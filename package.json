@@ -1,0 +1,42 @@
+{
+  "name": "dotkick",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "DotKick - an original 11-a-side football game for iPad Safari (touch + controller).",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build && node tools/postbuild.mjs",
+    "preview": "vite preview --host",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify": "npm run typecheck && npm run lint && vitest run && npm run soak:short",
+    "soak": "tsx tools/soak.ts --matches 2000",
+    "soak:short": "tsx tools/soak.ts --matches 10 --short",
+    "fuzz": "tsx tools/fuzz.ts --matches 500",
+    "bench": "npm run build && tsx tools/bench.ts",
+    "e2e": "playwright test",
+    "gen:data": "tsx tools/gen-data.ts"
+  },
+  "dependencies": {
+    "three": "0.186.1",
+    "peerjs": "1.5.5",
+    "@fontsource/space-grotesk": "5.3.0",
+    "@fontsource/jetbrains-mono": "5.3.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.56.1",
+    "@types/node": "22.19.1",
+    "@types/three": "0.186.0",
+    "eslint": "10.12.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.1",
+    "vite": "8.3.4",
+    "vite-plugin-singlefile": "2.3.3",
+    "vitest": "5.0.4"
+  }
+}
