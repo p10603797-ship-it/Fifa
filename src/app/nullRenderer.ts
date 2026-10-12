@@ -30,6 +30,9 @@ export function createNullRenderer(): GameRenderer {
     stopReplay() {},
     replaying: false,
     clearMatch() {},
+    setSettings() {},
+    onContextLost: () => () => {},
+    onContextRestored: () => () => {},
     dispose() {},
   };
 }

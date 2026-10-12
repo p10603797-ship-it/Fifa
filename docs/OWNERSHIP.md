@@ -30,6 +30,9 @@ except where listed below.
 | FND-06 | `tools/**` (headless runner, soak, fuzz, bench, replay inspector, postbuild; helpers `tools/lib/*`), `tests/harness/**` (invariant checker, scenario helpers), `src/sim/replay.ts` (replay record/playback, pure data), `src/sim/debug/invariants.ts` (invariant checker, shared by tests and the debug build), `src/platform/benchHook.ts` |
 
 After Wave 0 every stub file below exists with its exported signatures; Wave 1 owners implement them.
+Frozen after Wave 0 (lead-owned): `src/render/types.ts`, `src/render/index.ts` (orchestrator), `src/audio/types.ts`,
+`src/input/axes.ts`, `src/input/touch/index.ts` wiring is TCH-07's, `src/app/**` and `src/ui/index.ts`,
+`src/ui/hud/index.ts`, `src/ui/screens/match.ts` (owned by the INT wave; change requests to the lead in Wave 1).
 
 ## Wave 1 — Build squads
 
@@ -137,14 +140,14 @@ After Wave 0 every stub file below exists with its exported signatures; Wave 1 o
 | GFX-11 | `src/render/anim/contact.ts` |
 | GFX-12 | `src/render/anim/mapper.ts` |
 | GFX-13 | `src/render/ball.ts`, `src/render/markers.ts` |
-| GFX-14 | `src/render/camera/broadcast.ts` |
+| GFX-14 | `src/render/camera/broadcast.ts`, `src/render/camera/project.ts` |
 | GFX-15 | `src/render/camera/cinematic.ts` |
 | GFX-16 | `src/render/replay.ts`, `src/render/effects.ts` |
 
 ### UIX (menus and HUD) — files created as stubs by FND-04
 | Id | Owns |
 |---|---|
-| UIX-01 | `src/ui/tokens.css`, `src/ui/components.ts`, `src/ui/dotfield.ts`, `src/ui/fonts.ts` |
+| UIX-01 | `src/ui/tokens.css`, `src/ui/components.ts`, `src/ui/components.css`, `src/ui/dotfield.ts`, `src/ui/fonts.ts` |
 | UIX-02 | `src/ui/screens/splash.ts`, `src/ui/screens/main.ts` |
 | UIX-03 | `src/ui/screens/teamSelect.ts` |
 | UIX-04 | `src/ui/screens/sideSelect.ts` |
@@ -160,7 +163,7 @@ After Wave 0 every stub file below exists with its exported signatures; Wave 1 o
 ### AUD (audio) — stubs by FND-04
 | Id | Owns |
 |---|---|
-| AUD-01 | `src/audio/engine.ts` |
+| AUD-01 | `src/audio/engine.ts` (`src/audio/types.ts` is frozen; change via the lead) |
 | AUD-02 | `src/audio/crowd.ts` |
 | AUD-03 | `src/audio/sfx.ts` |
 | AUD-04 | `src/audio/whistles.ts` |

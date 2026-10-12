@@ -122,6 +122,11 @@ export interface GameRenderer {
   readonly replaying: boolean;
   /** Menus: draw nothing and release per-match resources. */
   clearMatch(): void;
+  /** Apply the latest settings snapshot (the SettingsStore replaces its object on every update). */
+  setSettings(s: Readonly<Settings>): void;
+  /** WebGL context lost / restored notifications (the session pauses, then resumes from the pause menu). Return unsubscribe. */
+  onContextLost(fn: () => void): () => void;
+  onContextRestored(fn: () => void): () => void;
   dispose(): void;
 }
 
@@ -211,6 +216,8 @@ export interface TickInputProvider {
   /** True while stalled waiting for a remote input. */
   readonly waiting: boolean;
   releaseAll(): void;
+  /** Queue a command (tactics, subs, SKIP) into the given human's next local frame (lockstep sends it with the frame). */
+  queueCommand?(human: number, cmd: Command, arg: number): void;
   dispose(): void;
 }
 
@@ -259,6 +266,7 @@ export interface FocusNavigator {
 
 export interface HumanBinding {
   human: number;
+  /** Device ids from DeviceRegistry. '*' (ANY_DEVICE in app/localInput.ts) also binds devices that appear later (pads join on a button press). */
   deviceIds: string[];
 }
 

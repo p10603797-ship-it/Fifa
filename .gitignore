@@ -10,3 +10,4 @@ blob-report
 .claude/worktrees
 tmp/
 reports/raw/
+dist-e2e

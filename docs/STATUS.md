@@ -8,8 +8,8 @@ Total assignments: 201.
 | FND-01 | 0 | done | lead; tsc + eslint clean |  |
 | FND-02 | 0 | done | lead; tsc + eslint clean |  |
 | FND-03 | 0 | done | 199 tests (fnd-03 + review); reviewer found 9 defects, all fixed |  |
-| FND-04 | 0 | queued |  |  |
-| FND-05 | 0 | queued |  |  |
+| FND-04 | 0 | done | app shell; reviewer found 8 defects, fixed; 229 unit tests (FND-04/05 + reviews) |  |
+| FND-05 | 0 | done | render+input skeleton; reviewer found 5 defects, fixed; skeleton gate 47/47 e2e on HEAD |  |
 | FND-06 | 0 | done | 136 tests (fnd-06 + review); reviewer found 10 defects, all fixed; soak:short runs |  |
 | SIM-01 | 1 | queued |  |  |
 | SIM-02 | 1 | queued |  |  |

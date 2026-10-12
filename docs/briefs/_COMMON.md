@@ -22,9 +22,13 @@ orchestrates ~200 assignments; you own exactly one. Your assignment brief is the
   `cd /home/user/Fifa && npx tsc --noEmit -p tsconfig.json 2>&1 | grep -E "<your paths>"`.
   If a dependency you call is still a stub, code against its documented contract, test your logic with
   scenario setups, and note the dependency in your report.
-- Unit/scenario tests: `npx vitest run <files>` (Node environment; no jsdom). Lint: `npx eslint <files>` must
-  report 0 errors. E2E: `npx vite build && npx playwright test <spec>` (preinstalled Chromium; never run
-  `playwright install`).
+- Unit/scenario tests: `npx vitest run <files>` (Node environment; no jsdom). Run YOUR test files, not the whole
+  suite (the container has 4 CPUs shared by many agents); run the whole suite at most once at the end.
+  Lint: `npx eslint <files>` must report 0 errors.
+- E2E (Playwright, preinstalled Chromium; never run `playwright install`): use your own build dir and port so you
+  do not collide with other agents: `npx vite build --outDir dist-e2e/<your-id> --emptyOutDir` then
+  `PW_DIST=dist-e2e/<your-id> PW_PORT=<4200 + a number from your id> npx playwright test <spec>`. Software WebGL is
+  slow here: keep e2e specs short and few.
 - Tuning: never hard-code gameplay numbers in logic. Use `src/contracts/tuning.ts`; for new constants add a
   `const LOCAL_TUNING = { ... } // TUNING-CR` block at the top of your file (with units in comments) and list it.
 

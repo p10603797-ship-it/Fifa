@@ -5,15 +5,670 @@
  * (when no higher-priority contact happened this tick), and drops possession when the ball gets away.
  * Uses sim/core/kick.ts helpers (takePossession, releasePossession, recordTouch). Constants: T_DRIBBLE.
  * Runs LAST in the contact phase.
+ *
+ * WHAT dribbleTick DOES (IN_PLAY only; other phases belong to the rules / restart modules):
+ *  1. Possession loss (always, even after another contact this tick): the owner is inactive, stunned (stunT > 0), in
+ *     a non-ball action (tackles, STUMBLE / FALLEN / GET_UP, dives, punches, rushes, celebrations, wall jumps: see
+ *     BALL_ACT), or the ball is more than T_DRIBBLE.loseRadius from him (horizontal) -> releasePossession. A ball in a
+ *     keeper's hands (heldBy) is GKP-05's: nothing is done to it.
+ *  2. Owner control (skipped when another stage already touched the ball this tick: one contact per tick):
+ *     - KICK / SHOT wind-up (actDone 0): the ball is held at the kicking spot (holdAhead in front of his feet along
+ *       his facing): its velocity is set to his velocity plus a pull onto the spot (time constant holdTau, capped at
+ *       holdMaxRel), so it slows to the spot and the contact tick finds it in reach. SKILL / FAKE: the same before
+ *       their contact tick only (afterwards SIM-13 scripts the ball).
+ *     - SHIELD with an opponent in range (SIM-05 isShielding + shieldBallSpot): held the same way on the shield spot,
+ *       on the far side of the body from the opponent.
+ *     - Free (NONE / SHIELD with nobody near): dribble touches (below). FIRST_TOUCH: SIM-07's window, no touches.
+ *     - Steal between touches: while the ball is out of the owner's reach (controlRadius / controlHeight) the nearest
+ *       pick-up-eligible opponent within controlRadius of it (ties: closest, then lower slot; a shielding owner's
+ *       shieldBlocks() keeps a challenger off) takes it when it is slow relative to him (stealMaxRelSpeed;
+ *       takePossession), or blocks it (deflects it off his feet, the ball becomes loose, recordTouch + KICK event with
+ *       KickKind.DEFLECTION) when faster. The dribbler gets noTouchT = T_DRIBBLE.dispossessedNoTouch either way.
+ *       This is the poke-away window: at a sprint the ball spends most of each touch cycle out of the owner's reach.
+ *  3. Loose ball (no owner, not in hands, no contact this tick, not in the net, low (<= controlHeight), horizontal
+ *     speed < pickUpMaxSpeed): the nearest pick-up-eligible player within controlRadius takes possession (ties:
+ *     closest, then lower slot) and controls it at once (a dribble touch, or the wind-up hold). Eligible
+ *     (pickUpEligible): active, stunT <= 0, noTouchT <= 0, and act NONE / SHIELD / FIRST_TOUCH or a KICK / SHOT
+ *     wind-up before contact (a first-time kick then finds the ball on the kicking spot). Tackles, dives, rushes,
+ *     punches, skills, fakes and down states are excluded (their owners resolve their own contacts).
+ *  4. Stuck ball (glitch list "Ball stuck: between two players / under a sliding player"): a loose, low ball slower
+ *     than stuckSpeed that nobody could take this tick, untouched for stuckTicks (ball.idleT) with an active player
+ *     within stuckRadius (so the ball lies under / between bodies whose players cannot take it) squirts out at
+ *     squirtSpeed, away from the nearby bodies (inverse-square repulsion over squirtScan; exactly symmetric: at right
+ *     angles to the nearest body, or along his facing when the ball lies under his centre). recordTouch(nearest
+ *     body) so the last touch is right for out-of-play decisions.
+ *  5. Every tick, every phase: p.touchCd and p.noTouchT count down by one for every player (SIM-06 owns the countdowns;
+ *     SIM-13 / SIM-14 / GKP-05 may set noTouchT), and ball.ownerT counts up while someone owns the ball.
+ *
+ * DRIBBLE TOUCHES. A touch happens when the free owner has the ball within reach and touchCd has run out, or earlier
+ * (at least turnMinGap ticks after the last touch) when he turns sharply: the wanted direction is more than
+ * acos(turnCos) away from the ball's travel (an extra small touch at touchAheadClose, next touch after turnInterval).
+ * A standing owner leaves a ball at rest at his feet alone (settleSpeed); a rolling one gets a stopping touch.
+ *  - Direction u and planned speed: from the movement intent (DIRECT stick: jog * |stick| or a sprint; ARRIVE: toward
+ *    the target), else his velocity, else his facing. Strafe / jockey caps and the SHIELD speed cap mirror SIM-04.
+ *  - Lead (how far ahead of the feet the ball runs at the peak of the touch): touchAheadClose when standing, strafing /
+ *    jockey-dribbling, shielding or turning; touchAheadClose..touchAheadJog up to jog speed; touchAheadJog..
+ *    touchAheadSprint from jog to top speed (sprint touches are heavier). Opponents near the owner (pressureNear..
+ *    pressureFar) pull non-sprint touches toward touchAheadClose. Capped at loseRadius - loseMargin.
+ *  - Quality q (0..1) = weighted dribbling / ballControl / agility x SIM-04 staminaFactor: poor q pushes further
+ *    (leadQualityScale), waits longer between touches (intervalQualityScale), and errs more: two s.rng draws per touch
+ *    give a direction error up to errAngleMax and a lead error up to errLeadMax (x (1 - q), sprint x (1 +
+ *    errSprintMul)).
+ *  - Push speed: a fixed-step 1-D model along u (SIM-02 rolling: rollDecel + rollDamping * v; the player accelerating
+ *    / braking toward his planned speed with SIM-04's accelerations) is bisected for the ball speed whose peak lead is
+ *    the wanted lead; the sideways offset is closed by the time of that peak (latMinTime..; latMaxSpeed).
+ *  - touchCd = the interval (T_DRIBBLE.touchIntervalJog..touchIntervalSprint by speed, quality-scaled). The interval is
+ *    the minimum spacing: the actual cadence is the time the ball takes to come back into reach (rolling physics).
+ *  - WHY NOT applyKick(DRIBBLE_TOUCH): applyKick releases possession and rewrites lastKick* / passTarget / shot data,
+ *    and RUL-08 snapshots offside on every lastKickTick, so a dribble would look like a stream of passes (offside
+ *    judged on every touch, pass targets wiped, the back-pass rule tainted). A dribble touch is recordTouch (last touch,
+ *    idleT, the player's lastTouchTick) plus the new ball velocity, and ball.owner is kept. A KICK event with
+ *    KickKind.DRIBBLE_TOUCH and a small power is still emitted for audio and animation (stats count only
+ *    isFootPassKind kicks).
+ *
+ * canTouchBall: physical eligibility only (active, not stunned or down, noTouchT expired, ball not in another
+ * player's hands, ball low and within controlRadius); contact-phase callers check ballTouchedThisTick themselves.
+ *
+ * Determinism / cost: plain arithmetic + Math.sqrt, s.rng only (two draws per dribble touch), slot-order loops with
+ * strict-< tie breaks, no allocation (module scratch; numbers cross helper calls through a Float64Array). Per tick:
+ * O(22) countdowns plus O(11..22) scans; the push solver (<= ~1100 tiny steps) runs only on touch ticks.
  */
-import type { EventSink } from '../../contracts/events';
-import type { SimState } from '../../contracts/state';
+import { NUM_SLOTS } from '../../contracts/constants';
+import { ActionKind, KickKind, MatchPhase } from '../../contracts/enums';
+import { EventType, type EventSink } from '../../contracts/events';
+import { MoveMode, type PlayerState, type SimState } from '../../contracts/state';
+import { T_BALL, T_DRIBBLE, T_PLAYER } from '../../contracts/tuning';
+import { ballTouchedThisTick, recordTouch, releasePossession, takePossession } from '../core/kick';
+import { rngRange } from '../core/rng';
+import { isShielding, shieldBallSpot, shieldBlocks } from './bodies';
 
-export function dribbleTick(s: SimState, ev: EventSink): void {
-  // Wave 0 stub.
+/** TUNING-CR (SIM-06): proposed additions to T_DRIBBLE (units in the comments). */
+export const LOCAL_TUNING = { // TUNING-CR
+  /** Loose-ball pick-up: max horizontal ball speed, m/s. */
+  pickUpMaxSpeed: 6,
+  /** Steal between touches: max ball speed relative to the stealer for a clean take, m/s (faster = a block). */
+  stealMaxRelSpeed: 6,
+  /** Block (ball deflected off a stealer's feet): normal restitution and kept tangential fraction, relative to him. */
+  blockRestitution: 0.3,
+  blockTangentKeep: 0.6,
+  /** Wind-up hold: kicking spot ahead of the body centre along the facing, m. */
+  holdAhead: 0.5,
+  /** Time constant pulling a held ball onto its spot (kicking spot / shield spot), s. */
+  holdTau: 0.1,
+  /** Max ball speed relative to the player while held on a spot, m/s. */
+  holdMaxRel: 6,
+  /** Below this planned and current speed the owner counts as standing, m/s. */
+  standSpeed: 0.6,
+  /** A standing owner leaves a ball moving slower than this relative to him alone (no touch), m/s. */
+  settleSpeed: 0.4,
+  /** DIRECT stick magnitude below which the intent counts as released, 0..1. */
+  stickDead: 0.05,
+  /** Stick magnitude at which a sprint reaches top speed, 0..1 (mirrors SIM-04 sprintStickFull). */
+  sprintStickFull: 0.6,
+  /** Acceleration multiplier above jog speed (mirrors SIM-04 highSpeedAccelMul). */
+  highSpeedAccelMul: 0.6,
+  /** ARRIVE braking as a fraction of T_PLAYER.decel (mirrors SIM-04 arriveDecelFrac). */
+  arriveBrakeFrac: 0.45,
+  /** Strafe / jockey-dribble speed cap: fraction of jog (of top with sprint) (mirrors SIM-04 jockeyForwardFraction). */
+  jockeySpeedCap: 0.8,
+  /** Sharp turn: cos of the angle between the wanted direction and the ball's travel at and below which the owner
+   *  takes an extra small touch. */
+  turnCos: 0.6,
+  /** Ticks after a touch before a turn touch is allowed. */
+  turnMinGap: 6,
+  /** Ticks to the next regular touch after a turn touch. */
+  turnInterval: 10,
+  /** Braking: planned speed below this fraction of his speed also allows the extra small (stopping) touch. */
+  brakeFrac: 0.5,
+  /** The owner's touch reach is controlRadius + his speed x this (a running player meets a ball up to a stride
+   *  ahead), s. Loose-ball pick-up, steals and canTouchBall use controlRadius alone. */
+  reachLookahead: 0.08,
+  /** Ball speed above which its travel direction counts for the turn test, m/s. */
+  travelSpeed: 0.5,
+  /** Standing owner: the ball must lie at least this far from his centre for its offset to count as a direction, m. */
+  turnOffsetMin: 0.2,
+  /** A player cannot pick up a loose ball he kicked himself (ball.lastKickBy) for this many ticks. */
+  selfKickTicks: 12,
+  /** Nearest opponent within pressureNear m: full pull toward touchAheadClose; none beyond pressureFar m. */
+  pressureNear: 1.5,
+  pressureFar: 4.5,
+  /** Touch quality weights (dribbling, ballControl, agility); q = weighted mean x staminaFactor. */
+  qDribbling: 0.45,
+  qBallControl: 0.35,
+  qAgility: 0.2,
+  /** Lead x (1 + leadQualityScale * (0.5 - q)). */
+  leadQualityScale: 0.2,
+  /** Touch interval x (1 + intervalQualityScale * (0.5 - q)). */
+  intervalQualityScale: 0.3,
+  /** Random touch error at q = 0: direction, rad; lead, fraction. Sprint touches x (1 + errSprintMul). */
+  errAngleMax: 0.12,
+  errLeadMax: 0.25,
+  errSprintMul: 0.5,
+  /** Leads are capped at loseRadius - loseMargin, m (and floored at minLead, m). */
+  loseMargin: 0.4,
+  minLead: 0.3,
+  /** Sideways correction: max sideways ball speed, m/s; min time to bring the ball onto the running line, s. */
+  latMaxSpeed: 3,
+  latMinTime: 0.2,
+  /** Push solver: horizon s, step s, bisection iterations, upper bound above the player's speed m/s. */
+  solveHorizon: 2.5,
+  solveStep: 1 / 30,
+  solveIters: 14,
+  solveHiExtra: 14,
+  /** Stuck ball: slower than stuckSpeed m/s, untouched for stuckTicks ticks, a body within stuckRadius m. */
+  stuckSpeed: 0.4,
+  stuckTicks: 45,
+  stuckRadius: 0.75,
+  /** Squirt-out speed, m/s, and the radius of bodies that push it away, m. */
+  squirtSpeed: 2.5,
+  squirtScan: 1.5,
+  /** KICK event power of a dribble touch / block = ball speed relative to the player / this, m/s. */
+  touchPowerRef: 22,
+} as const;
+
+const L = LOCAL_TUNING;
+const CR2 = T_DRIBBLE.controlRadius * T_DRIBBLE.controlRadius;
+const LOSE2 = T_DRIBBLE.loseRadius * T_DRIBBLE.loseRadius;
+const CTRL_H = T_DRIBBLE.controlHeight;
+const HALF_NS = NUM_SLOTS / 2;
+
+// ---------------------------------------------------------------- action tables (indexed by ActionKind)
+
+const ACT_N = ActionKind.SHIELD + 1;
+/** 1 = the owner keeps possession in this action. */
+const BALL_ACT = new Uint8Array(ACT_N);
+/** 1 = a player in this action may pick up a loose ball / steal (KICK / SHOT only before contact). */
+const PICK_ACT = new Uint8Array(ACT_N);
+/** 1 = on the ground or losing balance (cannot touch the ball). */
+const DOWN_ACT = new Uint8Array(ACT_N);
+(() => {
+  const keep = [
+    ActionKind.NONE, ActionKind.KICK, ActionKind.SHOT, ActionKind.HEADER, ActionKind.VOLLEY, ActionKind.FIRST_TOUCH,
+    ActionKind.SKILL, ActionKind.FAKE, ActionKind.SHIELD, ActionKind.GK_HOLD, ActionKind.GK_THROW, ActionKind.GK_KICK,
+    ActionKind.GK_CATCH, ActionKind.THROW_IN, ActionKind.SET_PIECE,
+  ];
+  for (const a of keep) BALL_ACT[a] = 1;
+  for (const a of [ActionKind.NONE, ActionKind.SHIELD, ActionKind.FIRST_TOUCH, ActionKind.KICK, ActionKind.SHOT]) PICK_ACT[a] = 1;
+  for (const a of [ActionKind.STUMBLE, ActionKind.FALLEN, ActionKind.GET_UP]) DOWN_ACT[a] = 1;
+})();
+
+// ---------------------------------------------------------------- module scratch (no per-tick allocation)
+
+/** Numbers passed between the helpers (a double returned from a call V8 does not inline would be boxed). */
+const F = new Float64Array(16);
+const F_UX = 0, F_UZ = 1, F_VT = 2, F_TOP = 3, F_JOG = 4, F_ACC = 5, F_UB = 6, F_TPK = 7, F_SF = 8, F_Q = 9;
+/** shieldBallSpot output. */
+const SPOT = { x: 0, z: 0 };
+
+function clamp01(v: number): number { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+// ---------------------------------------------------------------- eligibility
+
+/** May p pick up a loose ball / steal one now (ignores distance)? */
+function pickUpEligible(p: Readonly<PlayerState>): boolean {
+  if (p.active !== 1 || p.stunT > 0 || p.noTouchT > 0) return false;
+  const a = p.act;
+  if (PICK_ACT[a] !== 1) return false;
+  return (a !== ActionKind.KICK && a !== ActionKind.SHOT) || p.actDone === 0;
 }
 
 /** True if `slot` could touch the ball this tick (distance, height, not stunned, noTouchT expired). */
 export function canTouchBall(s: SimState, slot: number): boolean {
-  return false;
+  if (!(slot >= 0 && slot < NUM_SLOTS)) return false;
+  const p = s.players[slot]!;
+  if (p.active !== 1 || p.stunT > 0 || p.noTouchT > 0 || DOWN_ACT[p.act] === 1) return false;
+  const b = s.ball;
+  if (b.heldBy >= 0 && b.heldBy !== slot) return false;
+  if (!(b.y <= CTRL_H)) return false;
+  const dx = b.x - p.x, dz = b.z - p.z;
+  return dx * dx + dz * dz <= CR2;
+}
+
+// ---------------------------------------------------------------- intent, quality, pressure
+
+/**
+ * Movement direction (F_UX, F_UZ) and planned speed F_VT of slot from his intent (SIM-04 semantics), plus his
+ * stamina-scaled top / jog speed and acceleration (F_TOP, F_JOG, F_ACC) and the sprint fraction F_SF (0 at jog or
+ * below, 1 at top speed).
+ */
+function intentOf(s: SimState, slot: number): void {
+  const p = s.players[slot]!;
+  const a = s.attrs[slot]!;
+  const st = Number.isFinite(p.stamina) ? p.stamina : 1;
+  const thr = T_PLAYER.staminaLowThreshold;
+  const sfac = st < thr ? T_PLAYER.staminaFloorMul + (1 - T_PLAYER.staminaFloorMul) * (st > 0 ? st / thr : 0) : 1;
+  const top = (a.topSpeed > 0 ? a.topSpeed : T_PLAYER.topSpeedMin) * sfac;
+  const jog = top * T_PLAYER.jogFraction;
+  const acc = (a.accel > 0 ? a.accel : T_PLAYER.accelMin) * sfac;
+  let ux = 0, uz = 0, vt = 0, dirOk = 0;
+  if (p.moveMode === MoveMode.DIRECT) {
+    const ix = Number.isFinite(p.ix) ? p.ix : 0;
+    const iz = Number.isFinite(p.iz) ? p.iz : 0;
+    const mag = Math.sqrt(ix * ix + iz * iz);
+    if (mag > L.stickDead) {
+      ux = ix / mag; uz = iz / mag; dirOk = 1;
+      const m = mag < 1 ? mag : 1;
+      if (p.wantSprint === 1) { const f = m / L.sprintStickFull; vt = top * (f < 1 ? f : 1); } else vt = jog * m;
+    }
+  } else if (p.moveMode === MoveMode.ARRIVE) {
+    const dx = (Number.isFinite(p.tgtX) ? p.tgtX : p.x) - p.x;
+    const dz = (Number.isFinite(p.tgtZ) ? p.tgtZ : p.z) - p.z;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    if (d > T_PLAYER.arriveStop) {
+      ux = dx / d; uz = dz / d; dirOk = 1;
+      const cap = Number.isFinite(p.tgtSpeed) && p.tgtSpeed > 0 ? p.tgtSpeed : 0;
+      const brake = Math.sqrt(2 * L.arriveBrakeFrac * T_PLAYER.decel * (d - T_PLAYER.arriveStop));
+      vt = cap < top ? cap : top;
+      if (brake < vt) vt = brake;
+    }
+  }
+  if (p.act === ActionKind.SHIELD) {
+    const cap = jog * T_PLAYER.shieldSpeedFraction;
+    if (vt > cap) vt = cap;
+  } else if (p.lookAt === 1) {
+    const cap = (p.wantSprint === 1 ? top : jog) * L.jockeySpeedCap;
+    if (vt > cap) vt = cap;
+  }
+  if (dirOk === 0 || vt < L.standSpeed) {
+    // No (or a standing) intent: keep to the way he is moving, else the way he faces.
+    const sp = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
+    if (dirOk === 0 || sp > L.standSpeed) {
+      if (sp > L.standSpeed) { ux = p.vx / sp; uz = p.vz / sp; } else {
+        const fl = Math.sqrt(p.fx * p.fx + p.fz * p.fz);
+        if (fl > 1e-9) { ux = p.fx / fl; uz = p.fz / fl; } else { ux = s.teams[p.team]!.dir; uz = 0; }
+      }
+    }
+  }
+  F[F_UX] = ux; F[F_UZ] = uz; F[F_VT] = vt; F[F_TOP] = top; F[F_JOG] = jog; F[F_ACC] = acc;
+  F[F_SF] = vt > jog && top > jog + 1e-9 ? clamp01((vt - jog) / (top - jog)) : 0;
+  // Touch quality.
+  const wsum = L.qDribbling + L.qBallControl + L.qAgility;
+  const q = (L.qDribbling * clamp01((a.dribbling - 1) / 98) + L.qBallControl * clamp01((a.ballControl - 1) / 98) +
+    L.qAgility * clamp01((a.agility - 1) / 98)) / wsum;
+  F[F_Q] = clamp01(q * sfac);
+}
+
+/** 1 = an opponent at pressureNear or closer .. 0 = none within pressureFar. Result in F[F_TPK] (scratch reuse). */
+function pressureOf(s: SimState, slot: number): void {
+  const p = s.players[slot]!;
+  const first = p.team === 0 ? HALF_NS : 0;
+  let best = 1e18;
+  for (let j = first; j < first + HALF_NS; j++) {
+    const q = s.players[j]!;
+    if (q.active !== 1) continue;
+    const dx = q.x - p.x, dz = q.z - p.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < best) best = d2;
+  }
+  const d = Math.sqrt(best);
+  F[F_TPK] = clamp01((L.pressureFar - d) / (L.pressureFar - L.pressureNear));
+}
+
+// ---------------------------------------------------------------- push solver
+
+/**
+ * Does the ball's lead along u reach tgt, for an initial ball speed ub (ball lead d0 now; the player moving at v0
+ * along u, accelerating / braking toward vt)? The lead counts only from the moment the ball stops falling back
+ * (ball at least as fast as the player): for a braking player a soft touch first drops back, then rolls on to rest
+ * ahead of where he stops, and that resting lead is what counts. The answer is increasing in ub (bisection).
+ * With early = 1 it stops as soon as the answer is known. With early = 0 it runs on until the lead is back down to
+ * `back` after its peak and leaves that return time in F[F_TPK] (the horizon if it never comes back).
+ */
+function peakReaches(
+  ub: number, d0: number, v0: number, vt: number, acc: number, jog: number, tgt: number, early: number, back: number,
+): number {
+  const h = L.solveStep;
+  const n = Math.ceil(L.solveHorizon / h);
+  const ra = T_BALL.rollDecel, rc = T_BALL.rollDamping, rest = T_BALL.restSpeed;
+  const dec = T_PLAYER.decel;
+  const accHi = acc * L.highSpeedAccelMul;
+  let vb = ub, vp = v0, xb = 0, xp = 0;
+  let rising = vb >= vp ? 1 : 0;
+  let best = rising === 1 ? d0 : -1e9;
+  let tret = n * h;
+  let falling = 0;
+  for (let k = 1; k <= n; k++) {
+    let nvb = vb - (ra + rc * vb) * h;
+    if (nvb < rest) nvb = 0;
+    xb += 0.5 * (vb + nvb) * h;
+    vb = nvb;
+    let nvp: number;
+    if (vp < vt) { nvp = vp + (vp >= jog ? accHi : acc) * h; if (nvp > vt) nvp = vt; } else { nvp = vp - dec * h; if (nvp < vt) nvp = vt; }
+    xp += 0.5 * (vp + nvp) * h;
+    vp = nvp;
+    const lead = d0 + xb - xp;
+    if (rising === 0 && vb >= vp) rising = 1;
+    if (rising === 1 && lead > best) best = lead;
+    // Ball no faster than the player, who is no longer braking: the lead only falls from here.
+    const done = vb <= vp && vp <= vt + 1e-9;
+    if (early === 1) {
+      if (best >= tgt) return 1;
+      if (done) break;
+    } else {
+      if (rising === 1 && lead < best) falling = 1;
+      if (falling === 1 && lead <= back) { tret = k * h; break; }
+      if (done && vp === 0) break; // both at rest: it never comes back
+    }
+  }
+  F[F_TPK] = tret;
+  return best >= tgt ? 1 : 0;
+}
+
+/**
+ * Ball speed along u (F[F_UB]) whose peak lead is `lead`, and the time the ball takes to come back to the owner's
+ * feet (lead back to d0, clamped to minLead..controlRadius) (F[F_TPK]).
+ */
+function solvePush(d0: number, v0: number, vt: number, acc: number, jog: number, tgt: number): void {
+  const back = d0 < L.minLead ? L.minLead : d0 > T_DRIBBLE.controlRadius ? T_DRIBBLE.controlRadius : d0;
+  let lo = 0;
+  let hi = (vt > v0 ? vt : v0) + L.solveHiExtra;
+  if (hi > T_BALL.maxSpeed) hi = T_BALL.maxSpeed;
+  let ub: number;
+  if (peakReaches(lo, d0, v0, vt, acc, jog, tgt, 1, back) === 1) ub = lo;
+  else if (peakReaches(hi, d0, v0, vt, acc, jog, tgt, 1, back) === 0) ub = hi;
+  else {
+    for (let i = 0; i < L.solveIters; i++) {
+      const mid = 0.5 * (lo + hi);
+      if (peakReaches(mid, d0, v0, vt, acc, jog, tgt, 1, back) === 1) hi = mid; else lo = mid;
+    }
+    ub = hi;
+  }
+  peakReaches(ub, d0, v0, vt, acc, jog, tgt, 0, back);
+  F[F_UB] = ub;
+}
+
+// ---------------------------------------------------------------- ball control
+
+/** Hold the (low) ball on the spot (sx, sz) next to slot's feet: his velocity + a capped pull onto the spot. */
+function holdOn(s: SimState, slot: number, sx: number, sz: number): void {
+  const b = s.ball;
+  if (!(b.y <= CTRL_H)) return;
+  const p = s.players[slot]!;
+  let rx = (sx - b.x) / L.holdTau;
+  let rz = (sz - b.z) / L.holdTau;
+  const r = Math.sqrt(rx * rx + rz * rz);
+  if (r > L.holdMaxRel) { rx *= L.holdMaxRel / r; rz *= L.holdMaxRel / r; }
+  b.vx = p.vx + rx;
+  b.vz = p.vz + rz;
+  if (b.vy > 0) b.vy = 0;
+  b.sx = 0; b.sy = 0; b.sz = 0;
+}
+
+/** Hold the ball on slot's kicking spot (holdAhead along his facing). */
+function holdKickSpot(s: SimState, slot: number): void {
+  const p = s.players[slot]!;
+  let fx = p.fx, fz = p.fz;
+  const fl = Math.sqrt(fx * fx + fz * fz);
+  if (fl > 1e-9) { fx /= fl; fz /= fl; } else { fx = s.teams[p.team]!.dir; fz = 0; }
+  holdOn(s, slot, p.x + fx * L.holdAhead, p.z + fz * L.holdAhead);
+}
+
+/** A dribble touch by slot (intent already in F via intentOf). turn = 1: the extra small touch of a sharp turn. */
+function touchBall(s: SimState, slot: number, turn: number, ev: EventSink): void {
+  const p = s.players[slot]!;
+  const b = s.ball;
+  const ux = F[F_UX]!, uz = F[F_UZ]!, vt = F[F_VT]!, jog = F[F_JOG]!, acc = F[F_ACC]!, sf = F[F_SF]!, q = F[F_Q]!;
+  const close = T_DRIBBLE.touchAheadClose;
+  const jogLead = T_DRIBBLE.touchAheadJog;
+  let lead: number;
+  if (turn === 1 || p.jockeying === 1 || p.act === ActionKind.SHIELD || vt <= L.standSpeed) lead = close;
+  else if (vt <= jog) lead = jog > L.standSpeed ? close + (jogLead - close) * clamp01((vt - L.standSpeed) / (jog - L.standSpeed)) : jogLead;
+  else lead = jogLead + (T_DRIBBLE.touchAheadSprint - jogLead) * sf;
+  if (lead > close && sf < 1) {
+    pressureOf(s, slot);
+    lead += (close - lead) * F[F_TPK]! * (1 - sf);
+  }
+  lead *= 1 + L.leadQualityScale * (0.5 - q);
+  const r1 = rngRange(s.rng, -1, 1);
+  const r2 = rngRange(s.rng, -1, 1);
+  const err = (1 - q) * (1 + L.errSprintMul * sf);
+  lead *= 1 + L.errLeadMax * err * r2;
+  const maxLead = T_DRIBBLE.loseRadius - L.loseMargin;
+  if (lead > maxLead) lead = maxLead;
+  if (lead < L.minLead) lead = L.minLead;
+  // Geometry along u (d0 ahead, e0 to the side n = (-uz, ux)).
+  const rx = b.x - p.x, rz = b.z - p.z;
+  const d0 = rx * ux + rz * uz;
+  const e0 = rz * ux - rx * uz;
+  const v0 = p.vx * ux + p.vz * uz;
+  solvePush(d0, v0, vt, acc, jog, lead);
+  const ub = F[F_UB]!;
+  const tl = F[F_TPK]! > L.latMinTime ? F[F_TPK]! : L.latMinTime;
+  let vl = -e0 / tl;
+  if (vl > L.latMaxSpeed) vl = L.latMaxSpeed; else if (vl < -L.latMaxSpeed) vl = -L.latMaxSpeed;
+  // The push relative to the player's run (ub - v0 along u, vl sideways) gets the direction error: rotate it by a
+  // small angle (Taylor sin/cos, |th| <= errAngleMax * 1.5). The error is in the touch, not in his running speed.
+  const vb0 = v0 > 0 ? v0 : 0;
+  const pa = ub - vb0;
+  const th = L.errAngleMax * err * r1;
+  const t2 = th * th;
+  const c = 1 - t2 * 0.5 * (1 - t2 / 12);
+  const sn = th * (1 - t2 / 6 * (1 - t2 / 20));
+  const ra = pa * c - vl * sn;
+  const rl = pa * sn + vl * c;
+  const vx = ux * (vb0 + ra) - uz * rl;
+  const vz = uz * (vb0 + ra) + ux * rl;
+  b.vx = vx;
+  b.vz = vz;
+  if (b.vy > 0) b.vy = 0;
+  b.sx = 0; b.sy = 0; b.sz = 0;
+  recordTouch(s, slot);
+  let iv: number;
+  if (turn === 1) iv = L.turnInterval;
+  else {
+    iv = T_DRIBBLE.touchIntervalJog + (T_DRIBBLE.touchIntervalSprint - T_DRIBBLE.touchIntervalJog) * sf;
+    iv = Math.round(iv * (1 + L.intervalQualityScale * (0.5 - q)));
+  }
+  p.touchCd = iv > 1 ? iv : 1;
+  const rvx = vx - p.vx, rvz = vz - p.vz;
+  ev.emit(EventType.KICK, slot, KickKind.DRIBBLE_TOUCH, clamp01(Math.sqrt(rvx * rvx + rvz * rvz) / L.touchPowerRef), 0, b.x, b.y, b.z);
+}
+
+/** Free owner with the ball in reach: touch it when due (cooldown run out, or a sharp turn). */
+function dribbleControl(s: SimState, slot: number, ev: EventSink): void {
+  const p = s.players[slot]!;
+  const b = s.ball;
+  intentOf(s, slot);
+  const ux = F[F_UX]!, uz = F[F_UZ]!, vt = F[F_VT]!;
+  const sp = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
+  if (vt < L.standSpeed && sp < L.standSpeed) {
+    const rvx = b.vx - p.vx, rvz = b.vz - p.vz;
+    if (rvx * rvx + rvz * rvz < L.settleSpeed * L.settleSpeed) return; // ball at rest at his feet
+  }
+  // Sharp turn: the wanted direction disagrees with the way he runs (standing: with where the ball lies) AND with
+  // the way the ball travels (so a ball already sent the new way, or a sideways correction, does not re-trigger).
+  // Braking hard (planned speed well below his speed) with the ball running on also takes the small touch.
+  let turn = 0;
+  if (vt < L.brakeFrac * sp && sp > L.standSpeed) {
+    if (b.vx * ux + b.vz * uz > vt + L.settleSpeed) turn = 1;
+  } else if (vt >= L.standSpeed) {
+    if (sp > L.standSpeed) {
+      if ((p.vx * ux + p.vz * uz) / sp < L.turnCos) turn = 1;
+    } else {
+      const dx = b.x - p.x, dz = b.z - p.z;
+      const d = Math.sqrt(dx * dx + dz * dz);
+      if (d > L.turnOffsetMin && (dx * ux + dz * uz) / d < L.turnCos) turn = 1;
+    }
+    const bs = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
+    if (turn === 1 && bs > L.travelSpeed && (b.vx * ux + b.vz * uz) / bs >= L.turnCos) turn = 0;
+  }
+  if (p.touchCd > 0 && !(turn === 1 && s.tick - p.lastTouchTick >= L.turnMinGap)) return;
+  touchBall(s, slot, turn, ev);
+}
+
+/** Control right after gaining possession this tick (pick-up / steal): wind-up hold, else a touch. */
+function controlAfterTake(s: SimState, slot: number, ev: EventSink): void {
+  const p = s.players[slot]!;
+  p.touchCd = 0;
+  if (p.act === ActionKind.KICK || p.act === ActionKind.SHOT) { holdKickSpot(s, slot); return; }
+  if (p.act !== ActionKind.NONE && p.act !== ActionKind.SHIELD) return;
+  intentOf(s, slot);
+  touchBall(s, slot, 0, ev);
+}
+
+/** Nearest pick-up-eligible player of slots [from, to) within controlRadius of the ball (ties: lower slot); -1 none. */
+function nearestTaker(s: SimState, from: number, to: number, owner: number): number {
+  const b = s.ball;
+  let best = -1;
+  let bestD2 = CR2;
+  const shield = owner >= 0 && isShielding(s, owner);
+  const selfKick = owner < 0 && s.tick - b.lastKickTick < L.selfKickTicks ? b.lastKickBy : -1;
+  for (let j = from; j < to; j++) {
+    const q = s.players[j]!;
+    if (j === selfKick || !pickUpEligible(q)) continue;
+    const dx = b.x - q.x, dz = b.z - q.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 > bestD2 || (d2 === bestD2 && best >= 0)) continue;
+    if (shield && shieldBlocks(s, owner, j)) continue;
+    best = j;
+    bestD2 = d2;
+  }
+  return best;
+}
+
+/** Owner out of reach: an opponent at the ball steals (slow) or blocks (fast) it. Returns 1 if the ball changed. */
+function stealTick(s: SimState, owner: number, ev: EventSink): number {
+  const b = s.ball;
+  if (!(b.y <= CTRL_H)) return 0;
+  const o = s.players[owner]!;
+  const first = o.team === 0 ? HALF_NS : 0;
+  const j = nearestTaker(s, first, first + HALF_NS, owner);
+  if (j < 0) return 0;
+  const q = s.players[j]!;
+  const rvx = b.vx - q.vx, rvz = b.vz - q.vz;
+  const rel2 = rvx * rvx + rvz * rvz;
+  if (rel2 <= L.stealMaxRelSpeed * L.stealMaxRelSpeed) {
+    takePossession(s, j, ev);
+    if (o.noTouchT < T_DRIBBLE.dispossessedNoTouch) o.noTouchT = T_DRIBBLE.dispossessedNoTouch;
+    controlAfterTake(s, j, ev);
+    return 1;
+  }
+  // Too fast to control: it hits his feet (only if it is coming at him) and deflects; the ball is loose.
+  let nx = b.x - q.x, nz = b.z - q.z;
+  let nl = Math.sqrt(nx * nx + nz * nz);
+  if (nl < 1e-6) { nx = -rvx; nz = -rvz; nl = Math.sqrt(rel2); }
+  nx /= nl; nz /= nl;
+  const vn = rvx * nx + rvz * nz;
+  if (vn >= 0) return 0;
+  const tx = rvx - vn * nx, tz = rvz - vn * nz;
+  const ox = tx * L.blockTangentKeep - vn * L.blockRestitution * nx;
+  const oz = tz * L.blockTangentKeep - vn * L.blockRestitution * nz;
+  b.vx = q.vx + ox;
+  b.vz = q.vz + oz;
+  if (b.vy > 0) b.vy = 0;
+  b.sx = 0; b.sy = 0; b.sz = 0;
+  releasePossession(s, ev);
+  recordTouch(s, j);
+  if (o.noTouchT < T_DRIBBLE.dispossessedNoTouch) o.noTouchT = T_DRIBBLE.dispossessedNoTouch;
+  ev.emit(EventType.KICK, j, KickKind.DEFLECTION, clamp01(Math.sqrt(rel2) / L.touchPowerRef), 0, b.x, b.y, b.z);
+  return 1;
+}
+
+/** The owned (feet) ball: possession loss, then control (holds, touches, steals). */
+function ownerTick(s: SimState, ev: EventSink): void {
+  const b = s.ball;
+  const o = b.owner;
+  if (!(o < NUM_SLOTS)) { releasePossession(s, ev); return; }
+  const p = s.players[o]!;
+  if (p.active !== 1 || p.stunT > 0 || BALL_ACT[p.act] !== 1) { releasePossession(s, ev); return; }
+  const dx = b.x - p.x, dz = b.z - p.z;
+  const d2 = dx * dx + dz * dz;
+  if (!(d2 <= LOSE2)) { releasePossession(s, ev); return; }
+  if (ballTouchedThisTick(s)) return;
+  const r = T_DRIBBLE.controlRadius + Math.sqrt(p.vx * p.vx + p.vz * p.vz) * L.reachLookahead;
+  const reach = d2 <= r * r && b.y <= CTRL_H;
+  const act = p.act;
+  if (act === ActionKind.KICK || act === ActionKind.SHOT) {
+    if (p.actDone !== 0) return;
+    if (!reach && stealTick(s, o, ev) === 1) return;
+    holdKickSpot(s, o);
+    return;
+  }
+  if (act === ActionKind.SKILL || act === ActionKind.FAKE) {
+    if (p.actDone === 0 && p.actContact >= 0 && p.actT < p.actContact) holdKickSpot(s, o);
+    return;
+  }
+  if (act !== ActionKind.NONE && act !== ActionKind.SHIELD && act !== ActionKind.FIRST_TOUCH) return;
+  if (!reach && stealTick(s, o, ev) === 1) return;
+  if (act === ActionKind.FIRST_TOUCH) return;
+  if (act === ActionKind.SHIELD && shieldBallSpot(s, o, SPOT)) { holdOn(s, o, SPOT.x, SPOT.z); return; }
+  if (reach) dribbleControl(s, o, ev);
+}
+
+/** Loose ball: pick-up by the nearest eligible player in reach, else the stuck-ball squirt. */
+function looseTick(s: SimState, ev: EventSink): void {
+  const b = s.ball;
+  if (ballTouchedThisTick(s) || b.inNet !== 0 || !(b.y <= CTRL_H)) return;
+  const hs2 = b.vx * b.vx + b.vz * b.vz;
+  if (hs2 < L.pickUpMaxSpeed * L.pickUpMaxSpeed) {
+    const j = nearestTaker(s, 0, NUM_SLOTS, -1);
+    if (j >= 0) {
+      takePossession(s, j, ev);
+      controlAfterTake(s, j, ev);
+      return;
+    }
+  }
+  if (hs2 < L.stuckSpeed * L.stuckSpeed && b.idleT >= L.stuckTicks) squirt(s);
+}
+
+/** Squirt a stuck ball out from under / between bodies (see header, step 4). */
+function squirt(s: SimState): void {
+  const b = s.ball;
+  let near = -1;
+  let nearD2 = L.stuckRadius * L.stuckRadius;
+  let sx = 0, sz = 0;
+  const scan2 = L.squirtScan * L.squirtScan;
+  for (let j = 0; j < NUM_SLOTS; j++) {
+    const q = s.players[j]!;
+    if (q.active !== 1) continue;
+    const dx = b.x - q.x, dz = b.z - q.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 > scan2) continue;
+    if (d2 < nearD2 || (d2 === nearD2 && near < 0)) { near = j; nearD2 = d2; }
+    const w = 1 / (d2 > 0.01 ? d2 : 0.01);
+    sx += dx * w;
+    sz += dz * w;
+  }
+  if (near < 0) return;
+  let len = Math.sqrt(sx * sx + sz * sz);
+  if (len < 1e-6) {
+    const q = s.players[near]!;
+    const dx = b.x - q.x, dz = b.z - q.z;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    if (d > 1e-6) { sx = -dz / d; sz = dx / d; } else {
+      sx = q.fx; sz = q.fz;
+      if (!(sx * sx + sz * sz > 1e-12)) { sx = s.teams[q.team]!.dir; sz = 0; }
+    }
+    len = Math.sqrt(sx * sx + sz * sz);
+  }
+  b.vx = sx / len * L.squirtSpeed;
+  b.vz = sz / len * L.squirtSpeed;
+  if (b.vy > 0) b.vy = 0;
+  b.sx = 0; b.sy = 0; b.sz = 0;
+  recordTouch(s, near);
+}
+
+/** Countdowns (every tick, every phase): touchCd and noTouchT for every player; ownerT while owned. */
+function countdowns(s: SimState): void {
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    const p = s.players[i]!;
+    p.touchCd = p.touchCd > 1 ? p.touchCd - 1 : 0;
+    p.noTouchT = p.noTouchT > 1 ? p.noTouchT - 1 : 0;
+  }
+  const b = s.ball;
+  if (b.owner >= 0) b.ownerT++;
+}
+
+export function dribbleTick(s: SimState, ev: EventSink): void {
+  const b = s.ball;
+  if (s.match.phase === MatchPhase.IN_PLAY) {
+    if (b.heldBy >= 0) {
+      // In a keeper's hands (GKP-05). Defensive: the holder is the owner.
+      if (b.owner !== b.heldBy) { b.owner = b.heldBy; b.ownerT = 0; }
+    } else {
+      if (b.owner >= 0) ownerTick(s, ev);
+      if (b.owner < 0) looseTick(s, ev);
+    }
+  }
+  countdowns(s);
 }

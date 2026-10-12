@@ -3,7 +3,7 @@
  * RUL-01 implements the machine with setPhase(); any transition not listed here fails an assertion
  * in test builds and is refused (logged) in the shipped game.
  *
- *   PRE_MATCH -> KICK_OFF | SHOOT_OUT (shoot-out mode)
+ *   PRE_MATCH -> KICK_OFF | SHOOT_OUT (shoot-out mode) | IN_PLAY (practice free play and test setups: config.startPhase)
  *   KICK_OFF  -> IN_PLAY
  *   IN_PLAY  <-> THROW_IN | GOAL_KICK | CORNER | FREE_KICK | PENALTY
  *   IN_PLAY   -> GOAL -> CELEBRATION -> REPLAY -> KICK_OFF | HALF_TIME | FULL_TIME
@@ -18,7 +18,7 @@
 import { MatchPhase as P } from './enums';
 
 export const LEGAL_TRANSITIONS: Readonly<Record<P, readonly P[]>> = {
-  [P.PRE_MATCH]: [P.KICK_OFF, P.SHOOT_OUT],
+  [P.PRE_MATCH]: [P.KICK_OFF, P.SHOOT_OUT, P.IN_PLAY],
   [P.KICK_OFF]: [P.IN_PLAY, P.FULL_TIME],
   [P.IN_PLAY]: [P.THROW_IN, P.GOAL_KICK, P.CORNER, P.FREE_KICK, P.PENALTY, P.GOAL, P.HALF_TIME, P.FULL_TIME],
   [P.THROW_IN]: [P.IN_PLAY, P.HALF_TIME, P.FULL_TIME],
@@ -42,10 +42,10 @@ export function isLegalTransition(from: P, to: P): boolean {
 
 /**
  * Phases in which the match clock runs (play and restarts, as in real football). Time spent in restart phases also
- * accumulates added time (T_RULES.addedTimeScale). The clock stops during cut-scenes (goal, celebration, replay,
- * half/full time).
+ * accumulates added time (T_RULES.addedTimeScale). The clock does not run before a kick-off is taken and stops during
+ * cut-scenes (goal, celebration, replay, half/full time).
  */
-export const CLOCK_PHASES: readonly P[] = [P.IN_PLAY, P.KICK_OFF, P.THROW_IN, P.GOAL_KICK, P.CORNER, P.FREE_KICK, P.PENALTY];
+export const CLOCK_PHASES: readonly P[] = [P.IN_PLAY, P.THROW_IN, P.GOAL_KICK, P.CORNER, P.FREE_KICK, P.PENALTY];
 
 /** Restart phases (a taker is waiting). */
 export const RESTART_PHASES: readonly P[] = [P.KICK_OFF, P.THROW_IN, P.GOAL_KICK, P.CORNER, P.FREE_KICK, P.PENALTY];

@@ -15,3 +15,8 @@ Decisions taken where the brief is silent or the environment forces a choice. Ne
 | D-009 | Saves are always made by the keeper AI, also on human sides; humans control rush-out, pick-up and distribution. | Matches console behaviour and the brief's GKP split. |
 | D-010 | The lead wrote the toolchain (FND-01) and contracts + sim/ai skeleton (FND-02) directly. | They are the frozen foundation every other assignment depends on. |
 | D-011 | Pitch-space input: stick right = +x, stick down = +z for the broadcast camera; other cameras rotate via CameraProjector.stickRotation(). | Predictable control under a fixed side camera; network frames are camera-independent. |
+| D-012 | POSSESSION events only on a change of team (a loose ball is judged against the last touch). | Completed passes must not look like turnovers to stats, crowd and HUD. |
+| D-013 | The match clock does not run before a kick-off is taken; it runs in play and other restarts (added time from restart phases). PRE_MATCH may go straight to IN_PLAY (practice free play, tests). | Real-football feel for 2-10 minute halves; deterministic e2e entry. |
+| D-014 | Camera FOV stays 22 deg: at the iPad aspect a player at the centre spot is 5.7% of screen height with 43.6 m visible (the 6% / 45 m targets pull against each other). | FND-05 measurement; GFX-14 may retune. |
+| D-015 | E2E runs at deviceScaleFactor 1 by default (PW_HIDPI=1 adds DPR 2) with per-agent build dirs and ports; vitest maxWorkers 2. | Software WebGL in the 4-CPU container; many agents share it. |
+| D-016 | Possession band is judged per match: mean share of the side with more of the ball <= 60%. | FND-06 reading of "40-60% for each side". |
