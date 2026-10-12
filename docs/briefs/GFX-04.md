@@ -1,0 +1,9 @@
+# GFX-04 — Goals and nets with ripple
+Owns: `src/render/goals.ts`. Spec: BRIEF §8 Look ("goals with nets that ripple"), constants (goal 7.32 x 2.44, depth 2, posts
+radius 0.06), sim events NET/POST (ball entering the net -> ripple; post hits -> shake). Contracts: src/contracts/app.ts (GameRenderer), render.ts (Pose, PoseIdx, POSE_SIZE, AnimId, PoseFn, RenderStats), state.ts (read-only sim state), events.ts, tuning T_CAMERA/T_PERF, settings.ts. Your stub was created by FND-05: read src/render/types.ts (RenderContext, RenderFrame, InterpState, RenderModule) and src/render/index.ts first; keep the module interface. Budgets (BRIEF §13): whole frame <= 80 draw calls and <= 200k triangles at the default tier, no per-frame allocation, unlit/Lambert materials, one directional light + ambient, no real-time shadow maps or post-processing at the default tier, textures total <= 64 MB. Readability beats realism (§8 Look). Original art only — no real stadiums, sponsors or commercial game visuals. Test pure logic (geometry builders, maths, pose functions) in Node; check visuals with Playwright screenshots (npx vite build && npx playwright test), and LOOK at your screenshots (Read the PNG) before reporting.
+Implement two goals: posts and crossbar (white cylinders, few segments), back support frame, net as a grid mesh (one geometry per
+goal or instanced) with a vertex-displacement ripple driven by NET events (impact point from the ball position, damped wave over
+~1 s, CPU-updated vertex buffer with a small grid ~24x10 or a vertex shader using uniforms — prefer the shader: no CPU cost),
+post wobble on POST events. The net must look see-through (line/mesh pattern) and read clearly from the broadcast camera.
+<= 6 draw calls total.
+Tests: unit — ripple maths decays to zero; e2e screenshot of a goal close-up via a debug camera hook; look at it.

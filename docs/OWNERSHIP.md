@@ -27,7 +27,7 @@ except where listed below.
 | FND-03 | `src/sim/core/{rng,dmath,vec,hash,clone,serialize}.ts`; tests for those + `kick.ts`, `query.ts`, `events.ts` |
 | FND-04 | `src/main.ts`, `index.html`, `src/app/**`, `src/ui/**` (screen + HUD stubs, router registration), `src/audio/**` (engine stub), `src/platform/**` (stubs + minimal storage), `src/modes/**` (stubs), `src/net/**` (stubs), `public/**` (placeholder manifest/sw/icons) |
 | FND-05 | `src/render/**` (renderer skeleton + per-module stubs + `render/types.ts`), `src/input/**` (minimal touch stick, pad, keyboard sources, device registry, per-module stubs) |
-| FND-06 | `tools/**` (headless runner, soak, fuzz, bench, replay inspector, postbuild), `tests/harness/**` (invariant checker, replay record/playback, scenario helpers), `src/platform/benchHook.ts` |
+| FND-06 | `tools/**` (headless runner, soak, fuzz, bench, replay inspector, postbuild), `tests/harness/**` (invariant checker, scenario helpers), `src/sim/replay.ts` (replay record/playback, pure data), `src/sim/debug/invariants.ts` (invariant checker, shared by tests and the debug build), `src/platform/benchHook.ts` |
 
 After Wave 0 every stub file below exists with its exported signatures; Wave 1 owners implement them.
 
@@ -92,7 +92,7 @@ After Wave 0 every stub file below exists with its exported signatures; Wave 1 o
 | TAI-09 | `src/ai/cpu/passing.ts` |
 | TAI-10 | `src/ai/cpu/shooting.ts` |
 | TAI-11 | `src/ai/cpu/defending.ts` |
-| TAI-12 | `src/ai/cpu/levels.ts` |
+| TAI-12 | `src/ai/cpu/levels.ts`, `tools/ladder.ts` |
 | TAI-13 | `src/ai/setpieces.ts` |
 | TAI-14 | `src/ai/tactics.ts` |
 
@@ -119,7 +119,7 @@ After Wave 0 every stub file below exists with its exported signatures; Wave 1 o
 | PAD-05 | `src/input/pad/rightStick.ts` |
 | PAD-06 | set-piece row tests (`tests/controls/pad-06-*.test.ts`) |
 | PAD-07 | `src/input/pad/glyphs.ts`, `src/input/pad/rumble.ts`, `src/ui/screens/remap.ts` |
-| PAD-08 | `src/input/keyboard.ts`, `src/input/focus.ts`, `src/input/menuInput.ts` |
+| PAD-08 | `src/input/keyboard.ts`, `src/input/focus.ts`, `src/input/menuInput.ts`, `docs/KEYBOARD.md` |
 
 ### GFX (rendering) — files created as stubs by FND-05
 | Id | Owns |
@@ -169,7 +169,7 @@ After Wave 0 every stub file below exists with its exported signatures; Wave 1 o
 ### DAT (data)
 | Id | Owns |
 |---|---|
-| DAT-01 | `tools/gen-data.ts` (club part), `src/data/clubs.ts`, `src/data/names.ts` |
+| DAT-01 | `tools/gen-data.ts`, `src/data/clubs.ts`, `src/data/clubs.generated.ts`, `src/data/names.ts` |
 | DAT-02 | `src/data/playerGen.ts` (used by gen-data), name screening list `src/data/screen.ts` |
 | DAT-03 | `src/data/kits.ts` |
 | DAT-04 | `src/data/formations.ts`, `src/data/tactics.ts` |
@@ -179,7 +179,7 @@ After Wave 0 every stub file below exists with its exported signatures; Wave 1 o
 | Id | Owns |
 |---|---|
 | NET-01 | `src/net/lockstep.ts` |
-| NET-02 | `src/net/transport.ts`, `src/net/config.ts` |
+| NET-02 | `src/net/transport.ts`, `src/net/config.ts`, `src/net/types.ts`, `src/net/memoryTransport.ts` |
 | NET-03 | `src/net/lobby.ts`, `src/net/roomCode.ts` |
 | NET-04 | `src/net/adaptive.ts` |
 | NET-05 | `src/net/desync.ts` |
@@ -199,11 +199,11 @@ After Wave 0 every stub file below exists with its exported signatures; Wave 1 o
 ### PLT (platform)
 | Id | Owns |
 |---|---|
-| PLT-01 | `public/manifest.webmanifest`, `public/sw.js`, `public/icons/**`, `src/platform/pwa.ts` |
+| PLT-01 | `public/manifest.webmanifest`, `public/sw.js`, `public/icons/**`, `src/platform/pwa.ts`, `tools/gen-icons.mjs` |
 | PLT-02 | `src/platform/ipados.ts`, `src/platform/viewport.css` |
 | PLT-03 | `src/platform/storage.ts`, `src/platform/settingsStore.ts` |
 | PLT-04 | `tools/postbuild.mjs`, `tools/size-check.ts`, `src/ui/fonts/**` (subsetted fonts) |
 | PLT-05 | `src/platform/recovery.ts`, `src/ui/screens/diagnostics.ts`, `src/ui/screens/recovery.ts`, `src/platform/diagnostics.ts` |
-| PLT-06 | `README.md`, `docs/ASSETS.md`, `docs/DEVICE_CHECKLIST.md`, `docs/DEPLOY.md` |
+| PLT-06 | `README.md`, `docs/ASSETS.md`, `docs/DEVICE_CHECKLIST.md`, `docs/DEPLOY.md`, `.github/workflows/pages.yml` |
 
 Waves 2-5 (INT, QA, FIX, SGN) own the files named in their briefs; fixes go to the owner area's FIX agent.

@@ -1,0 +1,8 @@
+# AUD-05 — Menu sounds and the event-to-sound map
+Owns: `src/audio/ui.ts`, `src/audio/eventMap.ts`. Spec: BRIEF §8 ("menu sounds"), §4 rule 4 (audio consumes events, never changes sim state). Contracts: src/contracts/app.ts (AudioEngine, UiSound), events.ts (EventType, WhistleKind), settings.ts AudioSettings. Your stub was created by FND-04: read src/audio/types.ts (AudioModule, AudioCtx) and src/audio/engine.ts first. Rules (BRIEF §8 Sound, §3 Audio): all sound synthesised with Web Audio (no audio files), starts only after a user gesture, resumes after interruptions and visibility, volumes for master/crowd/effects/menus, no commentary. Never allocate per event in the steady state (reuse nodes or pre-rendered AudioBuffers generated once at unlock). Test pure parts in Node (envelopes, event mapping, scheduling maths); test lifecycle in Playwright (AudioContext state, no errors) — headless Chromium supports Web Audio.
+Implement: UI sounds for UiSound (move, confirm, back, error, toggle, start, countdown) — soft, short, on the menus bus, debounced for key repeat;
+eventMap: one table mapping every EventType to audio module calls (KICK -> sfx kick by power/kind, BOUNCE, POST, NET, WHISTLE -> whistles, FOUL,
+CARD, OFFSIDE (whistle short), SAVE (crowd + sfx), GOAL (sting + crowd), SHOT/NEAR_MISS (crowd), TACKLE, BODY_CONTACT, PHASE_CHANGE (half/full time
+whistles via WHISTLE events — avoid duplicates), etc.), deduplicating simultaneous duplicates within a tick. Hook menu sounds into the focus
+navigator / router (subscribe to MenuAction or a router hook; propose a change request if needed).
+Tests: unit — map coverage (every EventType handled or explicitly ignored), dedupe; e2e — menu navigation produces sounds without errors.

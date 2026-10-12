@@ -1,0 +1,9 @@
+# GFX-06 — Crowd
+Owns: `src/render/crowd.ts`. Spec: BRIEF §8 Look ("a simple instanced crowd that reacts to events"), §13 budgets (crowd instanced
+or merged). Seat transforms from GFX-05 (use its export; until present, generate seats on simple tiers yourself). Contracts: src/contracts/app.ts (GameRenderer), render.ts (Pose, PoseIdx, POSE_SIZE, AnimId, PoseFn, RenderStats), state.ts (read-only sim state), events.ts, tuning T_CAMERA/T_PERF, settings.ts. Your stub was created by FND-05: read src/render/types.ts (RenderContext, RenderFrame, InterpState, RenderModule) and src/render/index.ts first; keep the module interface. Budgets (BRIEF §13): whole frame <= 80 draw calls and <= 200k triangles at the default tier, no per-frame allocation, unlit/Lambert materials, one directional light + ambient, no real-time shadow maps or post-processing at the default tier, textures total <= 64 MB. Readability beats realism (§8 Look). Original art only — no real stadiums, sponsors or commercial game visuals. Test pure logic (geometry builders, maths, pose functions) in Node; check visuals with Playwright screenshots (npx vite build && npx playwright test), and LOOK at your screenshots (Read the PNG) before reporting.
+Implement: thousands of simple low-poly spectators (or billboard quads) in 1-2 InstancedMeshes with per-instance colour
+(home/away/neutral sections derived from kit colours), idle sway via a vertex shader (time + per-instance phase; no CPU per
+frame), reactions to events: GOAL (jump/cheer wave for the scoring side, sit for the other), near misses/shots (rise), saves
+— driven by uniforms (event time, side), density by quality tier (GFX-02 getTierParams). <= 2 draw calls, <= 60k triangles
+at the default tier.
+Tests: e2e screenshot with crowd, then trigger a GOAL event and capture the reaction; look at it.

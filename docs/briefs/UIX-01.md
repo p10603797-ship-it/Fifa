@@ -1,0 +1,14 @@
+# UIX-01 — Design tokens, fonts, dot-field background, base components
+Owns: `src/ui/tokens.css`, `src/ui/components.ts`, `src/ui/dotfield.ts`, `src/ui/fonts.ts`. Spec: BRIEF §12 Visual identity (all
+bullets: derive the palette from #07070D and #FF6B35 — surfaces, borders, text tiers, success, warning, error, cyan for player 2 —
+every token a CSS variable in one file; Space Grotesk + JetBrains Mono tabular figures, subset to Latin and inlined; signature
+animated dot-field canvas behind the menus that stops completely during matches). Contracts: src/contracts/app.ts (Screen, Router, AppContext, SessionControl, MatchSetup, MatchSummary, HudPart, FocusNavigator, MenuAction, UiSound), settings.ts, data.ts (Club), state.ts (read-only). Your stub was created by FND-04: read src/ui/index.ts, src/app/router.ts, src/ui/tokens.css and your stub first; keep the factory names. Design (BRIEF §12): deep ink #07070D background, ember #FF6B35 used sparingly (focus, selection, primary actions), player 2 cyan; UI type Space Grotesk, numbers JetBrains Mono with tabular figures (UIX-01 inlines the fonts); dark surfaces, thin hairlines, generous spacing; original layouts (do not imitate any commercial game's UI). UI rules: every screen works with touch alone and with a controller alone (visible focus ring, sensible focus order, Back always works); touch targets >= 60 pt; HUD writes to the DOM only when a value changes, animates only transform/opacity; nothing overlaps the touch controls, safe areas or the ball's usual screen region at any aspect ratio (4:3..21:9). Use data-focus on focusable elements. Verify with Playwright e2e at 1180x820 (iPad landscape) plus 4:3 and 21:9, touch-only and keyboard/pad-only, and LOOK at screenshots (Read the PNG) before reporting.
+Implement: tokens.css (all variables, base element styles, focus ring, buttons, cards, toggles, sliders, tabs, lists, toasts
+styles), fonts.ts (import the @fontsource woff2 Latin subsets for Space Grotesk 400/500/700 and JetBrains Mono 400/600 so Vite
+inlines them as data URIs — verify they end up inline in dist/index.html and the total stays small; declare @font-face; record
+licences for PLT-06), components.ts (tiny DOM helpers: button, toggle, slider, segmented control, tabs, list, card, modal, toast —
+all keyboard/pad focusable with data-focus, >= 60 pt targets, aria labels), dotfield.ts (canvas 2D animated dot field: subtle
+ember/ink dots drifting with a parallax response to focus changes; capped at 30 fps; fully stopped and hidden during matches —
+start/stop API used by the router/session).
+Tests: unit — palette derivation contrast ratios (WCAG AA for text tiers), component builders (pure parts); e2e — fonts loaded
+(document.fonts.check), dot field runs in menus and is stopped in a match (no rAF callbacks from it), screenshot of the main menu.

@@ -40,8 +40,12 @@ export function isLegalTransition(from: P, to: P): boolean {
   return LEGAL_TRANSITIONS[from].includes(to);
 }
 
-/** Phases in which the match clock may run. */
-export const CLOCK_PHASES: readonly P[] = [P.IN_PLAY];
+/**
+ * Phases in which the match clock runs (play and restarts, as in real football). Time spent in restart phases also
+ * accumulates added time (T_RULES.addedTimeScale). The clock stops during cut-scenes (goal, celebration, replay,
+ * half/full time).
+ */
+export const CLOCK_PHASES: readonly P[] = [P.IN_PLAY, P.KICK_OFF, P.THROW_IN, P.GOAL_KICK, P.CORNER, P.FREE_KICK, P.PENALTY];
 
 /** Restart phases (a taker is waiting). */
 export const RESTART_PHASES: readonly P[] = [P.KICK_OFF, P.THROW_IN, P.GOAL_KICK, P.CORNER, P.FREE_KICK, P.PENALTY];

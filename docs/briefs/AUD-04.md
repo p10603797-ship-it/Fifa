@@ -1,0 +1,6 @@
+# AUD-04 — Whistles and match stings
+Owns: `src/audio/whistles.ts`. Spec: BRIEF §8 ("whistles (short for fouls, long for half time and full time)"). Contracts: src/contracts/app.ts (AudioEngine, UiSound), events.ts (EventType, WhistleKind), settings.ts AudioSettings. Your stub was created by FND-04: read src/audio/types.ts (AudioModule, AudioCtx) and src/audio/engine.ts first. Rules (BRIEF §8 Sound, §3 Audio): all sound synthesised with Web Audio (no audio files), starts only after a user gesture, resumes after interruptions and visibility, volumes for master/crowd/effects/menus, no commentary. Never allocate per event in the steady state (reuse nodes or pre-rendered AudioBuffers generated once at unlock). Test pure parts in Node (envelopes, event mapping, scheduling maths); test lifecycle in Playwright (AudioContext state, no errors) — headless Chromium supports Web Audio.
+Implement a referee whistle synth (pea whistle: modulated tone ~2.5-3.5 kHz with flutter AM/FM and breath noise) for WhistleKind SHORT, START,
+LONG, FINAL (three blasts), plus short original match stings (kick-off, goal sting, full-time sting) on the effects bus — subtle, no music
+loops.
+Tests: unit — whistle envelopes per kind; e2e — events trigger whistles.

@@ -1,0 +1,10 @@
+# GFX-05 — Stadium, boards, sky, day and night lighting
+Owns: `src/render/stadium.ts`. Spec: BRIEF §8 Look ("one stadium with stands, a simple instanced crowd that reacts to events,
+original advertising boards, and day and floodlit-night lighting."), §2 (no real sponsors; original invented board text/shapes
+generated in code), config.night. Contracts: src/contracts/app.ts (GameRenderer), render.ts (Pose, PoseIdx, POSE_SIZE, AnimId, PoseFn, RenderStats), state.ts (read-only sim state), events.ts, tuning T_CAMERA/T_PERF, settings.ts. Your stub was created by FND-05: read src/render/types.ts (RenderContext, RenderFrame, InterpState, RenderModule) and src/render/index.ts first; keep the module interface. Budgets (BRIEF §13): whole frame <= 80 draw calls and <= 200k triangles at the default tier, no per-frame allocation, unlit/Lambert materials, one directional light + ambient, no real-time shadow maps or post-processing at the default tier, textures total <= 64 MB. Readability beats realism (§8 Look). Original art only — no real stadiums, sponsors or commercial game visuals. Test pure logic (geometry builders, maths, pose functions) in Node; check visuals with Playwright screenshots (npx vite build && npx playwright test), and LOOK at your screenshots (Read the PNG) before reporting.
+Implement: a stadium bowl of low-poly stands on all four sides (tiers, roof edges), merged/instanced geometry; advertising
+boards around the pitch at BOARD_X/BOARD_Z with generated original designs (canvas texture atlas: invented brand-like words
+and shapes, e.g. "DOTKICK", abstract logos) — optionally animated by UV scroll; sky (gradient dome or background colour),
+floodlight towers at night; lighting: one directional light + hemisphere/ambient, day and night presets (night: darker sky,
+floodlight-coloured key light). Crowd seat positions export for GFX-06 (an array of seat transforms in the stands).
+<= 10 draw calls, <= 40k triangles. Tests: unit — seat generation count/bounds; e2e screenshots day and night; look at them.

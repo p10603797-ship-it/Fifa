@@ -1,0 +1,10 @@
+# GFX-16 — Replay buffer and playback; small effects
+Owns: `src/render/replay.ts`, `src/render/effects.ts`. Spec: BRIEF §8 ("Goal replays: two angles from a ring buffer of the last 8 s of
+render state. Skippable."), §5 (celebration + replay <= 12 s, skippable), §13 warm-up (first replay must not hitch). Contracts: src/contracts/app.ts (GameRenderer), render.ts (Pose, PoseIdx, POSE_SIZE, AnimId, PoseFn, RenderStats), state.ts (read-only sim state), events.ts, tuning T_CAMERA/T_PERF, settings.ts. Your stub was created by FND-05: read src/render/types.ts (RenderContext, RenderFrame, InterpState, RenderModule) and src/render/index.ts first; keep the module interface. Budgets (BRIEF §13): whole frame <= 80 draw calls and <= 200k triangles at the default tier, no per-frame allocation, unlit/Lambert materials, one directional light + ambient, no real-time shadow maps or post-processing at the default tier, textures total <= 64 MB. Readability beats realism (§8 Look). Original art only — no real stadiums, sponsors or commercial game visuals. Test pure logic (geometry builders, maths, pose functions) in Node; check visuals with Playwright screenshots (npx vite build && npx playwright test), and LOOK at your screenshots (Read the PNG) before reporting.
+Implement: a preallocated ring buffer of compact render snapshots (per frame: 22 players' x, z, facing, AnimId/phase or pose
+inputs, ball x/y/z/spin, at most ~8 s at 60 fps -> preallocate typed arrays), recording every rendered frame during play; playback
+API used by GameRenderer.startReplay(seconds)/stopReplay (renders from the buffer instead of the live state, with GFX-15 replay
+angles, slight slow motion on the final second before the goal), skip support. Effects: small, cheap: ball trail on hard shots,
+net-bulge puff, grass kick-up particles on slides (instanced points, pooled), goal flash; all optional by tier.
+Tests: unit — ring buffer wrap and read-back, memory bound; e2e — a scripted goal shows a replay that can be skipped; look at a
+replay screenshot.

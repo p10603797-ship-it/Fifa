@@ -1,0 +1,7 @@
+# AUD-03 — Ball, body and goal-frame sounds
+Owns: `src/audio/sfx.ts`. Spec: BRIEF §8 ("Kicks scaled by power, post and bar, net, tackles"). Contracts: src/contracts/app.ts (AudioEngine, UiSound), events.ts (EventType, WhistleKind), settings.ts AudioSettings. Your stub was created by FND-04: read src/audio/types.ts (AudioModule, AudioCtx) and src/audio/engine.ts first. Rules (BRIEF §8 Sound, §3 Audio): all sound synthesised with Web Audio (no audio files), starts only after a user gesture, resumes after interruptions and visibility, volumes for master/crowd/effects/menus, no commentary. Never allocate per event in the steady state (reuse nodes or pre-rendered AudioBuffers generated once at unlock). Test pure parts in Node (envelopes, event mapping, scheduling maths); test lifecycle in Playwright (AudioContext state, no errors) — headless Chromium supports Web Audio.
+Implement synthesised one-shots: kick (thump with pitch/brightness and gain by power and kind; first touches softer), bounce (soft thud by impact
+speed), post/bar (metallic ring with a short inharmonic decay), net (swish/rustle), tackle/body contact (thud + grass scuff), slide (scrape),
+keeper catch (glove slap); spatial-ish panning by screen x of the event position (simple stereo pan from pitch x relative to the camera's x if
+available, else pitch x). Triggered from events via AUD-05's map.
+Tests: unit — parameter mapping by power/speed; e2e — sounds trigger without errors; voice cap respected.

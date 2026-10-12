@@ -436,6 +436,14 @@ export interface TeamState {
   /** Ticks since this team last had possession / last lost it [TAI-06]. */
   possT: number;
   lostT: number;
+  /** Human/CPU requests with a remaining duration in ticks: call for support [TAI-02], trigger run [TAI-03],
+   *  pass and go [SIM-08 sets after a PASS_AND_GO pass; TAI-03 executes]. Slot -1 = none. */
+  supportCallT: number;
+  supportSlot: number;
+  runCallT: number;
+  runSlot: number;
+  passGoT: number;
+  passGoSlot: number;
   cpu: CpuBrainState;
 }
 
@@ -449,7 +457,8 @@ export function createTeamState(idx: number): TeamState {
     onPitch: PLAYERS_PER_TEAM, keeperSlot: idx === 0 ? 0 : PLAYERS_PER_TEAM,
     phase: TeamPhase.BUILD_UP, phaseT: 0, chaser: -1, chaserT: 0, lineX: 0, pressSlot: -1, coverSlot: -1, shapeT: 0,
     homeX: new Array<number>(PLAYERS_PER_TEAM).fill(0), homeZ: new Array<number>(PLAYERS_PER_TEAM).fill(0),
-    possT: 0, lostT: 0, cpu: createCpuBrainState(),
+    possT: 0, lostT: 0, supportCallT: 0, supportSlot: -1, runCallT: 0, runSlot: -1, passGoT: 0, passGoSlot: -1,
+    cpu: createCpuBrainState(),
   };
 }
 

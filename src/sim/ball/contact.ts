@@ -35,10 +35,21 @@ export function ballPhysicsStep(b: BallState, dt: number, ev: EventSink | null):
   }
 }
 
-/** Per-tick ball update: records px/py/pz, substeps, crossing detection, events. */
+/**
+ * Advance a free ball by exactly one tick (DT), sub-stepping as needed (T_BALL.maxStep) so nothing tunnels.
+ * Used by ballTick AND by SIM-01 predictBall (with ev = null), so predictions match the sim bit-for-bit.
+ */
+export function ballStepTick(b: BallState, ev: EventSink | null): void {
+  ballPhysicsStep(b, DT, ev);
+}
+
+/**
+ * Per-tick ball update: records px/py/pz, skips when held in hands, ballStepTick, then SIM-03 detectCrossing on
+ * the tick's segment (px,py,pz) -> (x,y,z), and keeps the ball inside the world bounds.
+ */
 export function ballTick(s: SimState, ev: EventSink): void {
   const b = s.ball;
   b.px = b.x; b.py = b.y; b.pz = b.z;
   if (b.heldBy >= 0) return;
-  ballPhysicsStep(b, DT, ev);
+  ballStepTick(b, ev);
 }

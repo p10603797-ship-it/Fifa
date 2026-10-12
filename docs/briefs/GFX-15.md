@@ -1,0 +1,11 @@
+# GFX-15 — Set-piece, intro and replay cameras
+Owns: `src/render/camera/cinematic.ts`. Spec: BRIEF §8 Other cameras ("Set pieces: behind the taker for free kicks near goal,
+penalties and goal kicks; a raised corner view for corners; the main camera for throw-ins. Cut between cameras, or blend in under
+0.3 s. Never fly across the pitch. Goal replays: two angles from a ring buffer of the last 8 s of render state. Skippable. Kick-off
+and full time get short, skippable establishing shots. Same-iPad 1v1 uses one shared main camera."). Contracts: src/contracts/app.ts (GameRenderer), render.ts (Pose, PoseIdx, POSE_SIZE, AnimId, PoseFn, RenderStats), state.ts (read-only sim state), events.ts, tuning T_CAMERA/T_PERF, settings.ts. Your stub was created by FND-05: read src/render/types.ts (RenderContext, RenderFrame, InterpState, RenderModule) and src/render/index.ts first; keep the module interface. Budgets (BRIEF §13): whole frame <= 80 draw calls and <= 200k triangles at the default tier, no per-frame allocation, unlit/Lambert materials, one directional light + ambient, no real-time shadow maps or post-processing at the default tier, textures total <= 64 MB. Readability beats realism (§8 Look). Original art only — no real stadiums, sponsors or commercial game visuals. Test pure logic (geometry builders, maths, pose functions) in Node; check visuals with Playwright screenshots (npx vite build && npx playwright test), and LOOK at your screenshots (Read the PNG) before reporting.
+Implement a camera director: per phase/restart kind choose the active camera (broadcast from GFX-14, behind-the-taker, raised
+corner view, establishing orbit for PRE_MATCH/HALF_TIME/FULL_TIME, replay angles (low behind-goal and side close-up)), switch by cut
+(when the shot changes a lot) or blend (<= 0.3 s, T_CAMERA.blendTime), never a long fly-over; replay cameras consume GFX-16 replay
+playback state; reduced motion setting -> cuts only. The projector used by input must follow the active camera (expose the active
+CameraProjector and stickRotation; during behind-the-taker cameras stick mapping rotates so "up" aims toward goal).
+Tests: unit — director decision table per phase/restart, blend timing; e2e screenshots per set-piece camera; look at them.

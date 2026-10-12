@@ -1,0 +1,13 @@
+# UIX-08 — Pause menu and team management
+Owns: `src/ui/screens/pause.ts`. Spec: BRIEF §12 Screens ("Pause menu: resume, team management (formation, substitutions by drag or
+select-and-swap, stamina shown), tactics, camera, controls, sound, restart, quit."), §5 substitutions (up to 5, at any stoppage, from the
+pause menu or the quick-sub prompt; a substituted player cannot return), §11 ("Either player can pause; only the player who paused can resume
+or quit."), Commands (SUBSTITUTE cmdArg = outSlot | inRosterIdx << 8, SET_FORMATION, TACTIC_*, FOCUS_*) sent through ctx.session.queueCommand.
+Contracts: src/contracts/app.ts (Screen, Router, AppContext, SessionControl, MatchSetup, MatchSummary, HudPart, FocusNavigator, MenuAction, UiSound), settings.ts, data.ts (Club), state.ts (read-only). Your stub was created by FND-04: read src/ui/index.ts, src/app/router.ts, src/ui/tokens.css and your stub first; keep the factory names. Design (BRIEF §12): deep ink #07070D background, ember #FF6B35 used sparingly (focus, selection, primary actions), player 2 cyan; UI type Space Grotesk, numbers JetBrains Mono with tabular figures (UIX-01 inlines the fonts); dark surfaces, thin hairlines, generous spacing; original layouts (do not imitate any commercial game's UI). UI rules: every screen works with touch alone and with a controller alone (visible focus ring, sensible focus order, Back always works); touch targets >= 60 pt; HUD writes to the DOM only when a value changes, animates only transform/opacity; nothing overlaps the touch controls, safe areas or the ball's usual screen region at any aspect ratio (4:3..21:9). Use data-focus on focusable elements. Verify with Playwright e2e at 1180x820 (iPad landscape) plus 4:3 and 21:9, touch-only and keyboard/pad-only, and LOOK at screenshots (Read the PNG) before reporting.
+Implement the pause overlay used by the match screen: Resume (only the pausing human or system pause), Team management (pitch view with the
+XI in formation + bench with stamina bars; substitutions by drag-and-drop on touch or select-and-swap with a controller; shows subs left;
+pending subs apply at the next stoppage — show "pending"), Formation picker, Tactics (quick tactics toggles, focus), Camera (type, height,
+zoom), Controls (opens settings sub-pages), Sound volumes, Restart, Quit (confirm); also the quick-sub prompt (Command.QUICK_SUB) as a
+compact variant. Online matches: pause limits handled by NET (show counters if provided).
+Tests: e2e — pause/resume rules with two humans, a substitution queued by touch and by controller appears after the next stoppage, formation
+change applies, quit confirm; screenshot.
