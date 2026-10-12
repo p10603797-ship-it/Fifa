@@ -17,7 +17,7 @@ import {
   FormationId, KickKind, KitSlot, MatchPhase, ModeId, Period, PracticeKind, RestartKind, Role, SkillMove,
   TacticalFocus, TeamPhase, TeamStyle,
 } from './enums';
-import { NUM_CONTROLLERS, NUM_SLOTS, PLAYERS_PER_TEAM, SQUAD_SIZE } from './constants';
+import { NUM_CONTROLLERS, NUM_SLOTS, PLAYERS_PER_TEAM, SIM_VERSION, SQUAD_SIZE } from './constants';
 import type { InputFrame } from './input';
 import { createInputFrame } from './input';
 import type { PlayerData } from './data';
@@ -647,7 +647,7 @@ export const IMMUTABLE_STATE_KEYS = ['config', 'squads'] as const;
 /** Allocate an empty state with every array at full length. sim/init.ts fills it for a match. */
 export function createSimState(config: MatchConfig, squads: PlayerData[][]): SimState {
   return {
-    version: 1, tick: 0, rng: { a: 0, b: 0, c: 0, d: 0 }, match: createMatchState(), ball: createBallState(),
+    version: SIM_VERSION, tick: 0, rng: { a: 0, b: 0, c: 0, d: 0 }, match: createMatchState(), ball: createBallState(),
     players: Array.from({ length: NUM_SLOTS }, (_, i) => createPlayerState(i)),
     attrs: Array.from({ length: NUM_SLOTS }, createPlayerAttrs),
     teams: [createTeamState(0), createTeamState(1)],

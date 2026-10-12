@@ -80,15 +80,14 @@ describe('takePossession', () => {
     expect(events(ev).map((e) => [e.type, e.a, e.b, e.tick])).toEqual([[EventType.POSSESSION, 1, 15, 100]]);
   });
 
-  it('current behaviour: a loose ball collected by the same team emits POSSESSION again', () => {
-    // Documented in the FND-03 report: prevTeam is derived from the owner only, so pass receptions after
-    // applyKick (which releases the ball) re-emit POSSESSION for the same team.
+  it('a completed pass (loose ball collected by the same team) does not emit POSSESSION again', () => {
+    // Lead decision on FND-03 CR-1 (option B): a loose ball is judged against the team that touched it last.
     const { s, ev } = setup();
     takePossession(s, 5, ev);
     applyKick(s, 5, launch(KickKind.GROUND_PASS), 0.5, ev);
     ev.begin(s.tick);
     takePossession(s, 7, ev);
-    expect(events(ev).filter((e) => e.type === EventType.POSSESSION).map((e) => e.a)).toEqual([0]);
+    expect(events(ev).filter((e) => e.type === EventType.POSSESSION).map((e) => e.a)).toEqual([]);
   });
 });
 

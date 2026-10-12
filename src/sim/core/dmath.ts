@@ -6,13 +6,17 @@
  * them, so every result is bit-identical in every JS engine.
  *
  * Accuracy (verified by tests/unit/fnd-03-dmath.test.ts against Math.*):
- *  - dsin / dcos: |error| < 1e-15 on [-1e4, 1e4] (a few ulp; reduction degrades slowly beyond ~1e6).
- *  - datan2: < 1e-15 rad in all quadrants; datan2(0, 0) = 0; result in (-PI, PI] (y = -0 is treated as 0).
+ *  - dsin / dcos / dtan: |error| < 1e-15 on [-1e4, 1e4] (a few ulp); Cody-Waite reduction up to 2^20 * PI/2,
+ *    Payne-Hanek beyond, so every finite input stays accurate (and dsin/dcos within [-1, 1]); +-Infinity -> NaN.
+ *  - datan2: < 1e-15 rad in all quadrants; datan2(0, 0) = 0; result in (-PI, PI] (y = -0 is treated as 0);
+ *    two infinite arguments give the IEEE diagonals (+-PI/4, +-3PI/4).
+ *  - wrapAngle: (-PI, PI] for every finite input (NaN for +-Infinity / NaN).
  *  - dasin / dacos: < 1e-14 rad on [-1, 1] (inputs are clamped to [-1, 1]).
  *  - dexp: relative error < 1e-15 on [-700, 700]; overflow -> Infinity, underflow -> 0.
  *  - dlog: relative error < 1e-15 for x > 0 (incl. subnormals); dlog(0) = -Infinity, dlog(x < 0) = NaN.
  *  - dpow: repeated squaring for integer |y| <= 1024 (exact whenever the result is representable, e.g.
- *    dpow(2, 10) === 1024), dexp(y * dlog(x)) otherwise; relative error < 1e-13 on typical game ranges.
+ *    dpow(2, 10) === 1024), dexp(y * dlog(x)) otherwise (also for negative integer y when x^|y| overflows, so
+ *    subnormal results like dpow(10, -310) survive); relative error < 1e-13 on typical game ranges.
  *  - datan2(y, x) with y < 0 that would round to -PI returns -PI + 1 ulp (keeps the (-PI, PI] contract).
  * NaN inputs propagate to NaN (except dpow(NaN, 0) = 1, as IEEE pow).
  */
@@ -38,6 +42,11 @@ const INV_TWO_PI = 0.15915494309189535;
 const NEG_PI_UP = -3.1415926535897927;
 /** Low part of pi: the true pi ~= PI + PI_LO to ~107 bits. */
 const PI_LO = 1.2246467991473532e-16;
+/** PI/4 and 3PI/4 rounded to double (datan2 of two infinities). */
+const QUARTER_PI = 0.7853981633974483;
+const THREE_QUARTER_PI = 2.356194490192345;
+/** 2^60: datan2 ratio above which PI - atan(ratio) rounds to HALF_PI. */
+const TWO_P60 = 1152921504606846976;
 
 // ---------------------------------------------------------------- sin / cos kernels (|x| <= PI/4)
 
@@ -73,12 +82,19 @@ function kCos(x: number): number {
 /** Quadrant (0..3) of the last reduction. Module scratch: no allocation. */
 let redN = 0;
 
+/** Above this (2^20 * PI/2) k * PIO2_1 is no longer exact: reduceLarge (Payne-Hanek) takes over. */
+const REDUCE_MEDIUM_MAX = 1647099.3291652855;
+
 /**
- * Reduce a >= 0 to y in [-PI/4, PI/4] with a = y + n * PI/2, n stored in redN. Exact head products for
- * a < ~1.6e6; beyond that the result is still deterministic but loses accuracy.
+ * Reduce a >= 0 to y in [-PI/4, PI/4] with a = y + n * PI/2, n stored in redN. Cody-Waite with exact head
+ * products for a <= 2^20 * PI/2, Payne-Hanek beyond (accurate for every finite a). a = +Infinity gives NaN.
  */
 function reduce(a: number): number {
   if (a <= PIO4) { redN = 0; return a; }
+  if (a > REDUCE_MEDIUM_MAX) {
+    if (a === Infinity) { redN = 0; return NaN; }
+    return reduceLarge(a);
+  }
   const k = Math.round(a * INV_PIO2);
   // a - k*PIO2_1 is exact (Sterbenz); two tail terms give ~85 bits of PI/2.
   const r = a - k * PIO2_1;
@@ -94,19 +110,176 @@ function reduce(a: number): number {
   return y;
 }
 
+// ---------------------------------------------------------------- Payne-Hanek (fdlibm k_rem_pio2.c, prec 2)
+
+/** 2/PI in 24-bit chunks (66 x 24 = 1584 bits: enough for any double exponent). */
+const TWO_OVER_PI = new Int32Array([
+  0xA2F983, 0x6E4E44, 0x1529FC, 0x2757D1, 0xF534DD, 0xC0DB62, 0x95993C, 0x439041, 0xFE5163, 0xABDEBB, 0xC561B7,
+  0x246E3A, 0x424DD2, 0xE00649, 0x2EEA09, 0xD1921C, 0xFE1DEB, 0x1CB129, 0xA73EE8, 0x8235F5, 0x2EBB44, 0x84E99C,
+  0x7026B4, 0x5F7E41, 0x3991D6, 0x398353, 0x39F49C, 0x845F8B, 0xBDF928, 0x3B1FF8, 0x97FFDE, 0x05980F, 0xEF2F11,
+  0x8B5A0A, 0x6D1F6D, 0x367ECF, 0x27CB09, 0xB74F46, 0x3F669E, 0x5FEA2D, 0x7527BA, 0xC7EBE5, 0xF17B3D, 0x0739F7,
+  0x8A5292, 0xEA6BFB, 0x5FB11F, 0x8D5D08, 0x560330, 0x46FC7B, 0x6BABF0, 0xCFBC20, 0x9AF436, 0x1DA9E3, 0x91615E,
+  0xE61B08, 0x659985, 0x5F14A0, 0x68408D, 0xFFD880, 0x4D7327, 0x310606, 0x1556CA, 0x73A8C9, 0x60E27B, 0xC08C6B,
+]);
+/** PI/2 in 24-bit pieces (each exact in a double). */
+const PIO2_PARTS = new Float64Array([
+  1.57079625129699707031e+00, 7.54978941586159635335e-08, 5.39030252995776476554e-15, 3.28200341580791294123e-22,
+  1.27065575308067607349e-29, 1.22933308981111328932e-36, 2.73370053816464559624e-44, 2.16741683877804819444e-51,
+]);
+const TWO24 = 16777216;
+const TWON24 = 5.9604644775390625e-8;
+/** Terms of 2/PI multiplied in initially (fdlibm init_jk for prec 2), and PIO2_PARTS terms used. */
+const RP_JK = 4;
+const RP_JP = 4;
+/** Module scratch (no allocation per call; every slot read is written first in the same call). */
+const RP_TX = new Float64Array(3);
+const RP_F = new Float64Array(20);
+const RP_Q = new Float64Array(20);
+const RP_FQ = new Float64Array(20);
+const RP_IQ = new Int32Array(20);
+
+/** q[i] = sum_j tx[j] * f[jx + i - j]. */
+function rpProduct(i: number, jx: number): void {
+  let fw = 0;
+  for (let j = 0; j <= jx; j++) fw += RP_TX[j]! * RP_F[jx + i - j]!;
+  RP_Q[i] = fw;
+}
+
+/**
+ * Payne-Hanek reduction for finite a > 2^20 * PI/2: multiplies the 24-bit chunks of a by just the bits of
+ * 2/PI that matter, so the result is accurate for every finite input. Returns y in [-PI/4, PI/4], quadrant
+ * in redN. A line-by-line port of fdlibm __kernel_rem_pio2 (prec 2) on integers held exactly in doubles.
+ */
+function reduceLarge(a: number): number {
+  // a = (tx0 + tx1 2^-24 + tx2 2^-48) * 2^e0 with tx0, tx1 24-bit integers.
+  LOG_F64[0] = a;
+  const e0 = ((LOG_U32[HI]! >>> 20) & 0x7ff) - 1046; // ilogb(a) - 23
+  let z = scale2(a, -e0);
+  for (let i = 0; i < 2; i++) {
+    const t = Math.trunc(z);
+    RP_TX[i] = t;
+    z = (z - t) * TWO24;
+  }
+  RP_TX[2] = z;
+  let nx = 3;
+  while (RP_TX[nx - 1] === 0) nx--;
+
+  const jx = nx - 1;
+  let jv = Math.trunc((e0 - 3) / 24);
+  if (jv < 0) jv = 0;
+  let q0 = e0 - 24 * (jv + 1);
+  for (let i = 0, j = jv - jx; i <= jx + RP_JK; i++, j++) RP_F[i] = j < 0 ? 0 : TWO_OVER_PI[j]!;
+  for (let i = 0; i <= RP_JK; i++) rpProduct(i, jx);
+
+  let jz = RP_JK;
+  let n: number;
+  let ih: number;
+  for (;;) {
+    // Distill q[] into 24-bit chunks iq[] (reversed).
+    z = RP_Q[jz]!;
+    for (let i = 0, j = jz; j > 0; i++, j--) {
+      const fw = Math.trunc(TWON24 * z);
+      RP_IQ[i] = Math.trunc(z - TWO24 * fw);
+      z = RP_Q[j - 1]! + fw;
+    }
+    // Integer part n (mod 8) and fraction z.
+    z = scale2(z, q0);
+    z -= 8 * Math.floor(z * 0.125);
+    n = Math.trunc(z);
+    z -= n;
+    ih = 0;
+    if (q0 > 0) {
+      const i = RP_IQ[jz - 1]! >> (24 - q0);
+      n += i;
+      RP_IQ[jz - 1] = RP_IQ[jz - 1]! - (i << (24 - q0));
+      ih = RP_IQ[jz - 1]! >> (23 - q0);
+    } else if (q0 === 0) {
+      ih = RP_IQ[jz - 1]! >> 23;
+    } else if (z >= 0.5) {
+      ih = 2;
+    }
+    if (ih > 0) { // fraction > 0.5: use 1 - fraction and round n up
+      n += 1;
+      let carry = 0;
+      for (let i = 0; i < jz; i++) {
+        const j = RP_IQ[i]!;
+        if (carry === 0) {
+          if (j !== 0) { carry = 1; RP_IQ[i] = 0x1000000 - j; }
+        } else {
+          RP_IQ[i] = 0xffffff - j;
+        }
+      }
+      if (q0 === 1) RP_IQ[jz - 1] = RP_IQ[jz - 1]! & 0x7fffff;
+      else if (q0 === 2) RP_IQ[jz - 1] = RP_IQ[jz - 1]! & 0x3fffff;
+      if (ih === 2) {
+        z = 1 - z;
+        if (carry !== 0) z -= scale2(1, q0);
+      }
+    }
+    // All fraction bits cancelled: pull in more terms of 2/PI and recompute.
+    if (z !== 0) break;
+    let any = 0;
+    for (let i = jz - 1; i >= RP_JK; i--) any |= RP_IQ[i]!;
+    if (any !== 0) break;
+    let k = 1;
+    while (RP_IQ[RP_JK - k] === 0) k++;
+    for (let i = jz + 1; i <= jz + k; i++) {
+      RP_F[jx + i] = TWO_OVER_PI[jv + i]!;
+      rpProduct(i, jx);
+    }
+    jz += k;
+  }
+
+  // Chop off zero terms, or split the last fraction into 24-bit chunks.
+  if (z === 0) {
+    jz -= 1;
+    q0 -= 24;
+    while (RP_IQ[jz] === 0) { jz--; q0 -= 24; }
+  } else {
+    z = scale2(z, -q0);
+    if (z >= TWO24) {
+      const fw = Math.trunc(TWON24 * z);
+      RP_IQ[jz] = Math.trunc(z - TWO24 * fw);
+      jz += 1;
+      q0 += 24;
+      RP_IQ[jz] = fw;
+    } else {
+      RP_IQ[jz] = Math.trunc(z);
+    }
+  }
+  // Chunks back to doubles, then multiply by PI/2.
+  let fw = scale2(1, q0);
+  for (let i = jz; i >= 0; i--) { RP_Q[i] = fw * RP_IQ[i]!; fw *= TWON24; }
+  for (let i = jz; i >= 0; i--) {
+    let s = 0;
+    for (let k = 0; k <= RP_JP && k <= jz - i; k++) s += PIO2_PARTS[k]! * RP_Q[i + k]!;
+    RP_FQ[jz - i] = s;
+  }
+  let y = 0;
+  for (let i = jz; i >= 0; i--) y += RP_FQ[i]!;
+  redN = n & 3;
+  return ih === 0 ? y : -y;
+}
+
 /**
  * Wrap an angle to (-PI, PI]. Works in the double-PI world of the sim (PI and TWO_PI are the constants
  * above): wrapAngle(TWO_PI) === 0 and wrapAngle(-PI) === PI exactly; one wrap of an angle in (-3PI, 3PI]
- * is a single exact-as-possible subtraction.
+ * is a single exact-as-possible subtraction. Any finite input lands in (-PI, PI]; +-Infinity and NaN give NaN.
  */
 export function wrapAngle(a: number): number {
   if (a > -PI && a <= PI) return a;
   let r: number;
   if (a > PI && a <= 3 * PI) r = a - TWO_PI;
   else if (a <= -PI && a > -3 * PI) r = a + TWO_PI;
-  else r = a - TWO_PI * Math.round(a * INV_TWO_PI);
-  if (r <= -PI) r += TWO_PI;
-  else if (r > PI) r -= TWO_PI;
+  else {
+    r = a - TWO_PI * Math.round(a * INV_TWO_PI);
+    // For |a| >~ 1e16, TWO_PI * k is inexact and r can still be many turns out; each pass shrinks |r| to about
+    // ulp(previous r), so this ends within a few passes (~20 for 1e308). NaN / Infinity fall straight through.
+    while (r > 3 * PI || r < -3 * PI) r -= TWO_PI * Math.round(r * INV_TWO_PI);
+  }
+  // At most two exact single-turn corrections (r = -3PI needs both).
+  while (r <= -PI) r += TWO_PI;
+  while (r > PI) r -= TWO_PI;
   return r;
 }
 
@@ -209,11 +382,15 @@ export function datan2(y: number, x: number): number {
   let r: number;
   if (x === 0) {
     r = HALF_PI;
+  } else if (ay === Infinity && (x === Infinity || x === -Infinity)) {
+    r = x > 0 ? QUARTER_PI : THREE_QUARTER_PI; // Inf/Inf would be NaN: IEEE gives the diagonals
   } else if (x > 0) {
     r = atanPos(ay / x);
   } else {
-    // PI - atan(|y/x|) with the PI tail folded in for accuracy.
-    r = PI - (atanPos(ay / -x) - PI_LO);
+    // PI - atan(|y/x|) with the PI tail folded in for accuracy. Beyond 2^60 (incl. y = +-Infinity) the true
+    // result PI/2 + |x/y| rounds to HALF_PI, which the fold would miss by 1 ulp (fdlibm e_atan2.c does the same).
+    const t = ay / -x;
+    r = t > TWO_P60 ? HALF_PI : PI - (atanPos(t) - PI_LO);
   }
   if (y >= 0) return r;
   // r rounds to PI only for y -> -0 with x < 0: return the largest double above -PI to keep (-PI, PI].
@@ -340,8 +517,9 @@ export function dlog(x: number): number {
 const POW_INT_MAX = 1024;
 
 /**
- * x^y. Integer y with |y| <= 1024 uses repeated squaring (any sign of x); otherwise x > 0 uses
- * dexp(y * dlog(x)). x < 0 with non-integer y gives NaN; 0^y follows the IEEE conventions.
+ * x^y. Integer y with |y| <= 1024 uses repeated squaring (any sign of x; 1 / x^|y| for y < 0 unless x^|y|
+ * overflows); otherwise x > 0 uses dexp(y * dlog(x)). x < 0 with non-integer y gives NaN; 0^y and
+ * +-Infinity^y follow the IEEE conventions.
  */
 export function dpow(x: number, y: number): number {
   if (y === 0) return 1;
@@ -355,7 +533,11 @@ export function dpow(x: number, y: number): number {
       n >>>= 1;
       if (n > 0) base *= base;
     }
-    return y < 0 ? 1 / acc : acc;
+    if (y > 0) return acc;
+    // 1 / x^|y| would flush a representable (subnormal) result to 0 when x^|y| overflows for a finite x:
+    // only that case falls through to the exp/log path below.
+    const overflowed = (acc === Infinity || acc === -Infinity) && x !== Infinity && x !== -Infinity;
+    if (!overflowed) return 1 / acc;
   }
   if (x > 0) return dexp(y * dlog(x));
   if (x === 0) return y > 0 ? 0 : Infinity;

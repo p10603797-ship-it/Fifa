@@ -44,7 +44,10 @@ export interface RenderContext {
   scene: Scene;
   /** The one camera drawn each frame. Camera modules (GFX-14/15) write its transform and projection. */
   camera: PerspectiveCamera;
-  /** Latest settings snapshot (replaced by index.ts on init). */
+  /**
+   * Latest settings snapshot. index.ts replaces the object on init() and on every settings change
+   * (DotkickRenderer.setSettings), so read it when needed and never keep a reference to an old one.
+   */
   settings: Readonly<Settings>;
   /** Clubs of the current match source data (kits, crests). Empty until setMatch. */
   clubs: readonly Club[];
@@ -113,6 +116,12 @@ export interface RenderModule {
   setQuality?(tier: QualityTier): void;
   /** ctx.size changed (CSS size, device pixel ratio or resolution scale). */
   resize?(): void;
+  /**
+   * Settings changed; ctx.settings already holds the new snapshot. Re-read what the module uses (accessibility:
+   * high-contrast kits, colour-blind markers...). Camera and quality settings also arrive through
+   * CameraModule.setSettings / setQuality. Not per frame.
+   */
+  onSettings?(s: Readonly<Settings>): void;
   /** Leave the match: hide and release per-match resources (menus draw nothing). */
   clearMatch?(): void;
   dispose(): void;

@@ -12,11 +12,18 @@
  *
  * Also sets window.__dotkickRendererStats = () => RenderStats for diagnostics, the benchmark and e2e tests.
  * If WebGL2 is unavailable, init() does not throw: the renderer stays inert, the projector still works (camera
- * maths only) and a clear message is shown over the canvas while a match is active.
+ * maths only) and a clear message takes the canvas's place while a match is active. The message lives in the
+ * canvas layer (right after #game, same z-index), so the HUD, the touch controls (PAUSE) and the pause menu stay
+ * above it, visible and usable.
+ *
+ * SETTINGS: the SettingsStore replaces its Settings object on every update, so the snapshot handed to init() goes
+ * stale. setSettings(s) / bindSettings(store) keep ctx.settings current for every module and re-apply camera and
+ * graphics settings (tier and fixed resolution scale) when they change. [CR: GameRenderer.setSettings in
+ * contracts/app.ts; the app calls it from its settings subscriber.]
  */
 
 import { PerspectiveCamera, Scene, type WebGLRenderer } from 'three';
-import type { FrameInfo, GameRenderer } from '../contracts/app';
+import type { FrameInfo, GameRenderer, SettingsStore } from '../contracts/app';
 import { NUM_SLOTS } from '../contracts/constants';
 import type { Club } from '../contracts/data';
 import { QualityTier } from '../contracts/enums';
@@ -58,6 +65,17 @@ export interface DotkickRenderer extends GameRenderer {
   onContextLost(fn: () => void): () => void;
   /** Context restored and GPU resources rebuilt: resume from the pause menu. */
   onContextRestored(fn: () => void): () => void;
+  /**
+   * Apply the latest settings snapshot. ctx.settings is replaced for every module; camera / reduced motion and
+   * graphics (quality tier, fixed resolution scale) are re-applied only when they changed; modules get
+   * RenderModule.onSettings. Cheap when nothing relevant changed. Safe before init() and after dispose().
+   */
+  setSettings(s: Readonly<Settings>): void;
+  /**
+   * Follow a SettingsStore: applies store.get() now and on every change until the returned function or dispose()
+   * runs. Binding again replaces the previous binding.
+   */
+  bindSettings(store: Pick<SettingsStore, 'get' | 'subscribe'>): () => void;
 }
 
 /**
@@ -88,6 +106,20 @@ export function fillInterp(out: InterpState, prev: ReadonlySimState, curr: Reado
 
 const MISSING_ID = 'dk-webgl-missing';
 
+/** Same game settings field by field (only the parts the renderer follows). Pure. */
+function sameCamera(a: Readonly<Settings>, b: Readonly<Settings>): boolean {
+  return a.camera.type === b.camera.type && a.camera.height === b.camera.height && a.camera.zoom === b.camera.zoom
+    && a.accessibility.reducedCameraMotion === b.accessibility.reducedCameraMotion;
+}
+function sameGraphics(a: Readonly<Settings>, b: Readonly<Settings>): boolean {
+  return a.graphics.tier === b.graphics.tier && a.graphics.resolutionScale === b.graphics.resolutionScale;
+}
+
+/**
+ * Show / hide the "3D view unavailable" message. It replaces the canvas visually and stays IN THE CANVAS LAYER:
+ * inserted right after the canvas with the canvas's z-index, so #hud, #touch and #ui (higher z-index, later in the
+ * DOM) draw above it and the pause control and pause menu stay usable. pointer-events: none.
+ */
 function showUnavailable(canvas: HTMLCanvasElement | null, reason: string, visible: boolean): void {
   if (typeof document === 'undefined') return;
   let el = document.getElementById(MISSING_ID);
@@ -99,8 +131,13 @@ function showUnavailable(canvas: HTMLCanvasElement | null, reason: string, visib
     el = document.createElement('div');
     el.id = MISSING_ID;
     el.setAttribute('role', 'alert');
+    let z = '0';
+    if (canvas && typeof getComputedStyle === 'function') {
+      const cz = getComputedStyle(canvas).zIndex;
+      if (cz && cz !== 'auto') z = cz;
+    }
     el.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;'
-      + 'background:#07070d;color:#f2f2f5;font:16px/1.5 system-ui,sans-serif;text-align:center;z-index:5;pointer-events:none';
+      + `background:#07070d;color:#f2f2f5;font:16px/1.5 system-ui,sans-serif;text-align:center;z-index:${z};pointer-events:none`;
     const box = document.createElement('div');
     box.style.cssText = 'max-width:520px';
     const h = document.createElement('div');
@@ -110,7 +147,8 @@ function showUnavailable(canvas: HTMLCanvasElement | null, reason: string, visib
     p.textContent = `${reason} DotKick needs WebGL 2 to draw the match. Update iPadOS / Safari, or turn WebGL on in your browser settings.`;
     box.append(h, p);
     el.append(box);
-    (canvas?.parentElement ?? document.body).append(el);
+    if (canvas && canvas.parentElement) canvas.after(el);
+    else document.body.prepend(el);
   }
   el.style.display = 'flex';
 }
@@ -152,6 +190,9 @@ export function createGameRenderer(): DotkickRenderer {
   };
   const lostFns: (() => void)[] = [];
   const restoredFns: (() => void)[] = [];
+  /** Tier last requested through setQuality / settings (re-requested when the fixed resolution scale changes). */
+  let requestedTier: QualityTier = settings0.graphics.tier;
+  let unbindSettings: (() => void) | null = null;
 
   const projector: CameraProjector = {
     screenToPitch: (sx, sy, out) => (cinematic.active ? cinematic : broadcast).screenToPitch(sx, sy, out),
@@ -189,6 +230,7 @@ export function createGameRenderer(): DotkickRenderer {
       if (core) return;
       canvasEl = canvas;
       ctx.settings = settings;
+      requestedTier = settings.graphics.tier;
       ctx.cameraSettings = { ...settings.camera };
       ctx.reducedMotion = settings.accessibility.reducedCameraMotion;
       broadcast.setSettings(ctx.cameraSettings, ctx.reducedMotion);
@@ -202,7 +244,14 @@ export function createGameRenderer(): DotkickRenderer {
       const c = core;
       c.onContextLost(() => { for (let i = 0; i < lostFns.length; i++) lostFns[i]!(); });
       c.onContextRestored(() => { for (let i = 0; i < restoredFns.length; i++) restoredFns[i]!(); });
-      quality = createQuality(ctx, { setScale: (s) => { c.setScale(s); ctx.size.scale = c.scale; } });
+      quality = createQuality(ctx, {
+        setScale: (s) => {
+          c.setScale(s);
+          if (ctx.size.scale === c.scale) return;
+          ctx.size.scale = c.scale;
+          for (let i = 0; i < modules.length; i++) modules[i]!.resize?.(); // RenderModule.resize: scale is part of ctx.size
+        },
+      });
       modules.push(
         quality,
         createStadium(ctx),
@@ -239,9 +288,11 @@ export function createGameRenderer(): DotkickRenderer {
     async warmUp() {
       if (!core || !core.available || !core.renderer) return;
       const r = core.renderer;
-      // Compile every material against the scene's lights with all match objects visible.
+      // Compile every material against the scene's lights with all match objects visible. compileAsync only when
+      // parallel compilation exists (three.js warns otherwise, and e2e requires a clean console).
       try {
-        await r.compileAsync(ctx.scene, ctx.camera);
+        if (r.extensions.has('KHR_parallel_shader_compile')) await r.compileAsync(ctx.scene, ctx.camera);
+        else r.compile(ctx.scene, ctx.camera);
       } catch {
         r.compile(ctx.scene, ctx.camera);
       }
@@ -294,6 +345,7 @@ export function createGameRenderer(): DotkickRenderer {
     },
 
     setQuality(tier: QualityTier) {
+      requestedTier = tier;
       if (!quality) return;
       const resolved = quality.request(tier);
       for (let i = 0; i < modules.length; i++) {
@@ -322,7 +374,33 @@ export function createGameRenderer(): DotkickRenderer {
       }
     },
 
+    setSettings(s: Readonly<Settings>) {
+      const prev = ctx.settings;
+      if (s === prev) return;
+      ctx.settings = s;
+      if (!sameCamera(prev, s)) api.setCamera(s.camera, s.accessibility.reducedCameraMotion);
+      // quality.request (GFX-02) re-reads the fixed resolution scale from ctx.settings: a new tier is requested as
+      // set; a scale-only change re-requests the current tier.
+      if (s.graphics.tier !== prev.graphics.tier) api.setQuality(s.graphics.tier);
+      else if (!sameGraphics(prev, s)) api.setQuality(requestedTier);
+      for (let i = 0; i < modules.length; i++) modules[i]!.onSettings?.(s);
+      replay?.onSettings?.(s);
+    },
+
+    bindSettings(store) {
+      unbindSettings?.();
+      const off = store.subscribe((s) => api.setSettings(s));
+      api.setSettings(store.get());
+      const unbind = (): void => {
+        off();
+        if (unbindSettings === unbind) unbindSettings = null;
+      };
+      unbindSettings = unbind;
+      return unbind;
+    },
+
     dispose() {
+      unbindSettings?.();
       api.clearMatch();
       for (let i = modules.length - 1; i >= 0; i--) modules[i]!.dispose();
       modules.length = 0;

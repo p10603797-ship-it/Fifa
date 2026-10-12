@@ -10,7 +10,7 @@
  *   navigator is attached to the container on mount and detached on unmount.
  * - Back inputs: Escape / Backspace (not in text fields, not key repeat), menu BACK (pads, via backFromInput('menu'))
  *   and the browser back gesture (popstate on a sentinel history entry that is re-armed so the page is never left).
- *   The same physical press arriving through several paths is collapsed (BACK_DEDUPE_MS).
+ *   A keyboard press seen both as keydown and as the menu input's BACK is collapsed (BACK_DEDUPE_MS).
  * - Navigation requested while another navigation is running (e.g. inside mount) is queued and run afterwards.
  */
 import type { AppContext, Screen, ScreenFactory, ScreenId, ScreenParams } from '../contracts/app';
@@ -51,7 +51,7 @@ export function createRouter(root: HTMLElement, getCtx: () => AppContext, opts: 
   let container: HTMLElement | null = null;
   let busy = false;
   const queue: Op[] = [];
-  let lastBackAt = -Infinity;
+  let lastKeyBackAt = -Infinity;
   const disposers: (() => void)[] = [];
 
   const fail = (err: unknown, where: string): void => {
@@ -118,7 +118,7 @@ export function createRouter(root: HTMLElement, getCtx: () => AppContext, opts: 
   function apply(op: Op): void {
     if (op.kind === 'back') {
       if (screen && screen.onBack) {
-        let handled = false;
+        let handled: boolean;
         try {
           handled = screen.onBack();
         } catch (err) {
@@ -198,9 +198,10 @@ export function createRouter(root: HTMLElement, getCtx: () => AppContext, opts: 
     },
     backFromInput(source) {
       const t = now();
-      if (t - lastBackAt < BACK_DEDUPE_MS) return;
-      lastBackAt = t;
-      void source;
+      // A keyboard Escape/Backspace reaches us twice: keydown here, then the menu input's latched BACK on its next
+      // poll. Only that pairing is collapsed; pad B and the browser back gesture always count.
+      if (source === 'menu' && t - lastKeyBackAt < BACK_DEDUPE_MS) return;
+      if (source === 'key') lastKeyBackAt = t;
       router.back();
     },
     dispose() {

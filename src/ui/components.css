@@ -1,0 +1,165 @@
+/*
+ * [UIX-01] Base component styles (screens, buttons, panels, focus ring). WAVE 0 version by FND-04.
+ * Screens live in #ui; each mounted screen is a .screen container created by the router.
+ */
+#ui {
+  font-family: var(--font-ui);
+  color: var(--text-1);
+}
+
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: calc(var(--safe-top, 0px) + var(--space-6)) calc(var(--safe-right, 0px) + var(--space-6))
+    calc(var(--safe-bottom, 0px) + var(--space-6)) calc(var(--safe-left, 0px) + var(--space-6));
+  box-sizing: border-box;
+  pointer-events: auto;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(244, 241, 236, 0.07) 1px, transparent 1.5px) 0 0 / 22px 22px,
+    radial-gradient(ellipse at 70% 20%, rgba(255, 107, 53, 0.1), transparent 60%),
+    var(--ink);
+  overflow: hidden;
+}
+
+/* Screens shown over the match canvas: no menu background. */
+.screen--overlay {
+  background: var(--scrim);
+}
+.screen--transparent {
+  background: none;
+  pointer-events: none;
+}
+.screen--transparent > * {
+  pointer-events: auto;
+}
+
+.ui-title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.ui-subtitle {
+  margin: 0;
+  font-size: var(--fs-md);
+  color: var(--text-2);
+  text-align: center;
+  max-width: 40em;
+}
+.ui-note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  text-align: center;
+  max-width: 40em;
+}
+
+.ui-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  justify-content: center;
+  align-items: center;
+}
+.ui-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: stretch;
+  min-width: min(360px, 80vw);
+}
+
+.ui-panel {
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.btn {
+  appearance: none;
+  -webkit-appearance: none;
+  min-height: var(--target);
+  min-width: calc(var(--target) * 2.5);
+  padding: 0 var(--space-6);
+  border-radius: var(--radius);
+  border: 1px solid var(--hairline-strong);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font: 600 var(--fs-md) / 1 var(--font-ui);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  outline: none;
+}
+.btn:active {
+  transform: scale(0.97);
+}
+.btn--primary {
+  background: var(--ember);
+  border-color: var(--ember);
+  color: var(--text-on-ember);
+}
+.btn--ghost {
+  background: transparent;
+}
+.btn--icon {
+  min-width: var(--target);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn[disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Focus ring: drawn by the FocusNavigator (src/input/focus.ts) on [data-focused] while <html data-focus-visible>. */
+[data-focus-visible] .btn[data-focused] {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.ui-back {
+  position: absolute;
+  left: calc(var(--safe-left, 0px) + var(--space-5));
+  top: calc(var(--safe-top, 0px) + var(--space-5));
+}
+
+.ui-pre {
+  font: 12px/1.45 var(--font-num);
+  color: var(--text-2);
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  max-width: min(900px, 90vw);
+  max-height: 45vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+  -webkit-user-select: text;
+  touch-action: pan-x pan-y;
+}
+
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The hidden attribute always wins over component display rules. */
+[hidden] {
+  display: none !important;
+}

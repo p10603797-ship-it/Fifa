@@ -11,7 +11,8 @@ teams[t].cpu.out):
 1. Edge tracking: buttons/prevButtons, holdT[0..7], pressTick, releaseTick; stick mx/mz floats and stickIdleT.
 2. Commands: cmd -> TAI-14 applyCommand (tactics/focus/formation), Command.SUBSTITUTE -> RUL-10 requestSub,
    Command.SKIP -> OR Btn.SKIP into ctrl.buttons for this tick (RUL-01 reads SKIP press edges of HUMAN
-   controllers during cut-scenes and set-piece hints).
+   controllers during cut-scenes). In a match with no HUMAN controllers, still record humanFrames[0].buttons into
+   s.ctrl[0].buttons/prevButtons (only the SKIP bit matters) so headless soaks can fast-forward cut-scenes.
 3. Restart phases: route the frame to SETPIECE_INPUT[restart.kind] (src/sim/rules/restart.ts) for both teams'
    controllers (taker side and defending side) and RUL-07 shootoutInput in SHOOT_OUT; nothing else.
 4. Switching: call SIM-16 `switchTick(s, c, ev)` every tick (manual L1 in defence, RS flick directional, auto rules).

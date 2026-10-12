@@ -19,8 +19,8 @@ export interface AppRouter extends Router {
   readonly stack: readonly ScreenId[];
   has(id: ScreenId): boolean;
   /**
-   * A back request from an input device. Deduplicates the same physical press arriving through several paths
-   * (keydown + menu navigator + history) within BACK_DEDUPE_MS.
+   * A back request from an input device. A menu BACK within BACK_DEDUPE_MS of a keyboard back is the same physical
+   * key press seen twice (keydown + menu input latch) and is ignored; pad B and browser back always count.
    */
   backFromInput(source: 'key' | 'menu' | 'history'): void;
   dispose(): void;

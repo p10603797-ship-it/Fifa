@@ -6,15 +6,27 @@
  * Snapshots round-trip bit-exactly: finite doubles survive JSON (shortest round-trip printing + correctly
  * rounded parsing), and the values JSON cannot carry are written as tagged objects:
  *   -0 -> {"$num":"-0"}, NaN -> {"$num":"NaN"}, +-Infinity -> {"$num":"Infinity"} / {"$num":"-Infinity"},
+ *   undefined (object value or array element) -> {"$undef":1},
  *   typed arrays -> {"$typed":"Float64Array","v":[...]}.
+ * Functions, symbols and BigInts cannot be carried and make serializeState throw a TypeError.
  * Key order is preserved, so hashState(deserializeState(serializeState(s))) === hashState(s).
+ *
+ * Snapshots arrive from the network (online resync), so deserializeState is defensive: a "__proto__" key
+ * anywhere, a wrong version or a missing / mistyped top-level member is a SyntaxError.
  */
-import { MAX_HUMANS } from '../../contracts/constants';
+import { MAX_HUMANS, NUM_CONTROLLERS, NUM_SLOTS, SIM_VERSION } from '../../contracts/constants';
 import type { SimState } from '../../contracts/state';
 import { INPUT_FIELDS, createInputFrame, type InputFrame } from '../../contracts/input';
 
 const NUM_TAG = '$num';
 const TYPED_TAG = '$typed';
+const UNDEF_TAG = '$undef';
+
+/**
+ * Placeholder the reviver returns for {"$undef":1}: returning undefined itself would delete the key. Each
+ * container swaps its placeholders back to undefined when the reviver reaches it (children come first).
+ */
+const UNDEF_MARK: object = Object.freeze({});
 
 type TypedCtor = new (values: ArrayLike<number>) => ArrayLike<number>;
 
@@ -34,7 +46,11 @@ function typedCtor(name: string): TypedCtor | null {
   }
 }
 
-function replacer(_key: string, v: unknown): unknown {
+function replacer(key: string, v: unknown): unknown {
+  if (v === undefined) return { [UNDEF_TAG]: 1 };
+  if (typeof v === 'function' || typeof v === 'symbol' || typeof v === 'bigint') {
+    throw new TypeError(`serializeState: unsupported ${typeof v} at key "${key}"`);
+  }
   if (typeof v === 'number') {
     if (v === 0) return Object.is(v, -0) ? { [NUM_TAG]: '-0' } : 0;
     if (v !== v) return { [NUM_TAG]: 'NaN' };
@@ -50,9 +66,16 @@ function replacer(_key: string, v: unknown): unknown {
   return v;
 }
 
-function reviver(_key: string, v: unknown): unknown {
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) return v;
+function reviver(key: string, v: unknown): unknown {
+  // JSON.parse keeps "__proto__" as an own key; any later generic walk would assign through the accessor.
+  if (key === '__proto__') throw new SyntaxError('deserializeState: forbidden key "__proto__"');
+  if (typeof v !== 'object' || v === null) return v;
+  if (Array.isArray(v)) {
+    for (let i = 0; i < v.length; i++) if (v[i] === UNDEF_MARK) v[i] = undefined;
+    return v;
+  }
   const o = v as Record<string, unknown>;
+  if (o[UNDEF_TAG] === 1) return UNDEF_MARK;
   const num = o[NUM_TAG];
   if (typeof num === 'string') {
     switch (num) {
@@ -69,7 +92,46 @@ function reviver(_key: string, v: unknown): unknown {
     if (C === null || !Array.isArray(o.v)) throw new SyntaxError(`deserializeState: bad typed array ${typed}`);
     return new C(o.v as number[]);
   }
+  for (const k in o) if (o[k] === UNDEF_MARK) o[k] = undefined;
   return v;
+}
+
+/** Non-null, non-array plain object. */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) && !ArrayBuffer.isView(v);
+}
+
+/** Array of exactly `len` plain objects. */
+function isRecordArray(v: unknown, len: number): boolean {
+  if (!Array.isArray(v) || v.length !== len) return false;
+  for (let i = 0; i < len; i++) if (!isRecord(v[i])) return false;
+  return true;
+}
+
+/**
+ * Top-level shape check of a parsed snapshot; returns the reason it is not a SimState, or null. Checks types
+ * and fixed lengths only, never values: a snapshot must reproduce the sender's state exactly, whatever it is.
+ */
+function snapshotProblem(r: Record<string, unknown>): string | null {
+  if (r.version !== SIM_VERSION) return `version ${String(r.version)} != SIM_VERSION ${SIM_VERSION}`;
+  if (typeof r.tick !== 'number') return 'bad tick';
+  const rng = r.rng;
+  if (!isRecord(rng) || typeof rng.a !== 'number' || typeof rng.b !== 'number' || typeof rng.c !== 'number' ||
+    typeof rng.d !== 'number') return 'bad rng';
+  if (!isRecord(r.match)) return 'bad match';
+  if (!isRecord(r.ball)) return 'bad ball';
+  if (!isRecordArray(r.players, NUM_SLOTS)) return 'bad players';
+  if (!isRecordArray(r.attrs, NUM_SLOTS)) return 'bad attrs';
+  if (!isRecordArray(r.teams, 2)) return 'bad teams';
+  if (!isRecordArray(r.ctrl, NUM_CONTROLLERS)) return 'bad ctrl';
+  if (!isRecord(r.config)) return 'bad config';
+  const sq = r.squads;
+  if (!Array.isArray(sq) || sq.length !== 2) return 'bad squads';
+  for (let t = 0; t < 2; t++) {
+    const team: unknown = sq[t];
+    if (!Array.isArray(team) || !isRecordArray(team, team.length)) return 'bad squads';
+  }
+  return null;
 }
 
 /** Full snapshot (mutable state + config + squads) as a JSON string. */
@@ -77,16 +139,17 @@ export function serializeState(s: SimState): string {
   return JSON.stringify(s, replacer);
 }
 
-/** Inverse of serializeState. Throws on malformed input. */
+/**
+ * Inverse of serializeState. Throws a SyntaxError on malformed JSON, a "__proto__" key, a version other
+ * than SIM_VERSION, or a missing / mistyped top-level member (fixed array lengths included). Members below
+ * the top level are not checked field by field.
+ */
 export function deserializeState(json: string): SimState {
   const s = JSON.parse(json, reviver) as unknown;
-  if (typeof s !== 'object' || s === null) throw new SyntaxError('deserializeState: not an object');
-  const r = s as Record<string, unknown>;
-  if (typeof r.tick !== 'number' || !Array.isArray(r.players) || typeof r.ball !== 'object' || typeof r.config !== 'object' ||
-    !Array.isArray(r.squads)) {
-    throw new SyntaxError('deserializeState: not a SimState snapshot');
-  }
-  return s as SimState;
+  if (!isRecord(s)) throw new SyntaxError('deserializeState: not an object');
+  const problem = snapshotProblem(s);
+  if (problem !== null) throw new SyntaxError(`deserializeState: not a SimState snapshot (${problem})`);
+  return s as unknown as SimState;
 }
 
 // ---------------------------------------------------------------- input frames codec
@@ -102,11 +165,13 @@ const NEUTRAL = createInputFrame();
 /**
  * Pack frames for all humans of one tick into a compact int array (network / replay). Writes exactly
  * PACKED_FRAME_INTS values (missing frames are written as neutral) and returns that count. Throws a
- * RangeError if `out` is too short. Allocation-free.
+ * RangeError if `offset` is not a non-negative integer or `out` is too short. Allocation-free.
  */
 export function packFrames(frames: readonly InputFrame[], out: Int16Array, offset: number): number {
   const nf = INPUT_FIELDS.length;
-  if (offset < 0 || offset + PACKED_FRAME_INTS > out.length) throw new RangeError('packFrames: buffer too small');
+  if (!Number.isInteger(offset) || offset < 0 || offset + PACKED_FRAME_INTS > out.length) {
+    throw new RangeError('packFrames: offset must be a non-negative integer with room for PACKED_FRAME_INTS');
+  }
   let o = offset;
   for (let hIdx = 0; hIdx < MAX_HUMANS; hIdx++) {
     const f = (frames[hIdx] ?? NEUTRAL) as unknown as Record<string, number>;
@@ -122,11 +187,13 @@ export function packFrames(frames: readonly InputFrame[], out: Int16Array, offse
 /**
  * Unpack MAX_HUMANS frames written by packFrames into `frames` (existing frame objects are reused; missing
  * entries are created). Returns the number of int16 values read (PACKED_FRAME_INTS). Throws a RangeError
- * if `src` is too short.
+ * if `offset` is not a non-negative integer or `src` is too short.
  */
 export function unpackFrames(src: Int16Array, offset: number, frames: InputFrame[]): number {
   const nf = INPUT_FIELDS.length;
-  if (offset < 0 || offset + PACKED_FRAME_INTS > src.length) throw new RangeError('unpackFrames: buffer too small');
+  if (!Number.isInteger(offset) || offset < 0 || offset + PACKED_FRAME_INTS > src.length) {
+    throw new RangeError('unpackFrames: offset must be a non-negative integer with PACKED_FRAME_INTS after it');
+  }
   let o = offset;
   for (let hIdx = 0; hIdx < MAX_HUMANS; hIdx++) {
     if (frames[hIdx] === undefined) frames[hIdx] = createInputFrame();

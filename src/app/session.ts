@@ -8,6 +8,9 @@
  * resume; a human pause can be resumed only by that human. Hidden page: pause, release inputs, suspend audio; on
  * return audio resumes and the pause menu shows (never auto-resume). Blur releases every held input.
  *
+ * resume() on a session that is not paused (running or finished) re-syncs the router to the match state; screens
+ * that return to the match (recovery Resume) rely on it.
+ *
  * Phases: HALF_TIME shows 'half-time', FULL_TIME shows 'full-time' (interim, Continue sends SKIP), POST_MATCH builds
  * the stats summary, calls setup.onFinish(summary, false) and shows the final 'full-time' screen (Rematch, Change
  * Teams, Quit). If onFinish navigates itself, the session leaves the router where it put it.
@@ -17,7 +20,7 @@
  * matches. A load still in flight when the match is quit or restarted is abandoned via a generation counter.
  */
 import type {
-  AudioEngine, DeviceRegistry, Diagnostics, GameRenderer, HudPart, MatchSetup, MatchSummary, ScreenId, ScreenParams,
+  AppContext, AudioEngine, DeviceRegistry, Diagnostics, GameRenderer, HudPart, MatchSetup, MatchSummary, ScreenId, ScreenParams,
   StatsTracker, TickInputProvider,
 } from '../contracts/app';
 import { MAX_HUMANS } from '../contracts/constants';
@@ -110,6 +113,32 @@ function withCommandQueue(inner: TickInputProvider, queue: CommandQueue): TickIn
 type CommandSink = { queueCommand(human: number, cmd: Command, arg: number): void };
 const hasQueue = (p: TickInputProvider): p is TickInputProvider & CommandSink =>
   typeof (p as Partial<CommandSink>).queueCommand === 'function';
+
+/** Human bound to `deviceId` in `setup` (explicit binding first, then an ANY_DEVICE binding), or -1. Pure. */
+export function humanForDevice(setup: MatchSetup | null, deviceId: string | null): number {
+  if (!setup || !deviceId) return -1;
+  for (const b of setup.bindings) if (b.deviceIds.includes(deviceId)) return b.human;
+  for (const b of setup.bindings) if (b.deviceIds.includes(ANY_DEVICE)) return b.human;
+  return -1;
+}
+
+/**
+ * Best guess of the human acting in the UI (pause menu, half-time Continue): the human bound to the last active
+ * device, else the only bound human, else -1. Uses only the contract API, so any screen can call it.
+ */
+export function uiHumanOf(ctx: Pick<AppContext, 'session' | 'devices'>): number {
+  const setup = ctx.session.getSetup();
+  let last: string | null;
+  try {
+    last = ctx.devices.lastActive();
+  } catch {
+    last = null;
+  }
+  const h = humanForDevice(setup, last);
+  if (h >= 0) return h;
+  if (setup && setup.bindings.length === 1) return setup.bindings[0]!.human;
+  return -1;
+}
 
 export function createSession(deps: SessionDeps): AppSession {
   const { router, renderer, hud, audio, devices, diagnostics, clubs } = deps;
@@ -214,7 +243,13 @@ export function createSession(deps: SessionDeps): AppSession {
 
   function resume(byHuman: number): boolean {
     if (!active) return false;
-    if (!paused) return true;
+    if (!paused) {
+      // Nothing to resume (running, or finished: finished matches never pause). Still point the router at the
+      // screen the match calls for, so a caller that just returned to a match screen (recovery Resume) lands on
+      // half-time / the final full-time screen instead of a stale 'match' screen.
+      syncScreen();
+      return true;
+    }
     if (pausedBy !== -1 && byHuman !== pausedBy) return false;
     if (hidden || blocked) return false;
     paused = false;
@@ -305,14 +340,6 @@ export function createSession(deps: SessionDeps): AppSession {
     finishCalled = true;
     const navigated = callFinish(setup, summary, false);
     if (!navigated) syncScreen();
-  }
-
-  function humanForDevice(deviceId: string | null): number {
-    const s = setup;
-    if (!s || !deviceId) return -1;
-    for (const b of s.bindings) if (b.deviceIds.includes(deviceId)) return b.human;
-    for (const b of s.bindings) if (b.deviceIds.includes(ANY_DEVICE)) return b.human;
-    return -1;
   }
 
   const session: AppSession = {
@@ -428,20 +455,8 @@ export function createSession(deps: SessionDeps): AppSession {
     releaseInputs() {
       if (provider) safe(() => provider!.releaseAll(), 'releaseAll');
     },
-    humanForDevice,
-    uiHuman() {
-      let last: string | null = null;
-      try {
-        last = devices.lastActive();
-      } catch {
-        last = null;
-      }
-      const h = humanForDevice(last);
-      if (h >= 0) return h;
-      const s = setup;
-      if (s && s.bindings.length === 1) return s.bindings[0]!.human;
-      return -1;
-    },
+    humanForDevice: (deviceId) => humanForDevice(setup, deviceId),
+    uiHuman: () => uiHumanOf({ session, devices }),
     dispose() {
       teardown();
     },

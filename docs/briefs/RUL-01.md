@@ -35,7 +35,8 @@ Implement `rulesTick`, `setPhase`, `setupKickOff`, `kickOffInput`, `displayClock
   variant 0..2 chosen by rng, conceding team DEJECTED) -> REPLAY (config.replaySeconds*60 capped by replayTicks; 0 ->
   skip immediately) -> KICK_OFF by the conceding team, or HALF_TIME/FULL_TIME if the period's time is up. The whole
   sequence never exceeds goalSequenceMaxTicks (12 s). Any HUMAN controller's SKIP press edge (ctrl.buttons & Btn.SKIP,
-  not in prevButtons) skips the current cut-scene phase. HALF_TIME (halfTimeTicks or skip) -> swap team.dir, next
+  not in prevButtons) skips the current cut-scene phase; in a match with NO human controllers, a SKIP edge in
+  humanFrames[0] (the resolver records it in s.ctrl[0].buttons even though ctrl[0] is not HUMAN) also skips (soak fast-forward). HALF_TIME (halfTimeTicks or skip) -> swap team.dir, next
   period, period length, kick-off by the team that did not kick off the first half (ET: re-toss via rng). FULL_TIME
   (fullTimeTicks or skip) -> cupRules and level after period 2 -> EXTRA_TIME (break, extraTimeBreakTicks) -> KICK_OFF
   of ET1 (periodLen = a third of a half); level after ET2 -> SHOOT_OUT (RUL-07 shootoutStart); else POST_MATCH

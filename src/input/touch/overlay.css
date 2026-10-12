@@ -1,0 +1,96 @@
+/*
+ * [TCH-09] Touch overlay styles. Original Dot design: ink surfaces, thin hairlines, ember for the pressed state.
+ * Browser gestures are off on the game surface (section 3): no scrolling, selection, callout, tap highlight,
+ * double-tap zoom or long-press menu. Only the layer receives pointer events; children are visuals only and are
+ * positioned with transforms (no layout work per frame).
+ */
+
+.dk-touch {
+  position: fixed;
+  inset: 0;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+  /* pointer-events inherit from the touch root (the app turns them off while paused). */
+  contain: strict;
+}
+
+.dk-touch * {
+  pointer-events: none;
+}
+
+.dk-tbtn {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dk-text, #f2f2f5);
+  background: rgba(7, 7, 13, 0.5);
+  border: 1.5px solid rgba(242, 242, 245, 0.4);
+  font: 600 12px/1 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.08em;
+  will-change: transform;
+}
+
+.dk-tbtn--big {
+  font-size: 13px;
+  border-width: 2px;
+}
+
+.dk-tbtn.is-pressed {
+  background: var(--dk-ember, #ff6b35);
+  border-color: var(--dk-ember, #ff6b35);
+  color: var(--dk-ink, #07070d);
+}
+
+.dk-tbtn--pause {
+  background: rgba(7, 7, 13, 0.42);
+}
+
+.dk-pause-icon {
+  width: 14px;
+  height: 16px;
+  border-left: 4px solid currentColor;
+  border-right: 4px solid currentColor;
+  box-sizing: border-box;
+}
+
+.dk-stick {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: none;
+}
+
+.dk-stick.is-active {
+  display: block;
+}
+
+.dk-stick-base,
+.dk-stick-knob {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  border-radius: 50%;
+  will-change: transform;
+}
+
+.dk-stick-base {
+  border: 1.5px solid rgba(242, 242, 245, 0.35);
+  background: rgba(7, 7, 13, 0.28);
+}
+
+.dk-stick-knob {
+  width: 56px;
+  height: 56px;
+  background: rgba(242, 242, 245, 0.78);
+  border: 2px solid var(--dk-ember, #ff6b35);
+}

@@ -42,9 +42,14 @@ export function rngFloat(r: RngState): number {
   return rngNext(r) * INV_2_32;
 }
 
-/** Uniform float in [lo, hi) (one draw). */
+/**
+ * Uniform float in [lo, hi) (one draw). When ulp(lo) > (hi - lo) * 2^-32 the top draws can round up to hi;
+ * such a draw wraps to lo, which keeps the open bound and gives lo exactly its missing half bucket.
+ * (lo > hi gives (hi, lo]; lo === hi gives lo.)
+ */
 export function rngRange(r: RngState, lo: number, hi: number): number {
-  return lo + (hi - lo) * rngFloat(r);
+  const v = lo + (hi - lo) * rngFloat(r);
+  return v === hi ? lo : v;
 }
 
 /** Uniform integer in [0, n) (one draw). n is truncated; n <= 1 returns 0 (still consumes a draw). */

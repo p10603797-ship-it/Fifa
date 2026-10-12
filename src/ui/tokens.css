@@ -1,0 +1,70 @@
+/*
+ * [UIX-01] Dot design system tokens. WAVE 0 minimal set (FND-04); UIX-01 refines and owns this file.
+ * Two source colours: ink #07070D (background) and ember #FF6B35 (accent). Everything else is derived and kept
+ * here as CSS variables. Player 1 = ember, player 2 = cyan.
+ */
+:root {
+  /* source colours */
+  --ink: #07070d;
+  --ember: #ff6b35;
+  --cyan: #35d0ff;
+
+  /* surfaces (ink lifted toward white) */
+  --surface-0: var(--ink);
+  --surface-1: #0f0f17;
+  --surface-2: #161621;
+  --surface-3: #1f1f2c;
+  --scrim: rgba(7, 7, 13, 0.78);
+
+  /* hairlines */
+  --hairline: rgba(244, 241, 236, 0.09);
+  --hairline-strong: rgba(244, 241, 236, 0.18);
+
+  /* text tiers */
+  --text-1: #f4f1ec;
+  --text-2: rgba(244, 241, 236, 0.72);
+  --text-3: rgba(244, 241, 236, 0.46);
+  --text-on-ember: #12080a;
+
+  /* accents and states */
+  --ember-soft: rgba(255, 107, 53, 0.16);
+  --ember-strong: #ff8a5c;
+  --cyan-soft: rgba(53, 208, 255, 0.16);
+  --p1: var(--ember);
+  --p2: var(--cyan);
+  --success: #3ddc97;
+  --warning: #ffc145;
+  --error: #ff4d5e;
+
+  /* type */
+  --font-ui: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-num: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --fs-xs: 13px;
+  --fs-sm: 15px;
+  --fs-md: 18px;
+  --fs-lg: 24px;
+  --fs-xl: 36px;
+  --fs-hero: 64px;
+
+  /* spacing, radii, targets */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 22px;
+  /* minimum touch target (brief section 12: 60 pt) */
+  --target: 60px;
+
+  /* motion */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+
+  /* focus ring */
+  --focus-ring: 0 0 0 3px var(--ink), 0 0 0 5px var(--ember);
+}

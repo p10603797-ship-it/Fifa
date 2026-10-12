@@ -43,7 +43,8 @@ export enum EventType {
   ADVANTAGE = 16,
   /** a = team that forfeits. */
   FORFEIT = 17,
-  /** a = new possessing team (-1 loose). */
+  /** a = team that gained possession, b = slot. Emitted only when possession changes team (a loose ball is judged
+   *  against the team that touched it last), so completed passes do not emit it. */
   POSSESSION = 18,
   /** a = WatchdogReason. */
   WATCHDOG = 19,

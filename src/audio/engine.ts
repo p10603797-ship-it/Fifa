@@ -6,8 +6,11 @@
  *   is created, so no autoplay warning is ever logged.
  * - Buses: master -> destination; crowd, effects, menus -> master. Volumes follow settings.audio live.
  * - setPaused(true) mutes the crowd and effects buses (menu sounds stay) and tells the modules.
- * - suspend()/resume() for backgrounding. If iOS interrupts the context (phone call, Siri) or a resume is refused,
- *   the next pointer/key gesture resumes it.
+ * - suspend()/resume() for backgrounding. Whenever sound is wanted and the context is not running, the next
+ *   pointer/key gesture resumes it: iOS refuses resume() outside a user gesture (the promise may resolve with the
+ *   context still 'suspended', or never settle while 'interrupted' after a call or Siri), and no statechange
+ *   follows. The gesture listeners are armed before resume() is even tried and removed once the context runs.
+ * - A module that throws (onEvents, update, lifecycle hooks) is isolated: the other modules and the game go on.
  * - Without Web Audio (Node tests, very old browsers) every call is a no-op.
  */
 import type { AudioEngine, SettingsStore } from '../contracts/app';
@@ -34,6 +37,11 @@ export interface AudioEngineImpl extends AudioEngine {
 export interface AudioEngineOptions {
   /** Context factory (tests). Default: window.AudioContext / webkitAudioContext. */
   createContext?: () => AudioContext | null;
+  /**
+   * A module threw. Reported once per module (the first failure); later failures of that module are counted
+   * silently. Default: ignore. Boot logs it to diagnostics (never the recovery screen: sound must not stop play).
+   */
+  onModuleError?(err: unknown, where: string): void;
 }
 
 function defaultContext(): AudioContext | null {
@@ -64,6 +72,8 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
   let wanted = true;
   let gestureArmed = false;
   let unsubscribe: (() => void) | null = null;
+  /** Per-module failure counts (index = position in `modules`); preallocated in build(). */
+  let failures: number[] = [];
 
   function setBus(node: GainNode | undefined, value: number): void {
     if (!node || !ac) return;
@@ -85,8 +95,42 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
 
   const onGesture = (): void => {
     disarmGesture();
-    if (ac && wanted && ac.state !== 'running' && ac.state !== 'closed') void ac.resume().catch(() => armGesture());
+    if (ac && wanted) void requestResume(ac);
   };
+
+  /**
+   * Resume `ctx` if sound is wanted and it is not running. The gesture fallback is armed first and stays armed
+   * until the context reports 'running' (statechange or the settled promise), so a resume that resolves without
+   * running, rejects, or never settles still comes back on the player's next tap or key press.
+   */
+  function requestResume(ctx: AudioContext): Promise<void> {
+    if (ctx.state === 'running') {
+      unlocked = true;
+      disarmGesture();
+      return Promise.resolve();
+    }
+    if (ctx.state === 'closed') return Promise.resolve();
+    armGesture();
+    let p: Promise<void>;
+    try {
+      p = ctx.resume();
+    } catch {
+      return Promise.resolve();
+    }
+    return p.then(
+      () => {
+        if (ctx.state === 'running') {
+          unlocked = true;
+          disarmGesture();
+        } else if (wanted && ac === ctx) {
+          armGesture();
+        }
+      },
+      () => {
+        if (wanted && ac === ctx) armGesture();
+      },
+    );
+  }
 
   function armGesture(): void {
     if (gestureArmed || typeof window === 'undefined') return;
@@ -114,21 +158,40 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
     actx = { ctx, master, crowd, effects, menus, settings };
     ui = createUi(actx);
     modules = [createCrowd(actx), createSfx(actx), createWhistles(actx), createEventMap(actx), ui];
+    failures = modules.map(() => 0);
     applyVolumes(settings.get().audio);
     unsubscribe = settings.subscribe((s) => applyVolumes(s.audio));
     ctx.addEventListener?.('statechange', () => {
-      if (ctx.state === 'running') unlocked = true;
-      // iOS reports 'interrupted' (non-standard) after calls/Siri; any non-running state while wanted needs a gesture.
-      if (wanted && ctx.state !== 'running' && ctx.state !== 'closed') armGesture();
+      if (ctx.state === 'running') {
+        unlocked = true;
+        disarmGesture();
+      } else if (wanted && ctx.state !== 'closed') {
+        // iOS reports 'interrupted' (non-standard) after calls/Siri; any non-running state while wanted needs a gesture.
+        armGesture();
+      }
     });
   }
 
-  function each(fn: (m: AudioModule) => void): void {
+  /** A module threw: count it and report its first failure only (no flooding at 60 calls per second). */
+  function moduleFailed(i: number, err: unknown, where: string): void {
+    const n = failures[i] ?? 0;
+    failures[i] = n + 1;
+    if (n === 0 && opts.onModuleError) {
+      try {
+        opts.onModuleError(err, `audio module ${i} ${where}`);
+      } catch {
+        /* reporting must not throw into the loop */
+      }
+    }
+  }
+
+  /** Lifecycle hooks (not per frame): one closure per call is fine here. */
+  function each(fn: (m: AudioModule) => void, where: string): void {
     for (let i = 0; i < modules.length; i++) {
       try {
         fn(modules[i]!);
-      } catch {
-        /* a broken module must not break the game */
+      } catch (err) {
+        moduleFailed(i, err, where);
       }
     }
   }
@@ -160,32 +223,32 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
       } catch {
         /* optional */
       }
-      if (ctx.state === 'running') {
-        unlocked = true;
-        return Promise.resolve();
-      }
-      return ctx.resume().then(
-        () => {
-          unlocked = unlocked || ctx.state === 'running';
-        },
-        () => {
-          armGesture();
-        },
-      );
+      return requestResume(ctx);
     },
     setVolumes(v) {
       applyVolumes(v);
     },
+    // Per tick / per frame: plain loops with a try per module (no closure allocation).
     onEvents(events: EventBuffer, state: ReadonlySimState) {
       for (let i = 0; i < modules.length; i++) {
         const m = modules[i]!;
-        if (m.onEvents) m.onEvents(events, state);
+        if (!m.onEvents) continue;
+        try {
+          m.onEvents(events, state);
+        } catch (err) {
+          moduleFailed(i, err, 'onEvents');
+        }
       }
     },
     update(state, dtSec) {
       for (let i = 0; i < modules.length; i++) {
         const m = modules[i]!;
-        if (m.update) m.update(state, dtSec);
+        if (!m.update) continue;
+        try {
+          m.update(state, dtSec);
+        } catch (err) {
+          moduleFailed(i, err, 'update');
+        }
       }
     },
     playUi(kind) {
@@ -198,16 +261,16 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
       }
     },
     matchStart(state) {
-      each((m) => m.matchStart?.(state));
+      each((m) => m.matchStart?.(state), 'matchStart');
     },
     matchEnd() {
-      each((m) => m.matchEnd?.());
+      each((m) => m.matchEnd?.(), 'matchEnd');
     },
     setPaused(p) {
       if (paused === p) return;
       paused = p;
       applyVolumes(settings.get().audio);
-      each((m) => m.setPaused?.(p));
+      each((m) => m.setPaused?.(p), 'setPaused');
     },
     suspend() {
       wanted = false;
@@ -216,14 +279,24 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
     },
     resume() {
       wanted = true;
-      if (!ac || !unlocked || ac.state === 'closed') return;
-      if (ac.state !== 'running') void ac.resume().catch(() => armGesture());
+      if (!ac || ac.state === 'closed') return;
+      if (ac.state === 'running') {
+        disarmGesture();
+        return;
+      }
+      // Never ran (a gesture-less unlock, e.g. a pad confirm): only a real gesture can start it.
+      if (!unlocked) {
+        armGesture();
+        return;
+      }
+      void requestResume(ac);
     },
     dispose() {
       disarmGesture();
       unsubscribe?.();
-      each((m) => m.dispose());
+      each((m) => m.dispose(), 'dispose');
       modules = [];
+      failures = [];
       ui = null;
       if (ac) void ac.close().catch(() => undefined);
       ac = null;

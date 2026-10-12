@@ -36,9 +36,10 @@ export function quantStick(x: number, y: number, out: { qx: number; qy: number }
   if (m > 1) { fx /= m; fy /= m; }
   let qx = Math.round(fx * AXIS_SCALE);
   let qy = Math.round(fy * AXIS_SCALE);
-  const lim = AXIS_SCALE * AXIS_SCALE;
-  while (qx * qx + qy * qy > lim) {
-    if (Math.abs(qx) >= Math.abs(qy)) qx -= Math.sign(qx); else qy -= Math.sign(qy);
+  if (qx * qx + qy * qy > AXIS_SCALE * AXIS_SCALE) {
+    // Rounding pushed the vector past the rim: truncate both toward zero (keeps diagonals symmetric).
+    qx = Math.trunc(fx * AXIS_SCALE);
+    qy = Math.trunc(fy * AXIS_SCALE);
   }
   out.qx = qx === 0 ? 0 : qx; // normalise -0
   out.qy = qy === 0 ? 0 : qy;

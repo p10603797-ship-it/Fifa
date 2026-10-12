@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="DotKick" />
+    <meta name="application-name" content="DotKick" />
+    <meta name="theme-color" content="#07070D" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="format-detection" content="telephone=no" />
+    <title>DotKick</title>
+    <!-- Optional at runtime: the game runs when these files are missing. -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png" />
+    <style>
+      /* Critical layer CSS, applied before the script loads (brief section 3: browser gestures off). */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #07070d;
+        color: #f4f1ec;
+        overscroll-behavior: none;
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+      }
+      body {
+        position: fixed;
+        inset: 0;
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+        font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+      }
+      *,
+      *::before,
+      *::after {
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+      }
+      #game {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+        touch-action: none;
+        visibility: hidden;
+        z-index: 0;
+      }
+      #hud {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        visibility: hidden;
+        z-index: 1;
+      }
+      #touch {
+        position: fixed;
+        inset: 0;
+        touch-action: none;
+        visibility: hidden;
+        pointer-events: none;
+        z-index: 2;
+      }
+      #ui {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 3;
+      }
+      /* The session shows the canvas while a match is loaded; the match screen shows HUD and touch layers. */
+      body.match-active #game {
+        visibility: visible;
+      }
+      body.in-match #hud {
+        visibility: visible;
+      }
+      body.in-match #touch {
+        visibility: visible;
+        pointer-events: auto;
+      }
+      body.in-match.match-paused #touch {
+        pointer-events: none;
+      }
+      /* Rotate / too-small card: CSS-only for portrait so it works before the script runs. */
+      #rotate {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 16px;
+        padding: 24px;
+        background: #07070d;
+        text-align: center;
+        font-size: 18px;
+        touch-action: none;
+      }
+      #rotate .rotate-icon {
+        width: 64px;
+        height: 96px;
+        border: 3px solid #ff6b35;
+        border-radius: 12px;
+        animation: dk-rotate 2.4s ease-in-out infinite;
+      }
+      #rotate .msg-small {
+        display: none;
+      }
+      @keyframes dk-rotate {
+        0%, 30% { transform: rotate(0deg); }
+        60%, 100% { transform: rotate(-90deg); }
+      }
+      /* Portrait = height >= width (square included). src/platform/ipados.ts pauses on this same media query. */
+      @media (orientation: portrait) {
+        #rotate {
+          display: flex;
+        }
+      }
+      body.too-small #rotate {
+        display: flex;
+      }
+      body.too-small:not(.is-portrait) #rotate .msg-portrait {
+        display: none;
+      }
+      body.too-small:not(.is-portrait) #rotate .msg-small {
+        display: block;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #rotate .rotate-icon {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game" aria-label="Match"></canvas>
+    <div id="hud" aria-live="off"></div>
+    <div id="touch"></div>
+    <div id="ui"></div>
+    <div id="rotate" role="alert">
+      <div class="rotate-icon" aria-hidden="true"></div>
+      <div class="msg-portrait">Turn your iPad to landscape to play.<br />The game is paused.</div>
+      <div class="msg-small">Make the window larger to play.<br />The game is paused.</div>
+    </div>
+    <noscript>DotKick needs JavaScript.</noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

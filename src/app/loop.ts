@@ -7,9 +7,11 @@
  *     frames from the TickInputProvider (the sim is held while provider.ready(tick + 1) is false); step(); then the
  *     tick's events go to renderer, HUD, audio and stats; session.afterTick() watches phases.
  *  3. Render prev -> curr with alpha, HUD update. While paused only when invalidated (resize, context restore).
- *  4. audio.update, menu input poll (menus and the pause overlay, not during live play), screen.onFrame.
+ *  4. audio.update, menu input poll, screen.onFrame.
  * Resuming (from pause, hidden page, loading) resets the accumulator, so missed time is never fast-forwarded.
- * Exceptions are caught per frame and reported (recovery screen); the loop itself never stops on an error.
+ * Exceptions are caught per stage (input pump, ticks, each event consumer, render, HUD, audio, menu input,
+ * screen.onFrame, hooks) and reported (recovery screen): the loop never stops, and a stage that throws every frame
+ * never starves the stages after it (controller-only players can always operate the recovery screen).
  * No allocation per frame: FrameInfo, FrameStats and timing objects are created once.
  */
 import type { AudioEngine, FrameInfo, GameRenderer, HudPart } from '../contracts/app';
@@ -31,7 +33,7 @@ export interface LoopDeps {
   hud: HudPart;
   audio: AudioEngine;
   router: Pick<AppRouter, 'current' | 'currentScreen'>;
-  /** Menu navigation (pads + keyboard -> MenuAction). Polled except during live play. */
+  /** Menu navigation (pads + keyboard -> MenuAction). Polled every frame. */
   menuInput?: { poll(nowMs: number): void } | null;
   getProjector(): CameraProjector | null;
   onError(err: unknown, where: string): void;
@@ -129,6 +131,7 @@ export function createLoop(deps: LoopDeps): GameLoop {
   let dirty = true;
   let alpha = 1;
   let frameEma = 0;
+  let lastRuntime: unknown = null;
 
   const onRaf = (t: number): void => {
     rafId = 0;
@@ -149,18 +152,32 @@ export function createLoop(deps: LoopDeps): GameLoop {
     info.ticks = 0;
     info.paused = session.paused;
     let busy = 0;
-    try {
-      deps.beforeFrame?.(info);
-      const rt = session.runtime();
-      if (rt) rt.provider.pump(nowMs);
+    // Every stage has its own try: a stage that throws every frame (a Wave 1 source's pollFrame, an audio module, a
+    // HUD part) is reported but never starves the stages after it. Menu input and screen.onFrame must keep running
+    // so a controller-only player can always operate the recovery screen. Literal stage names: no allocation.
+    if (deps.beforeFrame) {
+      try {
+        deps.beforeFrame(info);
+      } catch (err) {
+        deps.onError(err, 'loop.beforeFrame');
+      }
+    }
+    const rt = session.runtime();
+    if (rt) {
+      try {
+        rt.provider.pump(nowMs);
+      } catch (err) {
+        deps.onError(err, 'loop.pump');
+      }
+    }
 
-      let ticking = session.ticking;
-      let ran = 0;
-      let stalled = false;
-      if (ticking && rt) {
-        if (!wasTicking) resetLoopTiming(timing);
-        wasTicking = true;
-        const due = beginFrame(timing, nowMs);
+    let ran = 0;
+    let stalled = false;
+    if (session.ticking && rt) {
+      if (!wasTicking) resetLoopTiming(timing);
+      wasTicking = true;
+      const due = beginFrame(timing, nowMs);
+      try {
         while (ran < due) {
           const next = rt.curr.tick + 1;
           if (!rt.provider.ready(next)) {
@@ -177,43 +194,90 @@ export function createLoop(deps: LoopDeps): GameLoop {
           ran++;
           const ev = rt.events;
           if (ev.count > 0) {
-            renderer.onEvents(ev, rt.curr);
-            hud.onEvents(ev, rt.curr);
-            audio.onEvents(ev, rt.curr);
+            // Presentation consumers are independent modules: one failing never hides events from the others.
+            try {
+              renderer.onEvents(ev, rt.curr);
+            } catch (err) {
+              deps.onError(err, 'loop.renderer.onEvents');
+            }
+            try {
+              hud.onEvents(ev, rt.curr);
+            } catch (err) {
+              deps.onError(err, 'loop.hud.onEvents');
+            }
+            try {
+              audio.onEvents(ev, rt.curr);
+            } catch (err) {
+              deps.onError(err, 'loop.audio.onEvents');
+            }
           }
           rt.stats.onTick(rt.curr, ev);
           session.afterTick(rt);
           if (!session.ticking) break;
         }
-        endFrame(timing, ran, stalled);
-        alpha = alphaOf(timing);
-        dirty = true;
-        ticking = session.ticking;
-      } else {
-        wasTicking = false;
+      } catch (err) {
+        deps.onError(err, 'loop.tick');
       }
-      info.ticks = ran;
-      stats.ticks = ran;
-      stats.totalTicks += ran;
-      stats.stalled = stalled;
+      endFrame(timing, ran, stalled);
+      alpha = alphaOf(timing);
+      dirty = true;
+    } else {
+      wasTicking = false;
+    }
+    info.ticks = ran;
+    stats.ticks = ran;
+    stats.totalTicks += ran;
+    stats.stalled = stalled;
 
-      const live = session.runtime();
-      if (live && dirty) {
-        dirty = false;
-        const t0 = clock();
+    const live = session.runtime();
+    if (live !== lastRuntime) {
+      // A new match (or none): draw it at least once, even when it starts paused.
+      lastRuntime = live;
+      dirty = true;
+      alpha = 1;
+    }
+    if (live && dirty) {
+      dirty = false;
+      const t0 = clock();
+      try {
         renderer.render(live.prev, live.curr, alpha, info);
-        hud.update(live.curr, info, deps.getProjector());
-        const renderMs = clock() - t0;
-        recorder.addRender(renderMs);
-        busy += renderMs;
+      } catch (err) {
+        deps.onError(err, 'loop.render');
       }
+      try {
+        hud.update(live.curr, info, deps.getProjector());
+      } catch (err) {
+        deps.onError(err, 'loop.hud');
+      }
+      const renderMs = clock() - t0;
+      recorder.addRender(renderMs);
+      busy += renderMs;
+    }
+    try {
       audio.update(live ? live.curr : null, info.dtMs / 1000);
-      if (deps.menuInput && !(ticking && router.current === 'match')) deps.menuInput.poll(nowMs);
+    } catch (err) {
+      deps.onError(err, 'loop.audio');
+    }
+    // Polled every frame so latched keys never go stale; boot swallows menu actions during live play.
+    if (deps.menuInput) {
+      try {
+        deps.menuInput.poll(nowMs);
+      } catch (err) {
+        deps.onError(err, 'loop.menuInput');
+      }
+    }
+    try {
       const screen = router.currentScreen();
       if (screen && screen.onFrame) screen.onFrame(info);
-      deps.afterFrame?.(info, busy);
     } catch (err) {
-      deps.onError(err, 'loop');
+      deps.onError(err, 'loop.screen');
+    }
+    if (deps.afterFrame) {
+      try {
+        deps.afterFrame(info, busy);
+      } catch (err) {
+        deps.onError(err, 'loop.afterFrame');
+      }
     }
     stats.frame = info.frame;
     stats.frameMs = raw;

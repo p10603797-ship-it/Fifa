@@ -20,7 +20,9 @@ import { watchdogTick } from './rules/watchdog';
 
 /**
  * Advance one tick. `humanFrames` has one InputFrame per human controller (MAX_HUMANS); entries for
- * controllers that are not humans are ignored. Calls events.begin() itself.
+ * controllers that are not humans are ignored, except that in a match with no HUMAN controller at all a Btn.SKIP
+ * edge (or Command.SKIP) in humanFrames[0] skips the current cut-scene (headless soak fast-forward; RUL-01 reads it
+ * via s.ctrl[0].buttons). Calls events.begin() itself.
  */
 export function step(s: SimState, humanFrames: readonly InputFrame[], events: EventBuffer): void {
   s.tick++;

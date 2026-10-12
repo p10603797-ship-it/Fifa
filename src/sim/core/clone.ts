@@ -5,10 +5,17 @@
  *
  * Both walk the state generically in key-insertion order, so they follow contracts/state.ts without a
  * hand-maintained field list and preserve the hash order (hashState(cloneState(s)) === hashState(s)).
+ *
+ * An own "__proto__" key (only JSON.parse creates one; deserializeState rejects it) is skipped by every
+ * walker here and in hash.ts: assigning it would re-parent the copy or, through copyInto(Object.prototype, e),
+ * pollute every object in the app.
  */
 import { IMMUTABLE_STATE_KEYS, type SimState } from '../../contracts/state';
 
 type Rec = Record<string, unknown>;
+
+/** The one key the walkers never copy, compare or hash (see the module doc). */
+const PROTO_KEY = '__proto__';
 
 function isImmutableKey(k: string): boolean {
   for (let i = 0; i < IMMUTABLE_STATE_KEYS.length; i++) if (IMMUTABLE_STATE_KEYS[i] === k) return true;
@@ -37,6 +44,7 @@ function cloneValue(v: unknown): unknown {
   const src = v as Rec;
   const out: Rec = {};
   for (const k in src) {
+    if (k === PROTO_KEY) continue;
     const e = src[k];
     out[k] = typeof e === 'object' && e !== null ? cloneValue(e) : e;
   }
@@ -69,7 +77,9 @@ function copyInto(d: unknown, s: object): unknown {
   const dobj = d as Rec;
   for (const k in so) {
     const e = so[k];
-    dobj[k] = typeof e === 'object' && e !== null ? copyInto(dobj[k], e) : e;
+    // Hot path: only object/null values need the "__proto__" check (its setter ignores primitives).
+    if (typeof e !== 'object') dobj[k] = e;
+    else if (k !== PROTO_KEY) dobj[k] = e === null ? e : copyInto(dobj[k], e);
   }
   return d;
 }
@@ -79,6 +89,7 @@ export function cloneState(s: SimState): SimState {
   const src = s as unknown as Rec;
   const out: Rec = {};
   for (const k in src) {
+    if (k === PROTO_KEY) continue;
     const e = src[k];
     out[k] = isImmutableKey(k) || typeof e !== 'object' || e === null ? e : cloneValue(e);
   }
@@ -95,7 +106,9 @@ export function copyState(dst: SimState, src: SimState): void {
   const d = dst as unknown as Rec;
   for (const k in s) {
     const e = s[k];
-    if (isImmutableKey(k) || typeof e !== 'object' || e === null) d[k] = e;
+    if (typeof e !== 'object') d[k] = e; // primitives: the "__proto__" setter ignores them
+    else if (k === PROTO_KEY) continue;
+    else if (isImmutableKey(k) || e === null) d[k] = e;
     else d[k] = copyInto(d[k], e);
   }
 }
@@ -159,13 +172,14 @@ function diffValue(a: unknown, b: unknown): string | null {
   const ao = a as Rec;
   const bo = b as Rec;
   for (const k in ao) {
+    if (k === PROTO_KEY) continue;
     pathStack.push(k);
     const r = k in bo ? diffValue(ao[k], bo[k]) : `${pathString()}: present != missing`;
     pathStack.pop();
     if (r !== null) return r;
   }
   for (const k in bo) {
-    if (k in ao) continue;
+    if (k === PROTO_KEY || k in ao) continue;
     pathStack.push(k);
     const r = `${pathString()}: missing != present`;
     pathStack.pop();
@@ -183,14 +197,14 @@ export function diffState(a: SimState, b: SimState): string | null {
   const ao = a as unknown as Rec;
   const bo = b as unknown as Rec;
   for (const k in ao) {
-    if (isImmutableKey(k)) continue;
+    if (k === PROTO_KEY || isImmutableKey(k)) continue;
     pathStack.push(k);
     const r = k in bo ? diffValue(ao[k], bo[k]) : `${pathString()}: present != missing`;
     pathStack.pop();
     if (r !== null) { pathStack.length = 0; return r; }
   }
   for (const k in bo) {
-    if (isImmutableKey(k) || k in ao) continue;
+    if (k === PROTO_KEY || isImmutableKey(k) || k in ao) continue;
     return `${k}: missing != present`;
   }
   return null;

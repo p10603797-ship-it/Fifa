@@ -27,7 +27,7 @@ except where listed below.
 | FND-03 | `src/sim/core/{rng,dmath,vec,hash,clone,serialize}.ts`; tests for those + `kick.ts`, `query.ts`, `events.ts` |
 | FND-04 | `src/main.ts`, `index.html`, `src/app/**`, `src/ui/**` (screen + HUD stubs, router registration), `src/audio/**` (engine stub), `src/platform/**` (stubs + minimal storage), `src/modes/**` (stubs), `src/net/**` (stubs), `public/**` (placeholder manifest/sw/icons) |
 | FND-05 | `src/render/**` (renderer skeleton + per-module stubs + `render/types.ts`), `src/input/**` (minimal touch stick, pad, keyboard sources, device registry, per-module stubs) |
-| FND-06 | `tools/**` (headless runner, soak, fuzz, bench, replay inspector, postbuild), `tests/harness/**` (invariant checker, scenario helpers), `src/sim/replay.ts` (replay record/playback, pure data), `src/sim/debug/invariants.ts` (invariant checker, shared by tests and the debug build), `src/platform/benchHook.ts` |
+| FND-06 | `tools/**` (headless runner, soak, fuzz, bench, replay inspector, postbuild; helpers `tools/lib/*`), `tests/harness/**` (invariant checker, scenario helpers), `src/sim/replay.ts` (replay record/playback, pure data), `src/sim/debug/invariants.ts` (invariant checker, shared by tests and the debug build), `src/platform/benchHook.ts` |
 
 After Wave 0 every stub file below exists with its exported signatures; Wave 1 owners implement them.
 

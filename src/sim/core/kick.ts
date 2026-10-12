@@ -25,7 +25,7 @@ export function recordTouch(s: SimState, slot: number): void {
 /** Give `slot` possession of the (nearby) ball. Emits POSSESSION when the possessing team changes. */
 export function takePossession(s: SimState, slot: number, ev: EventSink): void {
   const b = s.ball;
-  const prevTeam = b.owner >= 0 ? s.players[b.owner]!.team : -1;
+  const prevTeam = b.owner >= 0 ? s.players[b.owner]!.team : b.lastTouchTeam;
   const team = s.players[slot]!.team;
   if (b.owner !== slot) b.ownerT = 0;
   b.owner = slot;

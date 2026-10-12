@@ -4,9 +4,9 @@
  * - Blocks browser gestures on the game surface: pinch (gesturestart/change/end), double-tap zoom (dblclick),
  *   context menu and long-press callout, text selection, rubber-band scroll (touchmove outside [data-scroll]),
  *   ctrl+wheel zoom on desktop trackpads.
- * - Detects portrait orientation and windows below the minimum playable size, toggles `is-portrait` /
- *   `too-small` classes on <body> (index.html shows the rotate card) and reports changes through callbacks so the
- *   app pauses.
+ * - Detects portrait orientation (exactly the CSS `(orientation: portrait)` rule, square included) and windows
+ *   below the minimum playable size, toggles `is-portrait` / `too-small` classes on <body> (index.html shows the
+ *   rotate card) and reports changes through callbacks so the app pauses.
  * - Low Power Mode hint hook: reportFrame() detects a steady ~30 fps with idle frame time and fires
  *   onLowPowerSuspected once.
  */
@@ -19,9 +19,18 @@ export interface ViewportClass {
   tooSmall: boolean;
 }
 
-/** Pure viewport classification. Portrait = taller than wide. */
-export function classifyViewport(width: number, height: number, minW = MIN_PLAY_WIDTH, minH = MIN_PLAY_HEIGHT): ViewportClass {
-  const portrait = height > width;
+/**
+ * Pure viewport classification. Portrait follows CSS `(orientation: portrait)`: height >= width, so an exactly
+ * square window (Stage Manager can make one) is portrait for both the CSS rotate card in index.html and the pause
+ * logic. `portrait` may be passed in (the live media query result) so JS and CSS can never disagree.
+ */
+export function classifyViewport(
+  width: number,
+  height: number,
+  minW = MIN_PLAY_WIDTH,
+  minH = MIN_PLAY_HEIGHT,
+  portrait: boolean = height >= width,
+): ViewportClass {
   const tooSmall = !portrait && (width < minW || height < minH);
   return { portrait, tooSmall };
 }
@@ -70,6 +79,15 @@ export function installIpadHardening(opts: IpadHardeningOptions = {}): IpadHarde
   const disposers: (() => void)[] = [];
 
   const hasDom = typeof window !== 'undefined' && typeof document !== 'undefined';
+  /** The same query index.html uses for the CSS-only rotate card; created once. */
+  let portraitQuery: MediaQueryList | null = null;
+  if (hasDom && typeof window.matchMedia === 'function') {
+    try {
+      portraitQuery = window.matchMedia('(orientation: portrait)');
+    } catch {
+      portraitQuery = null;
+    }
+  }
 
   function on<K extends string>(target: EventTarget, type: K, fn: (e: Event) => void, options?: AddEventListenerOptions): void {
     target.addEventListener(type, fn, options);
@@ -82,7 +100,9 @@ export function installIpadHardening(opts: IpadHardeningOptions = {}): IpadHarde
 
   function check(): void {
     if (!hasDom) return;
-    const c = classifyViewport(window.innerWidth, window.innerHeight, minW, minH);
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const c = classifyViewport(w, h, minW, minH, portraitQuery ? portraitQuery.matches : h >= w);
     document.body.classList.toggle('is-portrait', c.portrait);
     document.body.classList.toggle('too-small', c.tooSmall);
     if (c.portrait !== portrait) {

@@ -12,6 +12,7 @@
  *  - hashState does not hash key names (layout is fixed by contracts/state.ts + SIM_VERSION) for speed;
  *    hashValue does (general plain data such as configs, squads or replay headers).
  *  - No allocation per number: one preallocated Float64Array with a Uint32Array view.
+ *  - An own "__proto__" key (JSON.parse output only) is skipped, matching clone.ts, which never copies it.
  */
 import { IMMUTABLE_STATE_KEYS, type SimState } from '../../contracts/state';
 import { INPUT_FIELDS, type InputFrame } from '../../contracts/input';
@@ -34,6 +35,8 @@ const TAG_NULL = 0x4e554c4c;
 const TAG_UNDEFINED = 0x554e4446;
 const TAG_OTHER = 0x4f544852;
 const CANON_NAN_HI = 0x7ff80000;
+/** Skipped by every object walk (clone.ts never copies it either). */
+const PROTO_KEY = '__proto__';
 
 /** Default seed for every hash function. */
 export const HASH_SEED = 0x5f3759df;
@@ -103,6 +106,7 @@ function walk(v: unknown): void {
     mixWord(TAG_OBJECT);
     const o = v as Record<string, unknown>;
     for (const k in o) {
+      if (k === PROTO_KEY) continue;
       if (withKeys) mixString(k);
       const e = o[k];
       if (typeof e === 'number') mixNumber(e); else walk(e);
@@ -147,7 +151,7 @@ export function hashState(s: SimState): number {
   mixWord(TAG_OBJECT);
   const o = s as unknown as Record<string, unknown>;
   for (const k in o) {
-    if (isImmutableKey(k)) continue;
+    if (k === PROTO_KEY || isImmutableKey(k)) continue;
     const e = o[k];
     if (typeof e === 'number') mixNumber(e); else walk(e);
   }

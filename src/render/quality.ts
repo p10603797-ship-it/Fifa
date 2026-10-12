@@ -4,7 +4,9 @@
  * - Dynamic resolution between T_PERF.resScaleMin and resScaleMax from a smoothed frame-time signal with
  *   hysteresis (T_PERF.resUpMs / resDownMs). The DOM HUD stays at native resolution.
  * - Quality may add one shadow map and multisampling and steps down if it cannot hold 50 fps.
- * - settings.graphics.resolutionScale: 0 = automatic (dynamic), else a fixed 0.6..1.0.
+ * - settings.graphics.resolutionScale: 0 = automatic (dynamic), else a fixed 0.6..1.0. Always read it from
+ *   ctx.settings at the time of use: index.ts replaces ctx.settings on every settings change and calls request()
+ *   again when the tier or the fixed scale changes.
  *
  * WAVE 0 STUB (FND-05): AUTO resolves to BALANCED; the scale stays at the fixed setting or
  * T_PERF.resScaleInitial. GFX-02 implements the startup test and the dynamic controller.
