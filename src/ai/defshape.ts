@@ -28,8 +28,10 @@
  *     back. Step = stepUpM, or QUICK_TACTICS.offsideTrap.stepUpM with the offside trap (at sprint pace: trapUpRate,
  *     the line leading the players by up to trapLead, everybody sprinting).
  *     The stepped line stays stepBallGap goal-side of the ball.
- *  3. Drop when the carrier faces our goal unpressured (dropUnpressured, scaled by facing and pressure; the step is
- *     cancelled by the same amount; trapDropScale with the trap); stay goal-side of every opponent who cannot be
+ *  3. Drop when the carrier faces our goal unpressured (dropUnpressured, scaled by his facing and by how free he is:
+ *     nobody of ours within freeDistMin..freeDistFull; the step gives way by the same factor; trapDropScale with the
+ *     trap); drop transitionDrop just after losing the ball (team.phase TRANSITION_DEFEND from TAI-06: counter-attack
+ *     danger; the players hurry); stay goal-side of every opponent who cannot be
  *     offside whatever the line does (offside off, ball level with / behind him, his own half); without the trap,
  *     drop with an onside runner breaking the line while the carrier is free (an attacker who is onside only
  *     because the line is still stepping past him is not followed: that leaves him offside); drop goal-side of the
@@ -48,20 +50,21 @@
  *  - zonal marking: an attacker inside a defender's zone (disc of the role's zoneRadius round his line/band spot,
  *    roles with duties.mark >= markDutyMin) gets the defender goal-side of him (MARK, jobSlot = attacker), greedy
  *    by normalised distance, back line first then midfield, one attacker per defender and vice versa; back-liners
- *    stay on the line (at most
- *    markStepOut in front, never behind it: an attacker behind the line stays offside), midfielders stay
- *    midMarkMinGap in front of it;
+ *    stay on the line (at most markStepOut in front, never behind it: an attacker behind the line stays offside),
+ *    midfielders stay midMarkMinGap in front of it;
  *  - passing lanes into the box: with the carrier within laneCarrierRange of our goal line, the most dangerous
  *    opponents in / near our penalty area whose lane from the carrier is open get the nearest free midfielder on
  *    the lane (COVER, jobSlot = receiver), at most laneMax.
  * Speeds: jog, top speed when far (hurryDist), dropping or stepping with the trap; markers and lane covers top.
- * Determinism: + - * / sqrt only, slot-order loops, module scratch rewritten every call, no allocation per tick.
- * Pure function of the state apart from team.lineX and the jobs it writes.
+ * Determinism: + - * / sqrt only, slot-order loops, module scratch rewritten every call, no allocation per tick
+ * (hot helpers exchange doubles through module scratch, see OUT / EVAL; measured ~3 us and 0 B per tick for both
+ * teams; see tests/perf/tai-04-budget.test.ts for the one JIT-dependent boxed store). Pure function of the state
+ * apart from team.lineX and the jobs it writes.
  */
 import {
   DT, GOAL_AREA_DEPTH, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PENALTY_AREA_DEPTH, PENALTY_AREA_HALF_WIDTH, PLAYERS_PER_TEAM,
 } from '../contracts/constants';
-import { AiJob, MatchPhase } from '../contracts/enums';
+import { AiJob, MatchPhase, TeamPhase } from '../contracts/enums';
 import type { EventSink } from '../contracts/events';
 import type { SimState } from '../contracts/state';
 import { T_AI, T_PLAYER } from '../contracts/tuning';
@@ -69,10 +72,10 @@ import { FORMATIONS, ShapeLine, slotLine } from '../data/formations';
 import {
   createTacticParams, QUICK_TACTICS, resolveTactics, rolePreset, slotLineFor, slotRole, TacticFlag, tacticFlags,
 } from '../data/tactics';
-import { otherTeam, pressureOn, teamEnd, teamStart } from '../sim/core/query';
+import { otherTeam, teamEnd, teamStart } from '../sim/core/query';
 import { assignJob, isJobDriven } from './jobs';
 
-export const LOCAL_TUNING = {
+const LOCAL_TUNING = {
   // ---- line height (team frame u, m from the centre spot toward the opposition goal)
   /** The line follows the ball: neutral back line + lineSlope * ball u, m/m. */
   lineSlope: 0.55,
@@ -91,13 +94,17 @@ export const LOCAL_TUNING = {
   // ---- drop: carrier facing our goal, unpressured
   /** Drop with the carrier facing our goal under no pressure, m. */
   dropUnpressured: 5,
-  /** query.pressureOn below which the carrier counts as free: drop x1 at 0 .. x0 at pressFree. */
-  pressFree: 0.6,
+  /** Carrier freedom from the distance of our nearest player: none (pressed) within freeDistMin, full beyond
+   *  freeDistFull, linear in between, m. */
+  freeDistMin: 3,
+  freeDistFull: 6,
   /** Carrier facing toward our goal (cosine): no drop at faceFwdMin, full drop at faceFwdFull. */
   faceFwdMin: 0.2,
   faceFwdFull: 0.7,
   /** Drop multiplier while the offside trap is on (a trap side holds a high line). */
   trapDropScale: 0.3,
+  /** Extra drop just after losing the ball (team.phase TRANSITION_DEFEND, TAI-06): counter-attack danger, m. */
+  transitionDrop: 4,
   // ---- drop: runners
   /** A runner within this distance in front of the line ... m ... */
   runnerLead: 3,
@@ -190,14 +197,16 @@ const F_BACK_U = new Float64Array(NF);
 const F_BACK_N = new Int32Array(NF);
 for (let fi = 0; fi < NF; fi++) {
   const slots = FORMATIONS[fi]!.slots;
-  let back = BIG, n = 0;
-  for (let k = 0; k < slots.length; k++) {
+  let back = BIG, deepest = BIG, n = 0;
+  for (let k = 1; k < slots.length; k++) {
+    const u = slots[k]!.nx * HALF_LENGTH;
+    if (u < deepest) deepest = u;
     if (slotLine(FORMATIONS[fi]!.id, k) !== ShapeLine.DEF) continue;
     n++;
-    const u = slots[k]!.nx * HALF_LENGTH;
     if (u < back) back = u;
   }
-  F_BACK_U[fi] = n > 0 ? back : -26.5;
+  // No DEF line in the data (never with the shipped formations): the deepest outfield slot.
+  F_BACK_U[fi] = n > 0 ? back : deepest < BIG ? deepest : 0;
   F_BACK_N[fi] = n;
 }
 
@@ -217,7 +226,7 @@ const midL = new Int32Array(N);
 let midN = 0;
 /** Per-slot member flag: 1 back line, 2 midfield/forward. */
 const role = new Uint8Array(NUM_SLOTS);
-/** Per-slot planned target this call (team frame) for members, and whether it is set. */
+/** Per-slot planned target this call (team frame) of every member (written before any job is assigned). */
 const planU = new Float64Array(NUM_SLOTS);
 const planV = new Float64Array(NUM_SLOTS);
 /** Sort scratch. */
@@ -244,21 +253,46 @@ const laneDone = new Uint8Array(NUM_SLOTS);
  * Numeric results of helpers. V8 boxes a double passed to or returned from a call it does not inline, so helpers
  * that run every tick hand their numbers over through this array (OUT_*) instead of return values / parameters.
  */
-const OUT = new Float64Array(4);
+const OUT = new Float64Array(5);
 const OUT_MED = 0;
 const OUT_SL = 1;
+const OUT_U = 2;
+const OUT_V = 3;
+const OUT_NEAR = 4;
 /** Lane under test (carrier point and carrier->receiver vector, team frame) and a point to test against it. */
 const LANE = new Float64Array(6);
 
-/** Results of the latest evaluateLine (team frame). */
+/**
+ * Line evaluation scratch (team frame), filled stage by stage by evaluateLine. The stages are separate small
+ * functions so V8 inlines their arithmetic helpers (a double crossing a non-inlined call is boxed); they hand
+ * their numbers over through these fields. Rewritten on every evaluation; never read across ticks.
+ */
 const EVAL = {
-  /** Unlimited line target, current (anchored) line, the rate-limited new line, floor and ceiling, m. */
-  target: 0, cur: 0, next: 0, floor: 0, ceil: 0,
-  /** Back line actual median position (NaN-free; = cur when no member stands), m. */
-  anchor: 0,
-  /** 0..1 step-up factor applied, 1 = the trap is stepping (faster rate, sprint). */
-  step: 0, trapStep: 0,
-  /** 1 = the target is below the current line because of a threat (drop: hurry). */
+  // inputs
+  /** Ball position / velocity, m, m/s. */
+  bu: 0.5, bv: 0.5, vu: 0.5, vv: 0.5,
+  /** 1 = nobody owns or holds the ball. */
+  loose: 0,
+  /** Opponent carrier slot or -1. */
+  carrier: -1,
+  /** Floor and ceiling of the line, m. */
+  floor: 0.5, ceil: 0.5,
+  /** Base line from the ball, m. */
+  base: 0.5,
+  // step up
+  /** 0..1 step-up factor, the step bonus applied (m), 1 = the offside trap is stepping. */
+  step: 0.5, bonus: 0.5, trapStep: 0,
+  // current line
+  /** Current line (stored value pulled to the back line), and the back line's median position, m. */
+  cur: 0.5, anchor: 0.5,
+  // drops and result
+  /** Carrier freedom 0..1 (1 = no pressure) and drop factor 0..1 (free and facing our goal). */
+  freeK: 0.5, dropK: 0.5,
+  /** Unlimited target and the rate-limited new line, m. */
+  target: 0.5, next: 0.5,
+  /** 1 = a threat set the target (drop: hurry when below the current line). */
+  threat: 0,
+  /** 1 = the target is below the current line because of a threat. */
   drop: 0,
 };
 
@@ -267,8 +301,8 @@ const EVAL = {
 function clamp(v: number, lo: number, hi: number): number { return v < lo ? lo : v > hi ? hi : v; }
 function clamp01(v: number): number { return v < 0 ? 0 : v > 1 ? 1 : v; }
 function absv(v: number): number { return v < 0 ? -v : v; }
-/** v if finite, else d. */
-function fin(v: number, d: number): number { return v - v === 0 ? v : d; }
+// Finiteness guards on state reads are written inline (`if (v - v !== 0) v = d`): a double passed to a helper V8
+// does not inline is boxed, and these run per player per tick.
 /** (v - a) / (b - a) clamped to [0, 1]. */
 function ramp(a: number, b: number, v: number): number { return b === a ? (v >= b ? 1 : 0) : clamp01((v - a) / (b - a)); }
 
@@ -299,7 +333,8 @@ function collectMembers(s: SimState, team: number, dir: number, flags: number): 
     if (slotLineFor(fi, f, flags) !== ShapeLine.DEF) continue;
     role[i] = 1;
     backS[backN++] = i;
-    const hu = dir * fin(p.homeX, 0);
+    let hu = dir * p.homeX;
+    if (hu - hu !== 0) hu = 0;
     if (hu < minHome) minHome = hu;
   }
   // Vacated back-line slots (sent off): TAI-01 moves the laterally nearest players down; take the deepest-homed
@@ -311,7 +346,8 @@ function collectMembers(s: SimState, team: number, dir: number, flags: number): 
       const p = s.players[i]!;
       const f = p.formIdx;
       if (role[i] !== 0 || p.active !== 1 || p.isKeeper === 1 || !(f >= 0 && f < N) || (f | 0) !== f) continue;
-      const hu = dir * fin(p.homeX, 0);
+      let hu = dir * p.homeX;
+      if (hu - hu !== 0) hu = 0;
       if (hu <= minHome + LT.fillTol && hu < bestU) { bestU = hu; best = i; }
     }
     if (best < 0) break;
@@ -336,13 +372,17 @@ function backMedian(s: SimState, dir: number): void {
     for (let k = 0; k < backN; k++) {
       const i = backS[k]!;
       if (pass === 0 && !free(s, i)) continue;
-      const u = dir * fin(s.players[i]!.x, 0);
+      let u = dir * s.players[i]!.x;
+      if (u - u !== 0) u = 0;
       let j = m++;
       while (j > 0 && tmp[j - 1]! > u) { tmp[j] = tmp[j - 1]!; j--; }
       tmp[j] = u;
     }
   }
-  OUT[OUT_MED] = m === 0 ? NaN : (m & 1) === 1 ? tmp[m >> 1]! : (tmp[(m >> 1) - 1]! + tmp[m >> 1]!) * 0.5;
+  // Separate stores: a phi of the NaN constant and a computed double would be boxed.
+  if (m === 0) OUT[OUT_MED] = NaN;
+  else if ((m & 1) === 1) OUT[OUT_MED] = tmp[m >> 1]!;
+  else OUT[OUT_MED] = (tmp[(m >> 1) - 1]! + tmp[m >> 1]!) * 0.5;
 }
 
 /** Team-frame u of our second-last player (incl. keeper) = the offside line opponents play against -> OUT[OUT_SL]. */
@@ -385,44 +425,63 @@ export function isDefending(s: SimState, team: number): boolean {
  * the team. The opponent ball / runner model is described in the file header.
  */
 function evaluateLine(s: SimState, team: number, dir: number, trapOn: boolean): void {
-  const t = s.teams[team]!;
+  lineInputs(s, team, dir);
+  lineStep(s, team, dir, trapOn);
+  lineCurrent(s, team, dir);
+  lineCarrierDrop(s, team, dir, trapOn);
+  lineRunners(s, team, dir, trapOn);
+  lineFinish();
+}
+
+/** Ball, carrier, floor / ceiling and the base line (stage 1). */
+function lineInputs(s: SimState, team: number, dir: number): void {
   const b = s.ball;
   const opp = otherTeam(team);
-  const oppStart = teamStart(opp), oppEnd = teamEnd(opp);
-  const bu = dir * fin(b.x, 0), bv = dir * fin(b.z, 0);
-  const vu = dir * fin(b.vx, 0), vv = dir * fin(b.vz, 0);
-  const loose = b.owner < 0 && b.heldBy < 0;
-  const carrier = !loose && b.owner >= 0 && b.owner < NUM_SLOTS && s.players[b.owner]!.team === opp ? b.owner : -1;
-  const fi = formationIndex(t.formation);
+  let bu = dir * b.x, bv = dir * b.z, vu = dir * b.vx, vv = dir * b.vz;
+  if (bu - bu !== 0) bu = 0;
+  if (bv - bv !== 0) bv = 0;
+  if (vu - vu !== 0) vu = 0;
+  if (vv - vv !== 0) vv = 0;
+  const loose = b.owner < 0 && b.heldBy < 0 ? 1 : 0;
+  EVAL.bu = bu;
+  EVAL.bv = bv;
+  EVAL.vu = vu;
+  EVAL.vv = vv;
+  EVAL.loose = loose;
+  EVAL.carrier = loose === 0 && b.owner >= 0 && b.owner < NUM_SLOTS && s.players[b.owner]!.team === opp ? b.owner : -1;
   const lineOff = TP.lineNx * HALF_LENGTH;
-  const ceil = LT.lineCeil + (lineOff > 0 ? lineOff : 0);
-  const floor = -HALF_LENGTH + LT.floorNear + (LT.floorFar - LT.floorNear) * ramp(LT.ballNearDist, LT.ballFarDist, bu + HALF_LENGTH);
+  EVAL.ceil = LT.lineCeil + (lineOff > 0 ? lineOff : 0);
+  EVAL.floor = -HALF_LENGTH + LT.floorNear + (LT.floorFar - LT.floorNear) * ramp(LT.ballNearDist, LT.ballFarDist, bu + HALF_LENGTH);
+  const ballBase = loose === 1 && vu > 0 ? bu + vu * LT.stepLookahead : bu;
+  EVAL.base = F_BACK_U[formationIndex(s.teams[team]!.formation)]! + LT.lineSlope * ballBase + lineOff;
+}
 
-  // 1. Base.
-  const ballBase = loose && vu > 0 ? bu + vu * LT.stepLookahead : bu;
-  const base = F_BACK_U[fi]! + LT.lineSlope * ballBase + lineOff;
-
-  // 2. Step up on a backward / square ball.
+/** Step up on a backward / square ball or a carrier dribbling back (stage 2). */
+function lineStep(s: SimState, team: number, dir: number, trapOn: boolean): void {
+  const b = s.ball;
+  const opp = otherTeam(team);
+  const carrier = EVAL.carrier;
+  const loose = EVAL.loose === 1;
   let step = 0;
   const kb = b.lastKickBy;
-  if (b.lastKickTeam === opp && kb >= oppStart && kb < oppEnd) {
+  if (b.lastKickTeam === opp && kb >= teamStart(opp) && kb < teamEnd(opp)) {
     const since = s.tick - b.lastKickTick;
     const hold = QUICK_TACTICS.offsideTrap.stepTicks;
     if (since >= 0 && since <= hold + LT.stepFadeTicks) {
+      // Where the ball went: the receiver, else the intended reception point, else its predicted position.
       const k = s.players[kb]!;
-      const ku = dir * k.x, kv = dir * k.z;
       let ru = 0, rv = 0, have = false;
       if (carrier >= 0 && carrier !== kb) {
         const r = s.players[carrier]!;
         ru = dir * r.x; rv = dir * r.z; have = true;
       } else if (loose && b.passTarget >= 0) {
-        ru = dir * fin(b.passX, b.x); rv = dir * fin(b.passZ, b.z); have = true;
+        ru = dir * b.passX; rv = dir * b.passZ; have = ru - ru === 0 && rv - rv === 0;
       } else if (loose) {
-        ru = bu + vu * LT.stepLookahead; rv = bv + vv * LT.stepLookahead; have = true;
+        ru = EVAL.bu + EVAL.vu * LT.stepLookahead; rv = EVAL.bv + EVAL.vv * LT.stepLookahead; have = true;
       }
       if (have) {
-        const back = ru - ku;
-        const lat = absv(rv - kv);
+        const back = ru - dir * k.x;
+        const lat = absv(rv - dir * k.z);
         const went = back >= QUICK_TACTICS.offsideTrap.triggerBackM || (lat >= LT.squareLatM && back >= -LT.squareFwdTol);
         if (went) step = since <= hold ? 1 : 1 - (since - hold) / LT.stepFadeTicks;
       }
@@ -432,44 +491,81 @@ function evaluateLine(s: SimState, team: number, dir: number, trapOn: boolean): 
     const d = ramp(LT.dribbleBackMin, LT.dribbleBackFull, dir * s.players[carrier]!.vx);
     if (d > step) step = d;
   }
-  const stepM = trapOn ? QUICK_TACTICS.offsideTrap.stepUpM : LT.stepUpM;
-  let bonus = stepM * step;
+  let bonus = (trapOn ? QUICK_TACTICS.offsideTrap.stepUpM : LT.stepUpM) * step;
   if (bonus > 0) {
     // The stepped line stays goal-side of the ball (never below the base for it).
-    const cap = bu - LT.stepBallGap;
-    const room = cap > base ? cap - base : 0;
+    const cap = EVAL.bu - LT.stepBallGap;
+    const room = cap > EVAL.base ? cap - EVAL.base : 0;
     if (bonus > room) bonus = room;
   }
+  EVAL.step = step;
+  EVAL.bonus = bonus;
   // The trap steps at sprint pace: the line may lead the players by trapLead instead of anchorSlack.
-  const trapStep = trapOn && bonus > 0 ? 1 : 0;
+  EVAL.trapStep = trapOn && bonus > 0 ? 1 : 0;
+}
 
-  // Current line: the stored value pulled to within the slack of where the back line stands.
+/** Current line: the stored value pulled to within the slack of where the back line stands (stage 3). */
+function lineCurrent(s: SimState, team: number, dir: number): void {
   backMedian(s, dir);
   const med = OUT[OUT_MED]!;
-  let cur = fin(dir * t.lineX, NaN);
-  if (cur !== cur) cur = med === med ? med : F_BACK_U[fi]!;
+  let cur = dir * s.teams[team]!.lineX;
+  if (cur - cur !== 0) cur = med === med ? med : EVAL.base; // NaN / infinite stored line: start from the players
   const anchor = med === med ? med : cur;
-  cur = clamp(cur, anchor - LT.anchorSlack, anchor + (trapStep === 1 ? LT.trapLead : LT.anchorSlack));
+  EVAL.anchor = anchor;
+  EVAL.cur = clamp(cur, anchor - LT.anchorSlack, anchor + (EVAL.trapStep === 1 ? LT.trapLead : LT.anchorSlack));
+}
 
-  // 3. Drops.
-  let freeK = 0;
-  let dropK = 0;
+/**
+ * Drop with the carrier facing our goal unpressured (the step gives way by the same factor), and just after losing
+ * the ball (stage 4).
+ */
+function lineCarrierDrop(s: SimState, team: number, dir: number, trapOn: boolean): void {
+  const carrier = EVAL.carrier;
+  let freeK = 0, dropK = 0;
   if (carrier >= 0) {
-    const c = s.players[carrier]!;
-    freeK = clamp01(1 - pressureOn(s, carrier) / LT.pressFree);
-    dropK = freeK * ramp(LT.faceFwdMin, LT.faceFwdFull, -dir * c.fx);
+    nearestTo(s, team, carrier);
+    freeK = ramp(LT.freeDistMin, LT.freeDistFull, OUT[OUT_NEAR]!);
+    // Facing our goal: the carrier's facing toward -u in our frame.
+    dropK = freeK * ramp(LT.faceFwdMin, LT.faceFwdFull, -dir * s.players[carrier]!.fx);
   }
-  const dropM = LT.dropUnpressured * dropK * (trapOn ? LT.trapDropScale : 1);
-  let target = base + bonus * (1 - dropK) - dropM;
-  let threat = dropM > 0 ? 1 : 0;
+  let dropM = LT.dropUnpressured * dropK * (trapOn ? LT.trapDropScale : 1);
+  if (s.teams[team]!.phase === TeamPhase.TRANSITION_DEFEND) dropM += LT.transitionDrop;
+  EVAL.freeK = freeK;
+  EVAL.dropK = dropK;
+  EVAL.target = EVAL.base + EVAL.bonus * (1 - dropK) - dropM;
+  EVAL.threat = dropM > 0 ? 1 : 0;
+}
 
-  // Runners: an onside runner behind the line, or breaking it while the carrier is free (not with the trap).
+/** Distance from slot to the nearest active player of `team` (keeper included) into OUT[OUT_NEAR] (BIG if none). */
+function nearestTo(s: SimState, team: number, slot: number): void {
+  const q = s.players[slot]!;
+  let best = BIG * BIG;
+  const end = teamEnd(team);
+  for (let i = teamStart(team); i < end; i++) {
+    const p = s.players[i]!;
+    if (p.active !== 1) continue;
+    const dx = p.x - q.x, dz = p.z - q.z;
+    const d = dx * dx + dz * dz;
+    if (d < best) best = d;
+  }
+  OUT[OUT_NEAR] = Math.sqrt(best);
+}
+
+/** Runners and the ball itself (stage 5). */
+function lineRunners(s: SimState, team: number, dir: number, trapOn: boolean): void {
+  const b = s.ball;
+  const opp = otherTeam(team);
+  const carrier = EVAL.carrier;
+  const bu = EVAL.bu, cur = EVAL.cur, freeK = EVAL.freeK;
+  let target = EVAL.target;
+  let threat = EVAL.threat;
   const offsideOn = s.config.offside === 1;
   secondLastU(s, team, dir);
   const sl = OUT[OUT_SL]!;
   const of = s.match.offside;
   const flagged = of.passTeam === opp ? of.flags : 0;
-  for (let i = oppStart; i < oppEnd; i++) {
+  const end = teamEnd(opp);
+  for (let i = teamStart(opp); i < end; i++) {
     if (i === carrier) continue;
     const r = s.players[i]!;
     if (r.active !== 1 || r.isKeeper === 1) continue;
@@ -478,8 +574,7 @@ function evaluateLine(s: SimState, team: number, dir: number, trapOn: boolean): 
     // Never offside whatever the line does (no offside rule, ball level with / behind him, own half): the line
     // stays goal-side of him. Onside only because our players have not stepped past him yet: no drop (stepping
     // past him leaves him offside, which is the point).
-    const always = !offsideOn || ur >= bu || ur >= 0;
-    if (always) {
+    if (!offsideOn || ur >= bu || ur >= 0) {
       const cap = ur - LT.runnerMargin;
       if (cap < target) { target = cap; threat = 1; }
       continue;
@@ -493,39 +588,34 @@ function evaluateLine(s: SimState, team: number, dir: number, trapOn: boolean): 
       }
     }
   }
-
   // The ball: stay goal-side of a ball level with / behind the line, and of a long ball played toward our goal.
   if (bu - LT.behindBallGap < target) { target = bu - LT.behindBallGap; threat = 1; }
-  if (loose && b.lastTouchTeam === opp && vu < -LT.longBallSpeed) {
-    const land = bu + vu * LT.runnerLookahead - LT.behindBallGap;
+  if (EVAL.loose === 1 && b.lastTouchTeam === opp && EVAL.vu < -LT.longBallSpeed) {
+    const land = bu + EVAL.vu * LT.runnerLookahead - LT.behindBallGap;
     if (land < target) { target = land; threat = 1; }
   }
-
-  // 4. Floor and ceiling.
-  target = clamp(target, floor, ceil);
-
-  // 5. Rate limit.
-  const up = (trapStep === 1 ? LT.trapUpRate : LT.lineUpRate) * DT;
-  const down = LT.lineDownRate * DT;
-  let next = target > cur ? (target < cur + up ? target : cur + up) : (target > cur - down ? target : cur - down);
-  next = clamp(next, floor, ceil);
-
   EVAL.target = target;
-  EVAL.cur = cur;
-  EVAL.next = next;
-  EVAL.floor = floor;
-  EVAL.ceil = ceil;
-  EVAL.anchor = anchor;
-  EVAL.step = step;
-  EVAL.trapStep = trapStep;
-  EVAL.drop = threat === 1 && target < cur - 1e-9 ? 1 : 0;
+  EVAL.threat = threat;
+}
+
+/** Floor / ceiling and the rate limit (stage 6). */
+function lineFinish(): void {
+  const floor = EVAL.floor, ceil = EVAL.ceil, cur = EVAL.cur;
+  const target = clamp(EVAL.target, floor, ceil);
+  const up = (EVAL.trapStep === 1 ? LT.trapUpRate : LT.lineUpRate) * DT;
+  const down = LT.lineDownRate * DT;
+  const next = target > cur ? (target < cur + up ? target : cur + up) : (target > cur - down ? target : cur - down);
+  EVAL.target = target;
+  EVAL.next = clamp(next, floor, ceil);
+  EVAL.drop = EVAL.threat === 1 && target < cur - 1e-9 ? 1 : 0;
 }
 
 /**
- * Give slot a HOLD_SHAPE move to (u, v) (team frame): jog when near, top speed when far or urgent. The speed is
- * decided after assignJob so no double crosses a call boundary twice.
+ * Give slot a HOLD_SHAPE move to (OUT[OUT_U], OUT[OUT_V]) (team frame): jog when near, top speed when far or
+ * urgent. The point comes through OUT so no double crosses this (per player) call boundary.
  */
-function holdAt(s: SimState, slot: number, dir: number, u: number, v: number, urgent: boolean): void {
+function holdAt(s: SimState, slot: number, dir: number, urgent: boolean): void {
+  const u = OUT[OUT_U]!, v = OUT[OUT_V]!;
   const p = s.players[slot]!;
   const a = s.attrs[slot]!;
   const top = a.topSpeed > 0 ? a.topSpeed : T_PLAYER.topSpeedMin;
@@ -547,7 +637,7 @@ export function assignDefensiveShape(s: SimState, team: number, ev: EventSink): 
     // Track the back line so the value is continuous when the ball is lost.
     backMedian(s, dir);
     const med = OUT[OUT_MED]!;
-    if (med === med) t.lineX = dir * med + 0;
+    if (med === med) t.lineX = dir * clamp(med, -HALF_LENGTH, HALF_LENGTH) + 0;
     return;
   }
   const trapOn = (flags & TacticFlag.OFFSIDE_TRAP) !== 0;
@@ -562,24 +652,28 @@ export function assignDefensiveShape(s: SimState, team: number, ev: EventSink): 
 /** Back line: level at the line, ball-side defenders up to `stagger` higher. */
 function placeBackLine(s: SimState, dir: number): void {
   const line = EVAL.next;
-  const bv = dir * fin(s.ball.z, 0);
+  const bv = EVAL.bv;
   const urgentAll = EVAL.drop === 1 || EVAL.trapStep === 1;
+  const stagger = LT.stagger < LT.maxStepOut ? LT.stagger : LT.maxStepOut;
   for (let k = 0; k < backN; k++) {
     const i = backS[k]!;
     const p = s.players[i]!;
-    const v = clamp(dir * fin(p.homeZ, p.z), -HALF_WIDTH + 1, HALF_WIDTH - 1);
-    const u = line + LT.stagger * clamp01(1 - absv(v - bv) / LT.staggerRange);
+    let v = dir * p.homeZ;
+    if (v - v !== 0) v = dir * p.z;
+    v = clamp(v, -HALF_WIDTH + 1, HALF_WIDTH - 1);
+    const u = line + stagger * clamp01(1 - absv(v - bv) / LT.staggerRange);
     planU[i] = u;
     planV[i] = v;
     if (!free(s, i)) continue;
-    holdAt(s, i, dir, u, v, urgentAll || u < dir * p.x - 1);
+    OUT[OUT_U] = u; OUT[OUT_V] = v;
+    holdAt(s, i, dir, urgentAll || u < dir * p.x - 1);
   }
 }
 
 /** Midfield 8..14 m in front of the line (AM a little higher, forwards up to two line spacings), not past the ball. */
 function placeMidfield(s: SimState, dir: number): void {
   const line = EVAL.next;
-  const bu = dir * fin(s.ball.x, 0);
+  const bu = EVAL.bu;
   let lo = line + LT.midGapMin;
   const ballLo = bu > line ? bu : line;
   if (ballLo < lo) lo = ballLo;
@@ -588,13 +682,16 @@ function placeMidfield(s: SimState, dir: number): void {
     const p = s.players[i]!;
     const l = midL[k]!;
     const hi = line + (l === ShapeLine.FWD ? 2 * T_AI.lineSpacingMax : l === ShapeLine.AM ? T_AI.lineSpacingMax + LT.amExtra : T_AI.lineSpacingMax);
-    const hu = dir * fin(p.homeX, p.x);
-    const v = dir * fin(p.homeZ, p.z);
+    let hu = dir * p.homeX, v = dir * p.homeZ;
+    const homeOk = hu - hu === 0 && v - v === 0;
+    if (hu - hu !== 0) hu = dir * p.x;
+    if (v - v !== 0) v = dir * p.z;
     const u = clamp(hu, lo < hi ? lo : hi, hi);
     planU[i] = u;
     planV[i] = v;
-    if (u === hu || !free(s, i)) continue;
-    holdAt(s, i, dir, u, v, false);
+    if ((u === hu && homeOk) || !free(s, i)) continue; // home already in the band: HOLD_SHAPE as given
+    OUT[OUT_U] = u; OUT[OUT_V] = v;
+    holdAt(s, i, dir, false);
   }
 }
 
@@ -688,20 +785,26 @@ function laneBlocked(): boolean {
 /** Cover open passing lanes from the carrier to the most dangerous opponents in / near our penalty area. */
 function coverLanes(s: SimState, team: number, dir: number): void {
   const b = s.ball;
-  const opp = otherTeam(team);
   const c = b.owner;
-  if (b.heldBy >= 0 || !(c >= 0 && c < NUM_SLOTS) || s.players[c]!.team !== opp) return;
+  if (b.heldBy >= 0 || !(c >= 0 && c < NUM_SLOTS) || s.players[c]!.team !== otherTeam(team)) return;
+  if (dir * s.players[c]!.x + HALF_LENGTH > LT.laneCarrierRange) return;
+  // A separate function: V8 then optimizes it from its own feedback once lanes are being covered (compiled cold
+  // inside this one, its arithmetic would stay generic and box every double).
+  coverLanesFrom(s, team, dir, c);
+}
+
+function coverLanesFrom(s: SimState, team: number, dir: number, c: number): void {
+  const opp = otherTeam(team);
   const cp = s.players[c]!;
   const cu = dir * cp.x, cv = dir * cp.z;
-  if (cu + HALF_LENGTH > LT.laneCarrierRange) return;
   const boxU = -HALF_LENGTH + PENALTY_AREA_DEPTH + LT.laneBoxMargin;
   const boxV = PENALTY_AREA_HALF_WIDTH + LT.laneBoxMargin;
   const os = teamStart(opp), oe = teamEnd(opp);
   for (let i = os; i < oe; i++) laneDone[i] = 0;
   lcN = 0;
   const ts = teamStart(team), te = teamEnd(team);
-  for (let round = 0; round < LT.laneMax; round++) {
-    // Most dangerous remaining receiver: the one nearest our goal line.
+  // Receivers in order of danger (nearest our goal line first) until laneMax lanes are covered.
+  for (let guard = 0; guard < N && lcN < LT.laneMax; guard++) {
     let rs = -1, rBest = BIG;
     for (let i = os; i < oe; i++) {
       const r = s.players[i]!;
@@ -730,7 +833,7 @@ function coverLanes(s: SimState, team: number, dir: number): void {
       LANE[4] = lcU[k]!; LANE[5] = lcV[k]!;
       if (laneBlocked()) blocked = true;
     }
-    if (blocked) { round--; continue; }
+    if (blocked) continue;
     // Nearest free midfielder (not a forward, not marking) to his cover point.
     const lu = ru - cu, lv = rv - cv;
     const l2 = lu * lu + lv * lv;

@@ -40,7 +40,9 @@
  *     in the mouth: the ball went in through the goal-mouth plane. A path that reaches the goal volume from the side
  *     (side netting) or from the top (roof) is GOAL_LINE, never GOAL. Otherwise GOAL_LINE (goal kick / corner).
  *     crossX = end * BALL_OUT_X, crossZ = z(tG), crossEnd = end.
- * Deterministic (only + - * / and comparisons) and allocation-free (no objects, closures or boxed temporaries).
+ * Deterministic (+ - * /, comparisons, Math.abs/min/max/sqrt only) and allocation-free: no objects or closures, and
+ * no boxed doubles (detectCrossing is a tiny inlinable front; the full test reads the segment from a module scratch).
+ * A ball moved by anything other than ballTick (e.g. carried in a keeper's hands) is not swept here.
  */
 import {
   BALL_RADIUS, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_LENGTH, HALF_WIDTH,

@@ -27,7 +27,9 @@
  *  - Default (RUL-11 calls it at the human timeout; also the CPU fallback): short ground pass to an open defender
  *    (receiver >= openDist from every opponent and a safe lane: TAI-09 laneSafety >= laneSafeMin while it gives any
  *    signal, otherwise no opponent within laneClear of the lane), else a long LOB_PASS to the target man (forwards
- *    first, best in the air), else a short pass to the best available teammate, else a long kick straight ahead.
+ *    first, best in the air), else a short pass to the best available teammate, else a long kick straight ahead. The
+ *    AI's own targets are forward or sideways (back only away from the goal on the ball's side, never across the
+ *    goal mouth).
  *    A taker already kicking is left alone (no double kick). chooseGoalKick exposes the decision (TAI-13 may reuse it).
  *  - No offside from goal kicks: the kick's contact happens while the phase is still GOAL_KICK (applyKick marks the
  *    restart taken; RUL-01 returns to IN_PLAY after the rules of that tick), which RUL-08 checks at kick time.
@@ -185,6 +187,16 @@ export function clearOfOwnGoal(s: SimState, team: number, x0: number, z0: number
   return zHit > lim || zHit < -lim;
 }
 
+/**
+ * Stricter rule for the kicks the AI picks itself (Default, assisted targets): forward or sideways, or back toward the
+ * own goal line only on the ball's side moving away from the goal (never back across the goal mouth), and clear of it.
+ */
+function aiLaneOk(s: SimState, team: number, x0: number, z0: number, dx: number, dz: number): boolean {
+  if (s.teams[team === 1 ? 1 : 0]!.dir * dx >= 0) return true;
+  if ((z0 < 0 ? -dz : dz) <= 0) return false;
+  return clearOfOwnGoal(s, team, x0, z0, dx, dz);
+}
+
 /** Ball at rest on the ground at (x, z); possession and hands released (not a contact). */
 function placeBall(s: SimState, x: number, z: number, ev: EventSink): void {
   const b = s.ball;
@@ -289,7 +301,7 @@ export function goalKickSpot(s: SimState, team: number, side: number, absZ: numb
 
 /**
  * Best short option for the current goal kick of `team` (taker excluded, keepers excluded): teammates inside the pitch
- * shortMin..shortMax from the spot whose pass line is clear of the own goal. strict = 1: defenders only, and only
+ * shortMin..shortMax from the spot, forward / sideways or back only away from the goal on the ball's side. strict = 1: defenders only, and only
  * when open (receiver >= openDist from every opponent, lane safe: TAI-09 laneSafety >= laneSafeMin if laneSafety
  * returns any signal for these lanes, else no opponent within laneClear of the lane). strict = 0: the best
  * teammate whatever the pressure. -1 if none.
@@ -311,7 +323,7 @@ export function bestShortOption(s: SimState, team: number, taker: number, strict
     const dx = q.x - x0, dz = q.z - z0;
     const d = Math.sqrt(dx * dx + dz * dz);
     if (d < T.shortMin || d > T.shortMax) continue;
-    if (!clearOfOwnGoal(s, tm, x0, z0, dx, dz)) continue;
+    if (!aiLaneOk(s, tm, x0, z0, dx, dz)) continue;
     const def = isDefenderRole(q.role);
     if (strict === 1 && !def) continue;
     evalLane(s, tm, x0, z0, q.x, q.z);
@@ -336,8 +348,8 @@ export function bestShortOption(s: SimState, team: number, taker: number, strict
 }
 
 /**
- * Target man for a long goal kick of `team`: outfield teammates inside the pitch longMin..longMax from the spot, clear
- * of the own goal; forwards first (role tier), then best in the air (heading + height), then the more open. -1 if none.
+ * Target man for a long goal kick of `team`: outfield teammates inside the pitch longMin..longMax from the spot, not
+ * back across the own goal; forwards first (role tier), then best in the air (heading + height), then the more open. -1 if none.
  */
 export function bestLongOption(s: SimState, team: number, taker: number): number {
   const r = s.match.restart;
@@ -355,7 +367,7 @@ export function bestLongOption(s: SimState, team: number, taker: number): number
     const dx = q.x - x0, dz = q.z - z0;
     const d = Math.sqrt(dx * dx + dz * dz);
     if (d < T.longMin || d > T.longMax) continue;
-    if (!clearOfOwnGoal(s, tm, x0, z0, dx, dz)) continue;
+    if (!aiLaneOk(s, tm, x0, z0, dx, dz)) continue;
     const a = s.attrs[slot]!;
     evalLane(s, tm, x0, z0, q.x, q.z);
     const open = LANE.open < T.openCap ? LANE.open : T.openCap;
@@ -498,15 +510,24 @@ function takeDefault(s: SimState, ev: EventSink): number {
 
 // ---------------------------------------------------------------- input helpers
 
-/** Stick aim: set the aim point along (mx, mz) (backward component toward the own goal line removed). */
-function aimWithStick(s: SimState, mx: number, mz: number): void {
+/**
+ * Stick aim from the frame (when the stick is past T_INPUT.stickIdle): the aim point goes aimDist along it, with the
+ * backward component toward the own goal line removed (sideways is fine). Reads the frame directly so the per-tick
+ * path passes no doubles through calls.
+ */
+function aimWithStick(s: SimState, f: Readonly<InputFrame>): void {
+  let ax = f.mx / AXIS_SCALE, az = f.mz / AXIS_SCALE;
+  if (!(ax === ax && az === az)) return;
+  const idle = T_INPUT.stickIdle;
+  if (ax * ax + az * az <= idle * idle) return;
   const r = s.match.restart;
   const dir = s.teams[r.team === 1 ? 1 : 0]!.dir;
-  let ax = mx, az = mz;
-  if (dir * ax < 0) ax = 0; // never back toward the own goal line; sideways is fine
+  if (dir * ax < 0) ax = 0; // never back toward the own goal line
   const d = Math.sqrt(ax * ax + az * az);
   if (d < 1e-6) { ax = dir; az = 0; } else { ax /= d; az /= d; }
-  setAimPoint(s, r.x + ax * LOCAL_TUNING.aimDist, r.z + az * LOCAL_TUNING.aimDist);
+  const x = r.x + ax * LOCAL_TUNING.aimDist, z = r.z + az * LOCAL_TUNING.aimDist;
+  r.aimX = x < -HALF_LENGTH ? -HALF_LENGTH : x > HALF_LENGTH ? HALF_LENGTH : x;
+  r.aimZ = z < -HALF_WIDTH ? -HALF_WIDTH : z > HALF_WIDTH ? HALF_WIDTH : z;
 }
 
 /** PASS / LOB press by the taker's controller. */
@@ -677,9 +698,7 @@ export function goalKickInput(s: SimState, ctrlIdx: number, f: InputFrame, ev: E
     return;
   }
   if (!isValidTaker(s, t) || !takerWaiting(s.players[t]!)) return; // kicking already (power bar) or down
-  const mx = f.mx / AXIS_SCALE, mz = f.mz / AXIS_SCALE;
-  const idle = T_INPUT.stickIdle;
-  if (mx * mx + mz * mz > idle * idle) aimWithStick(s, mx, mz);
+  aimWithStick(s, f);
   if (f.gesture === GestureKind.TAP || f.gesture === GestureKind.DOUBLE_TAP) {
     if (gestureKick(s, c, t, f, ev) === 1) return;
   }

@@ -12,22 +12,32 @@
  *     -> 4-4-1, ...): a lacking line pulls the laterally nearest player from the line ahead (cascading), and
  *     sub-lines with gaps re-spread their members across a slightly narrower span. The keeper (isKeeper) always
  *     gets the keeper home, whatever his formIdx; nobody else does.
- *  2. Quick tactic extraStriker: the most central midfielder moves up into the forward line (half way out of
- *     possession).
+ *  2. Quick tactic extraStriker (DAT-04 data/tactics EXTRA_STRIKER_SHAPES, the same data TAI-14's slotRole /
+ *     slotLineFor give TAI-04/05/06): with a full side every listed slot moves to its override position, so the
+ *     slot that slotLineFor reports in the FWD line joins the forward line as a forward and his neighbours close
+ *     the gap (all of them half way out of possession). A short-handed side pushes that same formIdx when he still
+ *     plays in midfield, else its best midfielder (CAM > CM > CDM, then most central, then most advanced), into a
+ *     free lane of the forward line.
  *  3. Vertical: the back line starts at the formation's neutral back line (its deepest outfield slot) and moves
  *     by a per-phase offset + slope * ballU (higher in build-up/attack, deeper when defending), shifted by the
- *     tactical focus, and is taken from TAI-04's team.lineX in defending open play (within
- *     LOCAL_TUNING.lineXTrust of our own estimate). Other slots keep their formation depth relative to the back
- *     line, scaled per phase/focus, plus role pushes (full-backs and forwards up in attack, wide players back in
- *     defence); the back line is flattened when defending and nobody stands deeper than it.
+ *     block push of data/tactics resolveTactics (focus FOCUS_MODIFIERS.pushNx in possession; + team press
+ *     QUICK_TACTICS.teamPress.pushNx out of possession), and is taken from TAI-04's team.lineX in defending open
+ *     play (within LOCAL_TUNING.lineXTrust of our own estimate). Other slots keep their formation depth relative
+ *     to the back line, scaled per phase and focus (focusDepth), plus role pushes (full-backs and forwards up in
+ *     attack, wide players back in defence); the back line is flattened when defending and nobody stands deeper
+ *     than it. Widths scale per phase and by the resolveTactics focus width (widthAttack in possession,
+ *     widthDefend out of possession).
  *  4. Lateral: the block slides toward the ball, the far side narrows, and the ball side is squeezed so the
  *     widest player stays inside the touchline (width shrinks on the ball side).
  *  5. Compactness: sorted outfield depths never leave a gap above T_AI.lineSpacingMax (chain clamp).
  *  6. Quick tactic getInBox: when crossing (in possession, ball in the crossing zone) the widest non-defenders
- *     (one per flank, never the carrier) go to the far post and the penalty spot.
+ *     (one per flank, never the carrier) go to the far post and the penalty spot (data/tactics BOX_SPOTS, the
+ *     spots TAI-03's box runners fill).
  *  7. Clamps: onside (not beyond the opponents' second-last defender unless level with/behind the ball or in our
  *     own half, when offside is on), inside the pitch, outfielders outside their own goal area; during KICK_OFF
  *     own half and, for the defending side, outside the centre circle.
+ *  8. getInBox spacing: a box player whose (clamped) spot lands on a team-mate's home slides sideways to the
+ *     nearest free spot inside the box (LOCAL_TUNING.boxSeparation).
  *
  * Staggering: team.shapeT counts down; the shape is recomputed when it reaches 1 (or 0 = forced, see
  * invalidateShape) on ticks aligned to the interval, team 1 offset by half an interval. Every tick each active
@@ -35,13 +45,16 @@
  */
 import {
   CENTRE_CIRCLE_RADIUS, CROSS_ZONE_DEPTH, CROSS_ZONE_MIN_Z, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, GOAL_HALF_WIDTH,
-  HALF_LENGTH, HALF_WIDTH, PLAYERS_PER_TEAM,
+  HALF_LENGTH, HALF_WIDTH, PENALTY_AREA_HALF_WIDTH, PLAYERS_PER_TEAM,
 } from '../contracts/constants';
 import { MatchPhase, RestartKind, Role, TeamPhase } from '../contracts/enums';
 import type { EventSink } from '../contracts/events';
 import type { SimState } from '../contracts/state';
 import { T_AI } from '../contracts/tuning';
-import { FORMATIONS } from '../data/formations';
+import { FORMATIONS, ShapeLine, slotLine } from '../data/formations';
+import {
+  BOX_SPOTS, createTacticParams, EXTRA_STRIKER_SHAPES, resolveTactics, slotLineFor, TacticFlag, tacticFlags,
+} from '../data/tactics';
 import { otherTeam, possessingTeam, secondLastDefenderX, teamEnd, teamStart } from '../sim/core/query';
 
 // Per-phase tables are indexed by TeamPhase: BUILD_UP, ATTACK, DEFEND, TRANSITION_ATTACK, TRANSITION_DEFEND,
@@ -76,10 +89,9 @@ const LOCAL_TUNING = {
   wideMidPush: [0, 2, -2, 3, -2, 0],
   wingerPush: [2, 7, -2, 8, -2, 0],
   forwardPush: [2, 6, 0, 8, 0, 0],
-  /** Tactical focus (DEFAULT, DEFENDING, ATTACKING): back-line offset m, depth and width multipliers. */
-  focusLine: [0, -6, 6],
+  /** Tactical focus (DEFAULT, DEFENDING, ATTACKING): multiplier on the formation depths. The focus block push
+   *  and width multipliers are DAT-04's (data/tactics resolveTactics), shared with every other module. */
   focusDepth: [1, 0.9, 1.08],
-  focusWidth: [1, 0.9, 1.06],
   /** Accepted deviation of TAI-04's team.lineX from this module's own back-line estimate, m. */
   lineXTrust: 15,
   /** Max gap between consecutive outfield depths as a fraction of T_AI.lineSpacingMax. */
@@ -90,15 +102,17 @@ const LOCAL_TUNING = {
   spreadMin: 0.5,
   /** Sub-lines whose members are all at least this wide (|nz|) are flank pairs and keep their spots. */
   flankNz: 0.4,
-  /** Extra striker: lateral offset beside a lone forward (nz units); share of the push out of possession. */
+  /** Extra striker: lateral offset beside a lone forward (nz units, short-handed sides only); share of the move
+   *  to the EXTRA_STRIKER_SHAPES positions (and of the push up) out of possession. */
   extraStrikerNz: 0.22,
   extraStrikerDefend: 0.5,
-  /** Get in the box: min |nz| to count as wide; far-post and penalty-spot targets, m from goal line / centre. */
+  /** Get in the box: min |nz| to count as wide (targets: data/tactics BOX_SPOTS far post and penalty spot). */
   getInBoxMinNz: 0.25,
-  boxFarDepth: 7,
-  boxFarZ: 6,
-  boxNearDepth: 11,
-  boxNearZ: 4,
+  /** Get in the box: min distance of a box player's home from any team-mate's home, m; numeric slack, m; he stays
+   *  this far inside the penalty area's side lines, m. */
+  boxSeparation: 4,
+  boxSeparationSlack: 1e-6,
+  boxSideMargin: 1,
   /** Margins, m: inside the touchlines, inside the goal lines, outside the own goal area, onside. */
   sideMargin: 1.5,
   endMargin: 1,
@@ -235,6 +249,47 @@ function buildFormationTables(): void {
   }
 }
 buildFormationTables();
+
+/** DAT-04 EXTRA_STRIKER_SHAPES per formation, flattened: override count, slot, nx, nz (slot order of the data). */
+const esCount = new Int32Array(NF);
+const esIdx = new Int32Array(NF * N);
+const esNx = new Float64Array(NF * N);
+const esNz = new Float64Array(NF * N);
+/** The extra striker's formIdx per formation: the slot slotLineFor puts in the FWD line under EXTRA_STRIKER while
+ *  the formation has it elsewhere (-1: no such slot in the data). */
+const esStriker = new Int32Array(NF);
+
+function buildExtraStrikerTables(): void {
+  for (let fi = 0; fi < NF; fi++) {
+    const base = fi * N;
+    const list = EXTRA_STRIKER_SHAPES[fi];
+    let n = 0;
+    if (list !== undefined) {
+      for (let j = 0; j < list.length && n < N; j++) {
+        const o = list[j]!;
+        if (!(o.idx >= 1 && o.idx < N) || (o.idx | 0) !== o.idx || fLine[base + o.idx] === LINE_GK) continue;
+        esIdx[base + n] = o.idx;
+        esNx[base + n] = fin(o.nx);
+        esNz[base + n] = fin(o.nz);
+        n++;
+      }
+    }
+    esCount[fi] = n;
+    esStriker[fi] = -1;
+    for (let k = 1; k < N; k++) {
+      if (fLine[base + k] === LINE_GK || slotLine(fi, k) === ShapeLine.FWD) continue;
+      if (slotLineFor(fi, k, TacticFlag.EXTRA_STRIKER) === ShapeLine.FWD) { esStriker[fi] = k; break; }
+    }
+  }
+}
+buildExtraStrikerTables();
+
+/** getInBox targets (team frame; nzSide is multiplied by the ball side): BOX_SPOTS far post and penalty spot. */
+const BOX_FAR = BOX_SPOTS[1]!;
+const BOX_SPOT = BOX_SPOTS[2]!;
+
+/** Focus + quick tactics resolved by data/tactics (module scratch, rewritten on every computeShape). */
+const TP = createTacticParams();
 
 /** Same lookup rule as data/formations getFormation (falls back to the first formation). */
 function formationIndex(id: number): number {
@@ -396,10 +451,27 @@ function respread(fi: number): void {
   }
 }
 
-/** Extra striker: the most central (then most advanced) midfielder joins the forward line. Returns his formIdx. */
-function applyExtraStriker(fi: number, defending: boolean): number {
+/**
+ * Extra striker (see the header, step 2). Full side: DAT-04's EXTRA_STRIKER_SHAPES (every listed slot moves `share`
+ * of the way to its override; the striker is esStriker). Short-handed (or no data shape): esStriker when he still
+ * plays in midfield, else the best midfielder (CAM > CM > CDM > other, then most central, then most advanced, then
+ * the lowest formIdx) moves `share` of the way into a free lane of the forward line. Returns his formIdx (-1 none).
+ */
+function applyExtraStriker(fi: number, defending: boolean, full: boolean): number {
   const base = fi * N;
-  let pick = -1;
+  const share = defending ? T.extraStrikerDefend : 1;
+  const es = esStriker[fi]!;
+  if (full && es >= 0) {
+    for (let j = 0; j < esCount[fi]!; j++) {
+      const f = slotBy[esIdx[base + j]!]!;
+      if (f < 0) continue;
+      enx[f] = enx[f]! + (esNx[base + j]! - enx[f]!) * share;
+      enz[f] = enz[f]! + (esNz[base + j]! - enz[f]!) * share;
+    }
+    return es;
+  }
+  let pick = es >= 0 && occ[es] === 1 && asg[es]! >= 0 && fLine[base + asg[es]!] === LINE_MID ? es : -1;
+  const fixed = pick >= 0;
   let nf = 0;
   let front = -1e9;
   for (let f = 0; f < N; f++) {
@@ -413,10 +485,12 @@ function applyExtraStriker(fi: number, defending: boolean): number {
       fwdZ[j] = enz[f]!;
       continue;
     }
-    if (line !== LINE_MID) continue;
+    if (line !== LINE_MID || fixed) continue;
     if (pick < 0) { pick = f; continue; }
     const cp = fCentral[base + asg[pick]!]!, cf = fCentral[base + a]!;
-    if (cf > cp || (cf === cp && (enx[f]! > enx[pick]! || (enx[f] === enx[pick] && absv(enz[f]!) < absv(enz[pick]!))))) pick = f;
+    if (cf !== cp) { if (cf > cp) pick = f; continue; }
+    const zf = absv(enz[f]!), zp = absv(enz[pick]!);
+    if (zf < zp || (zf === zp && enx[f]! > enx[pick]!)) pick = f;
   }
   if (pick < 0) return -1;
   let tz = 0;
@@ -429,7 +503,6 @@ function applyExtraStriker(fi: number, defending: boolean): number {
       if (d > gap) { gap = d; tz = (fwdZ[j - 1]! + fwdZ[j]!) * 0.5; }
     }
   }
-  const share = defending ? T.extraStrikerDefend : 1;
   enx[pick] = enx[pick]! + (front - enx[pick]!) * share;
   enz[pick] = enz[pick]! + (tz - enz[pick]!) * share;
   return pick;
@@ -491,10 +564,14 @@ function computeShape(s: SimState, team: number, bx: number, bz: number): void {
   const ph = phaseIndex(s, team, bu);
   const defending = ph === TeamPhase.DEFEND || ph === TeamPhase.TRANSITION_DEFEND;
   const fo = t.focus >= 0 && t.focus <= 2 && (t.focus | 0) === t.focus ? t.focus : 0;
-  const extra = t.extraStriker === 1 ? applyExtraStriker(fi, defending) : -1;
+  const extra = t.extraStriker === 1 ? applyExtraStriker(fi, defending, full) : -1;
+  // Focus + quick tactics as every module reads them (data/tactics): block push (team press only out of
+  // possession) and width multiplier.
+  resolveTactics(fo, tacticFlags(t), TP);
+  const fl = fin(defending ? TP.pushDefendNx : TP.pushAttackNx) * HALF_LENGTH;
+  const fw = fin(defending ? TP.widthDefend : TP.widthAttack);
 
   // 3. Vertical: back-line height, then per-slot depth.
-  const fl = T.focusLine[fo]!;
   const nxBack = fNxBack[fi]!;
   let lineU = clamp(nxBack * HALF_LENGTH + T.lineOffset[ph]! + fl + T.lineSlope[ph]! * bu, T.lineMin[ph]! + fl, T.lineMax[ph]! + fl);
   const lineX = fin(t.lineX);
@@ -503,7 +580,7 @@ function computeShape(s: SimState, team: number, bx: number, bz: number): void {
   }
   lineU = clamp(lineU, T.lineFloor, T.lineCeil);
   const depth = T.depthScale[ph]! * T.focusDepth[fo]! * HALF_LENGTH;
-  const width = T.widthScale[ph]! * T.focusWidth[fo]! * HALF_WIDTH;
+  const width = T.widthScale[ph]! * fw * HALF_WIDTH;
   for (let f = 0; f < N; f++) {
     const k = occ[f] === 1 ? asg[f]! : f;
     if (isGk[f] === 1 || k < 0 || fLine[base + k] === LINE_GK) { isGk[f] = 1; continue; }
@@ -556,6 +633,7 @@ function computeShape(s: SimState, team: number, bx: number, bz: number): void {
   }
 
   // 6. Get in the box when crossing: widest non-defender per flank (never the carrier) -> far post / spot.
+  let boxFar = -1, boxNear = -1;
   if (t.getInBox === 1 && side !== 0 && possessingTeam(s) === team && bu >= HALF_LENGTH - CROSS_ZONE_DEPTH && absv(bv) >= CROSS_ZONE_MIN_Z) {
     const owner = s.ball.owner;
     const carrierF = owner >= 0 ? s.players[owner]!.formIdx : -1;
@@ -566,12 +644,13 @@ function computeShape(s: SimState, team: number, bx: number, bz: number): void {
       if (z >= T.getInBoxMinNz && (bestR < 0 || z > enz[bestR]!)) bestR = f;
       if (z <= -T.getInBoxMinNz && (bestL < 0 || z < enz[bestL]!)) bestL = f;
     }
-    const far = side > 0 ? bestL : bestR, near = side > 0 ? bestR : bestL;
-    if (far >= 0) { hu[far] = HALF_LENGTH - T.boxFarDepth; hv[far] = -side * T.boxFarZ; }
-    if (near >= 0) { hu[near] = HALF_LENGTH - T.boxNearDepth; hv[near] = side * T.boxNearZ; }
+    boxFar = side > 0 ? bestL : bestR;
+    boxNear = side > 0 ? bestR : bestL;
+    if (boxFar >= 0) { hu[boxFar] = BOX_FAR.nx * HALF_LENGTH; hv[boxFar] = side * BOX_FAR.nzSide * HALF_WIDTH; }
+    if (boxNear >= 0) { hu[boxNear] = BOX_SPOT.nx * HALF_LENGTH; hv[boxNear] = side * BOX_SPOT.nzSide * HALF_WIDTH; }
   }
 
-  // 7. Clamps (ceilings and floors keep the compactness of step 5), keeper home, mirror to pitch coordinates.
+  // 7. Clamps (ceilings and floors keep the compactness of step 5) and keeper home; final team-frame homes in hu/hv.
   let ceil = HALF_LENGTH - T.endMargin;
   if (s.config.offside === 1) {
     const oppU = dir * secondLastDefenderX(s, otherTeam(team));
@@ -605,9 +684,60 @@ function computeShape(s: SimState, team: number, bx: number, bz: number): void {
       }
       if (u < gaU && absv(v) < gaV) u = gaU;
     }
-    outX[f] = dir * u + 0;
-    outZ[f] = dir * v + 0;
+    hu[f] = u;
+    hv[f] = v;
   }
+
+  // 8. The get-in-box players keep clear of team-mates' homes (the onside clamp can put a box spot onto a
+  //    forward's home): lateral nudge only, so onside, depth and compactness are unchanged.
+  if (boxFar >= 0) separateBoxMover(boxFar, side);
+  if (boxNear >= 0) separateBoxMover(boxNear, side);
+
+  // Mirror to pitch coordinates.
+  for (let f = 0; f < N; f++) {
+    outX[f] = dir * hu[f]! + 0;
+    outZ[f] = dir * hv[f]! + 0;
+  }
+}
+
+/** True if no active outfield home other than m's lies within T.boxSeparation of (u, v) (team frame). */
+function boxSpotClear(m: number, u: number, v: number): boolean {
+  const sep2 = T.boxSeparation * T.boxSeparation;
+  for (let f = 0; f < N; f++) {
+    if (f === m || occ[f] !== 1 || isGk[f] === 1) continue;
+    const du = hu[f]! - u, dv = hv[f]! - v;
+    if (du * du + dv * dv < sep2) return false;
+  }
+  return true;
+}
+
+/**
+ * Move get-in-box player m (final team-frame home in hu/hv) to the nearest lateral position, inside the penalty
+ * area, that keeps T.boxSeparation from every other outfield home: his own spot, or just beside a blocking
+ * team-mate. Ties: the more central spot, then the far side. Unchanged when no such position exists.
+ */
+function separateBoxMover(m: number, side: number): void {
+  const um = hu[m]!, vm = hv[m]!;
+  if (boxSpotClear(m, um, vm)) return;
+  const sep = T.boxSeparation;
+  const vLim = PENALTY_AREA_HALF_WIDTH - T.boxSideMargin;
+  let best = vm, bestD = -1;
+  for (let c = 0; c < N; c++) {
+    if (c === m || occ[c] !== 1 || isGk[c] === 1) continue;
+    const du = hu[c]! - um;
+    if (du >= sep || du <= -sep) continue;
+    const half = Math.sqrt(sep * sep - du * du) + T.boxSeparationSlack;
+    for (let k = 0; k < 2; k++) {
+      const v = k === 0 ? hv[c]! - half : hv[c]! + half;
+      if (v > vLim || v < -vLim || !boxSpotClear(m, um, v)) continue;
+      const d = absv(v - vm);
+      if (bestD < 0 || d < bestD || (d === bestD && (absv(v) < absv(best) || (absv(v) === absv(best) && v * side < 0)))) {
+        best = v;
+        bestD = d;
+      }
+    }
+  }
+  if (bestD >= 0) hv[m] = best;
 }
 
 function nextDelay(tick: number, team: number): number {

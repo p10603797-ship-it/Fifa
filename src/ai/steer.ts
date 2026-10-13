@@ -21,8 +21,11 @@
  *     controlledBiasTicks while he is going for the ball (moving toward the interception point, or on it); the
  *     keeper only when GKP says he is going (act GK_RUSH) or he is controlled.
  *  4. Claims that bypass hysteresis, in order: the keeper in GK_RUSH; the intended receiver of our own pass
- *     (ball.passTarget, ball.lastKickTeam === team — TAI-14 gives him RECEIVE, so nobody else may chase); a controlled
- *     player within controlledNearDist of a playable ball who can intercept within controlledNearTicks.
+ *     (ball.passTarget, ball.lastKickTeam === team — TAI-14 gives him RECEIVE, so nobody else may chase) while the
+ *     pass is intact (ball.lastTouchTeam === team: an opponent's deflection ends it), he is not down (busy <=
+ *     chaserHysteresisTicks) and the claim was not already lost for this pass (another candidate took the chase
+ *     after the kick); a controlled player within controlledNearDist of a playable ball who can intercept within
+ *     controlledNearTicks.
  *  5. Hysteresis: keep the current chaser unless the best is faster by chaserHysteresisTicks AND the current one held
  *     it >= chaserMinTicks (or is incapacitated: busy > chaserHysteresisTicks). A controlled best claims at once
  *     (gain >= 0 after his bias) from an AI chaser. An invalid current chaser (sent off, keeper no longer rushing,
@@ -355,12 +358,28 @@ function rushingKeeper(s: SimState, team: number, first: number, end: number): n
   return p.active === 1 && p.act === ActionKind.GK_RUSH ? k : -1;
 }
 
-/** Intended receiver of our own pass still on its way (TAI-14 gives him RECEIVE), or -1. */
+/**
+ * Intended receiver of our own pass still on its way (TAI-14 gives him RECEIVE), or -1. Needs candidate flags OK[]
+ * of this call. The claim (which bypasses arrival time and hysteresis) holds only while:
+ *  - the pass is intact: our team kicked it AND touched it last (an opponent's deflection ends it, as in TAI-14's
+ *    assistedReceiver; ball.passTarget itself survives recordTouch);
+ *  - the receiver can play it: active and not down (busyTicks <= chaserHysteresisTicks, the same incapacitation
+ *    rule as for any chaser), so a fallen receiver is replaced at once;
+ *  - it was not already lost for this pass: once another candidate took the chase after the kick (receiver down,
+ *    deflection), arrival time + hysteresis decide until the next kick (no flip back when the receiver gets up).
+ *    The current chaser was assigned chaserT + 1 ticks ago (this call has not counted the current tick yet), the
+ *    pass was kicked s.tick - lastKickTick ticks ago, and the AI runs before kicks within a tick.
+ */
 function ownReceiver(s: SimState, team: number, first: number, end: number): number {
   const b = s.ball;
   const r = b.passTarget;
-  if (r < first || r >= end || b.lastKickTeam !== team) return -1;
-  return s.players[r]!.active === 1 ? r : -1;
+  if (r < first || r >= end || (r | 0) !== r || b.lastKickTeam !== team || b.lastTouchTeam !== team) return -1;
+  const p = s.players[r]!;
+  if (p.active !== 1 || busyTicks(p) > T_AI.chaserHysteresisTicks) return -1;
+  const t = s.teams[team]!;
+  const cur = t.chaser;
+  if (cur !== r && cur >= first && cur < end && OK[cur] === 1 && t.chaserT < s.tick - 1 - b.lastKickTick) return -1;
+  return r;
 }
 
 /** True if a controlled player is going for the interception point (moving toward it, or already on it). */

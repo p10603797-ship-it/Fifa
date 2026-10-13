@@ -1,51 +1,42 @@
 /**
- * [DAT-01/DAT-02/DAT-03] Clubs, squads and kits. WAVE 0 PLACEHOLDER: 20 generic clubs with flat attributes so
- * the skeleton and harness can run. DAT-01..03 replace this with committed output of tools/gen-data.ts
- * (invented names, unique codes, crests, kits, styles, ratings 62..88, 18-player squads).
+ * [DAT-01] The 20 clubs (BRIEF §15): invented names, unique 3-letter codes, geometric crests, home / away / keeper
+ * kits, a preferred formation, a style, a rating 62..88 and an 18-player squad each.
+ *
+ * The data is the committed output of tools/gen-data.ts (`npm run gen:data`), in src/data/clubs.generated.ts, so
+ * the teams are identical in every build; never edit it by hand. This module only re-exports it, so the game
+ * bundle carries the data but none of the generators, word lists or denylists.
+ *
+ * Squad layout (contracts/data.ts Club.squad): 0..10 starters in formation slot order (0 = keeper), 11 the reserve
+ * keeper, 12..17 outfield cover. The data is shared by reference with every match: treat it as read-only.
  */
-import { FormationId, Foot, KitPattern, Role, TeamStyle } from '../contracts/enums';
-import type { Club, Kit, PlayerData } from '../contracts/data';
-import { getFormation } from './formations';
+import type { Club } from '../contracts/data';
+import { CLUBS_DATA } from './clubs.generated';
 
-const PALETTE = [0xd7263d, 0x1b998b, 0xf46036, 0x2e294e, 0xc5d86d, 0x3a86ff, 0xffbe0b, 0x8338ec, 0xff006e, 0x06d6a0];
+/** Every club; index = Club.id. */
+export const CLUBS: readonly Club[] = CLUBS_DATA;
 
-function kit(shirt: number, shirt2: number, shorts: number): Kit {
-  return { shirt, shirt2, pattern: KitPattern.PLAIN, shorts, socks: shirt, number: 0xffffff };
-}
+/** Number of clubs. */
+export const CLUB_COUNT = CLUBS.length;
 
-function player(i: number, role: Role, rating: number): PlayerData {
-  const gk = role === Role.GK;
-  const o = gk ? 30 : rating;
-  const g = gk ? rating : 15;
-  return {
-    name: `Player ${i + 1}`, short: `P${i + 1}`, shirt: i + 1, pos: role, height: gk ? 190 : 180, foot: Foot.RIGHT,
-    weakFoot: 3, skillMoves: gk ? 1 : 3, overall: rating,
-    acceleration: o, sprintSpeed: o, agility: o, ballControl: o, dribbling: o, shortPassing: o, longPassing: o, crossing: o,
-    vision: o, finishing: o, shotPower: o, longShots: o, curve: o, heading: o, standingTackle: o, slidingTackle: o,
-    interceptions: o, strength: o, stamina: o, composure: o,
-    gkDiving: g, gkHandling: g, gkReflexes: g, gkPositioning: g, gkKicking: g,
-  };
-}
-
-function club(id: number): Club {
-  const rating = 62 + Math.round((26 * id) / 19);
-  const formation = (id % 6) as FormationId;
-  const slots = getFormation(formation).slots;
-  const squad: PlayerData[] = [];
-  for (let i = 0; i < 11; i++) squad.push(player(i, slots[i]!.role, rating));
-  const benchRoles = [Role.GK, Role.CB, Role.LB, Role.CM, Role.CM, Role.RW, Role.ST];
-  for (let i = 0; i < 7; i++) squad.push(player(11 + i, benchRoles[i]!, rating - 4));
-  const c1 = PALETTE[id % PALETTE.length]!;
-  const c2 = PALETTE[(id + 3) % PALETTE.length]!;
-  return {
-    id, name: `Club ${id + 1}`, code: `C${String(id + 1).padStart(2, '0')}`, city: 'City', rating, style: (id % 5) as TeamStyle,
-    formation, home: kit(c1, c2, 0xffffff), away: kit(0xf2f2f2, c1, c1), keeper: kit(0x222222, 0x444444, 0x222222),
-    keeper2: kit(0xeeee22, 0x222222, 0x222222), crest: { shape: id % 6, primary: c1, secondary: c2, emblem: id % 10, layout: id % 4 }, squad,
-  };
-}
-
-export const CLUBS: readonly Club[] = Array.from({ length: 20 }, (_, i) => club(i));
-
+/** The club with this id; an unknown id (out of range, fractional, NaN) gives club 0. */
 export function getClub(id: number): Club {
   return CLUBS[id] ?? CLUBS[0]!;
 }
+
+/** The club with this 3-letter code (case-insensitive), or undefined. */
+export function findClubByCode(code: string): Club | undefined {
+  const c = code.toUpperCase();
+  for (let i = 0; i < CLUBS.length; i++) if (CLUBS[i]!.code === c) return CLUBS[i];
+  return undefined;
+}
+
+/** Crest.shape ids 0..5 (contracts/data.ts). Labels for renderers and menus. */
+export const CREST_SHAPES = ['shield', 'circle', 'diamond', 'hexagon', 'square', 'chevron'] as const;
+
+/** Crest.emblem ids 0..9: simple geometric marks drawn in the secondary colour. The generator gives a club the
+ *  emblem its name suggests when one does (src/data/names.ts EMBLEM_HINTS: "Comet" -> star, "Brook" -> wave). */
+export const CREST_EMBLEMS = ['star', 'bolt', 'wave', 'ring', 'triangle', 'arrow', 'bars', 'sun', 'dots', 'gem'] as const;
+
+/** Crest.layout ids 0..3: how the primary and secondary colours split the field behind the emblem
+ *  (plain primary field, vertical halves, horizontal band, diagonal sash). */
+export const CREST_LAYOUTS = ['plain', 'halves', 'band', 'sash'] as const;

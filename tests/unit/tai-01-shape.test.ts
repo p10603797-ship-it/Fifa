@@ -12,7 +12,11 @@ import {
 import { FormationId, MatchPhase, RestartKind, Role, TacticalFocus, TeamPhase } from '../../src/contracts/enums';
 import type { SimState } from '../../src/contracts/state';
 import { T_AI } from '../../src/contracts/tuning';
-import { FORMATIONS } from '../../src/data/formations';
+import { FORMATIONS, ShapeLine, slotLine } from '../../src/data/formations';
+import {
+  BOX_SPOTS, createTacticParams, EXTRA_STRIKER_SHAPES, extraStrikerOverride, FOCUS_MODIFIERS, QUICK_TACTICS, resolveTactics,
+  slotLineFor, slotRole, TacticFlag,
+} from '../../src/data/tactics';
 import { homePosition, homePositionAt, invalidateShape, updateShape } from '../../src/ai/shape';
 import { NULL_SINK } from '../../src/sim/core/events';
 import { hashState } from '../../src/sim/core/hash';
@@ -368,8 +372,9 @@ describe('TAI-01 team phase and tactical focus', () => {
     expect(homes(s, 0, 7, 3)).toEqual(ref);
   });
 
-  it.each(FORMS)('formation %i: DEFENDING focus is deeper and narrower, ATTACKING higher and wider', (form) => {
+  it.each(FORMS)('formation %i: DEFENDING focus is deeper and narrower, ATTACKING higher (and wider in possession)', (form) => {
     for (const phase of PHASES) {
+      const inPossession = phase !== TeamPhase.DEFEND && phase !== TeamPhase.TRANSITION_DEFEND;
       for (const [bu, bv] of BALLS) {
         const s = scen({ form, phase });
         const of = outfield(s, 0);
@@ -379,10 +384,59 @@ describe('TAI-01 team phase and tactical focus', () => {
         expect(meanU(atk, of)).toBeGreaterThan(meanU(def, of) + 2);
         if (bv === 0) {
           expect(width(dfn, of)).toBeLessThan(width(def, of));
-          expect(width(atk, of)).toBeGreaterThan(width(def, of));
+          // DAT-04 FOCUS_MODIFIERS: ATTACKING widens in possession only (widthDefend = 1).
+          if (inPossession) expect(width(atk, of)).toBeGreaterThan(width(def, of));
+          else expect(width(atk, of)).toBeGreaterThanOrEqual(width(def, of) - EPS);
         }
       }
     }
+  });
+
+  it.each(FORMS)('formation %i: focus block push and widths are data/tactics FOCUS_MODIFIERS (one number for every module)', (form) => {
+    const tp = createTacticParams();
+    for (const phase of PHASES) {
+      const inPossession = phase !== TeamPhase.DEFEND && phase !== TeamPhase.TRANSITION_DEFEND;
+      const s = scen({ form, phase });
+      const of = outfield(s, 0);
+      const back = (h: H[]): number => Math.min(...of.map((f) => h[f]!.u));
+      s.teams[0]!.focus = TacticalFocus.DEFAULT;
+      const ref = homes(s, 0, 0, 0);
+      for (const focus of [TacticalFocus.DEFENDING, TacticalFocus.ATTACKING]) {
+        s.teams[0]!.focus = focus;
+        const h = homes(s, 0, 0, 0);
+        resolveTactics(focus, 0, tp);
+        const push = (inPossession ? tp.pushAttackNx : tp.pushDefendNx) * HALF_LENGTH;
+        const w = inPossession ? tp.widthAttack : tp.widthDefend;
+        expect(push).toBeCloseTo(FOCUS_MODIFIERS[focus]!.pushNx * HALF_LENGTH, 12);
+        expect(back(h) - back(ref), `${phase}/${focus}`).toBeCloseTo(push, 9);
+        expect(width(h, of) / width(ref, of), `${phase}/${focus}`).toBeCloseTo(w, 9);
+      }
+    }
+  });
+
+  it.each(FORMS)('formation %i: team press pushes the block up out of possession by QUICK_TACTICS.teamPress.pushNx only', (form) => {
+    for (const phase of [...PHASES, TeamPhase.SET_PIECE]) {
+      for (const [bu, bv] of BALLS) {
+        const s = scen({ form, phase, matchPhase: phase === TeamPhase.SET_PIECE ? MatchPhase.FREE_KICK : MatchPhase.IN_PLAY });
+        s.match.restart.team = 1; // SET_PIECE: the other team restarts, we defend
+        const of = outfield(s, 0);
+        const back = (h: H[]): number => Math.min(...of.map((f) => h[f]!.u));
+        const off = homes(s, 0, bu, bv);
+        s.teams[0]!.teamPress = 1;
+        const on = homes(s, 0, bu, bv);
+        const defending = phase === TeamPhase.DEFEND || phase === TeamPhase.TRANSITION_DEFEND || phase === TeamPhase.SET_PIECE;
+        if (!defending) { expect(on).toEqual(off); continue; }
+        expect(back(on) - back(off), `${phase}/(${bu},${bv})`).toBeCloseTo(QUICK_TACTICS.teamPress.pushNx * HALF_LENGTH, 9);
+        expect(meanU(on, of)).toBeGreaterThan(meanU(off, of) + 2);
+      }
+    }
+    // Defending open play with TAI-04's line set: the back line stays on lineX (TAI-04 adds teamPress.lineNx itself).
+    const s = scen({ form, phase: TeamPhase.DEFEND });
+    s.teams[0]!.lineX = -20;
+    const of = outfield(s, 0);
+    s.teams[0]!.teamPress = 1;
+    const h = homes(s, 0, 0, 0);
+    expect(Math.min(...of.map((f) => h[f]!.u))).toBeCloseTo(-20, 9);
   });
 });
 
@@ -479,7 +533,23 @@ describe('TAI-01 compact lines', () => {
 // ================================================================================================ quick tactics
 
 describe('TAI-01 quick tactics', () => {
+  /** formIdx DAT-04 / TAI-14 report as the extra striker: FWD line under EXTRA_STRIKER, another line without. */
+  function dataStriker(form: FormationId): number {
+    const r: number[] = [];
+    for (let f = 1; f < 11; f++) {
+      if (slotLine(form, f) !== ShapeLine.FWD && slotLineFor(form, f, TacticFlag.EXTRA_STRIKER) === ShapeLine.FWD) r.push(f);
+    }
+    expect(r).toHaveLength(1);
+    return r[0]!;
+  }
+  const MID_FAMILY = [ShapeLine.DM, ShapeLine.MID, ShapeLine.AM];
+
+  it('the DAT-04 extra striker of every formation (data check the shape relies on)', () => {
+    expect(FORMS.map(dataStriker)).toEqual([6, 5, 8, 5, 7, 8]);
+  });
+
   it.each(FORMS)('formation %i: extraStriker pushes exactly one midfielder into the forward line', (form) => {
+    const es = dataStriker(form);
     for (const phase of [TeamPhase.BUILD_UP, TeamPhase.ATTACK, TeamPhase.TRANSITION_ATTACK]) {
       for (const [bu, bv] of [[0, 0], [15, 10], [-20, -10]] as [number, number][]) {
         const s = scen({ form, phase });
@@ -491,23 +561,120 @@ describe('TAI-01 quick tactics', () => {
         const joined = (h: H[], frontU: number): number[] =>
           idxWithRoles(form, MIDFIELD_ROLES).filter((f) => Math.abs(h[f]!.u - frontU) <= 1.5);
         expect(joined(before, Math.max(...fwd.map((f) => before[f]!.u)))).toHaveLength(0);
-        const j = joined(after, front);
-        expect(j).toHaveLength(1);
+        // Exactly one, and it is the formIdx every other module (slotRole / slotLineFor) treats as the striker.
+        expect(joined(after, front), `${phase}/(${bu},${bv})`).toEqual([es]);
         // He takes a free lane in the front line: at least 4 m from every forward.
-        for (const f of fwd) expect(Math.hypot(after[f]!.u - after[j[0]!]!.u, after[f]!.v - after[j[0]!]!.v)).toBeGreaterThan(4);
+        for (const f of fwd) expect(Math.hypot(after[f]!.u - after[es]!.u, after[f]!.v - after[es]!.v)).toBeGreaterThan(4);
       }
     }
   });
 
-  it.each(FORMS)('formation %i: out of possession the extra striker stays half way up', (form) => {
-    const s = scen({ form, phase: TeamPhase.DEFEND });
-    const before = homes(s, 0, 0, 0);
+  it.each(FORMS)('formation %i: with extraStriker the home lines agree with slotLineFor (TAI-04/05/06 view)', (form) => {
+    for (const phase of [...PHASES, TeamPhase.SET_PIECE]) {
+      for (const [bu, bv] of [[0, 0], [12, -15], [-25, 20]] as [number, number][]) {
+        const s = scen({ form, phase });
+        s.teams[0]!.extraStriker = 1;
+        const h = homes(s, 0, bu, bv);
+        const line = (f: number): ShapeLine => slotLineFor(form, f, TacticFlag.EXTRA_STRIKER);
+        const of = outfield(s, 0);
+        const fwdU = of.filter((f) => line(f) === ShapeLine.FWD).map((f) => h[f]!.u);
+        const midU = of.filter((f) => MID_FAMILY.includes(line(f))).map((f) => h[f]!.u);
+        const defU = of.filter((f) => line(f) === ShapeLine.DEF).map((f) => h[f]!.u);
+        const tag = `${phase}/(${bu},${bv})`;
+        expect(Math.min(...fwdU), tag).toBeGreaterThan(Math.max(...midU));
+        expect(mean(midU), tag).toBeGreaterThan(mean(defU));
+        // Every FWD-line player stands closer to the forward line than to the midfield line, and vice versa.
+        const fwdMean = mean(fwdU), midMean = mean(midU);
+        for (const u of fwdU) expect(Math.abs(u - fwdMean), tag).toBeLessThan(Math.abs(u - midMean));
+        for (const u of midU) expect(Math.abs(u - midMean), tag).toBeLessThan(Math.abs(u - fwdMean));
+      }
+    }
+  });
+
+  it.each(FORMS)('formation %i: with a full side every EXTRA_STRIKER_SHAPES slot takes its DAT-04 position', (form) => {
+    const s = scen({ form, phase: TeamPhase.BUILD_UP });
+    const ref = homes(s, 0, 0, 0);
     s.teams[0]!.extraStriker = 1;
-    const after = homes(s, 0, 0, 0);
-    const moved = idxWithRoles(form, MIDFIELD_ROLES).filter((f) => after[f]!.u > before[f]!.u + 1);
-    expect(moved).toHaveLength(1);
-    const front = Math.max(...idxWithRoles(form, FWD_ROLES).map((f) => after[f]!.u));
-    expect(after[moved[0]!]!.u).toBeLessThan(front - 1);
+    const h = homes(s, 0, 0, 0);
+    const list = EXTRA_STRIKER_SHAPES[form]!;
+    const listed = new Set(list.map((o) => o.idx));
+    // Unlisted slots keep their place laterally; listed ones keep the data's left/right order and centre line.
+    for (let f = 1; f < 11; f++) if (!listed.has(f)) expect(h[f]!.v).toBeCloseTo(ref[f]!.v, 9);
+    const base = FORMATIONS[form]!.slots;
+    const scale = (ref[1]!.v - ref[4]!.v) / ((base[1]!.nz - base[4]!.nz) * HALF_WIDTH); // m per data metre (BUILD_UP width)
+    for (const o of list) {
+      expect(h[o.idx]!.v, `slot ${o.idx}`).toBeCloseTo(o.nz * HALF_WIDTH * scale, 6);
+      expect(extraStrikerOverride(form, o.idx)).toBe(o);
+      expect(slotRole(form, o.idx, TacticFlag.EXTRA_STRIKER)).toBe(o.role);
+    }
+  });
+
+  it('extraStriker: 5-3-2 pushes formIdx 7 (the central CM, DAT-04 striker), not the right CM; midfield keeps both sides', () => {
+    // Regression for the checker's case: ATTACK, ball on the centre spot, homePositionAt + slotLineFor.
+    const s = scen({ form: FormationId.F532, phase: TeamPhase.ATTACK });
+    s.teams[0]!.extraStriker = 1;
+    const o = { x: 0, z: 0 };
+    const h: { x: number; z: number }[] = [];
+    for (let f = 0; f < 11; f++) { homePositionAt(s, 0, f, 0, 0, o); h.push({ x: o.x, z: o.z }); }
+    const top = Math.max(h[9]!.x, h[10]!.x);
+    expect(slotLineFor(FormationId.F532, 7, TacticFlag.EXTRA_STRIKER)).toBe(ShapeLine.FWD);
+    expect(slotLineFor(FormationId.F532, 6, TacticFlag.EXTRA_STRIKER)).toBe(ShapeLine.MID);
+    expect(Math.abs(h[7]!.x - top)).toBeLessThanOrEqual(1.5); // formIdx 7 is up front ...
+    expect(Math.abs(h[7]!.z)).toBeLessThan(1); // ... centrally, between the two strikers
+    expect(h[9]!.z).toBeGreaterThan(4);
+    expect(h[10]!.z).toBeLessThan(-4);
+    expect(h[6]!.x).toBeLessThan(top - 8); // formIdx 6 stays a midfielder ...
+    expect(h[8]!.x).toBeLessThan(top - 8);
+    expect(h[6]!.z).toBeGreaterThan(3); // ... and the right of midfield is not left empty
+    expect(h[8]!.z).toBeLessThan(-3);
+  });
+
+  it.each(FORMS)('formation %i: out of possession the extra striker stays half way up', (form) => {
+    const es = dataStriker(form);
+    for (const phase of [TeamPhase.DEFEND, TeamPhase.TRANSITION_DEFEND]) {
+      const s = scen({ form, phase });
+      const before = homes(s, 0, 0, 0);
+      s.teams[0]!.extraStriker = 1;
+      const after = homes(s, 0, 0, 0);
+      const gain = (f: number): number => after[f]!.u - before[f]!.u;
+      expect(gain(es)).toBeGreaterThan(2);
+      for (const f of idxWithRoles(form, MIDFIELD_ROLES)) if (f !== es) expect(gain(f)).toBeLessThan(gain(es) / 2);
+      const front = Math.max(...idxWithRoles(form, FWD_ROLES).map((f) => after[f]!.u));
+      expect(after[es]!.u).toBeLessThan(front - 1);
+    }
+  });
+
+  it('extraStriker playing short: the DAT-04 striker goes up while he still plays in midfield', () => {
+    // 5-3-2 without a striker: still 5-3-1 (no rebalancing); formIdx 7 joins the lone striker.
+    const s = scen({ form: FormationId.F532, phase: TeamPhase.ATTACK });
+    sendOff(s, 10);
+    s.teams[0]!.extraStriker = 1;
+    const h = homes(s, 0, 0, 0);
+    expect(Math.abs(h[7]!.u - h[9]!.u)).toBeLessThanOrEqual(1.5);
+    expect(Math.hypot(h[7]!.u - h[9]!.u, h[7]!.v - h[9]!.v)).toBeGreaterThan(4);
+    expect(h[6]!.u).toBeLessThan(h[9]!.u - 8);
+    expect(h[8]!.u).toBeLessThan(h[9]!.u - 8);
+  });
+
+  it('extraStriker playing short: without the DAT-04 striker in midfield the most central midfielder goes up', () => {
+    // 5-3-2 minus the centre-back: formIdx 7 drops into the back five, striker 9 drops into the centre of
+    // midfield. The tactic then pushes the most central midfielder (formIdx 9, a ST for slotRole) back up, not the
+    // more advanced right CM (formIdx 6, which would empty the right of midfield).
+    const s = scen({ form: FormationId.F532, phase: TeamPhase.ATTACK });
+    sendOff(s, 3);
+    const ref = homes(s, 0, 0, 0);
+    const back = Math.min(...outfield(s, 0).map((f) => ref[f]!.u));
+    expect(ref[7]!.u).toBeLessThanOrEqual(back + 3); // 7 plays in the back line
+    expect(ref[9]!.u).toBeLessThan(ref[10]!.u - 8); // 9 plays in midfield
+    expect(Math.abs(ref[9]!.v)).toBeLessThan(1);
+    s.teams[0]!.extraStriker = 1;
+    const h = homes(s, 0, 0, 0);
+    const top = h[10]!.u;
+    expect(Math.abs(h[9]!.u - top)).toBeLessThanOrEqual(1.5);
+    expect(h[6]!.u).toBeLessThan(top - 8);
+    expect(h[6]!.v).toBeGreaterThan(3);
+    expect(h[8]!.v).toBeLessThan(-3);
+    expect(h[7]!.u).toBe(ref[7]!.u); // the back line is not touched
   });
 
   /** Team 0 has the ball with `carrierIdx` at team-frame (bu, bv). */
@@ -556,6 +723,63 @@ describe('TAI-01 quick tactics', () => {
     expect(on[rm]).toEqual(off[rm]);
     const lm = idxWithRoles(FormationId.F442, [Role.LM])[0]!;
     expect(inBox(on[lm]!)).toBe(true);
+  });
+
+  it('getInBox targets are data/tactics BOX_SPOTS (far post, penalty spot), the spots TAI-03 box runners fill', () => {
+    // BOX_SPOTS order: near post, far post, penalty spot, ... (nzSide is multiplied by the ball side).
+    expect(BOX_SPOTS[1]!.nzSide).toBeLessThan(0);
+    expect(BOX_SPOTS[2]!.nzSide).toBe(0);
+    for (const side of [1, -1]) {
+      // 4-4-2, right-back (or left-back) crossing, offside off: nothing clamps the spots.
+      const carrierIdx = side > 0 ? 1 : 4;
+      const s = scen({ form: FormationId.F442, phase: TeamPhase.ATTACK });
+      s.teams[0]!.getInBox = 1;
+      s.ball.owner = carrierIdx;
+      s.players[carrierIdx]!.x = 44; s.players[carrierIdx]!.z = side * 28;
+      const h = homes(s, 0, 44, side * 28);
+      const far = idxWithRoles(FormationId.F442, [side > 0 ? Role.LM : Role.RM])[0]!;
+      const near = idxWithRoles(FormationId.F442, [side > 0 ? Role.RM : Role.LM])[0]!;
+      expect(h[far]!.u).toBeCloseTo(BOX_SPOTS[1]!.nx * HALF_LENGTH, 9);
+      expect(h[far]!.v).toBeCloseTo(side * BOX_SPOTS[1]!.nzSide * HALF_WIDTH, 9);
+      expect(h[near]!.u).toBeCloseTo(BOX_SPOTS[2]!.nx * HALF_LENGTH, 9);
+      expect(Math.abs(h[near]!.v - side * BOX_SPOTS[2]!.nzSide * HALF_WIDTH)).toBeLessThan(T_AI.lineSpacingMax);
+    }
+  });
+
+  it.each(FORMS)('formation %i: getInBox never stacks a box player on a team-mate\'s home (onside clamp included)', (form) => {
+    let checked = 0;
+    for (const offside of [0, 1]) {
+      for (const extra of [0, 1]) {
+        for (const side of [1, -1]) {
+          for (const bu of [36, 42, 48]) {
+            for (const bz of [22, 28, 33]) {
+              const carrierIdx = side > 0 ? 1 : idxWithRoles(form, DEF_ROLES).slice(-1)[0]!;
+              const s = scen({ form, phase: TeamPhase.ATTACK, offside });
+              s.teams[0]!.getInBox = 1;
+              s.teams[0]!.extraStriker = extra;
+              s.ball.owner = carrierIdx;
+              s.players[carrierIdx]!.x = bu; s.players[carrierIdx]!.z = side * bz;
+              const off = homes(s, 0, bu, side * bz);
+              const h = homes(s, 0, bu, side * bz);
+              s.teams[0]!.getInBox = 0;
+              const ref = homes(s, 0, bu, side * bz);
+              const of = outfield(s, 0);
+              const tag = `${offside}/${extra}/${side}/(${bu},${bz})`;
+              expect(off).toEqual(h);
+              expect(minPairDist(h, of), tag).toBeGreaterThanOrEqual(4 - 1e-9);
+              // Only the box players move, sideways at most within the box, and the line depths stay onside.
+              for (const f of of) {
+                if (h[f]!.u === ref[f]!.u && h[f]!.v === ref[f]!.v) continue;
+                expect(inBox(h[f]!), `${tag} f${f}`).toBe(true);
+                expect(Math.abs(h[f]!.v)).toBeLessThanOrEqual(PENALTY_AREA_HALF_WIDTH - 1 + EPS);
+              }
+              checked++;
+            }
+          }
+        }
+      }
+    }
+    expect(checked).toBe(72);
   });
 });
 

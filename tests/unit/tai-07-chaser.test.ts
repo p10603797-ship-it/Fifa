@@ -79,6 +79,14 @@ function expectOneChaser(s: SimState, team: number): void {
   else expect(jobs).toEqual([]);
 }
 
+/** Ball fields as applyKick leaves them for a pass by `by` (team `team`) to `target`, kicked on tick `tick`. */
+function passBy(by: number, team: number, target: number, tick: number): Partial<SimState['ball']> {
+  return {
+    passTarget: target, lastKickBy: by, lastKickTeam: team, lastKickTick: tick,
+    lastTouch: by, lastTouchTeam: team, lastTouchTick: tick,
+  };
+}
+
 const est = createInterceptEstimate();
 function ballT(s: SimState, slot: number): number { return estimateIntercept(s, slot, est); }
 
@@ -310,9 +318,8 @@ describe('TAI-07 assignChaser: controlled players, keepers, receivers', () => {
   });
 
   it('the intended receiver of our own pass is the chaser (a closer teammate does not cut in)', () => {
-    const s = looseState({
-      ball: { x: -10, z: 0, vx: 14, vz: 0, passTarget: 9, lastKickTeam: 0, lastKickBy: 5, lastTouch: 5 },
-    });
+    // As applyKick leaves it: kicked and last touched by 5 (team 0) on the previous tick.
+    const s = looseState({ ball: { x: -10, z: 0, vx: 14, vz: 0, ...passBy(5, 0, 9, 0) } });
     place(s, 5, -11, 0);
     place(s, 9, 15, 0); // receiver at the end of the pass
     place(s, 6, -2, 0.4); // teammate right on the ball's path
@@ -322,13 +329,45 @@ describe('TAI-07 assignChaser: controlled players, keepers, receivers', () => {
     expect(s.teams[0]!.chaser).toBe(9);
     expectOneChaser(s, 0);
     expectOneChaser(s, 1);
-    // An opponent's pass target does not bind team 0.
-    s.ball.lastKickTeam = 1;
-    s.ball.passTarget = 16;
+    for (let k = 0; k < 40; k++) { aiTick(s); expect(s.teams[0]!.chaser).toBe(9); }
+    // An opponent's pass target does not bind team 0 (a new kick by team 1 on this tick).
+    Object.assign(s.ball, passBy(16, 1, 16, s.tick));
     s.teams[0]!.chaser = -1;
     aiTick(s);
     expect(s.teams[0]!.chaser).toBe(6);
     expect(s.teams[1]!.chaser).toBe(16);
+  });
+
+  it('a receiver claim survives a brief lock (busy <= chaserHysteresisTicks) and a touch by a teammate', () => {
+    const s = looseState({ ball: { x: -10, z: 0, vx: 14, vz: 0, ...passBy(5, 0, 9, 0) } });
+    place(s, 5, -11, 0);
+    place(s, 9, 15, 0);
+    place(s, 6, -2, 0.4);
+    // Just finishing a kick: T_AI.chaserHysteresisTicks ticks left.
+    Object.assign(s.players[9]!, {
+      act: ActionKind.KICK, actT: 30 - T_AI.chaserHysteresisTicks, actDur: 30, moveMode: MoveMode.LOCKED,
+    });
+    expect(busyTicks(s.players[9]!)).toBe(T_AI.chaserHysteresisTicks);
+    aiTick(s);
+    expect(s.teams[0]!.chaser).toBe(9);
+    // A teammate's touch does not end the pass (TAI-14 keeps assisting the receiver too).
+    Object.assign(s.ball, { lastTouch: 6, lastTouchTeam: 0, lastTouchTick: s.tick });
+    for (let k = 0; k < 20; k++) { aiTick(s); expect(s.teams[0]!.chaser).toBe(9); }
+  });
+
+  it('a first-time pass from a loose ball hands the chase from the passer to the receiver at once', () => {
+    const s = looseState({ ball: { x: 0, z: 0, vx: 0 } });
+    place(s, 5, 1.5, 0);
+    place(s, 9, 25, 0);
+    aiTick(s);
+    expect(s.teams[0]!.chaser).toBe(5);
+    for (let k = 0; k < 3; k++) aiTick(s); // chaserT < chaserMinTicks: only a claim can move it now
+    // 5 plays it first time to 9 on this tick (after the AI ran).
+    Object.assign(s.ball, { vx: 16, ...passBy(5, 0, 9, s.tick) });
+    Object.assign(s.players[5]!, { act: ActionKind.KICK, actT: 6, actDur: 20, moveMode: MoveMode.LOCKED });
+    aiTick(s);
+    expect(s.teams[0]!.chaser).toBe(9);
+    expectOneChaser(s, 0);
   });
 
   it('a side reduced to its keeper still has exactly one chaser (never nobody)', () => {

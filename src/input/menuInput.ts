@@ -1,54 +1,107 @@
 /**
- * [PAD-08] Menu input: pads + keyboard -> MenuAction for the FocusNavigator, with an initial delay and key repeat
- * for directions (section 10 "Menus: Confirm; back; move; switch tab": Cross / A, Circle / B, D-pad or left stick,
- * L1 and R1 / LB and RB; Options / Menu pauses).
+ * [PAD-08] Menu input: pads + keyboard -> MenuAction for the FocusNavigator, with an initial delay and repeat for
+ * held directions (section 10 "Menus: Confirm; back; move; switch tab": Cross / A, Circle / B, D-pad or left stick,
+ * L1 and R1 / LB and RB; "Any: Pause: Options / Menu").
  *
  *   Pad (standard mapping)       Keyboard                      MenuAction
- *   D-pad / left stick           Arrows / WASD                 UP DOWN LEFT RIGHT (repeat)
- *   0 Cross / A                  Enter / Space                 CONFIRM
- *   1 Circle / B                 Escape / Backspace            BACK
+ *   D-pad / left stick           Arrows / WASD                 UP DOWN LEFT RIGHT (repeat while held)
+ *   0 Cross / A                  Enter / Space / J             CONFIRM
+ *   1 Circle / B                 Escape / Backspace / K        BACK
  *   4 L1 / LB                    Q / PageUp                    TAB_PREV
  *   5 R1 / RB                    E / PageDown                  TAB_NEXT
  *   9 Options / Menu             P                             START -> opts.onPause()
  *
  * poll(nowMs) runs once per animation frame from the app loop (it also polls the shared pad manager, which is how
- * pads become known to the DeviceRegistry while in menus). Keyboard events are latched between polls; typing in a
- * text field is ignored except Escape. Home and Share are never read.
+ * pads become known to the DeviceRegistry while in menus). Every connected pad that has been pressed once counts
+ * (several pads at once are merged); a non-standard pad with a saved remap (settings.controls.pad.remaps, PAD-07) is
+ * read through it (PASS = Confirm, SHOOT = Back, MOD_L / MOD_R = tabs, PAUSE = Options, DPAD_* = directions).
+ * Home and Share are never read.
  *
- * WAVE 0 BASELINE (FND-05). PAD-08 owns and refines it.
+ * Timing: a direction fires on its press, again after MENU_REPEAT_DELAY_MS while held, then every
+ * MENU_REPEAT_INTERVAL_MS (the same count at 60 and 120 Hz; the schedule never drifts with the frame rate). The left
+ * stick counts as a direction past MENU_STICK_THRESHOLD on its dominant axis and lets go below MENU_STICK_RELEASE
+ * (hysteresis: a stick resting near the threshold cannot chatter; a diagonal never fires two directions).
+ *
+ * Keyboard presses are queued in press order between polls, so every physical press is one action even when several
+ * land inside one frame (Enter then ArrowDown in one frame: CONFIRM, then DOWN). Typing in a text field is ignored
+ * except Escape; key auto-repeat is ignored (the repeat machine owns held keys); keys with Ctrl / Alt / Cmd (browser
+ * shortcuts) are ignored. Mapped keys are preventDefault-ed (no page scroll, no native slider step on top of the
+ * navigator's adjust). Blur, a hidden page and the release of Cmd forget every held key (no runaway repeat).
  */
 
 import { MenuAction, type FocusNavigator } from '../contracts/app';
-import { dirKeyBit, dirsFromKeyMask, isEditableTarget } from './keyboard';
-import { getPadManager, PadButton, type PadManager } from './pad/manager';
+import type { Settings } from '../contracts/settings';
+import { dirKeyBit, dirsFromKeyMask, isEditableTarget, isMetaCode } from './keyboard';
+import { getPadManager, PAD_BUTTON_COUNT, PadButton, type PadManager, type PadSlot } from './pad/manager';
+import { PAD_ACTION_COUNT, PadAction, resolvePadRemap } from './pad/mapper';
+
+const LOCAL_TUNING = {
+  /** First repeat of a held direction after this delay, ms. */
+  repeatDelayMs: 300,
+  /** Then one repeat every interval, ms. */
+  repeatIntervalMs: 120,
+  /** A repeat due within this much of the frame time fires on that frame (rAF stamps jitter), ms. */
+  repeatSlackMs: 0.5,
+  /** Left-stick deflection (dominant axis, 0..1 after the radial dead zone) that counts as a direction. */
+  stickEngage: 0.5,
+  /** A stick direction is held until its component falls below this (0..1, hysteresis). */
+  stickRelease: 0.35,
+  /** Keyboard presses queued between two polls (more within one frame are dropped). */
+  keyQueueMax: 16,
+} as const; // TUNING-CR (menu feel, not gameplay): T_MENU = { repeatDelayMs, repeatIntervalMs, ... }
+
+/** The LOCAL_TUNING block (read-only; tests and the lead's TUNING-CR review). */
+export const MENU_TUNING = LOCAL_TUNING;
 
 /** Directional repeat: first repeat after this delay, then every interval (ms). */
-export const MENU_REPEAT_DELAY_MS = 380;
-export const MENU_REPEAT_INTERVAL_MS = 110;
-/** Left-stick deflection that counts as a direction in menus. */
-export const MENU_STICK_THRESHOLD = 0.5;
+export const MENU_REPEAT_DELAY_MS = LOCAL_TUNING.repeatDelayMs;
+export const MENU_REPEAT_INTERVAL_MS = LOCAL_TUNING.repeatIntervalMs;
+/** Left-stick deflection that counts as a direction in menus (and the level it lets go at). */
+export const MENU_STICK_THRESHOLD = LOCAL_TUNING.stickEngage;
+export const MENU_STICK_RELEASE = LOCAL_TUNING.stickRelease;
 
-const KEY_ACTIONS: Readonly<Record<string, MenuAction>> = {
+/** KeyboardEvent.code -> MenuAction. */
+export const MENU_KEY_ACTIONS: Readonly<Record<string, MenuAction>> = {
   ArrowUp: MenuAction.UP, KeyW: MenuAction.UP,
   ArrowDown: MenuAction.DOWN, KeyS: MenuAction.DOWN,
   ArrowLeft: MenuAction.LEFT, KeyA: MenuAction.LEFT,
   ArrowRight: MenuAction.RIGHT, KeyD: MenuAction.RIGHT,
-  Enter: MenuAction.CONFIRM, NumpadEnter: MenuAction.CONFIRM, Space: MenuAction.CONFIRM,
-  Escape: MenuAction.BACK, Backspace: MenuAction.BACK,
+  Enter: MenuAction.CONFIRM, NumpadEnter: MenuAction.CONFIRM, Space: MenuAction.CONFIRM, KeyJ: MenuAction.CONFIRM,
+  Escape: MenuAction.BACK, Backspace: MenuAction.BACK, KeyK: MenuAction.BACK,
   KeyQ: MenuAction.TAB_PREV, PageUp: MenuAction.TAB_PREV,
   KeyE: MenuAction.TAB_NEXT, PageDown: MenuAction.TAB_NEXT,
   KeyP: MenuAction.START,
 };
 
-const PAD_ACTIONS: readonly (readonly [number, MenuAction])[] = [
+/** Standard Gamepad button -> MenuAction (D-pad buttons are the directions). */
+export const MENU_PAD_ACTIONS: readonly (readonly [number, MenuAction])[] = [
   [PadButton.SOUTH, MenuAction.CONFIRM],
   [PadButton.EAST, MenuAction.BACK],
   [PadButton.L1, MenuAction.TAB_PREV],
   [PadButton.R1, MenuAction.TAB_NEXT],
   [PadButton.START, MenuAction.START],
+  [PadButton.DPAD_UP, MenuAction.UP],
+  [PadButton.DPAD_DOWN, MenuAction.DOWN],
+  [PadButton.DPAD_LEFT, MenuAction.LEFT],
+  [PadButton.DPAD_RIGHT, MenuAction.RIGHT],
+];
+
+/** PadAction (remap slot) -> MenuAction, for pads read through a custom remap. */
+const REMAP_ACTIONS: readonly (readonly [number, MenuAction])[] = [
+  [PadAction.PASS, MenuAction.CONFIRM],
+  [PadAction.SHOOT, MenuAction.BACK],
+  [PadAction.MOD_L, MenuAction.TAB_PREV],
+  [PadAction.MOD_R, MenuAction.TAB_NEXT],
+  [PadAction.PAUSE, MenuAction.START],
+  [PadAction.DPAD_UP, MenuAction.UP],
+  [PadAction.DPAD_DOWN, MenuAction.DOWN],
+  [PadAction.DPAD_LEFT, MenuAction.LEFT],
+  [PadAction.DPAD_RIGHT, MenuAction.RIGHT],
 ];
 
 const DIRS: readonly MenuAction[] = [MenuAction.UP, MenuAction.DOWN, MenuAction.LEFT, MenuAction.RIGHT];
+/** Direction bits (bit i = DIRS[i] = MenuAction i). */
+const DIR_MASK = 15;
 
 /** Directional repeat state machine (pure, unit-testable). */
 export interface RepeatState {
@@ -63,7 +116,7 @@ export function createRepeatState(): RepeatState {
 /**
  * Advance the repeat machine for held direction bits (bit i = DIRS[i]) at time nowMs; calls fire(action) for each
  * press edge and each repeat. `edgeBits` marks fresh presses since the last step (a second tap that lands before
- * the machine saw the first release still fires).
+ * the machine saw the first release still fires, and restarts the delay).
  */
 export function stepRepeat(st: RepeatState, heldBits: number, nowMs: number, fire: (a: MenuAction) => void, edgeBits = 0): void {
   for (let i = 0; i < 4; i++) {
@@ -72,12 +125,29 @@ export function stepRepeat(st: RepeatState, heldBits: number, nowMs: number, fir
     if (!held && !edge) { st.next[i] = -1; continue; }
     if (st.next[i] === -1 || edge) {
       fire(DIRS[i]!);
-      st.next[i] = nowMs + MENU_REPEAT_DELAY_MS;
-    } else if (nowMs >= st.next[i]!) {
+      st.next[i] = held ? nowMs + MENU_REPEAT_DELAY_MS : -1;
+    } else if (nowMs >= st.next[i]! - LOCAL_TUNING.repeatSlackMs) {
       fire(DIRS[i]!);
       st.next[i] = Math.max(st.next[i]! + MENU_REPEAT_INTERVAL_MS, nowMs - MENU_REPEAT_INTERVAL_MS);
     }
   }
+}
+
+/**
+ * Left-stick menu direction with hysteresis (pure): `cur` is the held direction (MenuAction 0..3) or -1. Keeps `cur`
+ * while its component stays at or above MENU_STICK_RELEASE; otherwise the dominant axis past MENU_STICK_THRESHOLD,
+ * else -1. Stick space: x right, y down (Gamepad API).
+ */
+export function stickMenuDir(cur: number, x: number, y: number): number {
+  const fx = Number.isFinite(x) ? x : 0, fy = Number.isFinite(y) ? y : 0;
+  if (cur >= 0) {
+    const comp = cur === MenuAction.UP ? -fy : cur === MenuAction.DOWN ? fy : cur === MenuAction.LEFT ? -fx : cur === MenuAction.RIGHT ? fx : 0;
+    if (comp >= LOCAL_TUNING.stickRelease) return cur;
+  }
+  const ax = Math.abs(fx), ay = Math.abs(fy);
+  if (Math.max(ax, ay) < LOCAL_TUNING.stickEngage) return -1;
+  if (ax > ay) return fx > 0 ? MenuAction.RIGHT : MenuAction.LEFT;
+  return fy > 0 ? MenuAction.DOWN : MenuAction.UP;
 }
 
 export interface MenuInputOptions {
@@ -87,6 +157,10 @@ export interface MenuInputOptions {
   pads?: PadManager;
   /** Key event target (default window). */
   target?: EventTarget;
+  /** visibilitychange target (default document when it exists). */
+  doc?: EventTarget & { visibilityState?: string };
+  /** Settings for custom remaps of non-standard pads (settings.controls.pad.remaps). None: standard positions. */
+  settings?: { get(): Readonly<Settings> } | null;
 }
 
 export interface MenuInput {
@@ -94,11 +168,32 @@ export interface MenuInput {
   dispose(): void;
 }
 
-interface KeyLike { code?: string; repeat?: boolean; target?: EventTarget | null; preventDefault?: () => void }
+interface KeyLike {
+  code?: string;
+  repeat?: boolean;
+  target?: EventTarget | null;
+  ctrlKey?: boolean;
+  altKey?: boolean;
+  metaKey?: boolean;
+  preventDefault?: () => void;
+}
+
+/** Digital state of raw button `raw` of a slot (manager bit below PAD_BUTTON_COUNT, else the Gamepad snapshot). */
+function rawDown(s: Readonly<PadSlot>, raw: number): boolean {
+  if (raw < 0) return false;
+  if (raw < PAD_BUTTON_COUNT) return (s.pressed & (1 << raw)) !== 0;
+  const btns = s.pad ? s.pad.buttons : null;
+  if (!btns || raw >= btns.length) return false;
+  const b = btns[raw] as GamepadButton | number | null | undefined;
+  if (typeof b === 'number') return b > 0.5;
+  return !!b && b.pressed === true;
+}
 
 export function createMenuInput(opts: MenuInputOptions): MenuInput {
   const pads = opts.pads ?? getPadManager();
   const target: EventTarget | null = opts.target ?? (typeof window !== 'undefined' ? window : null);
+  const doc = opts.doc ?? (typeof document !== 'undefined' ? document : null);
+  const settings = opts.settings ?? null;
   const repeat = createRepeatState();
   /**
    * Direction keys currently down (one bit per key, keyboard.ts DIR_CODES) and the held direction bits they resolve
@@ -106,82 +201,136 @@ export function createMenuInput(opts: MenuInputOptions): MenuInput {
    */
   let keyDirKeys = 0;
   let keyDirs = 0;
-  /** Direction keys pressed since the last poll (a tap shorter than a frame still moves focus once). */
-  let keyDirTaps = 0;
-  /** Latched non-directional key presses (bit = MenuAction). */
-  let keyEdges = 0;
+  /** Keyboard presses in order since the last poll (ring buffer of MenuAction). */
+  const queue = new Int8Array(LOCAL_TUNING.keyQueueMax);
+  let qHead = 0;
+  let qLen = 0;
+  /** Per pad slot index: menu bits (1 << MenuAction) at the last poll, and the held stick direction (-1 none). */
+  const padPrev: number[] = [];
+  const padStick: number[] = [];
+  /** Raw button index per PadAction for the slot being read (custom remaps). */
+  const remapIdx = new Int16Array(PAD_ACTION_COUNT);
+  let disposed = false;
 
-  const dirBit = (a: MenuAction): number => (a === MenuAction.UP ? 1 : a === MenuAction.DOWN ? 2 : a === MenuAction.LEFT ? 4 : a === MenuAction.RIGHT ? 8 : 0);
+  const dirBit = (a: MenuAction): number => (a <= MenuAction.RIGHT ? 1 << a : 0);
+
+  function clearKeys(): void {
+    keyDirKeys = 0;
+    keyDirs = 0;
+    qLen = 0;
+    qHead = 0;
+  }
 
   const onDown = (ev: Event): void => {
+    if (disposed) return;
     const e = ev as unknown as KeyLike;
-    const a = KEY_ACTIONS[e.code ?? ''];
+    const code = e.code ?? '';
+    const a = MENU_KEY_ACTIONS[code];
     if (a === undefined) return;
-    if (isEditableTarget(e.target ?? null) && e.code !== 'Escape') return;
-    const d = dirBit(a);
-    if (d !== 0) {
-      keyDirKeys |= dirKeyBit(e.code ?? '');
-      keyDirs = dirsFromKeyMask(keyDirKeys);
-      if (!e.repeat) keyDirTaps |= d;
-    } else if (!e.repeat) keyEdges |= 1 << a;
-  };
-  const onUp = (ev: Event): void => {
-    const code = (ev as unknown as KeyLike).code ?? '';
-    const a = KEY_ACTIONS[code];
-    if (a === undefined) return;
+    if (e.ctrlKey === true || e.altKey === true || e.metaKey === true) return;
+    if (isEditableTarget(e.target ?? null) && code !== 'Escape') return;
+    // The menu owns these keys: no page scroll (arrows, Space, Page Up / Down) and no native step of a focused
+    // slider on top of the navigator's own adjust.
+    e.preventDefault?.();
     if (dirBit(a) !== 0) {
-      keyDirKeys &= ~dirKeyBit(code);
+      keyDirKeys |= dirKeyBit(code);
       keyDirs = dirsFromKeyMask(keyDirKeys);
     }
+    if (e.repeat === true || qLen >= queue.length) return;
+    queue[(qHead + qLen) % queue.length] = a;
+    qLen++;
   };
-  const onBlur = (): void => { keyDirKeys = 0; keyDirs = 0; keyDirTaps = 0; keyEdges = 0; };
+  const onUp = (ev: Event): void => {
+    if (disposed) return;
+    const code = (ev as unknown as KeyLike).code ?? '';
+    if (isMetaCode(code)) {
+      // macOS drops the keyups of keys released while Cmd was down: forget held keys (no runaway repeat).
+      keyDirKeys = 0;
+      keyDirs = 0;
+      return;
+    }
+    const a = MENU_KEY_ACTIONS[code];
+    if (a === undefined || dirBit(a) === 0) return;
+    keyDirKeys &= ~dirKeyBit(code);
+    keyDirs = dirsFromKeyMask(keyDirKeys);
+  };
+  const onBlur = (): void => { clearKeys(); };
+  const onVisibility = (): void => {
+    if (doc && doc.visibilityState === 'hidden') clearKeys();
+  };
   target?.addEventListener('keydown', onDown);
   target?.addEventListener('keyup', onUp);
   target?.addEventListener('blur', onBlur);
+  doc?.addEventListener('visibilitychange', onVisibility);
 
   const fire = (a: MenuAction): void => {
     if (a === MenuAction.START) opts.onPause();
     else opts.focus.handle(a);
   };
 
+  /** Menu bits (1 << MenuAction) of a connected, active pad (buttons and D-pad, not the stick). */
+  function padBits(s: Readonly<PadSlot>): number {
+    let bits = 0;
+    if (s.standard || !settings) {
+      for (let j = 0; j < MENU_PAD_ACTIONS.length; j++) {
+        if ((s.pressed & (1 << MENU_PAD_ACTIONS[j]![0])) !== 0) bits |= 1 << MENU_PAD_ACTIONS[j]![1];
+      }
+      return bits;
+    }
+    const st = settings.get();
+    const remaps = st && st.controls && st.controls.pad ? st.controls.pad.remaps : null;
+    resolvePadRemap(remaps, s.gamepadId, s.standard, remapIdx);
+    for (let j = 0; j < REMAP_ACTIONS.length; j++) {
+      if (rawDown(s, remapIdx[REMAP_ACTIONS[j]![0]]!)) bits |= 1 << REMAP_ACTIONS[j]![1];
+    }
+    return bits;
+  }
+
   return {
     poll(nowMs: number) {
+      if (disposed) return;
       pads.poll(nowMs);
-      const dirEdges = keyDirTaps;
-      let dirs = keyDirs;
-      keyDirTaps = 0;
-      let nonDir = 0;
-      let padDirEdges = 0;
+      // Keyboard presses, in press order. A direction press restarts that direction's repeat delay.
+      while (qLen > 0) {
+        const a = queue[qHead]! as MenuAction;
+        qHead = (qHead + 1) % queue.length;
+        qLen--;
+        if (dirBit(a) !== 0) repeat.next[a] = (keyDirs & dirBit(a)) !== 0 ? nowMs + MENU_REPEAT_DELAY_MS : -1;
+        fire(a);
+      }
+      // Pads: held directions (D-pad, stick) and press edges.
+      let held = keyDirs;
+      let edges = 0;
       const slots = pads.slots;
       for (let k = 0; k < slots.length; k++) {
+        while (padPrev.length <= k) { padPrev.push(0); padStick.push(-1); }
         const s = slots[k]!;
-        if (!s.connected || !s.active) continue;
-        const p = s.pressed;
-        if (p & (1 << PadButton.DPAD_UP) || s.ly < -MENU_STICK_THRESHOLD) dirs |= 1;
-        if (p & (1 << PadButton.DPAD_DOWN) || s.ly > MENU_STICK_THRESHOLD) dirs |= 2;
-        if (p & (1 << PadButton.DPAD_LEFT) || s.lx < -MENU_STICK_THRESHOLD) dirs |= 4;
-        if (p & (1 << PadButton.DPAD_RIGHT) || s.lx > MENU_STICK_THRESHOLD) dirs |= 8;
-        const dEdge = p & ~s.prevPressed;
-        if (dEdge & (1 << PadButton.DPAD_UP)) padDirEdges |= 1;
-        if (dEdge & (1 << PadButton.DPAD_DOWN)) padDirEdges |= 2;
-        if (dEdge & (1 << PadButton.DPAD_LEFT)) padDirEdges |= 4;
-        if (dEdge & (1 << PadButton.DPAD_RIGHT)) padDirEdges |= 8;
-        for (let j = 0; j < PAD_ACTIONS.length; j++) {
-          const b = PAD_ACTIONS[j]![0];
-          if ((p & (1 << b)) !== 0 && (s.prevPressed & (1 << b)) === 0) nonDir |= 1 << PAD_ACTIONS[j]![1];
+        if (!s.connected || !s.active) {
+          padPrev[k] = 0;
+          padStick[k] = -1;
+          continue;
         }
+        let bits = padBits(s);
+        const sd = stickMenuDir(padStick[k]!, s.lx, s.ly);
+        padStick[k] = sd;
+        if (sd >= 0) bits |= 1 << sd;
+        edges |= bits & ~padPrev[k]!;
+        padPrev[k] = bits;
+        held |= bits & DIR_MASK;
       }
-      stepRepeat(repeat, dirs, nowMs, fire, dirEdges | padDirEdges);
-      const edges = keyEdges | nonDir;
-      keyEdges = 0;
-      if (edges !== 0) {
+      stepRepeat(repeat, held, nowMs, fire, edges & DIR_MASK);
+      if ((edges & ~DIR_MASK) !== 0) {
         for (let a = MenuAction.CONFIRM; a <= MenuAction.START; a++) if (edges & (1 << a)) fire(a);
       }
     },
     dispose() {
+      if (disposed) return;
+      disposed = true;
+      clearKeys();
       target?.removeEventListener('keydown', onDown);
       target?.removeEventListener('keyup', onUp);
       target?.removeEventListener('blur', onBlur);
+      doc?.removeEventListener('visibilitychange', onVisibility);
     },
   };
 }

@@ -233,6 +233,24 @@ describe('SIM-03 + SIM-02: goal given <=> ball in the net, on real ball paths', 
     }
   });
 
+  it('regression "goal counted twice": a ball in the net knocked back against the front wall (held at exactly u = BALL_OUT_X) and back in', () => {
+    for (const end of [1, -1]) {
+      const s = withBall(shot([end * 45, R, 0.5], [end * HALF_LENGTH, 0.8, 0.5], 25));
+      const first = run(s, 60, end);
+      expect([first.first, first.netEnd]).toEqual([CrossKind.GOAL, end]);
+      let minU = 1e9;
+      for (let k = 0; k < 20; k++) {
+        // Thrown back toward the field (as off the back netting): the in-net front wall stops it at u = BALL_OUT_X
+        // mid-tick and the next substep starts there, moving back in.
+        s.ball.vx = -end * (4 + k);
+        s.ball.vy = 1;
+        const r = run(s, 30, end, (b) => { minU = Math.min(minU, end * b.x); });
+        expect([r.first, r.crossings, s.ball.inNet], `knock ${k}`).toEqual([CrossKind.NONE, 0, end]);
+      }
+      expect(minU).toBeLessThan(BALL_OUT_X + 0.1);
+    }
+  });
+
   it('regression "ball resting on the goal line": a ball on the line (even partly over it) is never out', () => {
     for (const end of [1, -1]) {
       for (const u of [HALF_LENGTH - R, HALF_LENGTH, HALF_LENGTH + 0.05, BALL_OUT_X]) {

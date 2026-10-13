@@ -25,7 +25,8 @@ import { NULL_SINK } from '../../src/sim/core/events';
 import { hashState } from '../../src/sim/core/hash';
 import { locomotionTick } from '../../src/sim/players/locomotion';
 import { makeScenario, runTicks } from '../harness/scenario';
-import { pressureOn, secondLastDefenderX as secondLast } from '../../src/sim/core/query';
+import { rngChance, rngFloat, rngInt, rngSeed } from '../../src/sim/core/rng';
+import { secondLastDefenderX as secondLast } from '../../src/sim/core/query';
 
 const HL = HALF_LENGTH;
 
@@ -309,8 +310,10 @@ describe('TAI-04 stepping up and dropping', () => {
     const fwdFree = facing(-1, false);
     const fwdPressed = facing(-1, true);
     const awayFree = facing(1, false);
-    // Free = no pressure from anybody of ours (query.pressureOn: 1 at <= 1 m .. 0 at >= 6 m).
-    const free = 1 - Math.min(1, pressureOn(r.s, r.oppSlot(6)) / LT.pressFree);
+    // Free = nobody of ours near him (0 within freeDistMin .. 1 beyond freeDistFull).
+    const c = r.oppP(6);
+    const near = Math.min(...r.s.players.filter((p) => p.team === r.def && p.active === 1).map((p) => Math.hypot(p.x - c.x, p.z - c.z)));
+    const free = Math.min(1, Math.max(0, (near - LT.freeDistMin) / (LT.freeDistFull - LT.freeDistMin)));
     expect(free).toBeGreaterThan(0.8);
     expect(fwdFree).toBeLessThanOrEqual(side - LT.dropUnpressured * free + 1e-6);
     expect(fwdPressed).toBeCloseTo(side, 6);
@@ -323,6 +326,23 @@ describe('TAI-04 stepping up and dropping', () => {
     expect(r.lineU()).toBeLessThan(L0 - 4);
     expect(mean(r.backU())).toBeLessThan(B0 - 3);
     expect(sd(r.backU())).toBeLessThan(1.5);
+  });
+
+  it.each(DIRS)('drops further just after losing the ball (team.phase TRANSITION_DEFEND) (defending team %i)', (def) => {
+    const r = new Rig({ def });
+    settledOpps(r);
+    r.run(240);
+    const settled = target(r);
+    r.s.teams[r.def]!.phase = TeamPhase.TRANSITION_DEFEND;
+    expect(target(r)).toBeCloseTo(settled - LT.transitionDrop, 9);
+    // The players hurry back with the line (checked on this module's output, before TAI-07 steering).
+    r.s.tick++;
+    resetJobs(r.s, r.def);
+    assignDefensiveShape(r.s, r.def, NULL_SINK);
+    for (const i of r.back()) {
+      const p = r.s.players[i]!;
+      if (p.job === AiJob.HOLD_SHAPE) expect(p.tgtSpeed).toBe(r.s.attrs[i]!.topSpeed);
+    }
   });
 
   it.each(DIRS)('drops goal-side of an onside runner in behind; holds against an offside one (defending team %i)', (def) => {
@@ -831,5 +851,93 @@ describe('TAI-04 through the real step pipeline', () => {
     const h = run();
     expect(h.length).toBe(600);
     expect(run()).toEqual(h);
+  });
+});
+
+describe('TAI-04 robustness', () => {
+  it('the loose-ball chaser keeps his CHASE_LOOSE job; the rest of the line stays level', () => {
+    for (const def of DIRS) {
+      const r = new Rig({ def });
+      settledOpps(r);
+      r.run(240);
+      // Their pass in flight toward their striker, rolling right at our right centre-back.
+      const cb = r.defP(2);
+      const cbU = r.u(cb.x), cbV = r.v(cb.z);
+      r.ownerK = -1;
+      r.ball = { u: cbU + 3, v: cbV, vu: -2, vv: 0 };
+      const b = r.s.ball;
+      b.lastTouchTeam = r.opp; b.lastKickTeam = r.opp; b.lastKickBy = r.oppSlot(6); b.lastKickTick = r.s.tick;
+      b.passTarget = r.oppSlot(9);
+      r.tick((rr) => { rr.ball.u += rr.ball.vu / 60; });
+      expect(isDefending(r.s, r.def)).toBe(true);
+      expect(r.s.teams[r.def]!.chaser).toBe(cb.slot);
+      expect(cb.job).toBe(AiJob.CHASE_LOOSE);
+      const others = r.back().filter((i) => i !== cb.slot).map((i) => r.u(r.s.players[i]!.tgtX));
+      expect(Math.max(...others) - Math.min(...others)).toBeLessThanOrEqual(LT.markStepOut + 1e-9);
+    }
+  });
+
+  it('hostile random states: finite, in-pitch outputs; one marker per attacker; valid job targets (fuzz, 400 states)', () => {
+    const rng = { a: 0, b: 0, c: 0, d: 0 };
+    rngSeed(rng, 0x7a104);
+    const f = (lo: number, hi: number): number => lo + (hi - lo) * rngFloat(rng);
+    for (let n = 0; n < 400; n++) {
+      const form = FORMS[rngInt(rng, FORMS.length)]!;
+      const s = makeScenario({
+        seed: n + 1, phase: MatchPhase.IN_PLAY, humans: rngInt(rng, 3),
+        config: { homeFormation: form, awayFormation: FORMS[rngInt(rng, FORMS.length)]!, offside: rngInt(rng, 2) },
+      });
+      if (rngChance(rng, 0.5)) { s.teams[0]!.dir = -1; s.teams[1]!.dir = 1; }
+      for (const t of s.teams) {
+        t.offsideTrap = rngInt(rng, 2); t.teamPress = rngInt(rng, 2); t.extraStriker = rngInt(rng, 2);
+        t.focus = rngInt(rng, 3); t.phase = rngInt(rng, 6); t.lineX = rngChance(rng, 0.1) ? NaN : f(-60, 60);
+      }
+      for (const p of s.players) {
+        p.x = f(-56, 56); p.z = f(-38, 38); p.vx = f(-9, 9); p.vz = f(-9, 9);
+        const a = f(0, 6.283); p.fx = Math.cos(a); p.fz = Math.sin(a);
+        p.homeX = rngChance(rng, 0.03) ? NaN : f(-50, 50); p.homeZ = f(-33, 33);
+        if (p.isKeeper === 0 && rngChance(rng, 0.06)) p.active = 0;
+        if (p.isKeeper === 0 && rngChance(rng, 0.05)) p.ctrl = 2 + p.team;
+      }
+      const owner = rngInt(rng, 24) - 2; // -2..21: some loose balls
+      const b = s.ball;
+      b.owner = owner >= 0 && s.players[owner]!.active === 1 ? owner : -1;
+      b.heldBy = b.owner >= 0 && s.players[b.owner]!.isKeeper === 1 && rngChance(rng, 0.5) ? b.owner : -1;
+      b.x = b.owner >= 0 ? s.players[b.owner]!.x : f(-54, 54); b.z = b.owner >= 0 ? s.players[b.owner]!.z : f(-35, 35);
+      b.vx = f(-25, 25); b.vz = f(-15, 15);
+      b.lastTouchTeam = rngInt(rng, 3) - 1; b.lastKickTeam = rngInt(rng, 3) - 1; b.lastKickBy = rngInt(rng, 23) - 1;
+      b.lastKickTick = s.tick - rngInt(rng, 200); b.passTarget = rngInt(rng, 23) - 1;
+      b.passX = f(-52, 52); b.passZ = f(-34, 34);
+      s.match.offside.passTeam = rngInt(rng, 3) - 1; s.match.offside.flags = rngInt(rng, 1 << 22);
+      s.tick++;
+      for (let team = 0; team < 2; team++) {
+        resetJobs(s, team);
+        assignChaser(s, team, NULL_SINK);
+        const before = s.teams[team]!.lineX;
+        assignDefensiveShape(s, team, NULL_SINK);
+        const L = s.teams[team]!.lineX;
+        if (!Object.is(L, before) || isDefending(s, team)) { // written by this module
+          expect(Number.isFinite(L), `state ${n} team ${team} lineX ${L}`).toBe(true);
+          expect(Math.abs(L)).toBeLessThanOrEqual(HL);
+        }
+        const marked = new Set<number>();
+        const defending = isDefending(s, team);
+        for (let i = team * 11; i < team * 11 + 11; i++) {
+          const p = s.players[i]!;
+          // HOLD_SHAPE comes from jobs.resetJobs (home as given) unless this module placed the player (defending).
+          if (p.job !== AiJob.MARK && p.job !== AiJob.COVER && !(p.job === AiJob.HOLD_SHAPE && defending)) continue;
+          expect(Number.isFinite(p.tgtX) && Number.isFinite(p.tgtZ) && Number.isFinite(p.tgtSpeed), `state ${n} slot ${i}`).toBe(true);
+          expect(Math.abs(p.tgtX)).toBeLessThanOrEqual(HL);
+          expect(Math.abs(p.tgtZ)).toBeLessThanOrEqual(34);
+          expect(p.tgtSpeed).toBeGreaterThan(0);
+          if (p.job === AiJob.MARK || p.job === AiJob.COVER) {
+            const a = s.players[p.jobSlot]!;
+            expect(a.team).not.toBe(team);
+            expect(a.active).toBe(1);
+            if (p.job === AiJob.MARK) { expect(marked.has(p.jobSlot)).toBe(false); marked.add(p.jobSlot); }
+          }
+        }
+      }
+    }
   });
 });
