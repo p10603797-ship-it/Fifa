@@ -1,0 +1,6 @@
+[
+ {
+  "item": "Failing test: recovery runs get goal-side within 3 s (pipeline), both teams",
+  "detail": "tests/scenario/tai-06-transitions.test.ts:162-190 fails for team 0 and team 1 with 'idx 7 got RECOVER: expected false to be true' (line 183). The builder reported 81/81 passing; I get 79 passed and 2 failed, and the result repeats when the file runs alone. Cause: src/ai/press.ts was a stub at HEAD, and TAI-05 has since implemented it in the working tree. It now gives PRESS to A's idx 7, the CM closest to the ball (team.pressSlot = 7 or 18). PRESS (10) outranks RECOVER (9) in AiJob order, so assignJob correctly refuses RECOVER for him. A debug run confirms src/ai/transition.ts still behaves correctly: idx 5, 6 and 8 get RECOVER (idx 6 later gets COVER while goal-side), the presser idx 7 also ends goal-side (u 34.7 against ball u 36 by tick 121), and strikers 9 and 10 stay on HOLD_SHAPE. The problem is the test, which hard-codes that every one of indices 5-8 must hold RECOVER at some point. The test needs updating so the team's pressSlot (or anyone with a higher-priority job such as PRESS) can skip RECOVER, while still requiring every recoverer to end goal-side within 180 ticks. This is not a stub problem: a real module landed and broke the assertion."
+ }
+]

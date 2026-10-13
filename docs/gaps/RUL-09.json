@@ -1,0 +1,6 @@
+[
+ {
+  "item": "A violent foul that denies an obvious goal-scoring chance (DOGSO) can get only a yellow, contrary to the brief",
+  "detail": "In /home/user/Fifa/src/sim/rules/fouls.ts, classifyChallenge (lines ~286-292) checks serious foul play before DOGSO: `const red = rollRed(s, rec); if (red !== 0) return red === 2 ? FOUL_RED : FOUL_YELLOW;`. A serious-foul-play challenge (slide or hard tackle from behind, no ball, at >= 7.15 m/s) whose red roll fails returns FOUL_YELLOW, and isDogso is never checked. Example: the last defender slides from behind into a carrier who is through on goal, outside the area. That is a yellow 65% of the time (slideFromBehindRed 0.35), and 82.5% of the time for a hard tackle. A gentle side-on stand tackle in the same spot is always red. The brief says DOGSO ('last defender fouls a carrier through on goal') is red, so the worse challenge gets the lighter card. The test /home/user/Fifa/tests/unit/rul-09-classify.test.ts:233 ('serious foul play is decided before DOGSO (red roll fails -> yellow)') locks this wrong behaviour in. Fix: when the red roll fails, fall through to the DOGSO check (red, or yellow inside the area for an attempt to play the ball) before returning yellow, and update that test row."
+ }
+]

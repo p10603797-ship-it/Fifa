@@ -1,0 +1,6 @@
+[
+ {
+  "item": "No test checks that the back line staggers toward the ball side (brief: \"keep the back line level ... small stagger toward the ball side\")",
+  "detail": "The behaviour itself is correct. placeBackLine in /home/user/Fifa/src/ai/defshape.ts sets u = line + stagger * clamp01(1 - |v - ballV| / staggerRange). My scratch probe confirmed it in both attack directions: with the ball at v=22, defenders at v=28.6 and 13.2 aimed 0.67 m and 0.56 m above lineX, and those at v=-1.8 and -16.4 aimed exactly at lineX. But no test in /home/user/Fifa/tests/scenario/tai-04-defshape.test.ts pins it down. The flatness test only checks that the lowest target is between L and L + stagger. The mirror test is symmetric. Both would still pass with stagger = 0 or with the stagger reversed (far side higher). Fix: add one assertion, for both directions, that the back-liner nearest the ball laterally has the highest target, at most L + stagger, and that a defender 20 m or more across from the ball aims at L."
+ }
+]
