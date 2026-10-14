@@ -18,6 +18,8 @@
  * Exit code 0 when every matchup meets its target and no match failed; 1 otherwise (a failed match: exception,
  * unfinished match, invariant failure with a checker on, crashed or hung worker); 2 for bad flags. --no-enforce and
  * --max-ticks (smoke runs: matches stop early and count by the score at the stop) only report the targets.
+ * WARN lines (advisory, never change the verdict) flag matchups with more than WARN_DRAW_RATE draws or fewer than
+ * WARN_GOALS_PER_MATCH goals per match: an evenness PASS built on 0-0 draws says little.
  *
  *   npx tsx tools/balance.ts [--matches 200] [--suite all|top-bottom,equal,mirror] [--workers 4] [--seed 1]
  *                            [--halfMinutes 4] [--difficulty 3] [--cup] [--top-target 0.8] [--even-tol 0.1]

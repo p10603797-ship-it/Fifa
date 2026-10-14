@@ -12,9 +12,10 @@
  * Input delay
  *   computeTargetDelay(rtt, jitter) = clamp(ceil((rtt / 2 + 2 * jitter) / tickMs) + 1, 2, 8).
  *   createAdaptiveDelay()  feeds samples through the estimator, applies hysteresis (raise after RAISE_SAMPLES
- *                          consecutive higher targets; lower only after LOWER_SAMPLES consecutive samples with at
- *                          least LOWER_MARGIN_TICKS of slack), and answers delayFor(tick) from a list of agreed
- *                          switches (schedule(delay, atTick)).
+ *                          consecutive higher targets whose samples stay at or above the running average, so a lone
+ *                          spike never raises; lower only after LOWER_SAMPLES consecutive samples with at least
+ *                          LOWER_MARGIN_TICKS of slack), and answers delayFor(tick) from a list of agreed switches
+ *                          (schedule(delay, atTick)).
  *   createDelaySync(...)   the agreement: the guest reports its target ('ls:target'); the host takes the larger of
  *                          both targets and announces { type: 'ls:delay', delay, at } with `at` far enough ahead
  *                          (LEAD) that both peers switch on the same tick. A late announcement still applies on the
@@ -253,12 +254,16 @@ export function createAdaptiveDelay(opts: AdaptiveDelayOptions = {}): AdaptiveDe
     get scheduled() { return switches.length > 0 ? switches[switches.length - 1]!.delay : initial; },
     get switches() { return switches; },
     sample(rttMs) {
+      const before = est.rttMs;
       if (!est.add(rttMs)) return;
       const raw = rawTargetDelay(est.rttMs, est.jitterMs, tickMs);
       const want = computeTargetDelay(est.rttMs, est.jitterMs, tickMs, min, max);
       if (want > target) {
         below = 0;
-        if (++above >= LOCAL_TUNING.raiseSamples) {
+        // A real increase keeps samples above the (lagging) average; after a lone spike they fall back below it
+        // while the inflated jitter estimate decays, which must not count towards a raise.
+        if (rttMs < before) above = 0;
+        else if (++above >= LOCAL_TUNING.raiseSamples) {
           target = want;
           above = 0;
         }

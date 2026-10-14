@@ -167,4 +167,17 @@ matchup, preferred formations, offside and fouls on; top-bottom and equal play e
 swapped). Exit code 0 = every target met. Useful flags: `--matches N`, `--suite top-bottom,equal,mirror`,
 `--workers W`, `--seed S`, `--halfMinutes M`, `--difficulty D`, `--cup`, `--json out.json`, `--max-ticks T` (smoke).
 
-BALANCE-RESULTS
+Current numbers (2026-10-14, `npx tsx tools/balance.ts --workers 2`, seed 1, 4-minute halves, 600 matches, 873 s,
+no failed match). **RESULT: FAIL (2/3 matchups meet the target).**
+
+| Matchup | n | A W / D / L | Judged value (95% CI) | Target | Verdict | Goals A-B | Shots A-B | On target A-B |
+|---|---|---|---|---|---|---|---|---|
+| top-bottom: MOS (88) v ROO (62) | 200 | 40 / 159 / 1 | wins 20.0% (15.0-26.1) | wins >= 80% | FAIL | 0.23-0.01 | 0.9-0.1 | 0.5-0.1 |
+| equal: SND (76) v GLA (75) | 200 | 15 / 172 / 13 | points 50.5% (43.6-57.4) | points 40-60% | PASS | 0.09-0.09 | 0.6-0.4 | 0.4-0.2 |
+| mirror: GLA (75) v GLA (75) | 200 | 9 / 175 / 16 | home points 48.3% (41.4-55.1) | points 40-60% | PASS | 0.06-0.09 | 0.5-0.5 | 0.3-0.3 |
+
+Reading: the stronger club is clearly stronger (40 wins to 1 loss, 52.5% possession, 9x the shots), but 80-88% of
+CPU-v-CPU matches end 0-0, with under one shot per side per match. The equal and mirror passes say little for the same
+reason (the tool now prints a WARN line for matchups with more than 50% draws or under one goal per match). The
+balance target cannot be judged until CPU attacks create and finish chances; that is Wave 4 tuning (AI attacking
+play, shot decision thresholds, keeper save rates), after which QA re-runs the tool unchanged.

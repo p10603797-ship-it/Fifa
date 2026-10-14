@@ -1,6 +1,6 @@
 # QF-2 — AI, keepers, difficulty and game feel: QA-12..QA-22, FIX-03, FIX-04, FIX-05, FIX-14
 
-Area (exclusive for this wave): `src/ai/**`, `src/sim/keeper/**`, `src/contracts/tuning.ts` (all blocks except
+Area (exclusive for this wave): `src/ai/**`, `src/sim/keeper/**`, `src/sim/kicks/**` (pass/shot/aerial feel), `src/contracts/tuning.ts` (all blocks except
 T_BALL, T_PHYS, T_RULES, T_DRIBBLE which QF-1 holds), docs/TUNING.md, `tools/balance.ts`, `tools/ladder.ts`.
 Charter (BRIEF §6 Passing/Shooting/Defending/Goalkeepers, §7 all, §14 glitch list keeper/players/switching):
 - QA-12 passing accuracy bands and receiver lock; QA-13 shooting bands and keeper save rate 65-78% on target;
@@ -13,3 +13,7 @@ Charter (BRIEF §6 Passing/Shooting/Defending/Goalkeepers, §7 all, §14 glitch 
   defender, stuck in dive); QA-22 distribution and back-pass rule.
 - FIX-14 game feel against the §6 reference values: pass speeds, shot power curve, turn rates, tackle windows.
 Coordinate: possession/first-touch physics is QF-1's; ask by CR.
+DAT-05 findings to act on (docs/ATTRIBUTE_AUDIT.md): shotPower moves shot speed only ~4% (shot.ts shotPowerMulMin
+0.92 -> ~0.8); composure effect weak (composureRelief 0.5 -> ~0.8); skillMoves 4 and 5 identical for humans (add a
+4-star tier in T_SKILL.minStars); 40-ballControl has 0% clean first touches at 20 m/s (check against §6). The balance
+gate `npx tsx tools/balance.ts` (top v bottom club wins ~80%, equal clubs 50 +- 10%) must PASS with goals per match in band.

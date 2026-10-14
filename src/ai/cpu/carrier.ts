@@ -18,7 +18,7 @@
  *  2. Decision (first tick after the reaction delay, then every T_AI.carrierEvalInterval ticks while dribbling,
  *     shielding or holding; a kick or skill plan is committed until it has been executed or has failed). Every option
  *     gets a utility in goal-probability units against a possession-value model: PV(progress) = pvBase + pvSpan *
- *     ((progress + 1) / 2)^2 for having the ball at a spot, and lossCost(progress) (lossOwn .. lossOpp, x style safety)
+ *     ((progress + 1) / 2)^3 for having the ball at a spot, and lossCost(progress) (the opponents' PV(-progress), x style safety)
  *     for losing it there:
  *       - pass / through ball / cross (TAI-09 scorePassOptions: completion c, progress, danger):
  *         c * max(PV(target), danger * dangerValueMul) - (1 - c) * lossCost(min(here, target)); a through ball's
@@ -83,12 +83,12 @@ import { bestDribble, chooseSkill, estimateXg } from './shooting';
 export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* (utilities are goal-probability units)
   // ---- possession value model
   /** Value of having the ball at the own goal line, goal probability ... */
-  pvBase: 0.01,
-  /** ... plus this times ((progress + 1) / 2)^2 toward the opposition goal line, goal probability. */
-  pvSpan: 0.07,
-  /** Cost of losing the ball at the own / the opposition goal line (linear in between), goal probability. */
-  lossOwn: 0.07,
-  lossOpp: 0.01,
+  pvBase: 0.004,
+  /** ... plus this times ((progress + 1) / 2)^3 toward the opposition goal line, goal probability [INT-A: was
+   *  0.01 + 0.07 t^2 — too flat, so a forward pass never paid for its risk and attacks went sideways forever]. */
+  pvSpan: 0.1,
+  /** Losing the ball at progress p costs the opponents' possession value there, posValue(-p) (x style safety)
+   *  [INT-A: replaces the linear lossOwn 0.07 .. lossOpp 0.01, which overcharged a loss in midfield]. */
   /** A receiving spot is worth at least its TAI-09 danger (xG-ish 0..1) times this. */
   dangerValueMul: 0.8,
   /** Style multiplier on a positive gain over keeping the ball: weight 0 -> min, 1 -> max. */
@@ -113,6 +113,9 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   // ---- shooting
   /** Value of a shot that does not score (corner, rebound), goal probability. */
   shotMissValue: 0.006,
+  /** A shot's xG is weighted by this against the possession value of keeping the ball (that value is only an
+   *  average; against a set block it is rarely realised) [INT-A]. */
+  shotXgMul: 1.5,
   /** Extra urge to shoot inside the penalty area, goal probability. */
   boxShotBonus: 0.012,
   /** Beyond this distance from the goal centre a shot is a long shot, m ... */
@@ -309,13 +312,12 @@ function markStarted(b: CpuBrainState): void { b.p1 |= 1 << 6; }
 /** Possession value at progress (-1 own goal line .. +1 opposition goal line), goal probability. */
 function posValue(prog: number): number {
   const t = clamp01((prog + 1) * 0.5);
-  return LT.pvBase + LT.pvSpan * t * t;
+  return LT.pvBase + LT.pvSpan * t * t * t;
 }
 
-/** Cost of losing the ball at progress (x style safety), goal probability. */
+/** Cost of losing the ball at progress (x style safety): the opponents' possession value there, goal probability. */
 function lossCost(prog: number): number {
-  const t = clamp01((prog + 1) * 0.5);
-  return (LT.lossOwn + (LT.lossOpp - LT.lossOwn) * t) * C.safetyMul;
+  return posValue(-prog) * C.safetyMul;
 }
 
 function styleMul(w: number): number { return LT.styleMulMin + (LT.styleMulMax - LT.styleMulMin) * clamp01(w); }
@@ -531,7 +533,7 @@ function shotOptionInto(s: SimState, p: Readonly<PlayerState>, lv: Readonly<Leve
   const ls = clamp01(sw.longShot);
   const thr = fin(lv.shotThresholdXg) * (long ? LT.longShotThreshMax + (LT.longShotThreshMin - LT.longShotThreshMax) * ls : 1);
   if (xg < thr) return;
-  let u = xg + (1 - xg) * LT.shotMissValue;
+  let u = xg * LT.shotXgMul + (1 - xg) * LT.shotMissValue;
   if (inPenaltyArea(p.x, p.z, C.dir)) u += LT.boxShotBonus;
   if (long && u > C.vHere) u = C.vHere + (u - C.vHere) * styleMul(ls);
   noise(s);

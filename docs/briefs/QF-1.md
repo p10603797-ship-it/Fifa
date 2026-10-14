@@ -1,6 +1,6 @@
 # QF-1 — Sim core and rules: QA-01..QA-10, QA-11 (possession hand-over), FIX-01, FIX-02
 
-Area (exclusive for this wave): `src/sim/**` except `src/sim/keeper/**`; `src/contracts/tuning.ts` T_BALL, T_PHYS,
+Area (exclusive for this wave): `src/sim/**` except `src/sim/keeper/**` and `src/sim/kicks/**` (QF-2); `src/contracts/tuning.ts` T_BALL, T_PHYS,
 T_RULES, T_DRIBBLE blocks only (document in docs/TUNING.md under your id).
 Charter (BRIEF §5, §6 Ball/Possession, §14 rules tests and glitch list: ball stuck, goals, players overlap / through the
 frame, restarts, offside, discipline, clock):

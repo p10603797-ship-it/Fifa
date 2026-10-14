@@ -112,7 +112,7 @@ Total assignments: 201.
 | DAT-02 | 1 | done | lane/squad agent report; 3 own test files pass |  |
 | DAT-03 | 1 | done | lane/squad agent report; 1 own test files pass |  |
 | DAT-04 | 1 | done | lane/squad agent report; 3 own test files pass |  |
-| DAT-05 | 1 | running | PLT-06 + DAT-05 squad running |  |
+| DAT-05 | 1 | done | tools/balance.ts + --audit; 50 tests; 29/29 attributes read and visibly change play (docs/ATTRIBUTE_AUDIT.md) | balance FAIL today (80-88% 0-0 draws) -> INT-A / QF-2 tuning |
 | NET-01 | 1 | running | NET-A squad running |  |
 | NET-02 | 1 | running | NET-A squad running |  |
 | NET-03 | 1 | queued | queued for NET-B |  |
@@ -131,7 +131,7 @@ Total assignments: 201.
 | PLT-03 | 1 | done | lane/squad agent report; 4 own test files pass |  |
 | PLT-04 | 1 | done | lane/squad agent report; 3 own test files pass |  |
 | PLT-05 | 1 | done | lane/squad agent report; 3 own test files pass |  |
-| PLT-06 | 1 | running | PLT-06 + DAT-05 squad running |  |
+| PLT-06 | 1 | done | README, DEPLOY, ASSETS, DEVICE_CHECKLIST; plt-06-docs 20 tests (links, scripts, every §9/§10 row, licences); README commands run in a fresh copy | Pages workflow file not added (publishing is the user's decision); licence notices into dist -> QF-5 |
 | INT-01 | 2 | running | INT-A running |  |
 | INT-02 | 2 | running | INT-B running |  |
 | INT-03 | 2 | running | INT-C running |  |

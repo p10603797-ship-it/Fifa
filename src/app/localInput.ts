@@ -8,6 +8,13 @@
  *
  * Binding ANY_DEVICE ('*') to a human also binds devices that appear later (a pad shows up only after its first
  * button press), unless another human names that device explicitly.
+ *
+ * rebind(human, ids) [INT-B] changes one human's devices mid-match (SessionControl.setHumanDevice, PAD-03 reconnect
+ * card): sources of devices that no longer belong to him are disposed, devices newly named get a source from
+ * devices.createSource(id, human), devices kept keep their source (a pad's priming and a touch overlay survive). An
+ * explicit name wins over another human's wildcard; a device dropped from an explicit binding is never picked up by a
+ * wildcard later in the match (a pad handed away never starts driving the other side). rebind(human, []) drops every
+ * source of that human (CPU hand-off).
  */
 import type { DeviceRegistry, HumanBinding, TickInputProvider } from '../contracts/app';
 import { MAX_HUMANS } from '../contracts/constants';
@@ -25,6 +32,10 @@ export interface LocalInputProvider extends TickInputProvider {
   queueCommand(human: number, cmd: Command, arg: number): void;
   /** Number of live input sources (tests, diagnostics). */
   readonly sourceCount: number;
+  /** Bind `human` to `deviceIds` for the rest of the match (see module doc). */
+  rebind(human: number, deviceIds: readonly string[]): void;
+  /** Device ids with a live source for `human` (tests, diagnostics). Allocates. */
+  devicesOf(human: number): string[];
 }
 
 export interface LocalInputOptions {
@@ -134,7 +145,10 @@ export function createLocalInputProvider(
   const perHuman: InputSource[][] = [];
   for (let h = 0; h < MAX_HUMANS; h++) perHuman.push([]);
   const byDevice = new Map<string, InputSource>();
+  const ownerOf = new Map<string, number>();
   const explicit = new Map<string, number>();
+  /** Devices dropped from an explicit binding by rebind(): wildcards never claim them. */
+  const released = new Set<string>();
   let wildcardHuman = -1;
   const scratch = createInputFrame();
   const queue = createCommandQueue();
@@ -161,23 +175,75 @@ export function createLocalInputProvider(
     try {
       const src = devices.createSource(deviceId, human);
       byDevice.set(deviceId, src);
+      ownerOf.set(deviceId, human);
       perHuman[human]!.push(src);
     } catch (err) {
       report(err, `createSource ${deviceId}`);
     }
   }
 
+  function unbind(deviceId: string): void {
+    const src = byDevice.get(deviceId);
+    if (!src) return;
+    const h = ownerOf.get(deviceId) ?? -1;
+    byDevice.delete(deviceId);
+    ownerOf.delete(deviceId);
+    if (h >= 0) {
+      const list = perHuman[h]!;
+      const i = list.indexOf(src);
+      if (i >= 0) list.splice(i, 1);
+    }
+    try {
+      src.dispose();
+    } catch (err) {
+      report(err, 'dispose source');
+    }
+  }
+
   for (const [id, human] of explicit) bind(id, human);
 
   function bindNew(): void {
-    if (wildcardHuman < 0) return;
+    if (wildcardHuman < 0 || disposed) return;
     for (const d of devices.list()) {
-      if (!d.connected || explicit.has(d.id) || byDevice.has(d.id)) continue;
+      if (!d.connected || explicit.has(d.id) || released.has(d.id) || byDevice.has(d.id)) continue;
       bind(d.id, wildcardHuman);
     }
   }
   bindNew();
-  const unsubscribe = wildcardHuman >= 0 ? devices.subscribe(() => bindNew()) : null;
+  let unsubscribe: (() => void) | null = wildcardHuman >= 0 ? devices.subscribe(() => bindNew()) : null;
+
+  /** Human that should own `deviceId` under the current bindings, or -1. */
+  function wantedOwner(deviceId: string): number {
+    const e = explicit.get(deviceId);
+    if (e !== undefined) return e;
+    return wildcardHuman >= 0 && !released.has(deviceId) ? wildcardHuman : -1;
+  }
+
+  function rebind(human: number, deviceIds: readonly string[]): void {
+    if (disposed || !(human >= 0 && human < MAX_HUMANS)) return;
+    const wantWild = deviceIds.includes(ANY_DEVICE);
+    for (const [id, h] of [...explicit]) {
+      if (h === human && !deviceIds.includes(id)) {
+        explicit.delete(id);
+        released.add(id);
+      }
+    }
+    for (const id of deviceIds) {
+      if (id === ANY_DEVICE) continue;
+      explicit.set(id, human);
+      released.delete(id);
+    }
+    if (wantWild && wildcardHuman < 0) wildcardHuman = human;
+    else if (!wantWild && wildcardHuman === human) wildcardHuman = -1;
+    for (const id of [...byDevice.keys()]) if (wantedOwner(id) !== ownerOf.get(id)) unbind(id);
+    for (const [id, h] of explicit) bind(id, h);
+    bindNew();
+    if (wildcardHuman >= 0 && !unsubscribe) unsubscribe = devices.subscribe(() => bindNew());
+    else if (wildcardHuman < 0 && unsubscribe) {
+      unsubscribe();
+      unsubscribe = null;
+    }
+  }
 
   return {
     get waiting() {
@@ -220,6 +286,12 @@ export function createLocalInputProvider(
     queueCommand(human, cmd, arg) {
       queue.push(human, cmd, arg);
     },
+    rebind,
+    devicesOf(human) {
+      const out: string[] = [];
+      for (const [id, h] of ownerOf) if (h === human) out.push(id);
+      return out;
+    },
     releaseAll() {
       for (const s of byDevice.values()) {
         try {
@@ -233,6 +305,7 @@ export function createLocalInputProvider(
       if (disposed) return;
       disposed = true;
       unsubscribe?.();
+      unsubscribe = null;
       for (const s of byDevice.values()) {
         try {
           s.dispose();
@@ -241,6 +314,7 @@ export function createLocalInputProvider(
         }
       }
       byDevice.clear();
+      ownerOf.clear();
       for (const list of perHuman) list.length = 0;
       queue.clear();
       void getState;

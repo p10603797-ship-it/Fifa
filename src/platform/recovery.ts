@@ -16,7 +16,8 @@
  *   (LOCAL_TUNING.repeatWindowMs, LOCAL_TUNING.maxRepeats): an error that fires every frame offers Restart and Main
  *   menu instead of a Resume that can only fail again.
  * - Also installs the app-wide replay recorder (platform/replayRecorder.ts) and adds the Device, Match (seed, tick,
- *   phase, state hash) and Replay sections to the diagnostics report.
+ *   phase, state hash) and Replay sections to the diagnostics report. With `attach: false` (the app, INT-B) the
+ *   recorder is fed by the caller (SessionDeps.onTick) instead of a wrapped session afterTick.
  */
 import type { AppContext } from '../contracts/app';
 import { WORLD_MAX_X, WORLD_MAX_Y, WORLD_MAX_Z, WORLD_MIN_X, WORLD_MIN_Z } from '../contracts/constants';
@@ -73,6 +74,11 @@ export interface RecoveryOptions {
   reload?: () => void;
   /** Recorder to use (tests); default a new live recorder. */
   recorder?: LiveReplayRecorder;
+  /**
+   * Wrap the session's afterTick to feed the recorder (default true). The app passes false and feeds the recorder from
+   * its own per-tick hook (SessionDeps.onTick), so recovery never patches the session.
+   */
+  attach?: boolean;
 }
 
 const BENIGN = [/ResizeObserver loop/i, /^Script error\.?$/i];
@@ -166,9 +172,12 @@ export function installRecovery(ctx: AppContext, opts: RecoveryOptions = {}): Re
 
   const recorder = opts.recorder ?? createLiveReplayRecorder();
   setAppReplayRecorder(recorder);
-  const detachRecorder = attachReplayRecorder(ctx.session, recorder, (err) => {
-    diag.log('error', `replay recorder stopped: ${describeError(err)}`);
-  });
+  const attach = opts.attach !== false;
+  const detachRecorder = attach
+    ? attachReplayRecorder(ctx.session, recorder, (err) => {
+      diag.log('error', `replay recorder stopped: ${describeError(err)}`);
+    })
+    : null;
 
   if (typeof diag.addSection === 'function') {
     diag.addSection('Device', () => {
@@ -190,7 +199,7 @@ export function installRecovery(ctx: AppContext, opts: RecoveryOptions = {}): Re
       return `seed ${s.config.seed >>> 0}, tick ${s.tick}, phase ${s.match.phase}, score ${s.teams[0]?.goals ?? '?'}-${s.teams[1]?.goals ?? '?'}, ` +
         `hash ${hash}, paused ${ctx.session.paused ? `yes (by ${ctx.session.pausedBy})` : 'no'}, sane ${isStateSane(s) ? 'yes' : 'NO'}`;
     });
-    diag.addSection('Replay', () => (detachRecorder ? recorder.summary() : 'recorder unavailable (no session tick hook)'));
+    diag.addSection('Replay', () => (detachRecorder || !attach ? recorder.summary() : 'recorder unavailable (no session tick hook)'));
     diag.addSection('Recovery', () => `${errors} error(s)${lastError ? `, last at ${lastError.where}` : ''}${fatal ? ', fallback shown' : ''}`);
   }
 

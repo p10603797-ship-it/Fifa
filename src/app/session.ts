@@ -18,22 +18,33 @@
  * restart() replays the same setup with a fresh seed; quit() calls onFinish(partialSummary, true) and returns to
  * 'main'. Both release every match resource (input sources, renderer match, HUD, audio) so nothing leaks between
  * matches. A load still in flight when the match is quit or restarted is abandoned via a generation counter.
+ *
+ * [INT-B] Hooks: deps.onTick(rt) runs first in afterTick (the app's replay recorder); deps.onPause / deps.onMatchEnd
+ * (rumble stop) run when a pause starts and when the match ends or is torn down. deps.prepareState runs once on the
+ * fresh state right after initMatch (default: the practice layout, modes/practice preparePracticeState).
+ * setHumanDevice(human, ids | 'cpu') (D-019, PAD-03 reconnect card): 'cpu' queues Command.HAND_TO_CPU into that
+ * human's frame and drops his local sources (his binding stays in the setup, so a rematch gets his devices back); a
+ * device list rebinds him for the rest of the match (setup bindings updated, sources of dropped devices disposed, new
+ * ones created through devices.createSource; devices kept in the list keep their source). False online, with a
+ * custom input provider, outside a loaded match, for a human that is not playing (or was handed to the CPU), or when
+ * a named device is bound explicitly to another playing human.
  */
 import type {
-  AppContext, AudioEngine, DeviceRegistry, Diagnostics, GameRenderer, HudPart, MatchSetup, MatchSummary, ScreenId, ScreenParams,
-  StatsTracker, TickInputProvider,
+  AppContext, AudioEngine, DeviceRegistry, Diagnostics, GameRenderer, HudPart, HumanBinding, MatchSetup, MatchSummary, ScreenId,
+  ScreenParams, StatsTracker, TickInputProvider,
 } from '../contracts/app';
 import { MAX_HUMANS } from '../contracts/constants';
 import type { Club } from '../contracts/data';
-import { Command, MatchPhase } from '../contracts/enums';
+import { Command, ControllerKind, MatchPhase, ModeId } from '../contracts/enums';
 import type { EventBuffer } from '../contracts/events';
 import { createInputFrame, type CameraProjector, type InputFrame } from '../contracts/input';
 import type { MatchConfig, SimState } from '../contracts/state';
+import { preparePracticeState } from '../modes/practice';
 import { createStatsTracker } from '../modes/stats';
 import { cloneState as simCloneState } from '../sim/core/clone';
 import { createEventBuffer as simCreateEventBuffer } from '../sim/core/events';
 import { initMatch as simInitMatch } from '../sim/init';
-import { ANY_DEVICE, createCommandQueue, createLocalInputProvider, type CommandQueue } from './localInput';
+import { ANY_DEVICE, createCommandQueue, createLocalInputProvider, type CommandQueue, type LocalInputProvider } from './localInput';
 import type { AppRouter, AppSession, MatchRuntime } from './types';
 
 /** Pause/resume requests from devices within this window of the last pause change are ignored. */
@@ -65,6 +76,19 @@ export interface SessionDeps {
   newSeed?(): number;
   now?(): number;
   onError?(err: unknown, where: string): void;
+  /** After every tick, before phase watching (the app's replay recorder). Errors are reported once per match. */
+  onTick?(rt: MatchRuntime): void;
+  /** A pause started (rumble stop). */
+  onPause?(byHuman: number): void;
+  /** The match ended (POST_MATCH) or was torn down (quit, restart, dispose) after it loaded (rumble stop). */
+  onMatchEnd?(): void;
+  /** Once on the fresh state right after initMatch. Default: prepareModeState (practice layout). */
+  prepareState?(s: SimState): void;
+}
+
+/** Mode-specific layout of a fresh match state (practice free play takes the opponent's outfield players off). */
+export function prepareModeState(s: SimState): void {
+  if (s.config && s.config.mode === ModeId.PRACTICE) preparePracticeState(s);
 }
 
 let seedCounter = 0;
@@ -113,6 +137,37 @@ function withCommandQueue(inner: TickInputProvider, queue: CommandQueue): TickIn
 type CommandSink = { queueCommand(human: number, cmd: Command, arg: number): void };
 const hasQueue = (p: TickInputProvider): p is TickInputProvider & CommandSink =>
   typeof (p as Partial<CommandSink>).queueCommand === 'function';
+type Rebindable = Pick<LocalInputProvider, 'rebind'>;
+const canRebind = (p: TickInputProvider | null): p is TickInputProvider & Rebindable =>
+  p !== null && typeof (p as Partial<Rebindable>).rebind === 'function';
+
+/** Copy of `bindings` with `human` bound to `ids` (added when missing), sorted by human. Pure. */
+export function withBinding(bindings: readonly HumanBinding[], human: number, ids: readonly string[]): HumanBinding[] {
+  const out: HumanBinding[] = [];
+  let found = false;
+  for (const b of bindings) {
+    if (b.human === human) {
+      if (!found) out.push({ human, deviceIds: ids.slice() });
+      found = true;
+    } else {
+      out.push({ human: b.human, deviceIds: b.deviceIds.slice() });
+    }
+  }
+  if (!found) out.push({ human, deviceIds: ids.slice() });
+  out.sort((a, b) => a.human - b.human);
+  return out;
+}
+
+/** Valid, de-duplicated device ids (strings, non-empty), or null when the list is not usable. Pure. */
+export function cleanDeviceIds(devs: readonly unknown[]): string[] | null {
+  if (!Array.isArray(devs)) return null;
+  const out: string[] = [];
+  for (const d of devs) {
+    if (typeof d !== 'string' || d.length === 0) return null;
+    if (!out.includes(d)) out.push(d);
+  }
+  return out;
+}
 
 /** Human bound to `deviceId` in `setup` (explicit binding first, then an ANY_DEVICE binding), or -1. Pure. */
 export function humanForDevice(setup: MatchSetup | null, deviceId: string | null): number {
@@ -150,6 +205,7 @@ export function createSession(deps: SessionDeps): AppSession {
   const yieldFrame = deps.yieldFrame ?? defaultYield;
   const newSeed = deps.newSeed ?? newMatchSeed;
   const now = deps.now ?? (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()));
+  const prepareState = deps.prepareState ?? prepareModeState;
   const onError = (err: unknown, where: string): void => {
     if (deps.onError) deps.onError(err, where);
     else diagnostics.log('error', `${where}: ${String(err)}`, err);
@@ -173,6 +229,10 @@ export function createSession(deps: SessionDeps): AppSession {
   let provider: TickInputProvider | null = null;
   let runtime: MatchRuntime | null = null;
   let lastSummary: MatchSummary | null = null;
+  /** Humans handed to the CPU this match (setHumanDevice 'cpu'). */
+  const cpuHumans: number[] = [];
+  /** deps.onTick failed this match (reported once). */
+  let tickHookFailed = false;
   const fallbackQueue = createCommandQueue();
 
   function setLayer(on: boolean): void {
@@ -236,8 +296,10 @@ export function createSession(deps: SessionDeps): AppSession {
     paused = true;
     pausedBy = byHuman;
     markPauseChange();
+    // Synchronously, before anything else can sample: no held stick, sprint or charge survives the pause (PAD-02).
     if (provider) safe(() => provider!.releaseAll(), 'releaseAll');
     safe(() => audio.setPaused(true), 'audio.setPaused');
+    if (deps.onPause) safe(() => deps.onPause!(byHuman), 'onPause');
     syncScreen();
   }
 
@@ -266,7 +328,10 @@ export function createSession(deps: SessionDeps): AppSession {
     const p = provider;
     provider = null;
     if (p) safe(() => p.dispose(), 'provider.dispose');
-    if (loaded && !finished) safe(() => audio.matchEnd(), 'audio.matchEnd');
+    if (loaded && !finished) {
+      safe(() => audio.matchEnd(), 'audio.matchEnd');
+      if (deps.onMatchEnd) safe(() => deps.onMatchEnd!(), 'onMatchEnd');
+    }
     safe(() => audio.setPaused(false), 'audio.setPaused');
     if (loaded || loading) {
       safe(() => renderer.clearMatch(), 'renderer.clearMatch');
@@ -285,6 +350,8 @@ export function createSession(deps: SessionDeps): AppSession {
     finished = false;
     finishCalled = false;
     finalShown = false;
+    cpuHumans.length = 0;
+    tickHookFailed = false;
   }
 
   async function load(s: MatchSetup, myGen: number): Promise<void> {
@@ -292,6 +359,7 @@ export function createSession(deps: SessionDeps): AppSession {
       await yieldFrame();
       if (gen !== myGen) return;
       const curr = initMatch(s.config, clubs);
+      prepareState(curr);
       const prev = cloneState(curr);
       const events = createEvents();
       const stats = createStats();
@@ -337,6 +405,7 @@ export function createSession(deps: SessionDeps): AppSession {
     lastSummary = summary;
     if (provider) safe(() => provider!.releaseAll(), 'releaseAll');
     safe(() => audio.matchEnd(), 'audio.matchEnd');
+    if (deps.onMatchEnd) safe(() => deps.onMatchEnd!(), 'onMatchEnd');
     finishCalled = true;
     const navigated = callFinish(setup, summary, false);
     if (!navigated) syncScreen();
@@ -425,18 +494,46 @@ export function createSession(deps: SessionDeps): AppSession {
       else fallbackQueue.push(human, cmd, arg);
     },
     setHumanDevice(human, devs) {
-      // Interim (lead): the CPU hand-off goes through the frame; device rebinding lands with INT-B.
-      if (!active || !loaded || finished || !setup || setup.inputProvider) return false;
+      if (!active || !loaded || finished || !setup || setup.inputProvider || !runtime) return false;
+      if (!Number.isInteger(human) || human < 0 || human >= MAX_HUMANS || cpuHumans.includes(human)) return false;
+      const ctl = runtime.curr.ctrl ? runtime.curr.ctrl[human] : undefined;
+      if (!ctl || ctl.kind !== ControllerKind.HUMAN) return false;
+      const p = provider;
       if (devs === 'cpu') {
+        // Through the frame (deterministic, in replays); the sim applies it on the next tick, also after a pause.
         session.queueCommand(human, Command.HAND_TO_CPU, human);
+        cpuHumans.push(human);
+        if (canRebind(p)) safe(() => p.rebind(human, []), 'rebind');
         return true;
       }
-      return false;
+      const ids = cleanDeviceIds(devs);
+      if (!ids || !canRebind(p)) return false;
+      // Two humans never share a device: a device named explicitly by another playing human refuses the rebind.
+      for (const b of setup.bindings) {
+        if (b.human === human || cpuHumans.includes(b.human)) continue;
+        for (const id of ids) if (id !== ANY_DEVICE && b.deviceIds.includes(id)) return false;
+      }
+      try {
+        p.rebind(human, ids);
+      } catch (err) {
+        onError(err, 'rebind');
+        return false;
+      }
+      setup = { ...setup, bindings: withBinding(setup.bindings, human, ids) };
+      return true;
     },
     getState: () => (runtime ? runtime.curr : null),
     getSetup: () => setup,
     runtime: () => runtime,
     afterTick(rt) {
+      if (deps.onTick && !tickHookFailed) {
+        try {
+          deps.onTick(rt);
+        } catch (err) {
+          tickHookFailed = true; // never let a per-tick hook break play; report once per match
+          onError(err, 'session.onTick');
+        }
+      }
       const ph = rt.curr.match.phase;
       if (ph === lastPhase) return;
       lastPhase = ph;

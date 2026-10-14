@@ -50,6 +50,8 @@ export interface NetsimOptions {
   delay?: number;
   /** Adaptive delay (default true). */
   adaptive?: boolean;
+  /** Frame-advantage time sync in the providers (default true). */
+  timeSync?: boolean;
   /** Stop both peers at this tick (default: when both reach POST_MATCH). */
   maxTicks?: number;
   /** Seed of the scripted human inputs (default config.seed). */
@@ -300,7 +302,7 @@ export async function runNetsim(opts: NetsimOptions): Promise<NetsimReport> {
 
   const startPeer = (p: Peer): void => {
     p.provider = createLockstepProvider({
-      transport: p.transport, localHuman: p.idx, delay, adaptive: opts.adaptive, isHost: p.idx === 0,
+      transport: p.transport, localHuman: p.idx, delay, adaptive: opts.adaptive, timeSync: opts.timeSync, isHost: p.idx === 0,
       localSources: [createScriptedSource(inputSeed * 2 + p.idx + 1, opts.inputs ?? 'random')], compress: opts.compress,
       log: opts.log ? (kind, message, data) => opts.log!(kind, `[peer ${p.idx}] ${message}`, data) : undefined,
     });

@@ -226,7 +226,7 @@ describe('DAT-05 balance: outcomes and the verdict', () => {
   it('warns (without changing the verdict) when draws dominate or hardly anyone scores', () => {
     const m: Matchup = { suite: 'equal', a: 14, b: 7, mirrorLegs: true };
     const o = { topTarget: 0.8, evenTol: 0.1 };
-    const dull = summarizeMatchup(m, [res(m, 'D', 0, 0, 0), res(m, 'D', 1, 0, 0), res(m, 'W', 0, 1, 0)], o);
+    const dull = summarizeMatchup(m, [res(m, 'D', 0, 0, 0), res(m, 'D', 1, 0, 0), res(m, 'D', 0, 0, 0), res(m, 'D', 1, 0, 0), res(m, 'W', 0, 1, 0), res(m, 'L', 1, 0, 1)], o);
     expect(dull.met).toBe(true);
     const w = balanceWarnings([dull]);
     expect(w).toHaveLength(1);
