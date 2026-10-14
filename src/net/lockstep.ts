@@ -58,6 +58,12 @@ const LOCAL_TUNING = {
   resendIdleMs: 200,
   /** A stall this short does not stop time sync from asking the leader to hold (two frames), ms. */
   shortStallMs: 34,
+  /**
+   * More pump() calls than this without a ready() call between them means the app was not trying to tick (paused: it
+   * keeps pumping every frame but asks for no tick): that time is not part of a stall (the waiting pill, maxStallMs and
+   * totalStallMs count only time spent waiting for the friend), frames.
+   */
+  idlePumps: 2,
 } as const; // TUNING-CR
 
 export const HISTORY_TICKS: number = LOCAL_TUNING.historyTicks;
@@ -219,6 +225,8 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
   let lastSendMs = -Infinity;
   let waiting = false;
   let stallStart = 0;
+  let lastReadyMs = 0;
+  let pumpsSinceReady = 0;
   let lastTaken = firstTick - 1;
   let disposed = false;
   const st = {
@@ -273,7 +281,13 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
       if (useAdaptive) sync.handle(m);
     }),
     tr.onEvent((e) => {
-      if (!disposed && e.type === 'rtt') adaptive.sample(e.sampleMs); // fixed delay: still measured for stats
+      if (disposed) return;
+      if (e.type === 'rtt') adaptive.sample(e.sampleMs); // fixed delay: still measured for stats
+      else if (e.type === 'connected') {
+        // A rejoin on the same pages: reliable messages in flight (a snapshot, a delay switch) died with the old link.
+        guard.linkRestored();
+        sync.linkRestored();
+      }
     }),
   ];
 
@@ -337,6 +351,11 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
     },
     describeInputs,
     ready(tick) {
+      // A stall that spans a pause: the paused time is not waiting for the friend (QF-6: the pill showed at once after
+      // every pause and the stall diagnostics included pause time).
+      if (waiting && pumpsSinceReady > LOCAL_TUNING.idlePumps) stallStart += lastNow - lastReadyMs;
+      lastReadyMs = lastNow;
+      pumpsSinceReady = 0;
       if (lastNow < holdUntil) return false; // time-sync hold: deliberate, not a stall
       const ok = localRing.has(tick) && remoteRing.has(tick);
       if (!ok) {
@@ -373,6 +392,7 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
     },
     pump(nowMs) {
       lastNow = nowMs;
+      pumpsSinceReady++;
       for (let i = 0; i < sources.length; i++) {
         const src = sources[i]!;
         if (!src.pollFrame) continue;

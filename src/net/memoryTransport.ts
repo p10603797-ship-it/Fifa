@@ -15,6 +15,7 @@
  *  - 'control': same latency and jitter but always in order; with `reliableLoss` a message needs a retransmission
  *    (+ retransmitMs) and everything behind it waits (head-of-line blocking, like SCTP).
  *  - `bandwidthBytesPerSec` serialises each direction (a packet occupies the link for bytes / bandwidth).
+ *  - `hostToGuest` / `guestToHost` override any of these for one direction (asymmetric links).
  *  - The handshake mirrors transport.ts: the guest's open() rejects 'code-not-found' when no host has opened that
  *    code, 'version-mismatch' when hostVersion !== guestVersion, or `guestOpenError` when set.
  *  - Each endpoint runs the '$ping' meter every pingIntervalMs while open (rtt, jitter, 'rtt' events).
@@ -57,6 +58,9 @@ export interface MemoryLinkOptions {
   guestVersion?: string;
   /** Make the guest's open() fail with this reason (lobby error screens). */
   guestOpenError?: NetErrorReason;
+  /** Asymmetric links: conditions for one direction on top of the shared ones (QF-6: e.g. a slow uplink). */
+  hostToGuest?: MemoryLinkConditions;
+  guestToHost?: MemoryLinkConditions;
   /** Clock and scheduler (tests drive time by hand). Default: performance.now / setTimeout. */
   now?(): number;
   schedule?(fn: () => void, delayMs: number): unknown;
@@ -295,23 +299,30 @@ export function createMemoryTransportPair(opts: MemoryLinkOptions = {}): MemoryT
     readonly rand: () => number;
     lastReliableDue = 0;
     busyUntil = 0;
-    constructor(dirSeed: number) {
+    constructor(dirSeed: number, readonly over: MemoryLinkConditions = {}) {
       this.rand = createLinkRandom(dirSeed);
+    }
+    /** A condition for this direction (its override, else the shared value). */
+    c<K extends keyof MemoryLinkConditions>(k: K): number {
+      const v = this.over[k];
+      return typeof v === 'number' && Number.isFinite(v) ? v : cond[k];
     }
     /** Time the message finishes crossing the link, before latency. */
     transmit(bytes: number): number {
       const t = now();
-      if (cond.bandwidthBytesPerSec <= 0) return t;
+      const bw = this.c('bandwidthBytesPerSec');
+      if (bw <= 0) return t;
       const start = this.busyUntil > t ? this.busyUntil : t;
-      this.busyUntil = start + (bytes * 1000) / cond.bandwidthBytesPerSec;
+      this.busyUntil = start + (bytes * 1000) / bw;
       return this.busyUntil;
     }
     oneWay(): number {
-      return cond.latencyMs + (cond.jitterMs > 0 ? this.rand() * cond.jitterMs : 0);
+      const j = this.c('jitterMs');
+      return this.c('latencyMs') + (j > 0 ? this.rand() * j : 0);
     }
   }
-  const h2g = new Direction(seed ^ 0x9e3779b9);
-  const g2h = new Direction(seed ^ 0x85ebca6b);
+  const h2g = new Direction(seed ^ 0x9e3779b9, opts.hostToGuest);
+  const g2h = new Direction(seed ^ 0x85ebca6b, opts.guestToHost);
 
   function makeEndpoint(side: NetRole): Endpoint & {
     deliverInputs(buf: ArrayBuffer): void;
@@ -343,9 +354,11 @@ export function createMemoryTransportPair(opts: MemoryLinkOptions = {}): MemoryT
       s.reliableSent++;
       s.bytesSent += json.length;
       let due = out.transmit(json.length) + out.oneWay();
-      if (cond.reliableLoss > 0 && out.rand() < cond.reliableLoss) {
+      const rl = out.c('reliableLoss');
+      if (rl > 0 && out.rand() < rl) {
         s.reliableRetransmits++;
-        due += cond.retransmitMs >= 0 ? cond.retransmitMs : 2 * cond.latencyMs + cond.jitterMs + 50;
+        const rt = out.c('retransmitMs');
+        due += rt >= 0 ? rt : 2 * out.c('latencyMs') + out.c('jitterMs') + 50;
       }
       if (due < out.lastReliableDue) due = out.lastReliableDue; // ordered channel
       out.lastReliableDue = due;
@@ -412,18 +425,21 @@ export function createMemoryTransportPair(opts: MemoryLinkOptions = {}): MemoryT
         s.inputsSent++;
         s.bytesSent += buf.byteLength;
         const sent = out.transmit(buf.byteLength);
-        if (cond.loss > 0 && out.rand() < cond.loss) {
+        const loss = out.c('loss');
+        if (loss > 0 && out.rand() < loss) {
           s.inputsDropped++;
           return;
         }
         const other = side === 'host' ? guestEp : hostEp;
         let due = sent + out.oneWay();
-        if (cond.reorder > 0 && out.rand() < cond.reorder) {
+        const ro = out.c('reorder');
+        if (ro > 0 && out.rand() < ro) {
           s.inputsReordered++;
-          due += cond.reorderMs;
+          due += out.c('reorderMs');
         }
         enqueue(due, () => other.deliverInputs(buf));
-        if (cond.duplicate > 0 && out.rand() < cond.duplicate) {
+        const dup = out.c('duplicate');
+        if (dup > 0 && out.rand() < dup) {
           s.inputsDuplicated++;
           enqueue(sent + out.oneWay(), () => other.deliverInputs(buf));
         }

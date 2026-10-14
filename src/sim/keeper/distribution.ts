@@ -16,9 +16,10 @@
  *     (offside on): kind by distance (roll <= rollMaxUse, overarm throw <= throwMaxUse — driven throw from
  *     drivenThrowMinUse for midfielders and on a counter — driven throw <= drivenThrowMaxUse, driven kick
  *     <= drivenKickMaxUse, else drop kick); class SHORT (roll / throw), MID (driven throw) or LONG (kicks).
- *     Safety 0..1: TAI-09 laneSafety when it is available (any candidate > 0), else the own model: reception
- *     (opponent time to the reception point vs the ball's flight, and his distance from it; LONG balls: the space
- *     around the receiver only) and, for rolls, the lane (opponent time to the closest lane point vs the ball).
+ *     Safety 0..1: TAI-09 laneSafety for SHORT / MID releases when it is available (any candidate > 0; lofted ones at
+ *     the launch speed that carries them), else the own model: reception (opponent time to the reception point vs the
+ *     ball's flight, and his distance from it; LONG balls always: the space around the receiver only) and, for rolls,
+ *     the lane (opponent time to the closest lane point vs the ball).
  *     Score = wSafety * safety + wProgress * progress (x counterProgressMul on a counter) + style bias (TeamStyle)
  *     + high-press bias (isPressHigh: >= pressHighCount opponents within pressZoneDepth of our goal line) + counter
  *     bias + wing-play width bonus + a small per-possession decision noise (CPU level x noiseScale).
@@ -39,7 +40,7 @@ import type { EventSink } from '../../contracts/events';
 import type { SimState } from '../../contracts/state';
 import { createActionRequest } from '../../contracts/systems';
 import { T_LEVEL } from '../../contracts/tuning';
-import { laneSafety } from '../../ai/cpu/passing';
+import { laneSafety, loftLaunchSpeed } from '../../ai/cpu/passing';
 import { isHumanSlot, nearestDistOfTeam, otherTeam, secondLastDefenderX, teamEnd, teamStart } from '../core/query';
 import { maxSpeed } from '../players/locomotion';
 // Only the GKP-05 contract export (tests replace keeper/handling with contract doubles that have nothing else).
@@ -508,7 +509,16 @@ function evaluate(s: SimState, team: number, k: number, counter: boolean, press:
     RES[RES_X0] = kx; RES[RES_Z0] = kz; RES[RES_TX] = tx; RES[RES_TZ] = tz;
     ownSafetyInto(s, team, kind);
     C_OWN[n] = RES[RES_SAFETY]!;
-    const ts = laneSafety(s, team, kx, kz, tx, tz, speedOf(kind), kind === KickKind.GK_ROLL ? 0 : 1);
+    // [QF-2] A lofted release is judged at the launch speed that carries it (speedOf is a horizontal average: TAI-09
+    // read a 50 m drop kick to a free striker at 17 m/s as a ball that cannot get there, 7% safe).
+    const roll = kind === KickKind.GK_ROLL ? 1 : 0;
+    let lv = speedOf(kind);
+    if (roll === 0) {
+      const ldx = tx - kx, ldz = tz - kz;
+      const ls = loftLaunchSpeed(Math.sqrt(ldx * ldx + ldz * ldz));
+      if (ls > lv) lv = ls;
+    }
+    const ts = laneSafety(s, team, kx, kz, tx, tz, lv, roll === 1 ? 0 : 1);
     C_TAI[n] = finite(ts) ? clamp01(ts) : 0;
     if (C_TAI[n]! > 0) anyTai = 1;
     n++;
@@ -523,7 +533,10 @@ function evaluate(s: SimState, team: number, k: number, counter: boolean, press:
   BEST.long = -1; BEST.longScore = -1e18; BEST.any = -1; BEST.anyScore = -1e18;
   for (let c = 0; c < n; c++) {
     const cls = C_CLS[c]!;
-    const safety = anyTai === 1 ? C_TAI[c]! : C_OWN[c]!;
+    // [QF-2] LONG balls keep the own model (the space around the receiver: always a duel). TAI-09's lofted landing
+    // multiplies every opponent who can reach the drop zone (six midfielders and defenders 7-25 m away made an open
+    // 50 m kick to a striker 3% safe), so a direct team never kicked long and a counter was never launched.
+    const safety = anyTai === 1 && cls !== DistClass.LONG ? C_TAI[c]! : C_OWN[c]!;
     let prog = (dir * C_TX[c]! - dir * kx) / L.progressRef;
     prog = clamp01(prog);
     let bias: number;

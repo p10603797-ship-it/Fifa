@@ -24,8 +24,9 @@
  *    (DOGSO: the victim had the ball near him within dogsoMaxGoalDist of the goal mouth and no other outfield
  *    defender covers the line to goal; downgraded to a yellow inside the penalty area when the challenge was an
  *    attempt to play the ball, i.e. not a push/pull), so a violent DOGSO foul is never carded lighter than a gentle
- *    one; FOUL_YELLOW for a reckless challenge (from behind above recklessSpeed, a slide from behind, or any challenge
- *    above recklessSpeed * allOutSpeedMul; serious foul play whose red roll failed is always reckless); FOUL otherwise.
+ *    one; FOUL_YELLOW for a reckless challenge (from behind above recklessSpeed * behindRecklessMul, a slide from
+ *    behind, or any challenge above recklessSpeed * allOutSpeedMul; serious foul play whose red roll failed is always
+ *    reckless); FOUL otherwise.
  *  - A foul: FOUL event (a offender, b victim, c outcome, d 1 if in the penalty area, x/z the spot) at the victim's
  *    position. Penalty when the victim is inside the offender's own penalty area. Then either advantage or an
  *    immediate whistle: victim knocked down (SIM-14 knockDown FALLEN, before the award so he finishes his fall), any
@@ -70,23 +71,30 @@ import { sendOff } from './subs';
 
 /** TUNING-CR (RUL-09): proposed additions to T_FOUL (units in comments). */
 export const LOCAL_TUNING = { // TUNING-CR
-  /** Foul weight per ChallengeKind (index: STAND, HARD, SLIDE, SHOULDER, PUSH_PULL, KEEPER), 0..1. */
-  kindFoulWeight: [0.6, 0.8, 1.0, 0.12, 0.5, 0.75] as readonly number[],
+  /**
+   * Foul weight per ChallengeKind (index: STAND, HARD, SLIDE, SHOULDER, PUSH_PULL, KEEPER), 0..1. [QF-1 refit against
+   * real matches: ~18 challenge records a match, 94% standing tackles, 14% playing the ball first, mostly from the
+   * front at 0-5 m/s; the Wave-1 weights gave 5.1 fouls a match against the 6-16 band, now ~9.]
+   */
+  kindFoulWeight: [0.95, 0.97, 1.0, 0.12, 0.85, 0.96] as readonly number[],
   /** fromBehind (dot, -1 front .. 1 behind) at or above this counts as "from behind". */
   behindDot: 0.5,
   /** Foul-chance multiplier for a challenge straight from behind (fromBehind = 1); side (0) = 1, linear between. */
   behindFoulMul: 1.4,
   /** Foul-chance multiplier for a challenge from the front (fromBehind = -1), linear from the side. */
   frontFoulMul: 0.8,
-  /** Foul-chance multiplier at closing speed 0 and at >= recklessSpeed, linear between. */
-  speedFoulMulLow: 0.7,
+  /** Foul-chance multiplier at closing speed 0 and at >= recklessSpeed, linear between. [QF-1: low 0.7 -> 0.9] */
+  speedFoulMulLow: 0.9,
   speedFoulMulHigh: 1.3,
   /** Foul-chance multiplier when the tackler played the ball first but the challenge was reckless. */
   ballFirstFoulMul: 0.5,
   /** Cap on the foul chance of one challenge, 0..1. */
   maxFoulChance: 0.97,
-  /** A challenge faster than recklessSpeed * this is reckless from any direction. */
-  allOutSpeedMul: 1.4,
+  /** A challenge faster than recklessSpeed * this is reckless from any direction. [QF-1: 1.4 -> 0.85; CPU challenges
+   *  close at 0-6.5 m/s, so 7.7 m/s never happened and no card was ever shown] */
+  allOutSpeedMul: 0.85,
+  /** A challenge from behind faster than recklessSpeed * this is reckless. [QF-1, new: was recklessSpeed itself] */
+  behindRecklessMul: 0.6,
   /** Serious foul play: slide / hard tackle from behind without the ball at >= recklessSpeed * this. */
   seriousSpeedMul: 1.3,
   /** Red chance of serious foul play by a hard tackle, as a fraction of slideFromBehindRed. */
@@ -164,11 +172,14 @@ function readRecord(rec: Readonly<ChallengeRecord>): void {
   F[4] = k >= 0 && k < w.length && k === (k | 0) ? w[k]! : w[ChallengeKind.STAND]!;
 }
 
-/** Reckless: from behind above recklessSpeed, a slide from behind, or any challenge above recklessSpeed * allOutSpeedMul. */
+/**
+ * Reckless: from behind above recklessSpeed * behindRecklessMul, a slide from behind, or any challenge above
+ * recklessSpeed * allOutSpeedMul.
+ */
 export function isReckless(rec: Readonly<ChallengeRecord>): boolean {
   readRecord(rec);
   const behind = F[2]! >= LOCAL_TUNING.behindDot;
-  if (behind && F[3]! > T_FOUL.recklessSpeed) return true;
+  if (behind && F[3]! > T_FOUL.recklessSpeed * LOCAL_TUNING.behindRecklessMul) return true;
   if (behind && rec.kind === ChallengeKind.SLIDE) return true;
   return F[3]! > T_FOUL.recklessSpeed * LOCAL_TUNING.allOutSpeedMul;
 }

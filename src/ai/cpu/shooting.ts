@@ -135,6 +135,17 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-10): move into T_AI as xg* / dri
   blockNear: 4,
   blockFar: 16,
   blockFarKeep: 0.4,
+  /** [QF-2] A blocker close to the shooter reaches across the line with a leg (SIM-07 / SIM-14 reach): his radius
+   *  grows from blockRadius at blockNear m to blockRadiusNear at the shooter, and his efficiency to blockEffNear (a
+   *  shot straight through the man in front was rated 85% blocked; the sim blocked 80% of them, the CPU shot into
+   *  them anyway), m / 0..1. */
+  blockRadiusNear: 1.1,
+  blockEffNear: 0.95,
+  /** [QF-2] Blockers are also judged where they will be after this long (their velocity on): the press closes in
+   *  during the CPU's aim and power-up (about 0.5 s from decision to contact), s. */
+  blockLook: 0.3,
+  /** [QF-2] shotLaneClear: the ball's radius and a little aim error added to a blocker's reach, m. */
+  laneBallSlack: 0.15,
   // ---- xG: pressure
   /** Pressure 1 at <= pressNear m, 0 at >= pressFar m, the opponent moved on pressLook s first. */
   pressNear: 1.0,
@@ -212,6 +223,10 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-10): move into T_AI as xg* / dri
   behindProbe: 4,
   behindClear: 3.5,
   knockClear: 4.5,
+  /** [QF-2] Knock-on only when the ball's run (knockRun m along the facing: SIM-13 knocks it 7.5-15 m) stays knockEdge m
+   *  inside the touchlines and goal lines, m. */
+  knockRun: 14,
+  knockEdge: 2,
   /** Behind the carrier (drag-back): backProbe m, clearance backClear m. */
   backProbe: 4,
   backClear: 3,
@@ -237,7 +252,8 @@ const ODOWN = new Int32Array(PLAYERS_PER_TEAM);
 const OFAR = new Int32Array(PLAYERS_PER_TEAM);
 const NI = new Int32Array(1);
 /** Scalars handed to / from internal helpers: no double crosses a call boundary (V8 would box it). R[0] clearance,
- *  R[1] estimateXg result, R[2] bestDribble result, R[3] / R[4] atan argument / result, R[5] / R[6] the spot. */
+ *  R[1] estimateXg result, R[2] bestDribble result, R[3] / R[4] atan argument / result, R[5] / R[6] the spot, R[7] the
+ *  blocker factor of the last estimateXg (lastXgBlock). */
 const R = new Float64Array(8);
 
 /** Number of dribble directions sampled. */
@@ -357,9 +373,57 @@ export function estimateXg(s: SimState, slot: number, x: number, z: number): num
   return R[1]!;
 }
 
+/** [QF-2] The blocker factor (blockFloor..1, 1 = nobody in the way) the last estimateXg call applied. */
+export function lastXgBlock(): number {
+  return R[7]!;
+}
+
+/**
+ * [QF-2] Chance (0..1) that a shot from (x, z) by `slot` toward the goal-line point z = aimZ gets past every outfield
+ * opponent (now and after blockLook): each one whose line distance is within his reach (the estimateXg blocker radius
+ * for his distance along the shot, + LT.laneBallSlack) takes eff x (1 - (offset / reach)^2) of it. Used to pick the
+ * aim side and to price a shot into a man. 1 for an invalid slot or spot.
+ */
+export function shotLaneClear(s: SimState, slot: number, x: number, z: number, aimZ: number): number {
+  if (!validSlot(slot) || !finite(x) || !finite(z) || !finite(aimZ)) return 1;
+  const p = s.players[slot]!;
+  const team = p.team;
+  if (team !== 0 && team !== 1) return 1;
+  const gx = (s.teams[team]!.dir === -1 ? -1 : 1) * HALF_LENGTH;
+  const lx = gx - x, lz = aimZ - z;
+  const L = Math.sqrt(lx * lx + lz * lz);
+  if (!(L > 0.5)) return 1;
+  const ux = lx / L, uz = lz / L;
+  prepOpponents(s, team);
+  const n = NI[0]!;
+  let clear = 1;
+  for (let j = 0; j < n; j++) {
+    if (OKEEP[j] === 1) continue;
+    let cov = 0;
+    for (let k = 0; k < 2; k++) {
+      const bx = OX[j]! - x + (k === 0 ? 0 : OVX[j]! * LT.blockLook), bz = OZ[j]! - z + (k === 0 ? 0 : OVZ[j]! * LT.blockLook);
+      const t = bx * ux + bz * uz;
+      if (t <= 0.05 || t >= L) continue;
+      const near01 = t < LT.blockNear ? 1 - t / LT.blockNear : 0;
+      const r = LT.blockRadius + (LT.blockRadiusNear - LT.blockRadius) * near01 + LT.laneBallSlack;
+      const off = bx * -uz + bz * ux;
+      const ao = off < 0 ? -off : off;
+      if (ao >= r) continue;
+      const far = t > LT.blockNear ? (t < LT.blockFar ? (t - LT.blockNear) / (LT.blockFar - LT.blockNear) : 1) : 0;
+      const eff = LT.blockEff * (1 + (LT.blockFarKeep - 1) * far) + (LT.blockEffNear - LT.blockEff) * near01;
+      const q = ao / r;
+      const c = eff * (1 - q * q);
+      if (c > cov) cov = c;
+    }
+    clear *= 1 - cov;
+  }
+  return clear;
+}
+
 /** estimateXg for the spot (R[5], R[6]) into R[1]. */
 function xgKernel(s: SimState, slot: number): void {
   R[1] = 0;
+  R[7] = 1;
   const x = R[5]!, z = R[6]!;
   if (!validSlot(slot) || !finite(x) || !finite(z)) return;
   const p = s.players[slot]!;
@@ -463,15 +527,25 @@ function xgKernel(s: SimState, slot: number): void {
     const e2 = px * px + pz * pz;
     if (e2 < near2) near2 = e2;
     if (OKEEP[j] === 1 || block <= LT.blockFloor) continue;
-    const t = rx * ux + rz * uz;
-    if (t <= 0.05 || t >= d) continue;
-    const sb = (rx * wx + rz * wz) / t, rb = LT.blockRadius / t;
-    const lo = sb - rb > sL ? sb - rb : sL, hi = sb + rb < sR ? sb + rb : sR;
-    if (hi <= lo) continue;
-    const far = t > LT.blockNear ? (t < LT.blockFar ? (t - LT.blockNear) / (LT.blockFar - LT.blockNear) : 1) : 0;
-    block *= 1 - (LT.blockEff * (1 + (LT.blockFarKeep - 1) * far) * (hi - lo)) / width;
+    // [QF-2] Now and after blockLook (moving on): the larger cover counts.
+    let cov = 0;
+    for (let k = 0; k < 2; k++) {
+      const bx = k === 0 ? rx : rx + OVX[j]! * LT.blockLook, bz = k === 0 ? rz : rz + OVZ[j]! * LT.blockLook;
+      const t = bx * ux + bz * uz;
+      if (t <= 0.05 || t >= d) continue;
+      const near01 = t < LT.blockNear ? 1 - t / LT.blockNear : 0;
+      const sb = (bx * wx + bz * wz) / t, rb = (LT.blockRadius + (LT.blockRadiusNear - LT.blockRadius) * near01) / t;
+      const lo = sb - rb > sL ? sb - rb : sL, hi = sb + rb < sR ? sb + rb : sR;
+      if (hi <= lo) continue;
+      const far = t > LT.blockNear ? (t < LT.blockFar ? (t - LT.blockNear) / (LT.blockFar - LT.blockNear) : 1) : 0;
+      const eff = LT.blockEff * (1 + (LT.blockFarKeep - 1) * far) + (LT.blockEffNear - LT.blockEff) * near01;
+      const c = (eff * (hi - lo)) / width;
+      if (c > cov) cov = c;
+    }
+    block *= 1 - cov;
   }
   if (block < LT.blockFloor) block = LT.blockFloor;
+  R[7] = block;
   xg *= block;
   const a = s.attrs[slot]!;
   if (near2 < 1e17) {
@@ -688,7 +762,8 @@ export function chooseSkill(s: SimState, slot: number): SkillMove {
     behind >= LT.behindClear) move = SkillMove.HEEL_FLICK;
   else if (stars >= ms[SkillMove.KNOCK_ON]! && dd >= LT.knockMin && dd <= LT.knockMaxDist && behind >= LT.knockClear &&
     pvx * fx + pvz * fz >= LT.knockMinSpeed && myTop >= OTOP[dj]! - LT.paceSlack &&
-    defAway < myTop * LT.dribbleSpeedFrac * 0.5) move = SkillMove.KNOCK_ON;
+    defAway < myTop * LT.dribbleSpeedFrac * 0.5 &&
+    insidePitch(x + fx * LT.knockRun, z + fz * LT.knockRun, LT.knockEdge)) move = SkillMove.KNOCK_ON;
   else if (stars >= ms[SkillMove.BALL_ROLL]! && dd <= LT.closeDist && side90) move = SkillMove.BALL_ROLL;
   else if (stars >= ms[SkillMove.STEP_OVER]! && dd > LT.closeDist && dd <= LT.midDist && side45) move = SkillMove.STEP_OVER;
   else if (stars >= ms[SkillMove.BODY_FEINT]! && dd > LT.closeDist * LT.feintNear && dd <= LT.midDist && side60) {

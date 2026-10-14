@@ -19,8 +19,10 @@
  * sent as 'session:pause' { human, used }; the peer applies it with ctx.session.pause(remoteHuman). Only the pauser
  * resumes early ('session:resume'); after 30 s (T_NET.pauseMaxMs) the pauser's side resumes by itself and the other
  * side does the same 2 s later should that message never come. Two pauses at once: the host's wins and the guest's
- * is refunded. System pauses (hidden page, portrait) stay local and never count. During a lockstep pause the sims stop
- * a few ticks apart, which is harmless: frames are indexed by tick.
+ * is refunded (withdrawn on the host, which may have applied it if its own pause had already ended; voided by the host
+ * with 'session:void' in case the guest's pause was over before the host's arrived). System
+ * pauses (hidden page, portrait) stay local and never count. During a lockstep pause the sims stop a few ticks apart,
+ * which is harmless: frames are indexed by tick.
  *
  * Disconnect: the transport's 'disconnected' starts a 20 s window (T_NET.rejoinWaitMs) in which the guest re-dials and
  * the host listens; the sim simply holds (no frames). When both channels are back each side sends 'session:sync'
@@ -33,7 +35,9 @@
  *
  * Waiting forever (QF-6): a stall with the link up (the friend's game is held by a system pause, portrait, a page stuck
  * loading) also ends in 'opponent-gone' (reason 'unresponsive') after the rejoin window (T_NET.rejoinWaitMs once the
- * friend's sim has started, startWaitMs while it may still be loading); it clears by itself when frames flow again.
+ * friend's sim has started, startWaitMs while it may still be loading, also after a reloaded guest's rejoin); it
+ * clears by itself when frames flow again or the friend's game sends a pause / resume. After the friend left on purpose
+ * its closed room is not re-dialled.
  * A remote pause or its cap that cannot be lifted here (this page is hidden or blocked) is retried every frame and
  * turns into a system pause, so the returning player is never stuck in the friend's pause. Each side announces the
  * match warm-up to the transport (expectBusy) so a long load is not read as a disconnect. A side that reaches full time
@@ -107,6 +111,8 @@ export const SESSION_QUIT = 'session:quit';
 export const SESSION_END = 'session:end';
 /** { tick, h, mt }: the hash of this side's final (POST_MATCH) state, compared at full time. */
 export const SESSION_FINAL = 'session:final';
+/** { human, used }: host -> guest, the guest's pause number `used` lost a tie with the host's and does not count. */
+export const SESSION_VOID = 'session:void';
 
 export const STALL_INDICATOR_MS: number = LOCAL_TUNING.stallIndicatorMs;
 export const DRAIN_MS: number = LOCAL_TUNING.drainMs;
@@ -395,6 +401,8 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
   let finishSummary: MatchSummary | null = null;
   let quitNotified = false;
   let loadAnnounced = false;
+  /** Host: a reloaded guest's rejoin request that arrived before this side had loaded the match. */
+  let deferredRejoin: string | null = null;
   let finalLocal: { tick: number; h: number } | null = null;
   let finalRemote: { tick: number; h: number } | null = null;
   let finalCheck: 'pending' | 'ok' | 'mismatch' = 'pending';
@@ -445,11 +453,14 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
   const view = createMatchTransport(transport, tag, firstTick);
   const proxies = sources.map(borrowed);
   let mode: 'lockstep' | 'solo' | 'ended' = 'lockstep';
+  /** First tick of the lockstep in use (a host restarts it when a reloaded guest rejoins). */
+  let lockstepFirst = firstTick;
   let inner: LockstepProvider | null = makeLockstep(firstTick, start.delay);
   let lastTaken = firstTick - 1;
 
   function makeLockstep(first: number, delay: number): LockstepProvider {
     view.lastTaken = first - 1;
+    lockstepFirst = first;
     return createLockstepProvider({
       transport: view,
       localHuman: local,
@@ -556,7 +567,13 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
         return;
       }
       if (sess.pausedBy === local) {
-        if (local === 0) return; // both paused at once: the host's pause wins (the guest refunds its own)
+        if (local === 0) {
+          // Both paused at once: the host's pause wins and the guest's is void. The guest refunds it itself when ours
+          // reaches it while it still holds its pause; tell it as well, in case its pause was over by then (QF-6: it
+          // kept the count of a pause that never happened here).
+          send({ type: SESSION_VOID, human: remote, used: u });
+          return;
+        }
         used[remote] = Math.max(used[remote]!, u);
         used[local] = Math.max(0, used[local]! - 1);
         clearPauseCap();
@@ -564,6 +581,9 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
           sess.resume(local);
           sess.pause(remote);
         });
+        // Tell the host our pause is withdrawn: when its own pause was short it may have ended before ours arrived, and
+        // then the host applied ours and sat in a pause nobody held while we played on (QF-6).
+        send({ type: SESSION_RESUME, human: local, used: used[local], withdrawn: 1 });
       } else {
         used[remote] = Math.max(used[remote]!, u);
         remotePausePending = true; // a system pause is showing: apply the other player's pause when it ends
@@ -679,6 +699,13 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
 
   function onLinkLost(): void {
     if (mode !== 'lockstep' || finished || ended || disposed) return;
+    if (gone && goneReason === 'quit') {
+      // The friend left on purpose (quit, End match, Finish against CPU) and closed the room: its link going down is
+      // expected. Re-dialling a room that is gone looped every 1.5 s until this player chose (QF-6).
+      connLost = true;
+      refresh();
+      return;
+    }
     if (!connLost) {
       connLost = true;
       if (!gone) {
@@ -804,7 +831,14 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
       return;
     }
     const st = ctx.session.getState() as SimState | null;
-    if (!st || !inner) return;
+    if (!inner) return;
+    if (!st) {
+      // Still loading the match here (the guest's page died during its own load and came back first): answer once
+      // loaded, from the first pump. Dropping it left the new page waiting for a start that never came (QF-6).
+      deferredRejoin = token;
+      return;
+    }
+    deferredRejoin = null;
     // The old page's pause died with it (the new page starts unpaused): never keep waiting on it.
     remotePausePending = false;
     if (ctx.session.paused && ctx.session.pausedBy === remote) applyRemoteResume();
@@ -825,6 +859,20 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
     log('net', `guest rejoined after a reload: lockstep restarted at tick ${t + 1} (delay ${delay})`);
     notice(`${opponentName()} is back`);
     refresh();
+  }
+
+  /**
+   * The friend's game just did something (paused, resumed): it is not held, so an 'unresponsive' verdict is lifted at
+   * once. Otherwise a friend who came back and paused straight away kept the "not responding" card (with Finish
+   * against CPU) up for the whole of its pause (QF-6). The watchdog starts over.
+   */
+  function friendResponds(): void {
+    progressAt = -1;
+    if (!gone || goneReason !== 'unresponsive') return;
+    gone = false;
+    goneReason = null;
+    log('net', `${opponentName()} responds again (a pause message) at tick ${lastTaken}`);
+    notice(`${opponentName()} is back`);
   }
 
   function onOpponentLeft(reason: OnlineEndReason): void {
@@ -851,12 +899,16 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
       switch (m.type) {
         case SESSION_PAUSE:
           if (m.human === remote && mode === 'lockstep' && !finished && !ended) {
+            friendResponds();
             applyRemotePause(intIn(m.used, 0, pausesPer, used[remote]! + 1));
             refresh();
           }
           break;
         case SESSION_RESUME:
           if (m.human === remote) {
+            friendResponds();
+            // A withdrawn pause (lost a tie with ours) carries the friend's own count after its refund.
+            if (m.withdrawn === 1) used[remote] = intIn(m.used, 0, pausesPer, used[remote]!);
             applyRemoteResume();
             refresh();
           }
@@ -866,6 +918,13 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
           break;
         case SESSION_QUIT:
           onOpponentLeft('quit');
+          break;
+        case SESSION_VOID:
+          // Refund once: only while our count still includes that pause (a tie seen here already refunded it).
+          if (m.human === local && local === 1 && intIn(m.used, 1, pausesPer, -1) === used[local]) {
+            used[local] = Math.max(0, used[local]! - 1);
+            refresh();
+          }
           break;
         case SESSION_FINAL:
           onRemoteFinal(m);
@@ -1018,6 +1077,7 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
         loadAnnounced = true;
         transport.expectBusy?.(0); // loaded: our warm-up is over (the friend's own grace stays until it says so)
       }
+      if (deferredRejoin !== null) onRejoinRequest(deferredRejoin);
       if (liftRemotePause) retryLiftRemotePause();
       checkResyncs();
       checkUnresponsive(nowMs);
@@ -1168,7 +1228,9 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
       progressTick = lastTaken;
       return;
     }
-    const friendStarted = lastTaken >= firstTick + NET_DELAY_MAX;
+    // The friend's sim has started once we took ticks past the neutral start frames of the CURRENT lockstep: a guest
+    // that reloaded and rejoins loads the match again first (QF-6: the host offered Finish against CPU 20 s into it).
+    const friendStarted = lastTaken >= lockstepFirst + NET_DELAY_MAX;
     const limit = friendStarted ? rejoinWaitMs : Math.max(rejoinWaitMs, LOCAL_TUNING.startWaitMs);
     if (now - progressAt < limit) return;
     log('net', `no input from ${opponentName()} for ${Math.round(now - progressAt)} ms at tick ${lastTaken} with the link up`);

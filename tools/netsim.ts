@@ -43,6 +43,9 @@ import { parseArgs } from './lib/args';
 export interface NetsimLink extends MemoryLinkConditions {
   seed?: number;
   pingIntervalMs?: number;
+  /** Asymmetric links: per-direction conditions on top of the shared ones. */
+  hostToGuest?: MemoryLinkConditions;
+  guestToHost?: MemoryLinkConditions;
 }
 
 export interface NetsimOptions {

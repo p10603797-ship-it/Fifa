@@ -1137,9 +1137,59 @@ function separate(s: SimState): void {
         moved++;
       }
     }
-    if (moved === 0) return;
+    if (moved === 0) break;
+  }
+  // [QF-2] Pushing apart and legalising can undo each other (a free kick 6.5 m out: the legal room is the goal line
+  // between the posts, which the wall fills; a pushed defender was legalised back onto a wall member 0.3 m away).
+  // Any spot still too close is relocated to the nearest legal point clear of everybody.
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    if (SPOT_ROLE[i] === 0 || SPOT_FIXED[i] === 1) continue;
+    if (spacingOk(s, i, SPOT_X[i]!, SPOT_Z[i]!)) continue;
+    relocate(s, i);
   }
 }
+
+/** True when (x, z) is at least minSpacing (- a hair) from every other spot and every active player without one. */
+function spacingOk(s: SimState, i: number, x: number, z: number): boolean {
+  const lim = LT.minSpacing - 0.01;
+  const lim2 = lim * lim;
+  for (let j = 0; j < NUM_SLOTS; j++) {
+    if (j === i) continue;
+    let ox: number, oz: number;
+    if (SPOT_ROLE[j] !== 0) { ox = SPOT_X[j]!; oz = SPOT_Z[j]!; } else {
+      const q = s.players[j]!;
+      if (q.active !== 1) continue;
+      ox = q.x; oz = q.z;
+    }
+    const dx = x - ox, dz = z - oz;
+    if (dx * dx + dz * dz < lim2) return false;
+  }
+  return true;
+}
+
+/** Move spot i to the nearest legal point clear of everybody (rings of RING_N points round it); unchanged if none. */
+function relocate(s: SimState, i: number): void {
+  const x0 = SPOT_X[i]!, z0 = SPOT_Z[i]!;
+  const team = s.players[i]!.team;
+  let bestD = 1e18, bx = x0, bz = z0;
+  for (let k = 1; k <= RELOCATE_RINGS && bestD >= 1e18; k++) {
+    const rad = k * LT.minSpacing * 0.75;
+    for (let a = 0; a < RING_N; a++) {
+      PT.x = x0 + RING_X[a]! * rad;
+      PT.z = z0 + RING_Z[a]! * rad;
+      if (C.kind !== RestartKind.NONE) legalizePt(team);
+      if (!spacingOk(s, i, PT.x, PT.z)) continue;
+      const dx = PT.x - x0, dz = PT.z - z0;
+      const d = dx * dx + dz * dz;
+      if (d < bestD) { bestD = d; bx = PT.x; bz = PT.z; }
+    }
+  }
+  SPOT_X[i] = bx;
+  SPOT_Z[i] = bz;
+}
+
+/** Rings searched by relocate (radius k x 0.75 x minSpacing, k = 1..). */
+const RELOCATE_RINGS = 12;
 
 /**
  * Compute every candidate's set-piece spot for the current restart phase / shoot-out into module scratch. Pure

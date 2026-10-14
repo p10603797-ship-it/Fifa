@@ -9,7 +9,7 @@
 import '../../src/sim/actions/dispatch'; // load the action registry before the keeper modules (import-cycle order)
 import { describe, expect, it } from 'vitest';
 import { DT, HALF_LENGTH, PLAYERS_PER_TEAM, teamFirstSlot } from '../../src/contracts/constants';
-import { AiJob, ControllerKind, Difficulty, FormationId, MatchPhase, TacticalFocus, TeamPhase } from '../../src/contracts/enums';
+import { AiJob, ControllerKind, Difficulty, FormationId, MatchPhase, TacticalFocus, TeamPhase, TeamStyle } from '../../src/contracts/enums';
 import { MoveMode, type SimState } from '../../src/contracts/state';
 import { T_AI } from '../../src/contracts/tuning';
 import { resetJobs } from '../../src/ai/jobs';
@@ -622,8 +622,11 @@ describe('TAI-05 team press, engagement and intensity', () => {
   }
 
   it('intensity: difficulty ladder, human default, team press, focus and counter-press', () => {
+    // [QF-2] A neutral-press style (press weight 0.5, factor 1): the default club may be a high-press side, whose
+    // intensity saturates at 1 at the top levels by design (TAI-12 levels-styles test).
     const at = (o: Partial<RigOpts>, mut?: (r: Rig) => void) => {
       const r = new Rig({ def: 1, ...o });
+      r.team.style = TeamStyle.WING_PLAY;
       mut?.(r);
       return teamPressIntensity(r.s, 1);
     };
@@ -864,6 +867,11 @@ describe('TAI-05 determinism', () => {
       Object.assign(b.s.attrs[N + i]!, a.s.attrs[i]!);
       Object.assign(b.s.attrs[i]!, a.s.attrs[N + i]!);
     }
+    // [QF-2] The clubs' styles (press intensity -> standoff and cover gap) mirror too.
+    for (let t = 0; t < 2; t++) {
+      b.s.teams[1 - t]!.style = a.s.teams[t]!.style;
+      b.s.teams[1 - t]!.focus = a.s.teams[t]!.focus;
+    }
     for (const r of [a, b]) {
       r.opps.push({ k: 7, u: -12, v: 6, vu: -6.5, vv: 1 });
       for (let k = 1; k < N; k++) r.put(k, -30 + k * 3, -20 + ((k * 7) % 40));
@@ -874,7 +882,7 @@ describe('TAI-05 determinism', () => {
       for (let k = 0; k < N; k++) {
         const pa = a.defP(k), pb = b.defP(k);
         expect(pb.job).toBe(pa.job);
-        expect(pb.tgtX === -pa.tgtX && pb.tgtZ === -pa.tgtZ).toBe(true);
+        expect(pb.tgtX === -pa.tgtX && pb.tgtZ === -pa.tgtZ, `t ${t} k ${k} job ${pa.job} a (${pa.tgtX}, ${pa.tgtZ}) b (${pb.tgtX}, ${pb.tgtZ})`).toBe(true);
       }
       expect(b.team.pressSlot - N).toBe(a.team.pressSlot);
       expect(b.team.coverSlot - (b.team.coverSlot < 0 ? 0 : N)).toBe(a.team.coverSlot);

@@ -36,8 +36,8 @@ import {
 } from 'three';
 import { NUM_SLOTS } from '../../contracts/constants';
 import type { Club, Kit } from '../../contracts/data';
-import { ActionKind, KitPattern, type QualityTier } from '../../contracts/enums';
-import { AnimId, createPose, POSE_SIZE, type Pose } from '../../contracts/render';
+import { ActionKind, KitPattern, MatchPhase, type QualityTier } from '../../contracts/enums';
+import { AnimId, createPose, POSE_SIZE, PoseIdx, type Pose } from '../../contracts/render';
 import type { Settings } from '../../contracts/settings';
 import type { ReadonlySimState } from '../../contracts/state';
 import { advanceCycle, createAnimBank, createAnimDriver, createAnimSample, mapAnim, poseFnFor, samplePose } from '../anim/mapper';
@@ -48,6 +48,7 @@ import {
   BODY, createSkeleton, FRAME_SIZE, groundSkeleton, Joint, JOINT_COUNT, PLACE_SIZE, placeSkeleton, solvePoseFK,
   writeHiddenMatrix, writeJointMatrix,
 } from './fk';
+import { drawnOffsetsOf } from './drawn';
 import { buildPartGeometry, NUMBER_PANEL, Part, PART_COUNT, PART_NAMES, PART_PAIRED, TORSO_Y0, TORSO_Y1, trianglesPerPlayer } from './parts';
 
 export {
@@ -77,6 +78,26 @@ const LOCAL_TUNING = { // TUNING-CR (render-only; the ground snap distance lives
   lockReturnFree: 0.08,
   /** Interpolated travel above this in one frame drops the lock (restart placement, replay cut) (m). */
   lockTeleport: 1.5,
+  /** [QF-4] Yaw lock: largest body yaw held back from the sim facing while a boot is planted (rad) and the time it
+   *  takes to catch up in the flight phases / with a boot down (s). */
+  yawMax: 0.6,
+  yawReturn: 0.09,
+  yawReturnHeld: 0.3,
+  /** Only turns faster than this hold the yaw (rad/s): slower ones the translation lock alone keeps planted. */
+  yawHoldRate: 2.5,
+  /** [QF-4] Pop guard: the most a joint may move relative to the pelvis between two drawn frames (m). */
+  popLimit: 0.42,
+  // ---- set-piece stance [QF-4]
+  /** The waiting free-kick / corner / goal-kick / penalty taker (RUL-11 puts him 0.6 m behind the ball on the aim line)
+   *  is drawn this far to his side away from the camera (m), so the set-piece camera sees the ball beside him instead
+   *  of between his legs; he steps back in during the kick's wind-up (the boot still meets the ball on contact). */
+  stanceSide: 0.42,
+  /** Time to step out to the stance once the restart is set up (s). */
+  stanceIn: 0.35,
+  /** Longest step back in when the kick starts (s); shorter when the contact comes sooner. */
+  stanceOut: 0.25,
+  /** The camera moving further than this in one frame is a cut (m): a stance starting then is taken at once. */
+  stanceCut: 4,
 } as const;
 
 /** Legacy envelope of a 180 cm player (m), kept from the Wave 0 capsule: radius and height. */
@@ -89,6 +110,8 @@ export const CAPSULE_HEIGHT = 1.8;
 export interface PoseSink {
   /** Copy `pose` (POSE_SIZE values, contracts/render.ts PoseIdx) into the slot's pose buffer. No allocation. */
   setPose(slot: number, pose: ArrayLike<number>): void;
+  /** [QF-4] Render-only offsets each player was drawn with on the last frame (players/drawn.ts). */
+  readonly drawnOffsets?: Float64Array;
 }
 
 /** Writes the pose of every active slot for this frame (called first in the model's update). Must not allocate. */
@@ -537,6 +560,25 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
   const lockWas = new Uint8Array(NUM_SLOTS * 4);
   const lockLast = new Float64Array(NUM_SLOTS * 2);
   const lockSeen = new Uint8Array(NUM_SLOTS);
+  /** [QF-4] Yaw lock: per slot the body yaw held back from the sim facing (rad, + = left), the facing of the last frame
+   *  and whether the foot lock held a boot on it. */
+  const yawOff = new Float64Array(NUM_SLOTS);
+  const yawLast = new Float64Array(NUM_SLOTS * 2);
+  const lockHeld = new Uint8Array(NUM_SLOTS);
+  /** [QF-4] Pop guard: per slot the last drawn pose and its joints relative to the root (model space). */
+  const guardPose: Pose[] = [];
+  const guardRel: Float64Array[] = [];
+  for (let i = 0; i < NUM_SLOTS; i++) { guardPose.push(createPose()); guardRel.push(new Float64Array(JOINT_COUNT * 3)); }
+  const guardSeen = new Uint8Array(NUM_SLOTS);
+  // Set-piece stance [QF-4]: per slot the weight 0..1, the side (+1 his right, -1 his left; chosen once when he steps
+  // out) and this frame's unit world direction of the side step (follows his facing as he lines up on a new aim).
+  const stanceW = new Float64Array(NUM_SLOTS);
+  /** Total render-only offset per slot (foot lock + stance), shared with the markers (players/drawn.ts). */
+  const drawn = drawnOffsetsOf(ctx);
+  const stanceSide = new Int8Array(NUM_SLOTS);
+  const stanceDir = new Float64Array(NUM_SLOTS * 2);
+  /** Camera position of the previous frame (cut detection for the stance). */
+  const stanceCam = new Float64Array(3);
   /** Per frame: [0] dt (s); scratch [1..12] the raw boot points of the slot being placed. */
   const LK = new Float64Array(13);
   const hidden = new Uint8Array(NUM_SLOTS).fill(1);
@@ -629,6 +671,9 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
   }
 
   function hideSlot(i: number): void {
+    guardSeen[i] = 0;
+    drawn[i * 2] = 0;
+    drawn[i * 2 + 1] = 0;
     for (let p = 0; p < PART_COUNT; p++) {
       const arr = mats[p]!;
       if (PART_PAIRED[p]) { writeHiddenMatrix(arr, i * 2); writeHiddenMatrix(arr, i * 2 + 1); }
@@ -643,7 +688,29 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
    */
   function placeSlot(i: number, s: ReadonlySimState, it: RenderFrame['interp']): void {
     const pose = poses[i]!;
+    // [QF-4] Yaw lock: while a boot is planted (foot lock held it last frame) the body keeps its world yaw as the sim
+    // facing turns (a planted foot cannot pivot with the body: there is no leg twist); in the flight phases it catches
+    // up. Sharp turns (> 4 rad/s) dragged planted boots round at p50 0.14 of the body speed.
+    const ffx = it.fx[i]!, ffz = it.fz[i]!;
+    let yo = yawOff[i]!;
+    if (lockSeen[i] === 1 && held[i] !== 1) {
+      const pfx = yawLast[i * 2]!, pfz = yawLast[i * 2 + 1]!;
+      const dR = Math.atan2(pfx * ffz - pfz * ffx, pfx * ffx + pfz * ffz);
+      const dtl = LK[0]!;
+      if (lockHeld[i] === 1 && dtl > 0 && (dR > LOCAL_TUNING.yawHoldRate * dtl || dR < -LOCAL_TUNING.yawHoldRate * dtl)) yo += dR;
+      else if (dtl > 0) {
+        // Catch up: quickly in the flight phases, slowly while a boot is down (a run may never leave the ground).
+        const f = 1 - dtl / (lockHeld[i] === 1 ? LOCAL_TUNING.yawReturnHeld : LOCAL_TUNING.yawReturn);
+        yo = f > 0 ? yo * f : 0;
+      }
+      if (yo > LOCAL_TUNING.yawMax) yo = LOCAL_TUNING.yawMax; else if (yo < -LOCAL_TUNING.yawMax) yo = -LOCAL_TUNING.yawMax;
+      if (!(yo === yo)) yo = 0;
+    } else yo = 0;
+    yawOff[i] = yo;
+    yawLast[i * 2] = ffx; yawLast[i * 2 + 1] = ffz;
+    if (yo !== 0) pose[PoseIdx.ROOT_YAW] = pose[PoseIdx.ROOT_YAW]! + yo;
     solvePoseFK(pose, modelSk);
+    popGuard(i, pose);
     groundSkeleton(modelSk, pose);
     const sk = skeletons[i]!;
     // heightScale(), written out.
@@ -654,6 +721,19 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     place[0] = it.x[i]!; place[1] = it.z[i]!; place[2] = it.fx[i]!; place[3] = it.fz[i]!; place[4] = h;
     placeSkeleton(modelSk, sk, place);
     footLock(i, s, it, sk);
+    const sw = stanceW[i]!;
+    let ox = lockOff[i * 2]!, oz = lockOff[i * 2 + 1]!;
+    if (sw > 0) {
+      const k = sw * sw * (3 - 2 * sw) * LOCAL_TUNING.stanceSide;
+      const sx = stanceDir[i * 2]! * k, sz = stanceDir[i * 2 + 1]! * k;
+      for (let j = 0; j < JOINT_COUNT; j++) {
+        sk[j * FRAME_SIZE + 9] = sk[j * FRAME_SIZE + 9]! + sx;
+        sk[j * FRAME_SIZE + 11] = sk[j * FRAME_SIZE + 11]! + sz;
+      }
+      ox += sx; oz += sz;
+    }
+    drawn[i * 2] = ox;
+    drawn[i * 2 + 1] = oz;
     for (let k = 0; k < PART_JOINTS.length; k++) {
       const pj = PART_JOINTS[k]!;
       const part = pj[0], arr = mats[part]!;
@@ -665,6 +745,41 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
       }
     }
     hidden[i] = 0;
+  }
+
+  /**
+   * [QF-4] Pop guard (QA-32 "visible teleports" of limbs): no joint may move more than popLimit (m) relative to the
+   * pelvis between two drawn frames (~27 m/s at 60 Hz, faster than any real kick). A pose that would (a sim strike
+   * squeezed into one tick, a clip switch the cross-fade cannot cover, a reach correcting a late prediction) is moved
+   * only that far toward the new pose this frame and catches up on the next ones. modelSk holds the new pose's FK on
+   * entry and the drawn one on exit. Skipped for a slot that was hidden or teleported (fresh). No allocation.
+   */
+  function popGuard(i: number, pose: Pose): void {
+    const rel = guardRel[i]!, last = guardPose[i]!;
+    const T = LOCAL_TUNING;
+    let worst = 0;
+    if (guardSeen[i] === 1 && held[i] !== 1) {
+      const rx = modelSk[9]!, ry = modelSk[10]!, rz = modelSk[11]!;
+      for (let j = 1; j < JOINT_COUNT; j++) {
+        const o = j * FRAME_SIZE;
+        const dx = modelSk[o + 9]! - rx - rel[j * 3]!, dy = modelSk[o + 10]! - ry - rel[j * 3 + 1]!, dz = modelSk[o + 11]! - rz - rel[j * 3 + 2]!;
+        const d = dx * dx + dy * dy + dz * dz;
+        if (d > worst) worst = d;
+      }
+      worst = Math.sqrt(worst);
+      if (worst > T.popLimit) {
+        const k = T.popLimit / worst;
+        for (let c = 0; c < POSE_SIZE; c++) pose[c] = last[c]! + (pose[c]! - last[c]!) * k;
+        solvePoseFK(pose, modelSk);
+      }
+    }
+    guardSeen[i] = 1;
+    for (let c = 0; c < POSE_SIZE; c++) last[c] = pose[c]!;
+    const rx = modelSk[9]!, ry = modelSk[10]!, rz = modelSk[11]!;
+    for (let j = 0; j < JOINT_COUNT; j++) {
+      const o = j * FRAME_SIZE;
+      rel[j * 3] = modelSk[o + 9]! - rx; rel[j * 3 + 1] = modelSk[o + 10]! - ry; rel[j * 3 + 2] = modelSk[o + 11]! - rz;
+    }
   }
 
   /**
@@ -694,6 +809,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     }
     let ox = 0, oz = 0;
     let locked = 0;
+    lockHeld[i] = 0;
     if (!fresh) {
       ox = lockOff[i * 2]!; oz = lockOff[i * 2 + 1]!;
       const vx = it.vx[i]!, vz = it.vz[i]!;
@@ -708,6 +824,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
         }
         if (locked > 0) { ox -= dx / locked; oz -= dz / locked; }
       }
+      lockHeld[i] = locked > 0 ? 1 : 0;
       if (dt > 0) {
         let f = 1 - dt / (locked > 0 ? T.lockReturnLocked : T.lockReturnFree);
         if (f < 0) f = 0;
@@ -732,6 +849,50 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
       lockPts[i * 12 + k * 3 + 1] = LK[2 + k * 3]!;
       lockPts[i * 12 + k * 3 + 2] = LK[3 + k * 3]! + oz;
       lockWas[i * 4 + k] = LK[2 + k * 3]! < T.lockGroundY ? 1 : 0;
+    }
+  }
+
+  /**
+   * [QF-4] Set-piece stance weights. The waiting taker of a set-up free kick, corner, goal kick or penalty (SET_PIECE,
+   * restart ready and not taken) steps out to his side away from the camera drawn this frame (the set-piece camera cut
+   * in on the set-up frame), over stanceIn; when his kick starts he steps back in, done by the contact tick (at most
+   * stanceOut), so the boot meets the ball where the sim kicks it. Anything else drops the stance quickly. dt in LK[0].
+   */
+  function stepStance(s: ReadonlySimState, it: RenderFrame['interp']): void {
+    const T = LOCAL_TUNING;
+    const dt = LK[0]!;
+    // A camera cut this frame (the set-piece shot cuts in on the set-up tick) hides a sudden change: step out at once.
+    const cam = ctx.camera.position;
+    const cx = cam.x - stanceCam[0]!, cy = cam.y - stanceCam[1]!, cz = cam.z - stanceCam[2]!;
+    const cut = cx * cx + cy * cy + cz * cz > T.stanceCut * T.stanceCut;
+    stanceCam[0] = cam.x; stanceCam[1] = cam.y; stanceCam[2] = cam.z;
+    const m = s.match, r = m.restart;
+    const ph = m.phase;
+    const setPiece = (ph === MatchPhase.FREE_KICK || ph === MatchPhase.CORNER || ph === MatchPhase.GOAL_KICK
+      || ph === MatchPhase.PENALTY) && r.ready === 1 && r.taken === 0;
+    for (let i = 0; i < NUM_SLOTS; i++) {
+      let w = stanceW[i]!;
+      const p = s.players[i]!;
+      if (setPiece && r.taker === i && p.act === ActionKind.SET_PIECE && p.active === 1 && held[i] !== 1) {
+        const fx = it.fx[i]!, fz = it.fz[i]!;
+        // Side step away from the camera, perpendicular to his facing (right = (-fz, fx)); the side is kept.
+        if (w === 0) {
+          const cam = ctx.camera.position;
+          stanceSide[i] = (cam.x - it.ballX) * -fz + (cam.z - it.ballZ) * fx >= 0 ? -1 : 1;
+        }
+        stanceDir[i * 2] = -fz * stanceSide[i]!;
+        stanceDir[i * 2 + 1] = fx * stanceSide[i]!;
+        w = cut ? 1 : dt > 0 ? Math.min(1, w + dt / T.stanceIn) : w;
+      } else if (w > 0) {
+        let out: number = T.stanceOut;
+        if (r.taker === i && (p.act === ActionKind.KICK || p.act === ActionKind.SHOT) && p.actDone === 0 && p.actContact >= 0) {
+          const left = (p.actContact - p.actT) / 60;
+          out = left > 1 / 60 ? Math.min(out, left) : 1 / 60;
+        }
+        w = dt > 0 ? Math.max(0, w - dt / out) : w;
+        if (p.active !== 1) w = 0;
+      }
+      stanceW[i] = w;
     }
   }
 
@@ -760,6 +921,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     group,
     poses,
     skeletons,
+    drawnOffsets: drawn,
     get kits(): MatchKits | null { return kits; },
 
     setPose(slot: number, pose: ArrayLike<number>): void {
@@ -794,6 +956,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
       applyAll(state);
       for (let i = 0; i < NUM_SLOTS; i++) hideSlot(i);
       lockSeen.fill(0);
+      stanceW.fill(0);
       for (let p = 0; p < PART_COUNT; p++) meshes[p]!.instanceMatrix.needsUpdate = true;
       group.visible = true;
       matchOn = true;
@@ -817,6 +980,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
       for (let i = 0; i < NUM_SLOTS; i++) if (held[i] === 1) api.setPose(i, heldPoses[i]!);
       const dtMs = f.frame.paused ? 0 : f.frame.dtMs;
       LK[0] = dtMs > 0 ? (dtMs < 100 ? dtMs / 1000 : 0.1) : 0;
+      stepStance(s, it);
       for (let i = 0; i < NUM_SLOTS; i++) {
         const p = s.players[i]!;
         const x = it.x[i]!, z = it.z[i]!;

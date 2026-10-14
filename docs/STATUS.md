@@ -180,10 +180,10 @@ Total assignments: 201.
 | QA-36 | 3 | queued |  |  |
 | QA-37 | 3 | queued |  |  |
 | QA-38 | 3 | queued |  |  |
-| QA-39 | 3 | running | QF-5 (hunt + second pass, D-020) | |
-| QA-40 | 3 | running | QF-5 (hunt + second pass, D-020) | |
-| QA-41 | 3 | running | QF-5 (hunt + second pass, D-020) | |
-| QA-42 | 3 | running | QF-6 (hunt + second pass, D-020) | |
+| QA-39 | 3 | done | QF-5: 18 defects fixed (14 + 4); sw.js shell/quota/redirect, build-id update flow, no toast in play, licence notices in dist, audio warm-up + background resume, pause lockout; 797 KB gzip; splash 2.0 s | 3 cosmetic KNOWN_ISSUES |
+| QA-40 | 3 | done | QF-5: 18 defects fixed (14 + 4); sw.js shell/quota/redirect, build-id update flow, no toast in play, licence notices in dist, audio warm-up + background resume, pause lockout; 797 KB gzip; splash 2.0 s | 3 cosmetic KNOWN_ISSUES |
+| QA-41 | 3 | done | QF-5: 18 defects fixed (14 + 4); sw.js shell/quota/redirect, build-id update flow, no toast in play, licence notices in dist, audio warm-up + background resume, pause lockout; 797 KB gzip; splash 2.0 s | 3 cosmetic KNOWN_ISSUES |
+| QA-42 | 3 | done | QF-6: 33 defects fixed (18 + 15); netsim matrix 24/24, DoD seeds 3-9/2026 0 desyncs; real WebRTC e2e; protocol net2 | 4 cosmetic KNOWN_ISSUES |
 | QA-43 | 3 | queued |  |  |
 | QA-44 | 3 | queued |  |  |
 | FIX-01 | 4 | running | QF-1 (hunt + second pass, D-020) | |
@@ -196,8 +196,8 @@ Total assignments: 201.
 | FIX-08 | 4 | running | QF-4 (hunt + second pass, D-020) | |
 | FIX-09 | 4 | running | QF-4 (hunt + second pass, D-020) | |
 | FIX-10 | 4 | running | QF-4 (hunt + second pass, D-020) | |
-| FIX-11 | 4 | running | QF-5 (hunt + second pass, D-020) | |
-| FIX-12 | 4 | running | QF-6 (hunt + second pass, D-020) | |
+| FIX-11 | 4 | done | QF-5: 18 defects fixed (14 + 4); sw.js shell/quota/redirect, build-id update flow, no toast in play, licence notices in dist, audio warm-up + background resume, pause lockout; 797 KB gzip; splash 2.0 s | 3 cosmetic KNOWN_ISSUES |
+| FIX-12 | 4 | done | QF-6: 33 defects fixed (18 + 15); netsim matrix 24/24, DoD seeds 3-9/2026 0 desyncs; real WebRTC e2e; protocol net2 | 4 cosmetic KNOWN_ISSUES |
 | FIX-13 | 4 | queued |  |  |
 | FIX-14 | 4 | running | QF-2 (hunt + second pass, D-020) | |
 | SGN-01 | 5 | queued |  |  |

@@ -1016,7 +1016,12 @@ export function kickOffTick(s: SimState, ev: EventSink): void {
   const human = teamHasHumanCtrl(s, r.team);
   const due = human ? T_RULES.restartTimeoutTicks : T_RULES.cpuRestartDelay + LOCAL_TUNING.kickOffCpuGraceTicks;
   if (waited >= due) kickOffDefault(s, ev);
-  if (r.taken !== 1 && waited >= due + LOCAL_TUNING.kickOffForceTicks) forceKickOff(s, ev);
+  // [QF-1] Never force over a kick-off kick that is under way: a side handed to the CPU mid kick-off (Command.HAND_TO_CPU,
+  // a pad disconnect) drops `due` from 12 s to 2 s at once, so the Default and the forced kick used to fall in the same
+  // tick: the Default's pass had just started its wind-up and the safety net kicked over it (WATCHDOG RESTART_BLOCKED).
+  const tk = r.taker >= 0 && r.taker < NUM_SLOTS ? s.players[r.taker]! : null;
+  const kicking = tk !== null && (tk.act === ActionKind.KICK || tk.act === ActionKind.SHOT);
+  if (r.taken !== 1 && !kicking && waited >= due + LOCAL_TUNING.kickOffForceTicks) forceKickOff(s, ev);
 }
 
 function teamHasHumanCtrl(s: SimState, team: number): boolean {

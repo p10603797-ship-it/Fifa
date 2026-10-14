@@ -651,7 +651,12 @@ export function createOnlineScreen(): Screen {
     const r = room;
     const host = r ? r.lobby.isHost : lastWasHost;
     const code = r && !r.lobby.isHost ? r.lobby.code : lastJoin;
+    // A reloaded page whose rejoin attempt failed (ICE timeout, broker hiccup, a host still dropping the old link)
+    // tries again WITH its rejoin token: leaving the failed room clears it, and without it the host refuses the page
+    // as a stranger ("Room is full") while the match it belongs to is still waiting for it (QF-6).
+    const keep = !host && code ? readRejoin() : null;
     leaveRoom();
+    if (keep && keep.code === code) writeRejoin(keep);
     if (host) create();
     else if (code) join(code);
     else setView('home');

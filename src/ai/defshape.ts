@@ -75,7 +75,7 @@ import {
 import { otherTeam, teamEnd, teamStart } from '../sim/core/query';
 import { assignJob, isJobDriven } from './jobs';
 
-const LOCAL_TUNING = {
+export const LOCAL_TUNING = {
   // ---- line height (team frame u, m from the centre spot toward the opposition goal)
   /** The line follows the ball: neutral back line + lineOffset + lineSlope * ball u, m/m. */
   lineSlope: 0.55,

@@ -9,6 +9,9 @@
  *     ready); IN_PLAY / THROW_IN / GOAL / CELEBRATION -> main camera;
  *   GOAL_KICK / PENALTY / SHOOT_OUT -> BEHIND_TAKER; FREE_KICK -> BEHIND_TAKER within LOCAL_TUNING.fkNearGoal of the
  *     attacked goal, else the main camera; CORNER -> CORNER (raised view from behind the corner flag into the box);
+ *     [QF-4] goal kicks, penalties, free kicks and corners keep the main camera until the restart is set up
+ *     (match.restart.ready): RUL-11 teleports every player still out of position in that tick (D-008), and the cut
+ *     into the set-piece shot on that very frame hides it (index.ts draws teleports at their new spot, never halfway);
  *   a free kick or penalty struck as a shot keeps the behind view while the shot is in flight (at most shotHold s);
  *   replay playback (GFX-16 replayPlaybackOf(ctx)) -> REPLAY_SIDE (side close-up) / REPLAY_GOAL (low behind the goal),
  *     tracking the replayed ball (the replay module substitutes the frame before the cameras run).
@@ -17,10 +20,15 @@
  *   bigger is a cut, so the camera never flies across the pitch. Replay boundaries always cut. Reduced camera motion:
  *   cuts only, and the establishing shot holds still.
  * SHOTS (pure pose functions, all inside |x| <= maxX, |z| <= maxZ: in front of the stand walls, never in the goal):
- *   behind the taker: on the line from the attacked goal through the ball, takerBack behind it and takerHeight up, the
- *   pitch solved so the ball sits at takerBallY of the screen with the top of the goal in view; goal kicks use a lower,
- *   wider rig in front of the goal looking up-field. Corner: cornerBack beyond the flag on the line from the penalty
- *   spot through the flag, cornerHeight up, ball at cornerBallY. Replay side: near-side close-up trailing the ball;
+ *   behind the taker: takerBack from the ball, takerPhi around it from the line from the attacked goal through the ball
+ *   (on the side of that line facing the pitch's long axis, the near side for central spots) and takerHeight up, turned
+ *   to centre the ball and both posts (ball within takerBallNdc of the centre, FOV widened up to takerFovMax so the goal
+ *   fits a 4:3 screen), the pitch solved so the ball sits at takerBallY of the screen with the top of the goal in view.
+ *   [QF-4] The waiting taker stands 0.6 m behind the ball on the aim line: straight behind him the ball showed between
+ *   his legs. Goal kicks: a raised rig goalKickBack from the ball, goalKickPhi around it toward the touchline (over the
+ *   goal-line area beside the goal, its frame out of view), looking up-field (the far kick-line point and the centre
+ *   spot in view); the keeper stays small and clear of the ball. Corner: cornerBack beyond the corner spot on the line from the penalty spot through it,
+ *   turned cornerPhi toward the goal-line side, cornerHeight up, ball at cornerBallY. Replay side: near-side close-up trailing the ball;
  *   replay goal: low behind the goal, just above the bar so the view clears the net; both frame a constant height of
  *   pitch (FOV from distance).
  * PROJECTOR: while active the camera owns ctx.camera; screenToPitch / pitchToScreen follow it, and stickRotation()
@@ -32,7 +40,7 @@
  */
 
 import { Euler, type PerspectiveCamera } from 'three';
-import { BALL_RADIUS, GOAL_HEIGHT, HALF_LENGTH, PENALTY_SPOT_DIST } from '../../contracts/constants';
+import { BALL_RADIUS, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_LENGTH, NUM_SLOTS, PENALTY_SPOT_DIST } from '../../contracts/constants';
 import { MatchPhase, RestartKind } from '../../contracts/enums';
 import { EventType, type EventBuffer } from '../../contracts/events';
 import type { CameraSettings } from '../../contracts/settings';
@@ -62,26 +70,44 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
   takerBack: 8,
   takerHeight: 3.2,
   takerFov: 36,
+  /** [QF-4] The camera sits this far (deg) around the ball from straight behind it. The waiting taker stands 0.6 m
+   *  behind the ball on the aim line (RUL-11 takerBehind), so straight behind him the ball showed between his legs;
+   *  with this angle and the model's set-piece stance (players/model.ts stanceSide: he is drawn a step to his side away
+   *  from the camera) the ball stays clear for every aim across the goal frame. */
+  takerPhi: 28,
+  /** [QF-4] Free kicks / penalties: the view centres the angular span of the ball and both goal posts, which must fit a
+   *  4:3 screen (the narrowest supported) with this margin each side (deg); a wider span widens the FOV up to
+   *  takerFovMax (deg). */
+  takerSideMarginDeg: 4,
+  takerFovMax: 50,
+  /** [QF-4] ... while the ball stays within this horizontal NDC of the screen centre at 4:3 (x 0.38..0.62): further
+   *  out it sat over the touch buttons / stick zone at the bottom corners. */
+  takerBallNdc: 0.24,
+  /** [QF-4] Spots within this |z| of the pitch's long axis put the camera on the near (broadcast, +z) side; wider spots
+   *  put it on the side of the aim line facing the axis (crosses from wide positions turn toward that side). m. */
+  centralZ: 4,
+  /** [QF-4] A player closer than this to the behind-the-taker camera (m, horizontal) fills the frame: the shot takes the
+   *  other side of the ball when a player is not as close there. */
+  nearClear: 3.5,
   /** Ball height on screen (fraction from the top) the pitch is solved for. INT-C: 0.74 -> 0.68, so the taker standing
    *  behind the ball (lower on screen) stays above the HUD radar at the bottom centre. */
   takerBallY: 0.68,
   /** The crossbar stays at least this fraction below the top edge. */
   takerTopMargin: 0.12,
-  // ---- goal kicks (in front of the goal, looking up-field)
-  goalKickBack: 5,
-  goalKickHeight: 3.4,
+  // ---- goal kicks (raised, behind the taker, looking up-field)
+  /** [QF-4] Distance from the ball m (around the ball by goalKickPhi toward the touchline: over the goal-line area
+   *  beside the goal, whose frame stays out of view), height m, vertical FOV deg. The INT-C rig
+   *  (5 m back, 3.4 m up) still had the keeper filling 38% of the screen height and covering the ball. */
+  goalKickBack: 9,
+  goalKickHeight: 5,
   goalKickFov: 48,
   goalKickBallY: 0.76,
+  goalKickPhi: 35,
   /** Point on the kick line (m ahead of the ball) kept at least goalKickTopMargin below the top edge. */
   goalKickLook: 40,
   goalKickTopMargin: 0.18,
-  /** Goal-kick cameras stay this far inside the goal line (m): the goal frame stays behind them. */
-  goalKickLineInset: 0.5,
-  /** [INT-C] Goal-kick camera offset sideways from the kick line toward the pitch's long axis (m), and the share of the
-   *  angle between the far kick-line point and the ball the view turns toward the ball. Straight behind the ball the
-   *  keeper taking the kick stood 3.5 m in front of the lens, filling the frame and hiding the ball. */
-  goalKickSide: 2.2,
-  goalKickBallYaw: 0.5,
+  /** [QF-4] Widest goal-kick FOV (deg) when the far kick-line point needs it (see takerBallNdc). */
+  goalKickFovMax: 62,
   // ---- corner (raised view from behind the flag)
   cornerBack: 8,
   cornerHeight: 7,
@@ -92,6 +118,12 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
   /** Look target on the goal axis this far from the goal line, m (the penalty spot). */
   cornerLookIn: 11,
   cornerBallY: 0.7,
+  /** [QF-4] The camera turns this far (deg) around the corner spot from the penalty-spot line toward the goal-line side:
+   *  the taker lines up on the penalty-spot line (the default aim), which hid the ball behind his legs; aims toward the
+   *  goal mouth move him further from the view line (with the model's set-piece stance). */
+  cornerPhi: 25,
+  /** [QF-4] Share of the angle between the ball and the look target the view turns toward the target. */
+  cornerLookMix: 0.8,
   // ---- establishing orbit (high, inside the bowl, around the centre spot)
   orbitRadiusX: 56,
   orbitRadiusZ: 40,
@@ -185,6 +217,12 @@ export interface DirectorInput {
   skipped: boolean;
   /** A free kick / penalty shot struck from the behind view is still in flight. */
   holdShot: boolean;
+  /**
+   * [QF-4] The restart is set up (match.restart.ready): RUL-11 moved every player still out of position onto a legal
+   * spot in that tick (D-008, up to 60 m for a taker). Set-piece shots start then, so their cut hides those
+   * teleports; until then the main camera shows the set-up. Omitted = ready.
+   */
+  ready?: boolean;
 }
 
 class Input implements DirectorInput {
@@ -195,6 +233,7 @@ class Input implements DirectorInput {
   establishing = false;
   skipped = false;
   holdShot = false;
+  ready = true;
 }
 
 export function createDirectorInput(): DirectorInput {
@@ -213,14 +252,15 @@ export function chooseShot(i: Readonly<DirectorInput>): CineShot {
       return i.skipped ? CineShot.NONE : CineShot.ESTABLISHING;
     case MatchPhase.KICK_OFF:
       return i.establishing && !i.skipped ? CineShot.ESTABLISHING : CineShot.NONE;
-    case MatchPhase.GOAL_KICK:
-    case MatchPhase.PENALTY:
     case MatchPhase.SHOOT_OUT:
       return CineShot.BEHIND_TAKER;
+    case MatchPhase.GOAL_KICK:
+    case MatchPhase.PENALTY:
+      return i.ready === false ? CineShot.NONE : CineShot.BEHIND_TAKER;
     case MatchPhase.FREE_KICK:
-      return i.goalDist <= LT.fkNearGoal ? CineShot.BEHIND_TAKER : CineShot.NONE;
+      return i.ready !== false && i.goalDist <= LT.fkNearGoal ? CineShot.BEHIND_TAKER : CineShot.NONE;
     case MatchPhase.CORNER:
-      return CineShot.CORNER;
+      return i.ready === false ? CineShot.NONE : CineShot.CORNER;
     case MatchPhase.IN_PLAY:
       return i.holdShot ? CineShot.BEHIND_TAKER : CineShot.NONE;
     default: // THROW_IN (main camera), GOAL, CELEBRATION, REPLAY without playback
@@ -259,42 +299,64 @@ const T_TAKER = TAN_HALF(LT.takerFov), T_GOAL_KICK = TAN_HALF(LT.goalKickFov), T
 /** takerPose on PIN = [spotX, spotZ, aimX, aimZ]. */
 function takerPoseIn(goalKick: boolean, out: CinePose): void {
   const spotX = PIN[0]!, spotZ = PIN[1]!, aimX = PIN[2]!, aimZ = PIN[3]!;
-  let dx = aimX - spotX, dz = aimZ - spotZ;
-  const l = Math.sqrt(dx * dx + dz * dz);
-  if (l > 1e-3) { dx /= l; dz /= l; } else { dx = spotX > 0 ? -1 : 1; dz = 0; }
+  let ux = aimX - spotX, uz = aimZ - spotZ;
+  const l = Math.sqrt(ux * ux + uz * uz);
+  if (l > 1e-3) { ux /= l; uz /= l; } else { ux = spotX > 0 ? -1 : 1; uz = 0; }
+  // [QF-4] Around the ball by phi from straight behind it, on the side of the aim line facing the pitch's long axis
+  // (central spots: the near side): the waiting taker, 0.6 m behind the ball on the aim line, no longer hides it.
+  // Goal kicks take the touchline side instead: toward the axis the camera hung over the own goal and its crossbar
+  // came into view. Side +1 uses the normal n = (-uz, ux), whose z is ux.
+  let side = spotZ < LT.centralZ && spotZ > -LT.centralZ ? (ux >= 0 ? 1 : -1) : (ux * -spotZ > 0 ? 1 : -1);
+  if (goalKick) side = -side;
+  if (PIN[4] === -1) side = -side; // the other side (a player stood where the camera would be)
+  const phi = (goalKick ? LT.goalKickPhi : LT.takerPhi) * DEG;
+  const cp = Math.cos(phi), sp = Math.sin(phi);
+  const dx = -cp * ux - sp * uz * side, dz = -cp * uz + sp * ux * side;
   const back = goalKick ? LT.goalKickBack : LT.takerBack;
-  const maxX = goalKick ? HALF_LENGTH - LT.goalKickLineInset : LT.maxX;
-  let cx = spotX - dx * back;
-  let cz = spotZ - dz * back;
-  if (goalKick) {
-    // Sideways (perpendicular to the kick line) toward the pitch's long axis, so the taker is not in front of the lens.
-    const pz = dx;
-    const sgn = spotZ * pz > 0 ? -1 : 1;
-    cx += -dz * LT.goalKickSide * sgn;
-    cz += pz * LT.goalKickSide * sgn;
-  }
-  cx = Math.max(-maxX, Math.min(maxX, cx));
-  cz = Math.max(-LT.maxZ, Math.min(LT.maxZ, cz));
+  const cx = Math.max(-LT.maxX, Math.min(LT.maxX, spotX + dx * back));
+  const cz = Math.max(-LT.maxZ, Math.min(LT.maxZ, spotZ + dz * back));
   const cy = goalKick ? LT.goalKickHeight : LT.takerHeight;
-  const tanHalf = goalKick ? T_GOAL_KICK : T_TAKER;
-  // Look point: the goal (free kick, penalty) or goalKickLook ahead on the kick line (goal kick).
-  const lx = goalKick ? spotX + dx * LT.goalKickLook : aimX;
-  const lz = goalKick ? spotZ + dz * LT.goalKickLook : aimZ;
-  out.x = cx; out.y = cy; out.z = cz; out.fov = goalKick ? LT.goalKickFov : LT.takerFov;
-  out.yaw = Math.atan2(-(lx - cx), -(lz - cz));
-  if (goalKick) {
-    // Turn part of the way toward the ball (now off the view axis) so ball, taker and the far kick line share the frame.
-    let d = Math.atan2(-(spotX - cx), -(spotZ - cz)) - out.yaw;
+  // Look point: the goal (free kick, penalty) or goalKickLook ahead on the kick line (goal kick); the view turns part of
+  // the way from the ball toward it so ball, taker and goal (or the far kick line) share the frame.
+  const lx = goalKick ? spotX + ux * LT.goalKickLook : aimX;
+  const lz = goalKick ? spotZ + uz * LT.goalKickLook : aimZ;
+  out.x = cx; out.y = cy; out.z = cz;
+  const yawBall = Math.atan2(-(spotX - cx), -(spotZ - cz));
+  let tanHalf = goalKick ? T_GOAL_KICK : T_TAKER;
+  // [QF-4] Must-see points (both posts; goal kicks: the far kick-line point and the centre spot) as angles from the ball's direction; the
+  // view centres their span with the ball, keeps the ball within takerBallNdc of the centre at 4:3 (clear of the touch
+  // controls in the bottom corners) and widens the FOV until the span fits a 4:3 screen.
+  let lo = 0, hi = 0;
+  for (let k = -1; k <= 1; k += 2) {
+    const px = goalKick ? (k < 0 ? lx : 0) : aimX, pz = goalKick ? (k < 0 ? lz : 0) : aimZ + k * GOAL_HALF_WIDTH;
+    let d = Math.atan2(-(px - cx), -(pz - cz)) - yawBall;
     d -= TWO_PI * Math.floor((d + Math.PI) / TWO_PI);
-    out.yaw += d * LT.goalKickBallYaw;
+    if (d < lo) lo = d;
+    if (d > hi) hi = d;
   }
-  const bx = spotX - cx, bz = spotZ - cz;
-  const thetaBall = Math.atan2(cy - BALL_RADIUS, Math.max(0.5, Math.sqrt(bx * bx + bz * bz)));
+  const margin = LT.takerSideMarginDeg * DEG;
+  const tanMax = Math.tan((goalKick ? LT.goalKickFovMax : LT.takerFovMax) * DEG * 0.5);
+  let c = (lo + hi) * 0.5;
+  for (let it = 0; it < 4; it++) {
+    const cMax = Math.atan(LT.takerBallNdc * tanHalf * (4 / 3));
+    c = Math.max(-cMax, Math.min(cMax, (lo + hi) * 0.5));
+    const half = Math.max(hi - c, c - lo) + margin;
+    const need = half < 1.5 ? Math.tan(half) * (3 / 4) : tanMax;
+    if (!(need > tanHalf)) break;
+    tanHalf = Math.min(need, tanMax);
+  }
+  const yaw = yawBall + c;
+  out.fov = (2 * Math.atan(tanHalf)) / DEG;
+  out.yaw = yaw;
+  // Pitch from the depth along the view (screen height depends on height over forward distance).
+  const sy = Math.sin(yaw), cyw = Math.cos(yaw);
+  const fB = -sy * (spotX - cx) - cyw * (spotZ - cz);
+  const thetaBall = Math.atan2(cy - BALL_RADIUS, Math.max(0.5, fB));
   const ballY = goalKick ? LT.goalKickBallY : LT.takerBallY;
   let pitch = thetaBall - Math.atan((2 * ballY - 1) * tanHalf);
   // Keep the top of the goal (or the far point of the kick line) in view.
-  const ax = lx - cx, az = lz - cz;
-  const thetaTop = Math.atan2(cy - (goalKick ? 0 : GOAL_HEIGHT), Math.max(0.5, Math.sqrt(ax * ax + az * az)));
+  const fL = -sy * (lx - cx) - cyw * (lz - cz);
+  const thetaTop = Math.atan2(cy - (goalKick ? 0 : GOAL_HEIGHT), Math.max(0.5, fL));
   const topY = goalKick ? LT.goalKickTopMargin : LT.takerTopMargin;
   const maxPitch = thetaTop - Math.atan((2 * topY - 1) * tanHalf);
   if (pitch > maxPitch) pitch = maxPitch;
@@ -305,8 +367,8 @@ function takerPoseIn(goalKick: boolean, out: CinePose): void {
  * Behind-the-taker pose for a ball at the spot aiming at (aimX, aimZ) (the attacked goal's centre for free kicks and
  * penalties). goalKick: the low, wide rig in front of the own goal looking up-field along the aim. Pure; writes out.
  */
-export function takerPose(spotX: number, spotZ: number, aimX: number, aimZ: number, goalKick: boolean, out: CinePose): CinePose {
-  PIN[0] = spotX; PIN[1] = spotZ; PIN[2] = aimX; PIN[3] = aimZ;
+export function takerPose(spotX: number, spotZ: number, aimX: number, aimZ: number, goalKick: boolean, out: CinePose, otherSide = false): CinePose {
+  PIN[0] = spotX; PIN[1] = spotZ; PIN[2] = aimX; PIN[3] = aimZ; PIN[4] = otherSide ? -1 : 1;
   takerPoseIn(goalKick, out);
   return out;
 }
@@ -319,13 +381,24 @@ function cornerPoseIn(out: CinePose): void {
   let dx = cornerX - tx, dz = cornerZ - tz;
   const l = Math.sqrt(dx * dx + dz * dz);
   if (l > 1e-3) { dx /= l; dz /= l; } else { dx = end; dz = 0; }
-  const cx = Math.max(-LT.maxX, Math.min(LT.maxX, cornerX + dx * LT.cornerBack));
-  const cz = Math.max(-LT.maxZ, Math.min(LT.maxZ, cornerZ + dz * LT.cornerBack));
+  // [QF-4] Turn the "behind the flag" direction by cornerPhi toward the goal-line side (|x| grows): the taker lines up
+  // on the penalty-spot line and no longer hides the ball.
+  const phi = LT.cornerPhi * DEG;
+  const cp = Math.cos(phi), sp = Math.sin(phi);
+  // Rotation by +phi maps (dx, dz) to (dx cp - dz sp, dx sp + dz cp); pick the sign whose x moves toward the end.
+  const sgn = (-dz * end) > 0 ? 1 : -1;
+  const rx = dx * cp - dz * sp * sgn, rz = dx * sp * sgn + dz * cp;
+  const cx = Math.max(-LT.maxX, Math.min(LT.maxX, cornerX + rx * LT.cornerBack));
+  const cz = Math.max(-LT.maxZ, Math.min(LT.maxZ, cornerZ + rz * LT.cornerBack));
   const cy = LT.cornerHeight;
   out.x = cx; out.y = cy; out.z = cz; out.fov = LT.cornerFov;
-  out.yaw = Math.atan2(-(tx - cx), -(tz - cz));
-  const bx = cornerX - cx, bz = cornerZ - cz;
-  const thetaBall = Math.atan2(cy - BALL_RADIUS, Math.max(0.5, Math.sqrt(bx * bx + bz * bz)));
+  const yawBall = Math.atan2(-(cornerX - cx), -(cornerZ - cz));
+  let d = Math.atan2(-(tx - cx), -(tz - cz)) - yawBall;
+  d -= TWO_PI * Math.floor((d + Math.PI) / TWO_PI);
+  const yaw = yawBall + d * LT.cornerLookMix;
+  out.yaw = yaw;
+  const fB = -Math.sin(yaw) * (cornerX - cx) - Math.cos(yaw) * (cornerZ - cz);
+  const thetaBall = Math.atan2(cy - BALL_RADIUS, Math.max(0.5, fB));
   out.pitch = thetaBall - Math.atan((2 * LT.cornerBallY - 1) * T_CORNER);
 }
 
@@ -518,6 +591,26 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
   let stickRot = 0;
   /** The static shot's target pose is solved (BEHIND_TAKER / CORNER); cleared on every switch. */
   let targetFresh = false;
+  /** [QF-4] The restart was set up on the previous frame (DirectorInput.ready); its edge forces a cut. */
+  let wasReady = true;
+  /** [QF-4] The frame being drawn (players for the near-camera check); the alternative set-piece pose. */
+  let curFrame: RenderFrame | null = null;
+  const alt = createCinePose();
+
+  /** Horizontal distance (m) from (x, z) to the nearest active player of the frame being drawn (Infinity: none). */
+  function nearestPlayer(x: number, z: number): number {
+    const f = curFrame;
+    if (!f) return Infinity;
+    const it = f.interp, pl = f.curr.players;
+    let best = Infinity;
+    for (let i = 0; i < NUM_SLOTS; i++) {
+      if (pl[i]!.active !== 1) continue;
+      const dx = it.x[i]! - x, dz = it.z[i]! - z;
+      const d = dx * dx + dz * dz;
+      if (d < best) best = d;
+    }
+    return Math.sqrt(best);
+  }
 
   /** Aspect + the pose's FOV into the projection (only elements 0 and 5 depend on them for this symmetric frustum). */
   function applyProjection(p: Readonly<CinePose>): void {
@@ -615,11 +708,19 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
   /** Target pose of the current shot into `target`. NONE: the broadcast camera's pose in ctx.camera. */
   function computeTarget(): void {
     switch (shot) {
-      case CineShot.BEHIND_TAKER:
+      case CineShot.BEHIND_TAKER: {
         if (targetFresh) return; // static shot: solved once per shot (transition / new spot)
-        PIN[0] = S[S_SPOT_X]!; PIN[1] = S[S_SPOT_Z]!; PIN[2] = S[S_AIM_X]!; PIN[3] = S[S_AIM_Z]!;
+        PIN[0] = S[S_SPOT_X]!; PIN[1] = S[S_SPOT_Z]!; PIN[2] = S[S_AIM_X]!; PIN[3] = S[S_AIM_Z]!; PIN[4] = 1;
         takerPoseIn(goalKick, target);
+        // [QF-4] A player standing where the camera would be fills the frame: take the other side when it is clearer.
+        const near = nearestPlayer(target.x, target.z);
+        if (near < LT.nearClear) {
+          PIN[0] = S[S_SPOT_X]!; PIN[1] = S[S_SPOT_Z]!; PIN[2] = S[S_AIM_X]!; PIN[3] = S[S_AIM_Z]!; PIN[4] = -1;
+          takerPoseIn(goalKick, alt);
+          if (nearestPlayer(alt.x, alt.z) > near) copyPose(alt, target);
+        }
         break;
+      }
       case CineShot.CORNER:
         if (targetFresh) return;
         PIN[0] = S[S_SPOT_X]!; PIN[1] = S[S_SPOT_Z]!;
@@ -692,7 +793,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
   }
 
   /** Switch to a new shot: cut, or blend when the move is small (never with reduced motion or around replays). */
-  function transition(next: CineShot, f: RenderFrame): void {
+  function transition(next: CineShot, f: RenderFrame, forceCut: boolean): void {
     if (active) copyPose(last, from);
     else readCamera(from);
     const prevShot = shot;
@@ -701,7 +802,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     S[S_SHOT_T] = 0;
     if (isReplay(next)) stepLook(f, true);
     computeTarget();
-    const mayBlend = !reduced && T_CAMERA.blendTime > 0 && !isReplay(next) && !isReplay(prevShot)
+    const mayBlend = !forceCut && !reduced && T_CAMERA.blendTime > 0 && !isReplay(next) && !isReplay(prevShot)
       && (active || next !== CineShot.NONE) && canBlend(from, target);
     if (mayBlend) {
       blending = true;
@@ -716,6 +817,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
 
   function update(f: RenderFrame): void {
     if (!matchOn) return;
+    curFrame = f;
     const s = f.curr;
     const ms = f.frame.dtMs;
     S[S_DT] = f.frame.paused || !(ms > 0) ? 0 : Math.min(LT.maxStep, ms / 1000);
@@ -750,7 +852,9 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     input.establishing = estKind !== 0;
     input.skipped = skippedPhase === phase;
     input.holdShot = holdArmed && phase === MatchPhase.IN_PLAY;
+    input.ready = !isSetPiecePhase(phase) || phase === MatchPhase.SHOOT_OUT || s.match.restart.ready === 1;
     const next = chooseShot(input);
+    const readyNow = input.ready === true;
     orbitDir = phase === MatchPhase.FULL_TIME || phase === MatchPhase.POST_MATCH ? -1 : 1;
     // A new shot, a new restart (spot or award) or a new replay angle switches.
     let rekey = next !== shot;
@@ -764,11 +868,13 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
       S[S_KEY_Z] = S[S_SPOT_Z]!;
       keySerial = restartSerial;
       keyCuts = link.cuts;
-      transition(next, f);
+      // The set-up tick teleports players (D-008): entering a set-piece shot then is always a cut.
+      transition(next, f, input.ready === true && !wasReady);
     } else {
       S[S_SHOT_T] = S[S_SHOT_T]! + dt;
       if (isReplay(shot)) stepLook(f, false);
     }
+    wasReady = readyNow;
     if (shot === CineShot.NONE && !blending) {
       active = false;
       return;
@@ -813,6 +919,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
       holdArmed = false;
       lastPhase = state.match.phase;
       keyCuts = link.cuts;
+      wasReady = true;
       S.fill(0);
       S[S_GOAL_DIST] = 100;
       stickRot = 0;

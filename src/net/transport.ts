@@ -24,10 +24,12 @@
  *  5. Rejoins (QF-6): a guest that dials again under the same peer id replaces the host's old link (its side saw the
  *     old link die first; the host emits 'disconnected' for the old one, then 'connected'). Another peer replaces an
  *     established link only when that link has been silent for replaceSilentMs (a guest page that reloaded comes back
- *     under a new id). Every failure of a guest's reconnect() attempt ('$full', ICE, handshake, channel errors) leaves
- *     the transport 'closed' and retryable; only open() failures are fatal ('failed').
+ *     under a new id; raw silence, so a page killed inside its '$busy' grace never keeps the seat). Every failure of a
+ *     guest's reconnect() attempt ('$full', ICE, handshake, channel errors, a broker that does not answer within
+ *     brokerTimeoutMs) leaves the transport 'closed' and retryable; only open() failures are fatal ('failed').
  *  6. expectBusy(ms) sends '$busy' { ms }: both sides suspend the silence timeout for up to ms (match warm-up blocks
- *     the main thread); expectBusy(0) / '$busy' { ms: 0 } ends the grace.
+ *     the main thread); expectBusy(0) / '$busy' { ms: 0 } ends the grace. A grace belongs to its link: a new link
+ *     starts without the other side's old grace, and our own grace still running is announced again on it.
  *
  * Tests inject `createPeer` (a fake Peer / DataConnection pair, no network) and `timers` (a manual clock).
  */
@@ -298,7 +300,12 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     l.established = true;
     l.timer = clear(l.timer);
     state = 'open';
-    lastHeard = timers.now();
+    const now = timers.now();
+    lastHeard = now;
+    // A grace belongs to the link (the page) that announced it: a dead page's warm-up allowance must not shield the next
+    // link from the silence timeout. Our own grace still running is announced again on the new link (QF-6).
+    remoteGraceUntil = -Infinity;
+    if (localGraceUntil > now) sendControl(l, { type: CTRL_BUSY, ms: localGraceUntil - now });
     meter.reset();
     events.emit({ type: 'connected' });
     settle(null);
@@ -438,8 +445,11 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
       // still half open). Attaching the new channels to the old link would skip the handshake and fail the rejoin.
       const taken = conn.label === 'control' ? cur.control !== null : cur.inputs !== null;
       if (cur.established || taken) replaceLink(cur);
-    } else if (cur && cur.established && silentFor(timers.now()) >= config.replaceSilentMs) {
-      // Another peer dials while our guest has gone quiet: most likely that guest's page reloaded (new peer id).
+    } else if (cur && cur.established && timers.now() - lastHeard >= config.replaceSilentMs) {
+      // Another peer dials while our guest has gone quiet: most likely that guest's page reloaded (new peer id). Raw
+      // silence, not the silence-timeout view: a page killed during its warm-up '$busy' grace (iPad Safari drops tabs
+      // for memory while the match loads) would otherwise keep the seat for the whole grace and its reloaded page would
+      // read "room full" (QF-6). A stranger with the code who gets in this way is refused by the session (token check).
       replaceLink(cur);
     }
     if (closed || !peer) return;
@@ -594,6 +604,13 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
         else if (peer && !peer.destroyed) {
           try {
             peer.reconnect(); // 'open' fires again and dials
+            // A broker that neither answers nor fails (a network switch black-holes the socket) must not leave this
+            // attempt pending for ever: the session re-dials only after a rejection (QF-6).
+            brokerTimer = clear(brokerTimer);
+            brokerTimer = timers.setTimeout(() => {
+              brokerTimer = null;
+              if (state === 'connecting' && !link) failAttempt('broker-unreachable', 'broker timeout on rejoin');
+            }, config.brokerTimeoutMs);
           } catch {
             state = 'closed';
             settle(netError('broker-unreachable'));

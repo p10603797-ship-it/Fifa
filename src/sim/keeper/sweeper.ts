@@ -136,6 +136,8 @@ export const LOCAL_TUNING = { // TUNING-CR (GKP-03): move into T_GK
   zoneMaxDist: 24,
   /** An AI rush continues while the point stays inside the zone grown by this, m. */
   zoneKeepSlack: 4,
+  /** [QF-2] A rush starts only for an interception point at least this far in front of his goal line, m. */
+  startMinDepth: 2,
   /** Start a rush only when he reaches the ball at least this many ticks before the fastest opponent ... */
   oppStartMargin: 3,
   /** ... and abort it when an opponent will be there this many ticks before him. */
@@ -555,7 +557,10 @@ function oneOnOne(s: SimState, team: number, k: number, att: number, keep: numbe
  */
 function race(s: SimState, team: number, k: number, keep: number): boolean {
   estimateIntercept(s, k, EST);
-  if (EST.inHorizon !== 1 || !isFiniteNum(EST.ballT)) return false;
+  // [QF-2] A rush already under way keeps its point when the interception slips just past the prediction horizon (a
+  // ball rolling slowly toward the byline): requiring it in the horizon for both start and keep made the rush start and
+  // abort on alternate ticks (and TAI-07's chaser flip between him and an outfielder).
+  if (!isFiniteNum(EST.ballT) || (EST.inHorizon !== 1 && keep === 0)) return false;
   const kT = EST.ballT;
   RACE.kT = kT; RACE.kX = EST.x; RACE.kZ = EST.z;
   RACE.mateT = 1e9; RACE.oppT = 1e9; RACE.opp = -1; RACE.oppX = 0; RACE.oppZ = 0;
@@ -690,7 +695,9 @@ function assess(s: SimState, team: number, k: number, keep: number): number {
   if (keep === 0 && claimPlan(s, team, k)) return DEC_CLAIM;
   if (!race(s, team, k, keep)) return DEC_NONE;
   const kT = RACE.kT;
-  if (inZone(dir, keep === 1 ? L.zoneKeepSlack : 0)) {
+  // [QF-2] A start also needs the point startMinDepth in front of his line (a ball he can only meet on the line as it
+  // rolls out is GKP-01's: such starts aborted the next tick, over and over).
+  if (inZone(dir, keep === 1 ? L.zoneKeepSlack : 0) && (keep === 1 || depthOf(dir, RACE.kX) >= L.startMinDepth)) {
     const ok = keep === 1
       ? !(RACE.mateT + L.mateAbortMargin < kT) && !(RACE.oppT + L.oppAbortMargin < kT)
       : kT + L.mateStartMargin <= RACE.mateT && kT + L.oppStartMargin <= RACE.oppT;
@@ -780,6 +787,22 @@ export function keeperComeOut(s: SimState, team: number, ev: EventSink): void {
   if (d === DEC_BALL) beginRush(s, k, M_BALL, DEC.x, DEC.z, -1);
   else if (d === DEC_1V1) beginRush(s, k, M_1V1, DEC.x, DEC.z, decSlot);
   else if (d === DEC_CLAIM) beginClaim(s, k);
+}
+
+/**
+ * [QF-2] True when GKP-03 itself would start a come-out (a race for a loose ball or a one-on-one) for team's free AI
+ * keeper now. TAI-11's CPU brain asks before it holds keeper-rush, so it never restarts (as a held user rush) a
+ * come-out GKP-03 has just aborted: the two used to alternate on consecutive ticks. Pure (module scratch only).
+ */
+export function comeOutWanted(s: SimState, team: number): boolean {
+  const t = s.teams[team];
+  if (!t || s.match.phase !== MatchPhase.IN_PLAY) return false;
+  const k = t.keeperSlot;
+  if (!validSlot(k)) return false;
+  const p = s.players[k]!;
+  if (p.active !== 1 || p.isKeeper !== 1 || !isFree(p) || p.stunT > 0) return false;
+  const d = assess(s, team, k, 0);
+  return d === DEC_BALL || d === DEC_1V1;
 }
 
 /** Start a rush (user hold or AI). Returns 1 if started. */

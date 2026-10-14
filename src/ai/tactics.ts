@@ -92,7 +92,7 @@ import { assignJob, isJobDriven } from './jobs';
 import { invalidateShape } from './shape';
 import { busyTicks } from './steer';
 
-const LOCAL_TUNING = {
+export const LOCAL_TUNING = {
   /** Ball prediction horizon for the receiver's interception search, ticks (<= MAX_PREDICT_TICKS = 180). */
   receivePredictTicks: 120,
   /** Highest ball-centre height at which a receiver can play the ball (feet, chest, head), m. */

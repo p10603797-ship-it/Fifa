@@ -135,9 +135,11 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-09): move into T_AI as pass* (ti
   /** A through ball arrives at least this much faster than the runner runs away from it (SIM-08 leadArriveMargin), m/s. */
   leadArriveMargin: 2,
   /** Lead: receiver velocity extrapolated over the ball's travel time, capped, s. */
-  leadMaxS: 2.5,
+  leadMaxS: 1.5, // [QF-2] was 2.5: through balls led 20 m+ landed with the keeper
   /** Lead / target points stay this far inside the lines, m. */
   pitchMargin: 1,
+  /** [QF-2] A receiver's run is led only until it comes within this of a line (mirrors SIM-08 leadLineMargin), m. */
+  leadLineMargin: 4,
   /** A ground pass is met min(meetBackMax, meetBackFrac x distance) in front of the receiver, m / fraction. */
   meetBackMax: 1.8,
   meetBackFrac: 0.2,
@@ -194,7 +196,7 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-09): move into T_AI as pass* (ti
   /** Fixed-point iterations of the own lead model. */
   throughIters: 3,
   /** Completion multipliers for ground / lofted through balls (calibration, see throughBall) [INT-A]. */
-  throughGroundCompletionMul: 0.6,
+  throughGroundCompletionMul: 1, // [QF-2] was 0.6 (with the shorter lead the estimate holds)
   throughLobCompletionMul: 0.25,
   // ---- crosses
   /** Own cross targets: near / far post depth from the goal line and |z|; penalty spot |z| toward the ball side, m. */
@@ -424,6 +426,18 @@ function loftSpeed(cross: number): void {
   const sn = Math.sqrt((1 - c2) * 0.5);
   F[O_V] = v;
   F[O_T] = ((2 * v * sn) / g) * (1 - LT.loftTimePerM * d);
+}
+
+/**
+ * [QF-2] Launch speed (m/s) of a lofted ball that carries `dist` m at T_PASS.lobAngle in the lane model (the speed
+ * laneSafety(..., lofted = 1) expects). Callers that know a horizontal average speed (GKP-04's keeper kicks) pass this
+ * instead: a slower launch is judged as arriving late and an open 50 m drop kick read as 7% safe.
+ */
+export function loftLaunchSpeed(dist: number): number {
+  if (!(dist > 0) || !(dist < 1e4)) return 0;
+  F[RS_D] = dist;
+  loftSpeed(0);
+  return F[O_V]!;
 }
 
 // ---------------------------------------------------------------- players
@@ -832,6 +846,12 @@ function groundPass(q: Readonly<PlayerState>, driven: number): void {
     rollTime();
     let t = F[RS_T]!;
     if (!(t >= 0) || t > LT.leadMaxS) t = LT.leadMaxS;
+    // [QF-2] As SIM-08: his run is extrapolated only until it comes within leadLineMargin of a line.
+    const lmx = HALF_LENGTH - LT.leadLineMargin, lmz = HALF_WIDTH - LT.leadLineMargin;
+    if (vx > 1e-6 && q.x + vx * t > lmx) t = q.x < lmx ? (lmx - q.x) / vx : 0;
+    else if (vx < -1e-6 && q.x + vx * t < -lmx) t = q.x > -lmx ? (-lmx - q.x) / vx : 0;
+    if (vz > 1e-6 && q.z + vz * t > lmz) t = q.z < lmz ? (lmz - q.z) / vz : 0;
+    else if (vz < -1e-6 && q.z + vz * t < -lmz) t = q.z > -lmz ? (-lmz - q.z) / vz : 0;
     rx = q.x + vx * t; rz = q.z + vz * t;
     rx = rx > xm ? xm : rx < -xm ? -xm : rx;
     rz = rz > zm ? zm : rz < -zm ? -zm : rz;

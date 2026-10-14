@@ -336,7 +336,9 @@ describe('TAI-13 positions: legal for every restart kind and both teams', () => 
       const q = s.players[p.slot]!;
       if (q.ctrl >= 0) continue;
       expect(q.job, `slot ${p.slot}`).toBe(AiJob.SET_PIECE);
-      expect(dist(q.tgtX, q.tgtZ, p.x, p.z)).toBeLessThan(1e-9);
+      // [QF-2] The spots read after the tick see the keepers and the taker (players without a spot) where that tick
+      // moved them; spacing from them shifts a spot by a centimetre or two.
+      expect(dist(q.tgtX, q.tgtZ, p.x, p.z)).toBeLessThan(0.05);
     }
     const marks = sp.filter((p) => p.role === SpotRole.MARK);
     expect(marks.length).toBe(LOCAL_TUNING.maxMarkers);

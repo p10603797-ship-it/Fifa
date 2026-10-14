@@ -360,7 +360,10 @@ describe('GKP-05 determinism', () => {
 
   it('a clone taken mid-hold continues bit-identically', () => {
     const { s } = keeperHolding({ seed: 4, mate: { x: xAt(4) + 26, z: -5 } });
-    runTicks(s, 150);
+    // [QF-2] Mid-hold = inside GKP-04's first wait (0.9 s); with TAI-09's lanes live the keeper throws to the open
+    // mate at ~1.5 s, so the old clone point (2.5 s) came after the release.
+    runTicks(s, 40);
+    expect(s.ball.heldBy).toBe(KEEPER);
     const c = cloneState(s);
     const ea = runTicks(s, 260);
     const eb = runTicks(c, 260);

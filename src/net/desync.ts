@@ -16,8 +16,10 @@
  *                 the frames it kept, so input queues stay aligned), forgets its hashes after that tick, and answers
  *  - 'ls:snap-ok' { e, tick, ok }  (ok 0 = could not decode: the host sends a fresh snapshot).
  *  - verification the first comparison after the snapshot tick that matches counts as `verified`.
- * One snapshot is in flight at a time. Every incident is logged through opts.log (Diagnostics.log compatible) with
- * seed, tick, both hashes, the inputs around it (opts.describeInputs) and, on the guest, diffState(local, snapshot).
+ * One snapshot is in flight at a time; one lost with a dropped link is sent again once the link is back (linkRestored).
+ * A guest whose mismatch the host never saw stops waiting once a later tick agrees again (the divergence healed).
+ * Every incident is logged through opts.log (Diagnostics.log compatible) with seed, tick, both hashes, the inputs
+ * around it (opts.describeInputs) and, on the guest, diffState(local, snapshot).
  */
 import type { SimState } from '../contracts/state';
 import { T_NET } from '../contracts/tuning';
@@ -178,6 +180,12 @@ export interface DesyncGuard {
   readonly resyncing: boolean;
   readonly stats: Readonly<DesyncStats>;
   readonly reports: readonly DesyncReport[];
+  /**
+   * The link dropped and came back (transport 'connected' again): reliable messages in flight died with the old link.
+   * Host: a snapshot still unacknowledged is sent again (fresh state, next epoch). Guest: partial snapshot chunks are
+   * dropped (the rest never comes).
+   */
+  linkRestored(): void;
   dispose(): void;
 }
 
@@ -222,6 +230,8 @@ export function createDesyncGuard(opts: DesyncGuardOptions): DesyncGuard {
   let peerGzip = false;
   // guest
   let awaiting = false;
+  /** Tick of the mismatch the guest is waiting on. */
+  let awaitTick = -1;
   let collect: Collect | null = null;
   let pending: { tick: number; state: SimState; e: number } | null = null;
 
@@ -242,6 +252,13 @@ export function createDesyncGuard(opts: DesyncGuardOptions): DesyncGuard {
     lc[i] = 1;
     stats.hashesCompared++;
     if (lh[i] === rh[i]) {
+      if (!isHost && awaiting && tick > awaitTick) {
+        // A later tick agrees again: the divergence healed by itself. Normally the host saw the same mismatch and its
+        // snapshot is on the way (applied when it comes, harmless); but when the host never saw it (our hash died with
+        // a dropped link) no snapshot ever comes, and waiting for one ended a healthy match as 'desync' (QF-6).
+        awaiting = false;
+        log?.('net', `desync at tick ${awaitTick} healed by itself (tick ${tick} agrees)`);
+      }
       if (verifyAfter >= 0 && tick > verifyAfter) {
         stats.verified++;
         stats.lastVerifiedTick = tick;
@@ -255,7 +272,10 @@ export function createDesyncGuard(opts: DesyncGuardOptions): DesyncGuard {
     if (stats.firstDesyncTick < 0) stats.firstDesyncTick = tick;
     stats.lastDesyncTick = tick;
     if (isHost) snapRequested = true;
-    else awaiting = true;
+    else {
+      awaiting = true;
+      awaitTick = tick;
+    }
     report(tick, lh[i]!, rh[i]!);
     return true;
   }
@@ -446,6 +466,20 @@ export function createDesyncGuard(opts: DesyncGuardOptions): DesyncGuard {
       });
       opts.onApplied?.(p.tick, fromTick);
       return true;
+    },
+    linkRestored() {
+      if (disposed) return;
+      if (isHost) {
+        if (inFlight) {
+          // Without this the host waited for an answer to a lost snapshot for good (one in flight at a time), and the
+          // session ended the match as 'desync' (QF-6).
+          inFlight = false;
+          snapRequested = true;
+          log?.('net', `resync: snapshot ${stats.epoch} lost with the link; sending a fresh one`);
+        }
+      } else {
+        collect = null;
+      }
     },
     dispose() {
       disposed = true;

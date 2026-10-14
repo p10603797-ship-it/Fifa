@@ -326,6 +326,11 @@ export interface DelaySync {
   readonly late: number;
   /** The other side's target as last reported (host only; -1 before). */
   readonly remoteTarget: number;
+  /**
+   * The link dropped and came back: messages in flight died with it. The guest reports its target again; the host
+   * announces its latest switch again (idempotent on the guest: a switch already applied stays as it is).
+   */
+  linkRestored(): void;
 }
 
 export interface DelaySyncOptions {
@@ -343,10 +348,15 @@ export function createDelaySync(opts: DelaySyncOptions): DelaySync {
   let changes = 0;
   let late = 0;
   let tickNow = 0;
+  let resend = false;
   return {
     get changes() { return changes; },
     get late() { return late; },
     get remoteTarget() { return remoteTarget; },
+    linkRestored() {
+      lastSent = -1;
+      resend = true;
+    },
     handle(msg) {
       if (msg.type === CTRL_TARGET) {
         if (opts.isHost && typeof msg.target === 'number' && Number.isInteger(msg.target)) remoteTarget = msg.target;
@@ -355,6 +365,11 @@ export function createDelaySync(opts: DelaySyncOptions): DelaySync {
       if (msg.type !== CTRL_DELAY) return false;
       if (!opts.isHost && typeof msg.delay === 'number' && typeof msg.at === 'number' && Number.isInteger(msg.at) && msg.at >= 0) {
         let at = msg.at;
+        const sw = a.switches;
+        const last = sw.length > 0 ? sw[sw.length - 1]! : null;
+        // The same switch again (re-announced after a dropped link): already scheduled or applied.
+        if (msg.re === 1 && last && last.atTick === at && last.delay === Math.round(msg.delay)) return true;
+        if (msg.re === 1 && at <= tickNow && Math.round(msg.delay) === a.delayFor(tickNow)) return true;
         if (at <= tickNow) {
           late++;
           at = tickNow + 1;
@@ -374,6 +389,11 @@ export function createDelaySync(opts: DelaySyncOptions): DelaySync {
         return;
       }
       const sw = a.switches;
+      if (resend) {
+        resend = false;
+        const last = sw.length > 0 ? sw[sw.length - 1]! : null;
+        if (last) opts.send({ type: CTRL_DELAY, delay: last.delay, at: last.atTick, re: 1 });
+      }
       if (sw.length > 0 && sw[sw.length - 1]!.atTick > tick) return; // one switch in flight at a time
       const want = remoteTarget > a.target ? remoteTarget : a.target;
       if (want === a.scheduled) return;

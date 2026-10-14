@@ -18,6 +18,8 @@ vi.mock('../../src/ai/cpu/shooting', async (orig) => {
     ...real,
     estimateXg: (s: import('../../src/contracts/state').SimState, slot: number, x: number, z: number): number =>
       XG.double ? h.xgDouble(s, slot, x, z) : real.estimateXg(s, slot, x, z),
+    // [QF-2] The double has no separate blocker factor (its xG already includes blockers).
+    lastXgBlock: (): number => (XG.double ? 1 : real.lastXgBlock()),
   };
 });
 

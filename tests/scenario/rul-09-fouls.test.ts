@@ -20,7 +20,7 @@ import type { ChallengeRecord, SimState } from '../../src/contracts/state';
 import { T_FOUL, T_RULES } from '../../src/contracts/tuning';
 import { hashState } from '../../src/sim/core/hash';
 import { rngFloat, rngSeed } from '../../src/sim/core/rng';
-import { LOCAL_TUNING, classifyChallenge, foulsTick, showCard } from '../../src/sim/rules/fouls';
+import { LOCAL_TUNING, classifyChallenge, foulChance, foulsTick, showCard } from '../../src/sim/rules/fouls';
 import {
   EVB, challenge, foulScene, give, loose, ofType, putU, runFouls, tickFouls, xOf,
 } from './rul-09-setup';
@@ -850,23 +850,29 @@ describe('RUL-09 determinism and foul rates', () => {
   });
 
   it('fouls per match 6-16 over seeds for a representative challenge mix (sanity of the calibration)', () => {
-    // Assumed SIM-14 output for a 2 x 4-minute match: ~34 contact records, mixed as below (document in the report).
+    // [QF-1] Refit to what SIM-14 / the CPU actually produce in real 2 x 4-minute matches (18 soak matches, every
+    // difficulty): ~18 challenge records a match; 94% standing tackles, 4% shoulder, 2% slides; 14% played the ball
+    // first; mostly from the front (fromBehind quartiles -0.97 / -0.72 / -0.18, 90th percentile 0.42); closing speed
+    // quartiles 0.1 / 2.4 / 3.7 m/s, 90th percentile 4.8. (The Wave-1 mix assumed 34 records, a third of them slides
+    // and hard tackles at 1-7.5 m/s, which hid that real matches gave 5 fouls and no cards.)
     H.draw = null;
     const g = { a: 0, b: 0, c: 0, d: 0 };
     const perMatch: number[] = [];
     let yellows = 0, reds = 0;
-    const matches = 200;
+    const matches = 300;
     for (let seed = 1; seed <= matches; seed++) {
       const s = foulScene({ seed });
       rngSeed(g, seed * 7919);
       duel(s, 0, 0); // victim without the ball in midfield: no DOGSO
       let fouls = 0;
-      for (let i = 0; i < 34; i++) {
+      for (let i = 0; i < 18; i++) {
         const r = rngFloat(g);
-        const kind = r < 0.55 ? K.STAND : r < 0.68 ? K.SLIDE : r < 0.78 ? K.HARD : r < 0.9 ? K.SHOULDER : r < 0.97 ? K.PUSH_PULL : K.KEEPER;
+        const kind = r < 0.94 ? K.STAND : r < 0.98 ? K.SHOULDER : K.SLIDE;
+        const u = rngFloat(g);
+        const w = (u - 0.25) / 0.75;
         const rec = challenge(s, {
-          tackler: TAC, victim: VIC, kind, i: 0, ballFirst: rngFloat(g) < 0.45 ? 1 : 0,
-          fromBehind: -1 + 2 * rngFloat(g), closingSpeed: 1 + 6.5 * rngFloat(g),
+          tackler: TAC, victim: VIC, kind, i: 0, ballFirst: rngFloat(g) < 0.14 ? 1 : 0,
+          fromBehind: -1 + 2 * Math.pow(rngFloat(g), 2.6), closingSpeed: u < 0.25 ? 0.5 * u : 0.3 + 5.5 * w,
         });
         const out = classifyChallenge(s, rec);
         if (out !== O.CLEAN) fouls++;
@@ -880,10 +886,10 @@ describe('RUL-09 determinism and foul rates', () => {
     console.log(`RUL-09 rate sanity: mean fouls/match ${mean.toFixed(2)}, in 6-16: ${(inBand * 100).toFixed(0)}%, ` +
       `yellows/match ${(yellows / matches).toFixed(2)}, reds/match ${(reds / matches).toFixed(3)}`);
     expect(mean).toBeGreaterThanOrEqual(8);
-    expect(mean).toBeLessThanOrEqual(14);
+    expect(mean).toBeLessThanOrEqual(12);
     expect(inBand).toBeGreaterThan(0.85);
     expect(yellows / matches).toBeGreaterThan(0.5);
-    expect(yellows / matches).toBeLessThan(4);
+    expect(yellows / matches).toBeLessThan(3);
     expect(reds / matches).toBeLessThan(0.4);
   });
 
@@ -891,18 +897,20 @@ describe('RUL-09 determinism and foul rates', () => {
     H.draw = null;
     const s = foulScene({ seed: 99 });
     duel(s, 0, 0);
-    const rows: [ChallengeKind, number, number, number][] = [
-      [K.STAND, 0, 3, 0.4], [K.SLIDE, 1, 6, LOCAL_TUNING.maxFoulChance], [K.SHOULDER, 0, 3, 0.08],
-    ];
-    for (const [kind, fb, cs, approx] of rows) {
+    // [QF-1] Expected frequencies from foulChance itself (the refit moved the standing-tackle value to ~0.69).
+    const rows: [ChallengeKind, number, number][] = [[K.STAND, 0, 3], [K.SLIDE, 1, 6], [K.SHOULDER, 0, 3]];
+    for (const [kind, fb, cs] of rows) {
       let n = 0;
       const N = 3000;
+      let approx = 0;
       for (let i = 0; i < N; i++) {
         const rec = challenge(s, { tackler: TAC, victim: VIC, kind, fromBehind: fb, closingSpeed: cs, i: 0 });
+        approx = foulChance(rec);
         if (classifyChallenge(s, rec) !== O.CLEAN) n++;
       }
       expect(Math.abs(n / N - approx)).toBeLessThan(0.04);
     }
+    expect(foulChance(challenge(s, { tackler: TAC, victim: VIC, kind: K.SLIDE, fromBehind: 1, closingSpeed: 6, i: 0 }))).toBe(LOCAL_TUNING.maxFoulChance);
   });
 });
 

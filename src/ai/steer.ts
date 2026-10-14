@@ -23,7 +23,8 @@
  *     (GKP-03 RushMode USER_HOLD / USER_TIMED: a human holds keeper-rush) counts as a controlled candidate: a held
  *     rush button sent him 60 m upfield after a ball while, as the claiming chaser, no outfield teammate chased it
  *     (fuzz ball-untouched watchdog).
- *  4. Claims that bypass hysteresis, in order: the keeper in an AI GK_RUSH (GKP-03 keeps it in his come-out zone);
+ *  4. Claims that bypass hysteresis, in order: the keeper in an AI GK_RUSH (GKP-03 keeps it in his come-out zone) or
+ *     [QF-2] in a GKP-02 save (GK_CATCH / GK_DIVE) on the opponents' loose ball;
  *     the intended receiver of our own pass
  *     (ball.passTarget, ball.lastKickTeam === team — TAI-14 gives him RECEIVE, so nobody else may chase) while the
  *     pass is intact (ball.lastTouchTeam === team: an opponent's deflection ends it), he is not down (busy <=
@@ -67,7 +68,7 @@ import { predictBall } from '../sim/ball/flight';
 import { ticksToReach } from '../sim/players/locomotion';
 import { assignJob, finalizeJobT, isJobDriven } from './jobs';
 
-const LOCAL_TUNING = {
+export const LOCAL_TUNING = {
   /** Ball prediction horizon for loose-ball interception, ticks (<= MAX_PREDICT_TICKS = 180). */
   chasePredictTicks: 120,
   /** Highest ball-centre height a chaser can play (feet, chest, head), m; higher samples are flown over. */
@@ -373,12 +374,20 @@ function userRush(p: Readonly<PlayerState>): boolean {
   return p.isKeeper === 1 && p.act === ActionKind.GK_RUSH && p.actA >= RUSH_USER_MODE_MIN;
 }
 
-/** Keeper of `team` if active and (by GKP) committed to the ball: an AI GK_RUSH (a user rush is a candidate). */
+/**
+ * Keeper of `team` if active and (by GKP) committed to the ball: an AI GK_RUSH (a user rush is a candidate), or [QF-2]
+ * a GKP-02 save (GK_CATCH, incl. the planted stance, or GK_DIVE) on a loose ball the opponents touched last — his
+ * shot to save, so no outfielder chases it (glitch "keeper fights a defender for the same ball": the controlled
+ * defender beside a planted keeper, as the chaser, ran out and trapped the shot in front of him).
+ */
 function rushingKeeper(s: SimState, team: number, first: number, end: number): number {
   const k = s.teams[team]!.keeperSlot;
   if (k < first || k >= end) return -1;
   const p = s.players[k]!;
-  return p.active === 1 && p.act === ActionKind.GK_RUSH && p.actA < RUSH_USER_MODE_MIN ? k : -1;
+  if (p.active !== 1) return -1;
+  if (p.act === ActionKind.GK_RUSH) return p.actA < RUSH_USER_MODE_MIN ? k : -1;
+  if ((p.act === ActionKind.GK_CATCH || p.act === ActionKind.GK_DIVE) && s.ball.lastTouchTeam !== team && p.ctrl < 0) return k;
+  return -1;
 }
 
 /**

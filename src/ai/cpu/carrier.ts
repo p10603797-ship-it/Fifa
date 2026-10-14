@@ -66,7 +66,7 @@
  * a few TAI-10 calls (about 0.04 ms per full evaluation on desktop Node, tests/perf/tai-08-budget.test.ts).
  */
 import {
-  CPU_CONTROLLER_BASE, DT, GOAL_HALF_WIDTH, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PLAYERS_PER_TEAM,
+  CPU_CONTROLLER_BASE, DT, GOAL_HALF_WIDTH, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PLAYERS_PER_TEAM, TICK_HZ,
 } from '../../contracts/constants';
 import { ActionKind, GestureKind, KickKind, SkillMove, TeamPhase } from '../../contracts/enums';
 import type { EventSink } from '../../contracts/events';
@@ -78,7 +78,7 @@ import { rngGauss } from '../../sim/core/rng';
 import { inPenaltyArea } from '../../sim/pitch/geometry';
 import { levelParams, styleWeights } from './levels';
 import { createPassOptions, scorePassOptions, type PassOption } from './passing';
-import { bestDribble, chooseSkill, estimateXg } from './shooting';
+import { bestDribble, chooseSkill, estimateXg, lastXgBlock, shotLaneClear, SKILL_CHOICE } from './shooting';
 
 export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* (utilities are goal-probability units)
   // ---- possession value model
@@ -87,6 +87,8 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   /** ... plus this times ((progress + 1) / 2)^3 toward the opposition goal line, goal probability [INT-A: was
    *  0.01 + 0.07 t^2 — too flat, so a forward pass never paid for its risk and attacks went sideways forever]. */
   pvSpan: 0.08,
+  /** ... with this exponent (integer >= 3) [QF-2]. */
+  pvExp: 3,
   /** Width discount: none within pvLatFree m of the centre line, down to x pvLatMin at pvLatFull m, weighted by the
    *  progress share t (so it bites in the final third), m / m / 0..1. */
   pvLatFree: 9,
@@ -122,18 +124,18 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   shotMissValue: 0.006,
   /** A shot's xG is weighted by this against the possession value of keeping the ball (that value is only an
    *  average; against a set block it is rarely realised) [INT-A]. */
-  shotXgMul: 3.5,
+  shotXgMul: 10, // [QF-2] was 3.5: §7 wants 14-26 shots a match (the shot price is now the clean xG x its lane, see keeperSideMul)
   /** Extra urge to shoot inside the penalty area, goal probability. */
-  boxShotBonus: 0.012,
+  boxShotBonus: 0.03, // [QF-2] was 0.012
   /** Beyond this distance from the goal centre a shot is a long shot, m ... */
   longShotDist: 20,
   /** ... whose xG threshold is T_LEVEL.shotThresholdXg x this at style longShot 0 / 1. */
-  longShotThreshMax: 1.0,
+  longShotThreshMax: 0.7, // [QF-2] was 1.0
   longShotThreshMin: 0.7,
   /** ... x (1 + this x metres beyond longShotDist) [INT-A], 1/m ... */
-  longShotThreshPerM: 0.06,
+  longShotThreshPerM: 0.02, // [QF-2] was 0.06
   /** ... and no shot from beyond shotMaxDist (+ shotMaxLongShotExtra x style longShot) of the goal centre [INT-A], m. */
-  shotMaxDist: 35,
+  shotMaxDist: 40, // [QF-2] was 35 (long shots: blocked ones are priced by their lane now)
   shotMaxLongShotExtra: 4,
   /** Shot power 0..1 at <= shotNearDist m / >= shotFarDist m from the goal centre (linear between). */
   shotPowerNear: 0.65,
@@ -147,6 +149,24 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   shotInset: 0.5,
   /** Keeper this far (|z|) off the goal centre: aim at the other side, m. */
   keeperSideDead: 0.3,
+  /** [QF-2] Aim side: each post's lane is scored by TAI-10 shotLaneClear (the men in the way, now and as they close),
+   *  the side away from the keeper (far post when he is central) x 1 and the other x keeperSideMul; the better one is
+   *  aimed at and its lane prices the shot: xG = clean xG (TAI-10 without its uniform blocker factor) x lane clear. The
+   *  CPU used to aim by the keeper alone and shot into the presser in front of it (40 of 76 shots had a man within
+   *  0.6 m of the line, 75% of those were blocked). 0..1. */
+  keeperSideMul: 0.85,
+  /** [QF-2] A blocked shot runs loose near the shooter: this share of it is won back (its value counts as keeping
+   *  the ball, the rest as a loss there). */
+  blockedRecover: 0.4,
+  /** [QF-2] Shooting under pressure: the power hold is cut so the ball is struck before an outfield opponent ahead
+   *  on the shot line (along it between quickShotMinAlong and quickShotDist m) can step to within quickShotReach m of
+   *  it, moving across at max(his speed toward the line, quickShotMinClose) m/s, with quickShotMargin s to spare (a
+   *  shooter standing 0.7 s over a full power-up was blocked by the man who stepped across). m / m / m / m/s / s. */
+  quickShotMinAlong: 0.3,
+  quickShotDist: 10,
+  quickShotReach: 1.1,
+  quickShotMinClose: 3,
+  quickShotMargin: 0.05,
   /** Finesse shot (MOD_R): distance window m, |z| of the shooter at least m, curve attribute at least. */
   finesseMinDist: 10,
   finesseMaxDist: 24,
@@ -160,7 +180,7 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   /** Carry valued per dribble decision at full space, m (x (0.3 + 0.7 score)). */
   dribbleStep: 6,
   /** Chance of losing the ball dribbling at full pressure (x 1.2 - 0.4 x dribbling / 99). */
-  dribbleLossMax: 0.35,
+  dribbleLossMax: 0.2, // [QF-2] was 0.35: carriers in the opponents' half passed sideways instead of driving at the box
   /** Share of the shot value (shotXgMul x xG at the carry's end) a dribble is credited with in the attacking half [INT-A]. */
   driveShotShare: 0.8,
   /** Score assumed when bestDribble gives no direction. */
@@ -312,6 +332,9 @@ const C = {
   counter: 0,
 };
 
+/** [QF-2] Aim side picked by shotOptionInto (-1 / +1 = the post at z < 0 / z > 0), read by commitShot. */
+const SHOT = { side: 1, valid: 0 };
+
 /** Best option so far (scratch). */
 const BEST = { plan: CpuPlan.NONE as CpuPlan, u: -1e18, slot: -1, x: 0, z: 0, mode: MODE_NONE, kind: KickKind.NONE as number };
 
@@ -342,7 +365,9 @@ function posValue(prog: number, z: number): number {
   // Kept tiny so V8 inlines it (no boxed doubles per option).
   const t = clamp01((prog + 1) * 0.5);
   const lat = clamp01(((z < 0 ? -z : z) - LT.pvLatFree) * PV_LAT_INV);
-  return LT.pvBase + LT.pvSpan * t * t * t * (1 - t * PV_LAT_DROP * lat);
+  let tp = t * t * t;
+  for (let i = 3; i < LT.pvExp; i++) tp *= t;
+  return LT.pvBase + LT.pvSpan * tp * (1 - t * PV_LAT_DROP * lat);
 }
 
 // Cost of losing the ball at (progress, z) (x style safety) = the opponents' possession value there:
@@ -553,8 +578,9 @@ function passOptionsInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<Sty
 
 function shotOptionInto(s: SimState, p: Readonly<PlayerState>, lv: Readonly<LevelParams>, sw: Readonly<StyleWeights>): void {
   if (p.isKeeper === 1 || C.prog <= 0) return;
-  const xg = clamp01(fin(estimateXg(s, p.slot, p.x, p.z)));
-  if (!(xg > 0)) return;
+  SHOT.valid = 0;
+  const xgU = clamp01(fin(estimateXg(s, p.slot, p.x, p.z)));
+  if (!(xgU > 0)) return;
   const gx = C.dir * HALF_LENGTH - p.x;
   const dist = Math.sqrt(gx * gx + p.z * p.z);
   const long = dist > LT.longShotDist;
@@ -562,17 +588,48 @@ function shotOptionInto(s: SimState, p: Readonly<PlayerState>, lv: Readonly<Leve
   // [INT-A] Range: beyond longShotDist the threshold also grows per metre, and nobody shoots from beyond
   // shotMaxDist (+ shotMaxLongShotExtra for a long-shot style), so shots come from shooting range, not 40 m out.
   if (dist > LT.shotMaxDist + LT.shotMaxLongShotExtra * ls) return;
+  // [QF-2] Aim side and the price of the men in its lane (see keeperSideMul).
+  const bU = fin(lastXgBlock());
+  const clean = bU > 1e-6 ? xgU / bU : xgU;
+  aimSide(s, p);
+  const clear = SHOT.valid === 1 ? SHOT_CLEAR[0]! : bU;
+  const xg = clamp01(clean * clear);
   const thr = fin(lv.shotThresholdXg) * (long
     ? (LT.longShotThreshMax + (LT.longShotThreshMin - LT.longShotThreshMax) * ls) * (1 + LT.longShotThreshPerM * (dist - LT.longShotDist))
     : 1);
   if (xg < thr) return;
-  let u = xg * LT.shotXgMul + (1 - xg) * LT.shotMissValue;
+  const blocked = 1 - clear;
+  const miss = 1 - xg - blocked;
+  let u = xg * LT.shotXgMul + (miss > 0 ? miss : 0) * LT.shotMissValue +
+    blocked * (LT.blockedRecover * C.vHere - (1 - LT.blockedRecover) * posValue(-C.prog, p.z) * C.safetyMul);
   if (inPenaltyArea(p.x, p.z, C.dir)) u += LT.boxShotBonus;
   if (long && u > C.vHere) u = C.vHere + (u - C.vHere) * styleMul(ls);
   noise(s);
   u += NZ[0]!;
   CU[0] = u; CU[1] = 0; CU[2] = 0;
   consider(CpuPlan.SHOOT, -1, MODE_BUTTON, KickKind.SHOT_NORMAL);
+}
+
+/** Lane clear of the picked aim side (aimSide). */
+const SHOT_CLEAR = new Float64Array(1);
+
+/**
+ * [QF-2] Pick the post to aim at (SHOT.side) from the lanes' TAI-10 shotLaneClear and the keeper's position (the side
+ * away from him, the far post when he is central, scores x 1, the other x keeperSideMul); SHOT_CLEAR[0] = its lane.
+ */
+function aimSide(s: SimState, p: Readonly<PlayerState>): void {
+  const opp = s.teams[p.team === 0 ? 1 : 0]!;
+  const k = opp.keeperSlot;
+  const kz = validSlot(k) && s.players[k]!.active === 1 ? s.players[k]!.z : 0;
+  let pref: number;
+  if (kz > LT.keeperSideDead) pref = -1;
+  else if (kz < -LT.keeperSideDead) pref = 1;
+  else pref = p.z > 0 ? -1 : 1; // far post
+  const az = GOAL_HALF_WIDTH - LT.shotInset;
+  const cPref = fin(shotLaneClear(s, p.slot, p.x, p.z, pref * az));
+  const cOther = fin(shotLaneClear(s, p.slot, p.x, p.z, -pref * az));
+  if (cOther * LT.keeperSideMul > cPref) { SHOT.side = -pref; SHOT_CLEAR[0] = cOther; } else { SHOT.side = pref; SHOT_CLEAR[0] = cPref; }
+  SHOT.valid = 1;
 }
 
 /** Toward the attacked goal, turned 45 degrees away from an opponent close ahead (into DRB). */
@@ -736,7 +793,8 @@ function commitShot(s: SimState, team: number, brain: CpuBrainState, p: Readonly
     kOff = HALF_LENGTH - dir * kp.x;
   }
   let side: number;
-  if (kz > LT.keeperSideDead) side = -1;
+  if (SHOT.valid === 1) side = SHOT.side; // [QF-2] picked with the lanes in shotOptionInto
+  else if (kz > LT.keeperSideDead) side = -1;
   else if (kz < -LT.keeperSideDead) side = 1;
   else side = p.z > 0 ? -1 : 1; // far post
   const ex = fin(lv.executionError);
@@ -750,12 +808,45 @@ function commitShot(s: SimState, team: number, brain: CpuBrainState, p: Readonly
   gauss(s);
   let power = LT.shotPowerNear + (LT.shotPowerFar - LT.shotPowerNear) * f + NZ[1]! * LT.powerNoise * ex;
   if (power < LT.shotPowerMin) power = LT.shotPowerMin; else if (power > LT.shotPowerMax) power = LT.shotPowerMax;
+  let hold = holdFor(power, powerFill(s, team));
+  const quick = quickShotTicks(s, p, az);
+  if (quick < hold) hold = quick > 1 ? quick : 1;
   let btn: number = Btn.SHOOT;
   const a = s.attrs[p.slot]!;
   if (kOff >= LT.chipKeeperOff && dist >= LT.chipMinDist && dist <= LT.chipMaxDist) btn |= Btn.MOD_L;
   else if (dist >= LT.finesseMinDist && dist <= LT.finesseMaxDist && (p.z > LT.finesseMinAbsZ || p.z < -LT.finesseMinAbsZ) &&
     a.curve >= LT.finesseMinCurve) btn |= Btn.MOD_R;
-  commitKick(brain, CpuPlan.SHOOT, MODE_BUTTON, -1, gx, az, btn, holdFor(power, powerFill(s, team)));
+  commitKick(brain, CpuPlan.SHOOT, MODE_BUTTON, -1, gx, az, btn, hold);
+}
+
+/**
+ * [QF-2] Longest power hold (ticks) that still strikes the ball before an opponent ahead on the line to (goal line,
+ * aimZ) can step within quickShotReach of it (see quickShotDist); a large number when nobody is near the line.
+ */
+function quickShotTicks(s: SimState, p: Readonly<PlayerState>, aimZ: number): number {
+  const lx = C.dir * HALF_LENGTH - p.x, lz = aimZ - p.z;
+  const ll = Math.sqrt(lx * lx + lz * lz);
+  if (!(ll > 1e-6)) return 1e9;
+  const ux = lx / ll, uz = lz / ll;
+  const first = p.team === 0 ? PLAYERS_PER_TEAM : 0;
+  let tMin = 1e9;
+  for (let i = first; i < first + PLAYERS_PER_TEAM; i++) {
+    const q = s.players[i]!;
+    if (q.active !== 1 || q.isKeeper === 1) continue;
+    const dx = q.x - p.x, dz = q.z - p.z;
+    const along = dx * ux + dz * uz;
+    if (along < LT.quickShotMinAlong || along > LT.quickShotDist) continue;
+    const off = dx * -uz + dz * ux;
+    const ao = off < 0 ? -off : off;
+    // His speed toward the line (across it).
+    const vAcross = off > 0 ? -(q.vx * -uz + q.vz * ux) : (q.vx * -uz + q.vz * ux);
+    const close = vAcross > LT.quickShotMinClose ? vAcross : LT.quickShotMinClose;
+    const t = ao > LT.quickShotReach ? (ao - LT.quickShotReach) / close : 0;
+    if (t < tMin) tMin = t;
+  }
+  if (tMin > 1e8) return 1e9;
+  const ticks = Math.floor((tMin - LT.quickShotMargin) * TICK_HZ);
+  return ticks;
 }
 
 function commitClear(s: SimState, team: number, brain: CpuBrainState, p: Readonly<PlayerState>, lv: Readonly<LevelParams>): void {
@@ -810,8 +901,15 @@ function commitSkill(s: SimState, brain: CpuBrainState, p: Readonly<PlayerState>
     const lat = (q.x - p.x) * -fz + (q.z - p.z) * fx;
     side = lat > 0 ? -1 : 1;
   }
-  const ex = -fz * side + fx * LT.skillForward;
-  const ez = fx * side + fz * LT.skillForward;
+  let ex = -fz * side + fx * LT.skillForward;
+  let ez = fx * side + fz * LT.skillForward;
+  // [QF-2] TAI-10's exit for the move it chose (knock-on / heel flick straight on past the man, side moves toward the
+  // side with the space, on the pitch). The generic 65-degree side exit sent knock-ons beside the defender — near a
+  // touchline, out for a throw-in (6 in 8 matches).
+  if (SKILL_CHOICE.move === BEST.kind) {
+    const cl = Math.sqrt(SKILL_CHOICE.dirX * SKILL_CHOICE.dirX + SKILL_CHOICE.dirZ * SKILL_CHOICE.dirZ);
+    if (cl > 1e-6) { ex = SKILL_CHOICE.dirX / cl; ez = SKILL_CHOICE.dirZ / cl; }
+  }
   gauss(s);
   rotateInto(ex, ez, NZ[1]! * LT.dirNoise * fin(lv.executionError));
   brain.plan = CpuPlan.SKILL;
@@ -985,7 +1083,9 @@ function runKick(s: SimState, brain: CpuBrainState, p: Readonly<PlayerState>, ou
     nearestOpponent(s, p);
     const d = Math.sqrt(dx * dx + dz * dz);
     const facing = d > 1e-6 ? (p.fx * dx + p.fz * dz) / d : 1;
-    if (facing >= LT.aimCos || brain.planT >= LT.aimMaxTicks || C.nearD <= LT.tightDist) {
+    // [QF-2] A shot under pressure is struck at once (the solver aims it; turning first gives the press time).
+    if (facing >= LT.aimCos || brain.planT >= LT.aimMaxTicks || C.nearD <= LT.tightDist ||
+        (brain.plan === CpuPlan.SHOOT && C.nearD <= LT.quickShotDist)) {
       setStep(brain, STEP_FIRE);
       step = STEP_FIRE;
     } else {

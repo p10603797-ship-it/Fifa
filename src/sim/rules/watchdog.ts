@@ -17,7 +17,10 @@
  *     BALL_UNREACHABLE: the whole ball beyond a line by more than outSlack with no restart given (a missed crossing),
  *       in a net while play goes on, or resting above reach height (crossbar top / net roof).
  *     BALL_UNTOUCHED: ball.idleT >= T_RULES.ballIdleTicks (8 s) while loose or held in a keeper's hands (not in
- *       practice mode). An owned ball being dribbled is never "lying".
+ *       practice mode). An owned ball being dribbled is never "lying". [QF-1] Nor is a loose ball still on its way:
+ *       sim/step counts ball.idleT only while the ball lies (horizontal speed below 1 m/s) or is in a keeper's hands
+ *       (a long goal kick that bounced and rolled 85 m with both chasers running after it used to be "untouched for
+ *       8 s" while still doing 5 m/s: false watchdogs in fuzz).
  *     Restart: team = the team that did not touch last (nobody: the team defending that half); beyond a touchline ->
  *     throw-in; beyond a goal line / in a net -> goal kick for the defenders or corner for the attackers; otherwise a
  *     free kick where the ball is (moved to the edge of the box when it lies in the opponents' penalty area).

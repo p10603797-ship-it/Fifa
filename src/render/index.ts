@@ -43,7 +43,7 @@
  *    skippable through the sim's skip, so the app needs no establishing() calls.
  */
 
-import { PerspectiveCamera, Scene, type WebGLRenderer } from 'three';
+import { LinearFilter, NearestFilter, PerspectiveCamera, Scene, type Material, type Object3D, type Texture, type WebGLRenderer } from 'three';
 import type { FrameInfo, GameRenderer, SettingsStore } from '../contracts/app';
 import { NUM_SLOTS, WORLD_MAX_X, WORLD_MIN_X } from '../contracts/constants';
 import type { Club } from '../contracts/data';
@@ -73,7 +73,57 @@ declare global {
   interface Window {
     /** Render statistics of the last drawn frame (diagnostics, benchmark, e2e). Set by createGameRenderer. */
     __dotkickRendererStats?: () => RenderStats;
+    /** [QF-4] Texture memory of the scene (diagnostics, e2e budget checks; walks the scene, not per frame). */
+    __dotkickTextureMemory?: () => TextureMemory;
   }
+}
+
+/** [QF-4] Texture memory estimate: unique textures in use and their GPU bytes (RGBA8, x4/3 with mipmaps). */
+export interface TextureMemory {
+  textures: number;
+  bytes: number;
+}
+
+/** GPU bytes of one texture: its image (canvas / image / typed data) at 4 bytes per texel, x4/3 with mipmaps. */
+function textureBytes(t: Texture): number {
+  const img = (t.image ?? null) as { width?: number; height?: number; data?: ArrayBufferView } | null;
+  let b = 0;
+  if (img && img.data && typeof img.data.byteLength === 'number' && img.width && img.height) {
+    b = Math.max(img.data.byteLength, img.width * img.height * 4);
+  } else if (img && img.width && img.height) b = img.width * img.height * 4;
+  const mips = t.generateMipmaps && t.minFilter !== NearestFilter && t.minFilter !== LinearFilter;
+  return mips ? Math.round((b * 4) / 3) : b;
+}
+
+/**
+ * [QF-4] Texture memory of everything drawn in `scene` (BRIEF section 3: 64 MB or less of textures): every texture a
+ * visible mesh's material references (own properties and shader uniforms), plus light shadow maps. Not per frame.
+ */
+export function textureMemory(scene: Object3D): TextureMemory {
+  const seen = new Set<Texture>();
+  let bytes = 0;
+  const add = (v: unknown): void => {
+    const t = v as Texture | null;
+    if (!t || (t as { isTexture?: boolean }).isTexture !== true || seen.has(t)) return;
+    seen.add(t);
+    bytes += textureBytes(t);
+  };
+  scene.traverse((o) => {
+    const light = o as { shadow?: { map?: { texture?: Texture; width?: number; height?: number } | null } };
+    if (light.shadow && light.shadow.map) {
+      const m = light.shadow.map;
+      if (m.texture && !seen.has(m.texture)) { seen.add(m.texture); bytes += (m.width ?? 0) * (m.height ?? 0) * 4; }
+    }
+    const mat = (o as { material?: Material | Material[] }).material;
+    if (!mat) return;
+    const list = Array.isArray(mat) ? mat : [mat];
+    for (const m of list) {
+      for (const k of Object.keys(m)) add((m as unknown as Record<string, unknown>)[k]);
+      const u = (m as { uniforms?: Record<string, { value?: unknown }> }).uniforms;
+      if (u) for (const k of Object.keys(u)) add(u[k]!.value);
+    }
+  });
+  return { textures: seen.size, bytes };
 }
 
 /** GameRenderer plus the GFX-01 context-loss hooks the session uses to pause and rebuild. */
@@ -97,6 +147,8 @@ export interface DotkickRenderer extends GameRenderer {
   readonly msaa: boolean;
   /** GFX-02's Low Power Mode detector fired this page (diagnostics only; platform/ipados.ts shows the hint). */
   readonly lowPowerSuspected: boolean;
+  /** [QF-4] Texture memory of the current scene (walks the scene; diagnostics and budget tests, not per frame). */
+  textureMemory(): TextureMemory;
   /**
    * x (m) of the camera drawn last: the broadcast camera in open play, the set-piece / replay camera while one is
    * active. Clamped to the world bounds, 0 before the first frame. For stereo panning (audio sfx.setCameraX).
@@ -145,15 +197,28 @@ export function msaaAtStart(settings: Readonly<Settings>): boolean {
   return t === QualityTier.QUALITY && TIER_PARAMS[t]!.msaa;
 }
 
+/** [QF-4] Moves in one tick longer than these (m) are placements by the rules, not motion: drawn at the new spot. */
+export const INTERP_TELEPORT = {
+  /** Players: 1 m per tick is 60 m/s (a sprint covers ~0.17 m). */
+  player: 1,
+  /** Ball: 2 m per tick is 120 m/s (the hardest shot covers ~0.6 m). */
+  ball: 2,
+} as const;
+
 /**
  * Interpolate render state: value = prev + (curr - prev) * alpha for every player and the ball. Facing is
- * blended and re-normalised. Pure; no allocation.
+ * blended and re-normalised. [QF-4] A teleport (a move longer than INTERP_TELEPORT in one tick: restart placements,
+ * RUL-11's set-up legalisation, kick-off formations) is drawn at its new spot at once instead of sliding halfway on
+ * the frames between the two ticks, so the camera cut that hides it really does. Pure; no allocation.
  */
 export function fillInterp(out: InterpState, prev: ReadonlySimState, curr: ReadonlySimState, alpha: number): void {
-  const a = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+  const a0 = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+  const tp = INTERP_TELEPORT.player * INTERP_TELEPORT.player, tb = INTERP_TELEPORT.ball * INTERP_TELEPORT.ball;
   for (let i = 0; i < NUM_SLOTS; i++) {
     const p = prev.players[i]!;
     const c = curr.players[i]!;
+    const jx = c.x - p.x, jz = c.z - p.z;
+    const a = jx * jx + jz * jz > tp ? 1 : a0;
     out.x[i] = p.x + (c.x - p.x) * a;
     out.z[i] = p.z + (c.z - p.z) * a;
     out.vx[i] = p.vx + (c.vx - p.vx) * a;
@@ -166,9 +231,11 @@ export function fillInterp(out: InterpState, prev: ReadonlySimState, curr: Reado
     out.fz[i] = fz;
   }
   const pb = prev.ball, cb = curr.ball;
-  out.ballX = pb.x + (cb.x - pb.x) * a;
-  out.ballY = pb.y + (cb.y - pb.y) * a;
-  out.ballZ = pb.z + (cb.z - pb.z) * a;
+  const bx = cb.x - pb.x, by = cb.y - pb.y, bz = cb.z - pb.z;
+  const ab = bx * bx + by * by + bz * bz > tb ? 1 : a0;
+  out.ballX = pb.x + (cb.x - pb.x) * ab;
+  out.ballY = pb.y + (cb.y - pb.y) * ab;
+  out.ballZ = pb.z + (cb.z - pb.z) * ab;
 }
 
 const MISSING_ID = 'dk-webgl-missing';
@@ -341,6 +408,10 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
     get msaa() { return msaa; },
     get lowPowerSuspected() { return lowPower; },
 
+    textureMemory() {
+      return textureMemory(ctx.scene);
+    },
+
     cameraX() {
       const x = ctx.camera.position.x;
       if (!Number.isFinite(x)) return 0;
@@ -357,7 +428,10 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
       broadcast.setSettings(ctx.cameraSettings, ctx.reducedMotion);
       msaa = msaaAtStart(settings);
       core = (opts.createCore ?? createRenderer)(canvas, { clearColor: 0x07070d, antialias: msaa });
-      if (typeof window !== 'undefined') window.__dotkickRendererStats = statsNow;
+      if (typeof window !== 'undefined') {
+        window.__dotkickRendererStats = statsNow;
+        window.__dotkickTextureMemory = api.textureMemory;
+      }
       if (!core.available || !core.renderer) {
         msaa = false;
         console.warn(`[render] ${core.failure}`);
@@ -540,6 +614,7 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
       restoredFns.length = 0;
       lost = false;
       if (typeof window !== 'undefined' && window.__dotkickRendererStats === statsNow) delete window.__dotkickRendererStats;
+      if (typeof window !== 'undefined' && window.__dotkickTextureMemory === api.textureMemory) delete window.__dotkickTextureMemory;
     },
 
     onContextLost: (fn) => subscribe(lostFns, fn),

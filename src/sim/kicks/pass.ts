@@ -170,6 +170,10 @@ export const LOCAL_TUNING = { // TUNING-CR
   leadArriveMargin: 2,
   /** Lead / target points stay this far inside the touchlines and goal lines, m. */
   pitchMargin: 1.0,
+  /** [QF-2] A receiver's run is extrapolated only until it comes within this of a touchline / goal line (he pulls up
+   *  there, so the lead stops too and is no longer "running away"): extrapolating a wide player's run out of the pitch
+   *  and clamping the point onto the line sent ~3 passes a match rolling out for throw-ins, m. */
+  leadLineMargin: 4,
   /** No receiver: a teammate within this distance of the ball's line (before it stops) becomes the target, m. */
   laneReceiverWidth: 2.5,
   // ---- dinked pass
@@ -736,9 +740,19 @@ function speedForTarget(s: SimState, kind: KickKind, power: number, assist: numb
  * (F[F_T]). Returns that travel time x F[F_RATIO] (0 when the target is on the ball).
  */
 function leadEval(s: SimState, T: number, kind: KickKind, power: number, assist: number): number {
-  const vx = F[F_QVX]!, vz = F[F_QVZ]!;
-  F[F_TX] = clampX(F[F_QX]! + vx * T);
-  F[F_TZ] = clampZ(F[F_QZ]! + vz * T);
+  let vx = F[F_QVX]!, vz = F[F_QVZ]!;
+  // [QF-2] His run stops leadLineMargin inside the lines (see LT.leadLineMargin): the lead time is capped where it gets
+  // there, and a receiver who has pulled up is not running away from the ball.
+  let te = T;
+  const qx = F[F_QX]!, qz = F[F_QZ]!;
+  const mx = HALF_LENGTH - LT.leadLineMargin, mz = HALF_WIDTH - LT.leadLineMargin;
+  if (vx > 1e-6 && qx + vx * te > mx) te = qx < mx ? (mx - qx) / vx : 0;
+  else if (vx < -1e-6 && qx + vx * te < -mx) te = qx > -mx ? (-mx - qx) / vx : 0;
+  if (vz > 1e-6 && qz + vz * te > mz) te = qz < mz ? (mz - qz) / vz : 0;
+  else if (vz < -1e-6 && qz + vz * te < -mz) te = qz > -mz ? (-mz - qz) / vz : 0;
+  if (te < T) { vx = 0; vz = 0; }
+  F[F_TX] = clampX(qx + F[F_QVX]! * te);
+  F[F_TZ] = clampZ(qz + F[F_QVZ]! * te);
   F[F_AMIN] = 0;
   if (!aimAtTarget(s.ball)) { F[F_T] = 0; return 0; }
   const away = vx * F[F_UX]! + vz * F[F_UZ]!;

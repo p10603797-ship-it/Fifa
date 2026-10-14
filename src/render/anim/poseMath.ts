@@ -168,10 +168,10 @@ export const IK_INFO = new Float64Array(5);
 // it does not inline, so the hot paths hand numbers over in typed arrays (zero allocation per frame,
 // tests/perf/gfx-12-alloc.test.ts). Each function owns its own block so nested calls never clobber each other.
 /** legIKS: ankle target x, y, z. */
-const IKT = new Float64Array(3);
+export const IKT = new Float64Array(3);
 /** setFootPitchS: wanted pitch. footPitchS: result. */
-const FPA = new Float64Array(1);
-const FPR = new Float64Array(1);
+export const FPA = new Float64Array(1);
+export const FPR = new Float64Array(1);
 /** plantToeS: toe x, y, z, pitch. */
 export const PTA = new Float64Array(4);
 /** placeSwingFootS: toe x, lowest-sole height, toe z, pitch. */
@@ -189,7 +189,7 @@ export function legIK(out: Pose, side: number, ax: number, ay: number, az: numbe
 }
 
 /** legIK with the target in IKT (allocation-free internal form). */
-function legIKS(out: Pose, side: number): void {
+export function legIKS(out: Pose, side: number): void {
   const ax = IKT[0]!, ay = IKT[1]!, az = IKT[2]!;
   IK_INFO[2] = ax; IK_INFO[3] = ay; IK_INFO[4] = az;
   // Into the root frame: R = Ry(yaw) Rx(roll) Rz(-pitch); local = R^T (A - O) = Rz(pitch) Rx(-roll) Ry(-yaw) (A - O).
@@ -267,7 +267,7 @@ export function setFootPitch(out: Pose, side: number, pitch: number): void {
   setFootPitchS(out, side);
 }
 
-function setFootPitchS(out: Pose, side: number): void {
+export function setFootPitchS(out: Pose, side: number): void {
   const pitch = FPA[0]!;
   const left = side < 0;
   const hp = left ? out[P.HIP_L_PITCH]! : out[P.HIP_R_PITCH]!;
@@ -308,7 +308,7 @@ export function footPitchOf(out: Pose, side: number): number {
   return FPR[0]!;
 }
 
-function footPitchS(out: Pose, side: number): void {
+export function footPitchS(out: Pose, side: number): void {
   const left = side < 0;
   const hp = left ? out[P.HIP_L_PITCH]! : out[P.HIP_R_PITCH]!;
   const rD = left ? out[P.HIP_L_ROLL]! : -out[P.HIP_R_ROLL]!;

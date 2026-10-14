@@ -33,7 +33,7 @@ import { clamp, clamp01, datan2, lerp, PI, smoothstep, unlerp } from '../core/dm
 import { isHumanSlot } from '../core/query';
 
 // TUNING-CR: candidates for T_GK in contracts/tuning.ts.
-const LOCAL_TUNING = {
+export const LOCAL_TUNING = {
   /** Ball distance from the goal centre (m) at which the depth is T_GK.depthNear / T_GK.depthFar. */
   depthNearDist: 5,
   depthFarDist: 28,

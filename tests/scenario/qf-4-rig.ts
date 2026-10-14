@@ -19,7 +19,7 @@ import { createGameRenderer, type DotkickRenderer } from '../../src/render/index
 import { BODY, FRAME_SIZE, Joint } from '../../src/render/players/fk';
 import { createPlayerModel, type PlayerModelModule } from '../../src/render/players/model';
 import type { RebuildReport, RendererCore } from '../../src/render/renderer';
-import type { RenderModule } from '../../src/render/types';
+import type { RenderContext, RenderModule } from '../../src/render/types';
 import { cloneState, copyState } from '../../src/sim/core/clone';
 import { createEventBuffer, type EventBufferImpl } from '../../src/sim/core/events';
 import { initMatch } from '../../src/sim/init';
@@ -32,6 +32,8 @@ export interface LiveRig {
   s: SimState;
   prev: SimState;
   model: PlayerModelModule;
+  /** The renderer context the modules share. */
+  ctx: RenderContext;
   /** The camera of the last drawn frame (what the fake core was asked to draw with). */
   camera: PerspectiveCamera;
   w: number;
@@ -102,7 +104,7 @@ export function createLiveRig(o: LiveRigOptions = {}): LiveRig {
   let model: PlayerModelModule | null = null;
   const clock = { t: 1000 };
   const rig: LiveRig = {
-    r: null as unknown as DotkickRenderer, s, prev, model: null as unknown as PlayerModelModule,
+    r: null as unknown as DotkickRenderer, s, prev, model: null as unknown as PlayerModelModule, ctx: null as unknown as RenderContext,
     camera: new PerspectiveCamera(), w: o.w ?? 1180, h: o.h ?? 820, ev, frames, draws: 0,
     tick(framesPerTick = 1) {
       copyState(prev, s);
@@ -127,6 +129,7 @@ export function createLiveRig(o: LiveRigOptions = {}): LiveRig {
   const r = createGameRenderer({
     createCore: () => fakeCore((cam) => { rig.camera = cam; rig.draws++; }),
     createModules: (ctx) => {
+      rig.ctx = ctx;
       model = createPlayerModel(ctx);
       return [model as RenderModule];
     },

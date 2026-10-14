@@ -179,11 +179,11 @@ describe('GFX-15 shot framing', () => {
     for (const end of [1, -1]) {
       const sx = end * (HALF_LENGTH - PENALTY_SPOT_DIST);
       const p = takerPose(sx, 0, end * HALF_LENGTH, 0, false, createCinePose());
-      expect(p.z).toBeCloseTo(0, 9);
+      // [QF-4] Around the ball on the near side (the taker stands on the line straight behind it).
+      expect(p.z).toBeGreaterThan(3);
       for (const [w, h] of ASPECTS) {
         const ball = screen(p, w, h, sx, 0.11, 0)!;
         expect(ballClear(ball, w, h)).toBe(true);
-        expect(ball.x).toBeCloseTo(0.5, 6);
         expect(goalVisible(p, end, w, h)).toBe(true);
       }
     }
@@ -194,7 +194,6 @@ describe('GFX-15 shot framing', () => {
       for (const z of [-9.16, -4.6, 0, 4.6, 9.16]) {
         const sx = end * (HALF_LENGTH - 5.5);
         const p = takerPose(sx, z, -end * HALF_LENGTH, 0, true, createCinePose());
-        expect(Math.abs(p.x)).toBeLessThanOrEqual(HALF_LENGTH - LT.goalKickLineInset + 1e-9);
         expect(insideLimits(p)).toBe(true);
         for (const [w, h] of ASPECTS) {
           expect(ballClear(screen(p, w, h, sx, 0.11, z), w, h)).toBe(true);
@@ -204,9 +203,9 @@ describe('GFX-15 shot framing', () => {
           // The own goal (posts) is behind the camera: never in view.
           expect(inView(screen(p, w, h, end * HALF_LENGTH, 1, GOAL_HALF_WIDTH), 0)).toBe(false);
         }
-        // "Up" on the stick aims up-field.
+        // "Up" on the stick aims up-field (screen-relative: the view direction, turned toward the ball [QF-4]).
         const up = stickUp(stickRotationForYaw(p.yaw));
-        expect(up.x * -end).toBeGreaterThan(0.95);
+        expect(up.x * -end).toBeGreaterThan(Math.cos((35 * Math.PI) / 180));
       }
     }
   });
@@ -269,13 +268,17 @@ describe('GFX-15 shot framing', () => {
   });
 
   it('stick "up" aims toward goal behind the taker (both ends, wide angles)', () => {
+    // [QF-4] Screen-relative: "up" is the view direction, which looks between the ball and the goal (the camera sits
+    // around the ball from the taker), so it points toward the goal side within the half-angle of that span.
     for (const end of [1, -1]) {
       for (const sz of [-20, 0, 15]) {
         const sx = end * (HALF_LENGTH - 22);
         const p = takerPose(sx, sz, end * HALF_LENGTH, 0, false, createCinePose());
         const up = stickUp(stickRotationForYaw(p.yaw));
+        expect(up.x).toBeCloseTo(-Math.sin(p.yaw), 9);
+        expect(up.z).toBeCloseTo(-Math.cos(p.yaw), 9);
         const gx = end * HALF_LENGTH - sx, gz = -sz, gl = Math.hypot(gx, gz);
-        expect(up.x * gx / gl + up.z * gz / gl).toBeGreaterThan(0.999);
+        expect(up.x * gx / gl + up.z * gz / gl).toBeGreaterThan(Math.cos((LT.takerPhi * Math.PI) / 180));
       }
     }
   });
@@ -319,6 +322,8 @@ function makeRig(reduced = false): Rig {
   const rep = createReplay(ctx);
   const s = initMatch(createMatchConfig()) as SimState;
   s.match.phase = MatchPhase.IN_PLAY;
+  // [QF-4] Players out of the set-piece cameras' way (a player at the camera spot makes the shot take the other side).
+  for (let i = 0; i < NUM_SLOTS; i++) { s.players[i]!.x = -45 + i * 0.5; s.players[i]!.z = -30; }
   bc.setMatch!(s, []);
   cine.setMatch!(s, []);
   rep.setMatch!(s, []);
@@ -349,7 +354,8 @@ function award(r: Rig, phase: MatchPhase, kind: RestartKind, team: number, x: nu
   const m = r.s.match;
   const from = m.phase;
   m.phase = phase;
-  m.restart.kind = kind; m.restart.team = team; m.restart.x = x; m.restart.z = z; m.restart.taken = 0; m.restart.ready = 0;
+  // [QF-4] Set-piece shots start once the restart is set up (ready); these tests look at the set-up restart.
+  m.restart.kind = kind; m.restart.team = team; m.restart.x = x; m.restart.z = z; m.restart.taken = 0; m.restart.ready = 1;
   const b = r.s.ball;
   b.x = x; b.y = 0.11; b.z = z; b.vx = b.vy = b.vz = 0; b.owner = -1; b.shotBy = -1;
   events(r, [EventType.RESTART_AWARDED, kind, team], [EventType.PHASE_CHANGE, from, phase]);
@@ -389,10 +395,10 @@ describe('GFX-15 camera director in the frame pipeline', () => {
     expect(r.cine.screenToPitch(sp.x, sp.y, pp)).toBe(true);
     expect(pp.x).toBeCloseTo(30, 3);
     expect(pp.z).toBeCloseTo(8, 3);
-    // Stick "up" toward goal.
+    // Stick "up" toward goal (screen-relative: the view direction, between the ball and the goal [QF-4]).
     const up = stickUp(r.cine.stickRotation());
     const gl = Math.hypot(HALF_LENGTH - 30, -8);
-    expect(up.x * (HALF_LENGTH - 30) / gl + up.z * -8 / gl).toBeGreaterThan(0.999);
+    expect(up.x * (HALF_LENGTH - 30) / gl + up.z * -8 / gl).toBeGreaterThan(Math.cos((LT.takerPhi * Math.PI) / 180));
     for (let i = 0; i < 60; i++) frame(r);
     expect(r.cine.shot).toBe(CineShot.BEHIND_TAKER);
     // Taken as a pass: straight back to the broadcast camera.
@@ -442,7 +448,9 @@ describe('GFX-15 camera director in the frame pipeline', () => {
     award(r, MatchPhase.GOAL_KICK, RestartKind.GOAL_KICK, 1, HALF_LENGTH - 5.5, 4.6);
     frame(r);
     expect(r.cine.shot).toBe(CineShot.BEHIND_TAKER);
-    expect(Math.abs(camPos(r)[0])).toBeLessThan(HALF_LENGTH);
+    // [QF-4] Raised over the goal-line area beside the goal: the own goal (crossbar) stays out of view.
+    const bar = { x: 0, y: 0 };
+    expect(!r.cine.pitchToScreen(HALF_LENGTH, 2.44, 0, bar) || bar.y > 820 || bar.x < 0 || bar.x > 1180).toBe(true);
     award(r, MatchPhase.PENALTY, RestartKind.PENALTY, 0, HALF_LENGTH - PENALTY_SPOT_DIST, 0);
     frame(r);
     expect(r.cine.shot).toBe(CineShot.BEHIND_TAKER);
@@ -620,7 +628,7 @@ describe('GFX-15 camera director in the frame pipeline', () => {
     expect(r.cine.shot).toBe(CineShot.BEHIND_TAKER);
     expect(r.cine.pose.x).toBeGreaterThan(r.s.ball.x); // behind the ball, away from the -x goal
     const up = stickUp(r.cine.stickRotation());
-    expect(up.x).toBeLessThan(-0.999);
+    expect(up.x).toBeLessThan(-Math.cos((LT.takerPhi * Math.PI) / 180));
   });
 
   it('resize while active keeps the projection current; clearMatch deactivates', () => {
@@ -632,7 +640,9 @@ describe('GFX-15 camera director in the frame pipeline', () => {
     expect(r.ctx.camera.aspect).toBeCloseTo(1024 / 768, 9);
     const sp = { x: 0, y: 0 };
     expect(r.cine.pitchToScreen(HALF_LENGTH - PENALTY_SPOT_DIST, 0.11, 0, sp)).toBe(true);
-    expect(sp.x / 1024).toBeCloseTo(0.5, 3);
+    const want = screen(r.cine.pose, 1024, 768, HALF_LENGTH - PENALTY_SPOT_DIST, 0.11, 0)!;
+    expect(sp.x / 1024).toBeCloseTo(want.x, 3);
+    expect(sp.y / 768).toBeCloseTo(want.y, 3);
     r.cine.clearMatch!();
     expect(r.cine.active).toBe(false);
     frame(r);

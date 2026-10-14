@@ -251,11 +251,20 @@ describe('SIM-13 star gating', () => {
     });
   }
 
-  it('the harder moves (roulette, heel flick) need 3 stars; 2-star players still have the basics', () => {
+  it('the harder moves need more stars (step-over 3, roulette 4, heel flick 5); 2-star players still have the basics', () => {
+    // [QF-2, DAT-05] One new move per star, so 3, 4 and 5 stars differ.
     const s = skillScene({ stars: 2 });
     expect(startSkill(s, SKILLER, SkillMove.ROULETTE, 0, 1, recorder())).toBe(0);
     expect(startSkill(s, SKILLER, SkillMove.HEEL_FLICK, 0, 1, recorder())).toBe(0);
-    expect(startSkill(s, SKILLER, SkillMove.STEP_OVER, 0, 1, recorder())).toBe(1);
+    expect(startSkill(s, SKILLER, SkillMove.STEP_OVER, 0, 1, recorder())).toBe(0);
+    expect(startSkill(s, SKILLER, SkillMove.BALL_ROLL, 0, 1, recorder())).toBe(1);
+    const avail = (stars: number): number => {
+      let n = 0;
+      for (const k of [SkillMove.BALL_ROLL, SkillMove.STEP_OVER, SkillMove.BODY_FEINT, SkillMove.DRAG_BACK, SkillMove.ROULETTE,
+        SkillMove.HEEL_FLICK, SkillMove.KNOCK_ON]) if (stars >= T_SKILL.minStars[k]!) n++;
+      return n;
+    };
+    for (let st = 2; st <= 5; st++) expect(avail(st), `stars ${st}`).toBeGreaterThan(avail(st - 1));
   });
 });
 

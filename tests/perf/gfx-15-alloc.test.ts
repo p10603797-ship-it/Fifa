@@ -49,7 +49,7 @@ describe('GFX-15 zero allocation per frame', () => {
       const SEG = [
         [0, 2, 0, 0, 0, 0, -1],        // in play (recorded; ball runs to the +x goal)
         [500, 6, 5, 0, 30, 8, -1],     // free kick near goal: behind the taker
-        [560, 6, 5, 0, 31.5, 6.8, -1], // re-awarded close by: blend
+        [560, 6, 5, 0, 31.5, 6.8, -1], // re-spotted close by (set up): blend
         [620, 2, 0, 0, 0, 0, 9],       // taken as a shot: hold
         [720, 5, 4, 0, 51.9, 33.4, -1],// corner
         [780, 4, 3, 1, 47, 4.6, -1],   // goal kick
@@ -84,8 +84,11 @@ describe('GFX-15 zero allocation per frame', () => {
           s.match.phase = row[1];
           if (row[2] > 0) {
             const r = s.match.restart;
-            r.kind = row[2]; r.team = row[3]; r.x = row[4]; r.z = row[5]; r.ready = 0; r.taken = 0;
-            evAward.a = row[2]; evAward.b = row[3]; send(evAward);
+            // [QF-4] A new award is set up 50 ticks later (ready below); the frame-560 row re-spots the set-up free kick
+            // 2 m away (no new award), which blends.
+            const respot = row[0] === 560;
+            r.kind = row[2]; r.team = row[3]; r.x = row[4]; r.z = row[5]; r.ready = respot ? 1 : 0; r.taken = 0;
+            if (!respot) { evAward.a = row[2]; evAward.b = row[3]; send(evAward); }
             b.x = row[4]; b.z = row[5]; b.vx = 0; b.vz = 0;
           }
           if (row[1] === 8) s.match.goalTick = tick;
@@ -94,6 +97,8 @@ describe('GFX-15 zero allocation per frame', () => {
           else { evPhase.a = from; evPhase.b = row[1]; send(evPhase); }
         }
         b.shotBy = row[6];
+        // [QF-4] The restart is set up (RUL-11 ready) 50 ticks after the award: set-piece shots start then.
+        if (row[2] > 0 && (k - row[0] >= 50 || row[0] === 560)) s.match.restart.ready = 1;
         if (row[1] === 2 || row[1] === 8) { b.x = BX[k]; b.z = BZ[k]; b.vx = 9; b.inNet = row[1] === 8 ? 1 : 0; }
         b.y = 0.11;
         fillInterp(interp, s, s, 1);

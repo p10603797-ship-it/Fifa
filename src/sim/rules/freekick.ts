@@ -773,6 +773,27 @@ function repickWall(s: SimState): void {
   }
 }
 
+/**
+ * [QF-1] True when moving `slot` to (x, z) would put his body into another player's beyond half the overlap tolerance
+ * (SIM-05 contact distance). A wall slot can be taken (the keeper's spot by a goal-line wall, a team-mate still on
+ * his way): the ready snap is one teleport SIM-05 resolves, but re-snapping / sliding a member into it every tick after
+ * held two bodies inside each other for seconds (overlap invariant); left alone, SIM-05 separates them and the member
+ * slides in once the spot is clear.
+ */
+function bodyInTheWay(s: SimState, slot: number, x: number, z: number): boolean {
+  const rs = bodyRadiusOf(s, slot);
+  const slack = T_PLAYER.overlapTolerance * 0.5;
+  for (let j = 0; j < NUM_SLOTS; j++) {
+    if (j === slot) continue;
+    const q = s.players[j]!;
+    if (q.active !== 1) continue;
+    const dx = q.x - x, dz = q.z - z;
+    const min = rs + bodyRadiusOf(s, j) - slack;
+    if (dx * dx + dz * dz < min * min) return true;
+  }
+  return false;
+}
+
 /** Members onto their slots: snapped at ready, else slid (wallSlideStep) when near the wall; facing the ball. */
 function placeWall(s: SimState, snap: boolean): void {
   const r = s.match.restart;
@@ -790,12 +811,12 @@ function placeWall(s: SimState, snap: boolean): void {
     const dx = tx - p.x, dz = tz - p.z;
     const d = Math.sqrt(dx * dx + dz * dz);
     if (snap || d <= LT.wallSlideStep) {
-      p.x = tx; p.z = tz; p.vx = 0; p.vz = 0;
+      if (snap || !bodyInTheWay(s, w, tx, tz)) { p.x = tx; p.z = tz; p.vx = 0; p.vz = 0; }
     } else {
       const cx = p.x - r.wallX, cz = p.z - r.wallZ;
       if (cx * cx + cz * cz > hold * hold) continue; // still walking in (TAI-13)
-      p.x += (dx / d) * LT.wallSlideStep;
-      p.z += (dz / d) * LT.wallSlideStep;
+      const nx = p.x + (dx / d) * LT.wallSlideStep, nz = p.z + (dz / d) * LT.wallSlideStep;
+      if (!bodyInTheWay(s, w, nx, nz)) { p.x = nx; p.z = nz; }
     }
     const fx = r.x - p.x, fz = r.z - p.z;
     const fl = Math.sqrt(fx * fx + fz * fz);

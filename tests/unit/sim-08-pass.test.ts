@@ -274,7 +274,9 @@ function leadCheck(seed: number, rx: number, rz: number, vx: number, vz: number,
 
 describe('SIM-08 leading a moving receiver', () => {
   const runs: [number, number, number, number][] = [
-    [20, 8, 6, 0], [15, -10, 0, 5], [25, 0, -4, 3], [12, 6, 7, -2], [30, -5, 5, 5], [18, 12, 0, -6],
+    // [QF-2] Runs that stay leadLineMargin inside the lines over the longest lead (a run into the line margin stops
+    // there: see 'a run toward the touchline is led only to leadLineMargin inside it').
+    [20, 8, 6, 0], [15, -10, 0, 5], [25, 0, -4, 3], [12, 6, 7, -2], [26, -5, 5, 5], [18, 12, 0, -6],
   ];
   it('lead passes to moving receivers arrive within 1.5 m (plan exact, ball with error in 95% of seeds)', () => {
     for (const kind of [KickKind.GROUND_PASS, KickKind.DRIVEN_PASS, KickKind.DINKED_PASS]) {
@@ -283,7 +285,7 @@ describe('SIM-08 leading a moving receiver', () => {
         for (let seed = 1; seed <= 8; seed++) {
           const r = leadCheck(seed, rx, rz, vx, vz, kind, 0.5);
           expect(r.target).toBe(MATE_A);
-          expect(r.plan).toBeLessThan(1.5);
+          expect(r.plan, `${KickKind[kind]} run ${rx},${rz},${vx},${vz} seed ${seed}`).toBeLessThan(1.5);
           n++;
           if (r.ball < 1.5) ok++;
         }
@@ -298,6 +300,23 @@ describe('SIM-08 leading a moving receiver', () => {
     const l = solve(s, KickKind.GROUND_PASS, { power: 0.5, targetSlot: MATE_A })!;
     expect(l.tx).toBeCloseTo(20, 9);
     expect(l.tz).toBeCloseTo(5, 9);
+  });
+
+  it('a run toward the touchline is led only to leadLineMargin inside it (no pass rolling out for a throw-in)', () => {
+    for (const kind of [KickKind.GROUND_PASS, KickKind.DRIVEN_PASS]) {
+      const s = quiet();
+      place(s, MATE_A, 20, 27);
+      s.players[MATE_A]!.vx = 2; s.players[MATE_A]!.vz = 5; // a wide man drifting out toward the line
+      const l = solve(s, kind, { power: 0.5, targetSlot: MATE_A })!;
+      expect(l.tz).toBeLessThanOrEqual(34 - LT.leadLineMargin + 1e-9);
+      expect(l.tz).toBeGreaterThan(27 - 1e-9);
+      // ... and the same toward the goal line.
+      const g = quiet();
+      place(g, MATE_A, 44, 5);
+      g.players[MATE_A]!.vx = 6;
+      const lg = solve(g, kind, { power: 0.5, targetSlot: MATE_A })!;
+      expect(lg.tx).toBeLessThanOrEqual(52.5 - LT.leadLineMargin + 1e-9);
+    }
   });
 
   it('lead targets stay on the pitch', () => {

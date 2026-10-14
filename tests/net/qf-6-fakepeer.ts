@@ -5,6 +5,8 @@
  *  - FakePeer.goSilent(): everything this peer sends is dropped from now on (a page that froze or was unloaded
  *    without closing its channels).
  *  - FakeBroker.iceBlocked: new channels never open (ICE failure), for one attempt at a time.
+ *  - FakePeer.loseBroker() / FakeBroker.reachable = false: the broker socket drops; a reconnect to an unreachable broker
+ *    neither opens nor fails (second pass).
  */
 import { createNetConfig, type NetConfig } from '../../src/net/config';
 import { createManualClock, type ManualClock } from '../../src/net/memoryTransport';
@@ -109,8 +111,16 @@ export class FakePeer extends Emitter implements PeerLike {
     return mine;
   }
   reconnect(): void {
+    // Like PeerJS: no longer 'disconnected' while it tries. An unreachable broker is a black hole (a Wi-Fi switch: the
+    // WebSocket neither opens nor fails for a long time).
     this.disconnected = false;
+    if (!this.broker.reachable) return;
     this.broker.later(() => this.emit('open', this.id));
+  }
+  /** The broker WebSocket drops (iOS closes sockets of a backgrounded page); data channels are not affected. */
+  loseBroker(): void {
+    this.disconnected = true;
+    this.emit('disconnected');
   }
   destroy(): void {
     this.destroyed = true;

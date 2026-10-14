@@ -194,8 +194,10 @@ export const T_TACKLE = {
 export const T_SKILL = {
   /** Duration ticks per SkillMove index (0 = NONE). */
   duration: [0, 22, 26, 20, 24, 18, 34, 20, 16, 12, 14, 10] as readonly number[],
-  /** Minimum skill-move stars per SkillMove index. */
-  minStars: [0, 2, 2, 1, 2, 1, 3, 3, 1, 1, 1, 1] as readonly number[],
+  /** Minimum skill-move stars per SkillMove index. [QF-2, DAT-05] One new move per star: 1 body feint, knock-on (and
+   *  the fake shot / stops), 2 ball roll, drag-back, 3 step-over, 4 roulette, 5 heel flick (3, 4 and 5 stars used to
+   *  give the same set). */
+  minStars: [0, 2, 3, 1, 2, 1, 4, 5, 1, 1, 1, 1] as readonly number[],
   /** Vulnerable window [start, end) ticks where the ball can be won, per SkillMove index. */
   vulnStart: [0, 6, 8, 6, 8, 4, 12, 6, 2, 0, 0, 0] as readonly number[],
   vulnEnd: [0, 16, 18, 14, 18, 12, 26, 14, 10, 6, 8, 6] as readonly number[],
@@ -203,8 +205,8 @@ export const T_SKILL = {
 
 export const T_GK = {
   /** Reaction delay ticks at reflexes 99 / 1. */
-  reactBest: 8,
-  reactWorst: 22,
+  reactBest: 6, // [QF-2] was 8 (INT-A): full matches saved 52-58% of on-target shots (band 65-78%)
+  reactWorst: 19, // [QF-2] was 22
   /** Dive reach m and dive speed m/s at diving 99 / 1. */
   reachBest: 3.2,
   reachWorst: 2.2,
@@ -237,6 +239,8 @@ export const T_RULES = {
   advantageTicks: 180,
   /** Ball untouched / unreachable watchdog, ticks (8 s). */
   ballIdleTicks: 480,
+  /** [QF-1] The loose ball "lies" (ball.idleT counts toward ballIdleTicks) below this horizontal speed, m/s. */
+  ballLieSpeed: 1.0,
   /** Half-end extension cap, ticks of real time (20 s). */
   halfEndExtensionTicks: 1200,
   /** Final-25-m attack zone that delays the half end, m from goal line. */

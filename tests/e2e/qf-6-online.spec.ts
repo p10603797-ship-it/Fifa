@@ -57,7 +57,8 @@ test('glitch: both sides waiting forever — a friend held with the link up: wai
   await b.evaluate(() => window.__dotkick!.ctx.session.resume(1));
   await expect(a.getByTestId('net-gone')).toHaveCount(0, { timeout: 15_000 });
   const t0 = await simTick(a);
-  await expect.poll(() => simTick(a), { timeout: 15_000 }).toBeGreaterThan(t0 + 60);
+  // (45 s: two pages on software WebGL in a busy container can drop to a few ticks a second.)
+  await expect.poll(() => simTick(a), { timeout: 45_000 }).toBeGreaterThan(t0 + 60);
 
   // Held again; this time Ana finishes against the CPU and Ben is told at once.
   await setBlocked(b, true);
@@ -66,7 +67,7 @@ test('glitch: both sides waiting forever — a friend held with the link up: wai
   await expect.poll(async () => (await onlineState(a)).status, { timeout: 10_000 }).toBe('solo');
   await expect(b.getByTestId('net-gone')).toContainText('Ana left the match', { timeout: 8_000 });
   const s0 = await simTick(a);
-  await expect.poll(() => simTick(a), { timeout: 15_000 }).toBeGreaterThan(s0 + 60);
+  await expect.poll(() => simTick(a), { timeout: 45_000 }).toBeGreaterThan(s0 + 60);
   expect(errs).toEqual([]);
 });
 

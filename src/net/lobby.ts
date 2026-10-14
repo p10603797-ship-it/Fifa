@@ -379,6 +379,12 @@ export function createLobby(opts: LobbyOptions): Lobby {
 
   function onHello(m: ControlMessage): void {
     const versionsMatch = m.game === GAME_VERSION && m.sim === SIM_VERSION && m.net === NET_PROTOCOL_VERSION;
+    if (!versionsMatch && phase === 'playing') {
+      // Mid-match the versions were agreed long ago (and the transport handshake checks them on every link): a garbled
+      // hello must not close the room under a running match (QF-6).
+      log?.('net', 'lobby: malformed hello during a match ignored');
+      return;
+    }
     if (!versionsMatch) {
       fail('version-mismatch', `remote ${String(m.game)}/${String(m.sim)}/${String(m.net)}`);
       return;
@@ -424,7 +430,8 @@ export function createLobby(opts: LobbyOptions): Lobby {
   }
 
   function onConfig(m: ControlMessage): void {
-    if (isHost) return;
+    // The match runs on the start's config; settings change in the lobby only (a garbled one must not end a match).
+    if (isHost || phase === 'playing') return;
     const c = sanitizeConfig(m.config, clubs ? clubs.length : Infinity);
     if (!c) {
       fail('version-mismatch', 'bad config');

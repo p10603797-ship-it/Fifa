@@ -32,7 +32,7 @@ const PROBE = `
     for (let i = 0; i < 4; i++) {
       const r = recs[i];
       r.active = 1; r.tackler = 12 + i; r.victim = 3; r.kind = i; r.ballFirst = bf; r.fromBehind = (i - 1.5) / 1.5;
-      r.closingSpeed = 2 + i; r.x = 30; r.z = 0; r.tick = s.tick;
+      r.closingSpeed = 1 + 0.5 * i; r.x = 30; r.z = 0; r.tick = s.tick; // [QF-1] never reckless (clean case stays clean)
     }
   };
   const idle = () => { s.tick++; foulsTick(s, ev); };

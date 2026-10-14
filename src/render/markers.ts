@@ -42,6 +42,7 @@ import type { ReadonlySimState } from '../contracts/state';
 import { createBallPrediction, MAX_PREDICT_TICKS, type BallPrediction } from '../contracts/systems';
 import { predictBall } from '../sim/ball/flight';
 import { touchZones, type TouchZones } from './camera/broadcast';
+import { drawnOffsetsOf } from './players/drawn';
 import type { InterpState, RenderContext, RenderFrame, RenderModule } from './types';
 
 const LOCAL_TUNING = { // TUNING-CR (GFX-13 on-pitch aids)
@@ -758,6 +759,8 @@ export function createMarkers(ctx: RenderContext): MarkersModule {
   ctx.scene.add(overlay);
 
   const plan = createAidPlan();
+  /** [QF-4] Render-only offsets the player model drew each player with (foot lock, set-piece stance). */
+  const drawn = drawnOffsetsOf(ctx);
   const landing = createLandingTracker();
   const arrow = createEdgeArrow();
   const zones: TouchZones = { clusterW: 0, clusterH: 0, stickW: 0, stickH: 0, mirror: false };
@@ -768,9 +771,9 @@ export function createMarkers(ctx: RenderContext): MarkersModule {
   function drawHead(s: ReadonlySimState, it: InterpState, mi: ArrayLike<number>, h: number, slot: number, faint: boolean,
     label: boolean): void {
     const hcm = s.attrs[slot]!.height;
-    RG[B_AX] = it.x[slot]!;
+    RG[B_AX] = it.x[slot]! + drawn[slot * 2]!;
     RG[B_AY] = MARKER_Y * (hcm > 100 && hcm < 230 ? hcm / 180 : 1);
-    RG[B_AZ] = it.z[slot]!;
+    RG[B_AZ] = it.z[slot]! + drawn[slot * 2 + 1]!;
     if (!anchorScale(mi)) return;
     const unit = RG[UNIT]! * (faint ? LOCAL_TUNING.switchScale : 1);
     const alpha = faint ? LOCAL_TUNING.switchAlpha : 1;
@@ -794,9 +797,9 @@ export function createMarkers(ctx: RenderContext): MarkersModule {
 
   /** Power bar of human h under the controlled player's feet: white frame, ink background, fill in his colour. */
   function drawPower(it: InterpState, mi: ArrayLike<number>, h: number, slot: number): void {
-    RG[B_AX] = it.x[slot]!;
+    RG[B_AX] = it.x[slot]! + drawn[slot * 2]!;
     RG[B_AY] = 0;
-    RG[B_AZ] = it.z[slot]!;
+    RG[B_AZ] = it.z[slot]! + drawn[slot * 2 + 1]!;
     if (!anchorScale(mi)) return;
     const power = plan.humans[h]!.power;
     const hw = LOCAL_TUNING.barW / 2, hh = LOCAL_TUNING.barH / 2, bd = LOCAL_TUNING.barBorder, v = -LOCAL_TUNING.barDrop;
@@ -869,7 +872,7 @@ export function createMarkers(ctx: RenderContext): MarkersModule {
       const k = 1 + LOCAL_TUNING.receiverPulse * Math.sin(ph - ph === 0 ? ph : 0);
       const ci = C_P1 + plan.receiverHuman;
       const r1 = LOCAL_TUNING.receiverOuter * k;
-      RG[G_X] = it.x[t]!; RG[G_Z] = it.z[t]!;
+      RG[G_X] = it.x[t]! + drawn[t * 2]!; RG[G_Z] = it.z[t]! + drawn[t * 2 + 1]!;
       RG[G_R0] = LOCAL_TUNING.receiverInner * k; RG[G_R1] = r1; RG[G_ALPHA] = LOCAL_TUNING.receiverAlpha;
       groundRing(groundBatch, 1, false, ci);
       RG[G_R0] = r1 - 0.02; RG[G_R1] = r1 + LOCAL_TUNING.receiverTick; RG[G_HW] = LOCAL_TUNING.receiverTickHalfW;
@@ -880,7 +883,7 @@ export function createMarkers(ctx: RenderContext): MarkersModule {
     for (let h = 0; h < MAX_HUMANS; h++) {
       const slot = plan.humans[h]!.slot;
       if (slot < 0) continue;
-      RG[G_X] = it.x[slot]!; RG[G_Z] = it.z[slot]!;
+      RG[G_X] = it.x[slot]! + drawn[slot * 2]!; RG[G_Z] = it.z[slot]! + drawn[slot * 2 + 1]!;
       if (cb && HUMAN_SHAPES[h] === MarkerShape.DIAMOND) {
         RG[G_R0] = LOCAL_TUNING.dashInner; RG[G_R1] = LOCAL_TUNING.dashOuter; RG[G_ALPHA] = LOCAL_TUNING.ringAlpha;
         groundRing(groundBatch, 2, true, C_P1 + h);

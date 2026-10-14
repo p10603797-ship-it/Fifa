@@ -54,9 +54,12 @@ describe('RUL-09 classifyChallenge table (pinned draw)', () => {
     ['slide, ball first, from behind at 9 m/s: not serious foul play (ball first)', K.SLIDE, 1, 1, 9, 0, O.FOUL_YELLOW],
     ['stand, man first, side, roll passes', K.STAND, 0, 0, 3, 0, O.FOUL],
     ['stand, man first, side, roll fails', K.STAND, 0, 0, 3, 0.999, O.CLEAN],
-    ['stand from behind below recklessSpeed', K.STAND, 0, 1, 5, 0, O.FOUL],
+    // [QF-1] refit: from behind is reckless above recklessSpeed * behindRecklessMul (3.3 m/s), any direction above
+    // recklessSpeed * allOutSpeedMul (4.7 m/s).
+    ['stand from behind below the behind-reckless speed', K.STAND, 0, 1, 3, 0, O.FOUL],
+    ['stand from behind above the behind-reckless speed', K.STAND, 0, 1, 4, 0, O.FOUL_YELLOW],
     ['stand from behind above recklessSpeed', K.STAND, 0, 1, 6, 0, O.FOUL_YELLOW],
-    ['stand from the front at 7.5 m/s (not all-out)', K.STAND, 0, -1, 7.5, 0, O.FOUL],
+    ['stand from the front at 4.5 m/s (not all-out)', K.STAND, 0, -1, 4.5, 0, O.FOUL],
     ['stand from the front at 8 m/s (all-out lunge)', K.STAND, 0, -1, 8, 0, O.FOUL_YELLOW],
     ['stand from behind at 9 m/s: reckless, never serious', K.STAND, 0, 1, 9, 0, O.FOUL_YELLOW],
     ['slide from the side, slow', K.SLIDE, 0, 0, 2, 0, O.FOUL],
@@ -67,7 +70,7 @@ describe('RUL-09 classifyChallenge table (pinned draw)', () => {
     ['hard from behind at 7.5 m/s, red roll fails', K.HARD, 0, 1, 7.5, 0.2, O.FOUL_YELLOW],
     ['shoulder from the side: rare foul, roll fails at 0.1', K.SHOULDER, 0, 0, 3, 0.1, O.CLEAN],
     ['shoulder from the side: roll passes at 0.05', K.SHOULDER, 0, 0, 3, 0.05, O.FOUL],
-    ['push/pull from behind (chasing), slow', K.PUSH_PULL, 0, 1, 4, 0, O.FOUL],
+    ['push/pull from behind (chasing), slow', K.PUSH_PULL, 0, 1, 3, 0, O.FOUL],
     ['keeper takes the man', K.KEEPER, 0, 0, 3, 0, O.FOUL],
   ];
   for (const [name, kind, bf, fb, cs, draw, want] of rows) {
@@ -120,7 +123,7 @@ describe('RUL-09 classifyChallenge table (pinned draw)', () => {
   it('non-finite record fields are treated as side-on, standing still', () => {
     const s = midScene();
     const r = rec(s, K.STAND, 0, NaN, NaN);
-    expect(foulChance(r)).toBeCloseTo(T_FOUL.baseFoulChance * 0.6 * LOCAL_TUNING.speedFoulMulLow, 10);
+    expect(foulChance(r)).toBeCloseTo(T_FOUL.baseFoulChance * LOCAL_TUNING.kindFoulWeight[K.STAND]! * LOCAL_TUNING.speedFoulMulLow, 10);
     expect(classifyChallenge(s, r)).toBe(O.FOUL);
     r.closingSpeed = Infinity;
     expect(Number.isFinite(foulChance(r))).toBe(true);
@@ -148,16 +151,18 @@ describe('RUL-09 foul chance shape', () => {
     expect(at(K.STAND, 0, 3, 1)).toBeCloseTo(at(K.STAND, 0, 3) * LOCAL_TUNING.ballFirstFoulMul, 10);
     expect(at(K.SLIDE, 1, 9)).toBe(LOCAL_TUNING.maxFoulChance);
     expect(at(K.STAND, 0, 3)).toBeGreaterThan(0.2);
-    expect(at(K.STAND, 0, 3)).toBeLessThan(0.6);
+    expect(at(K.STAND, 0, 3)).toBeLessThan(0.8); // [QF-1] refit: a standing tackle that misses the ball is usually a foul
     void s;
   });
 
   it('reckless and serious foul play thresholds', () => {
     const r = (kind: ChallengeKind, fb: number, cs: number, bf = 0): ChallengeRecord =>
       ({ active: 1, tackler: TAC, victim: VIC, kind, ballFirst: bf, fromBehind: fb, closingSpeed: cs, x: 0, z: 0, tick: 0 });
-    expect(isReckless(r(K.STAND, 1, T_FOUL.recklessSpeed + 0.01))).toBe(true);
-    expect(isReckless(r(K.STAND, 1, T_FOUL.recklessSpeed - 0.01))).toBe(false);
-    expect(isReckless(r(K.STAND, 0.4, 6))).toBe(false); // not from behind
+    const behind = T_FOUL.recklessSpeed * LOCAL_TUNING.behindRecklessMul;
+    expect(isReckless(r(K.STAND, 1, behind + 0.01))).toBe(true);
+    expect(isReckless(r(K.STAND, 1, behind - 0.01))).toBe(false);
+    expect(isReckless(r(K.STAND, 0.4, behind + 1))).toBe(false); // not from behind (and below all-out)
+    expect(isReckless(r(K.STAND, -1, T_FOUL.recklessSpeed * LOCAL_TUNING.allOutSpeedMul - 0.01))).toBe(false);
     expect(isReckless(r(K.SLIDE, 0.5, 0))).toBe(true);
     expect(isReckless(r(K.SLIDE, 0.49, 0))).toBe(false);
     expect(isReckless(r(K.PUSH_PULL, -1, T_FOUL.recklessSpeed * LOCAL_TUNING.allOutSpeedMul + 0.01))).toBe(true);

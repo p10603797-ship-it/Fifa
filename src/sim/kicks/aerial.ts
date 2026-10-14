@@ -61,7 +61,8 @@ export { headerHandler, solveHeader, solveVolley, volleyHandler } from './aerial
 import { bindAerialImpl } from './aerialHooks';
 import { beginAction, endAction, isFree } from '../actions/dispatch';
 import {
-  BALL_RADIUS, DT, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PENALTY_AREA_HALF_WIDTH, TICK_HZ,
+  BALL_RADIUS, DT, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS,
+  PENALTY_AREA_HALF_WIDTH, TICK_HZ,
 } from '../../contracts/constants';
 import { ActionKind, AssistLevel, ControllerKind, CrossKind, KickKind, MatchPhase } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
@@ -100,7 +101,7 @@ const T_TURN_FAST = T_PLAYER.turnRateFast;
 const T_AGI_TURN = T_PLAYER.agilityTurnScale;
 const T_SPRINT_TURN = T_PLAYER.sprintTurnMul;
 
-const LOCAL_TUNING = {
+export const LOCAL_TUNING = {
   // ---- windows: ball-centre height at contact, m [BRIEF / SIM-12 brief]
   headerMinY: 1.2,
   headerMaxY: 2.6,
@@ -200,6 +201,11 @@ const LOCAL_TUNING = {
   aiVolleyClearDepth: 18,
   /** ... and head clear even an uncontested opponent ball within this of their own goal line, m [INT-A]. */
   aiClearAlwaysDepth: 22,
+  /** [QF-2] "Keeper's ball": an AI outfielder leaves an opponent's ball whose contact point is within this of his own
+   *  keeper while the keeper is already set to save / claim it (GK_CATCH, GK_DIVE, GK_RUSH, GK_PUNCH), or inside his
+   *  own goal area with the keeper free and nearer to it (glitch "keeper fights a defender for the same ball": a
+   *  defender volleyed a shot clear from 1.5 m in front of his planted keeper), m. */
+  keepersBallRadius: 3,
   /** An opponent within this of the spot makes a trappable ball a contested header, m. */
   contestRadius: 2.5,
   /** AI header pass / clear power. */
@@ -1302,6 +1308,31 @@ function aiChoose(s: SimState, slot: number): void {
   }
 }
 
+/**
+ * [QF-2] True when slot should leave an opponent's ball at (x, z) to his own keeper (see LT.keepersBallRadius): the
+ * keeper is set to save / claim and the point is within keepersBallRadius of him, or the point is inside the own goal
+ * area and the free keeper is nearer to it than slot.
+ */
+function keepersBall(s: SimState, slot: number, x: number, z: number): boolean {
+  const p = s.players[slot]!;
+  if (s.ball.lastTouchTeam === p.team) return false;
+  const k = s.teams[p.team]!.keeperSlot;
+  if (k < 0 || k >= NS) return false;
+  const kp = s.players[k]!;
+  if (kp.active !== 1 || kp.isKeeper !== 1) return false;
+  const kx = x - kp.x, kz = z - kp.z;
+  const kd2 = kx * kx + kz * kz;
+  const a = kp.act;
+  if ((a === ActionKind.GK_CATCH || a === ActionKind.GK_DIVE || a === ActionKind.GK_RUSH || a === ActionKind.GK_PUNCH) &&
+      kd2 <= LT.keepersBallRadius * LT.keepersBallRadius) return true;
+  if (!isFree(kp)) return false;
+  const dir = s.teams[p.team]!.dir;
+  const toOwn = HL + dir * x;
+  if (toOwn > GOAL_AREA_DEPTH || absf(z) > GOAL_AREA_HALF_WIDTH) return false;
+  const px = x - p.x, pz = z - p.z;
+  return kd2 < px * px + pz * pz;
+}
+
 /** AI-driven players attack aerial balls that reach them (one attempt per team per flight). */
 function aiStarts(s: SimState, ev: EventSink): void {
   const b = s.ball;
@@ -1333,6 +1364,7 @@ function aiStarts(s: SimState, ev: EventSink): void {
       if (!predicted) { ensurePrediction(b); predicted = true; }
       if (!findAerial(s, slot, 3, LT.aiLeadTicks, LT.aiLeadTicks + LT.aiComfortWait)) continue;
       if (FIND.idx > LT.aiLeadTicks) continue;
+      if (keepersBall(s, slot, FIND.x, FIND.z)) continue;
       aiChoose(s, slot);
       if (AI.kind === KickKind.NONE) continue;
       const prio = slot === pt || slot === s.teams[team]!.chaser ? 0 : 1;

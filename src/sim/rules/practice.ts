@@ -31,6 +31,8 @@ export const LOCAL_TUNING = { // TUNING-CR
   attemptTicks: 360,
   /** Live play allowed after a penalty kick before the attempt is over, ticks (3 s). */
   penaltyAttemptTicks: 180,
+  /** A pending free kick / penalty of the practised kind within this of the practice spot is the practice one, m. */
+  spotTolerance: 1,
 } as const;
 
 /**
@@ -133,6 +135,17 @@ export function practiceAttemptDone(s: SimState, team: number, kind: RestartKind
 }
 
 /**
+ * [QF-1] The pending restart stands at the practice spot (SPOT_OUT): free kicks and penalties within spotTolerance,
+ * corners at the same corner. A foul on the practising side during an attempt gives it a free kick of the practised
+ * kind somewhere else, which used to pass for the practice restart.
+ */
+function atPracticeSpot(kind: RestartKind, x: number, z: number): boolean {
+  if (kind === RestartKind.CORNER) return (x < 0) === (SPOT_OUT.x < 0) && (z < 0) === (SPOT_OUT.z < 0);
+  const dx = x - SPOT_OUT.x, dz = z - SPOT_OUT.z;
+  return dx * dx + dz * dz <= LOCAL_TUNING.spotTolerance * LOCAL_TUNING.spotTolerance;
+}
+
+/**
  * Per tick after rulesTick (set-piece practice only): award the practice restart again when an attempt is over or
  * another restart is pending (see header). Returns 1 when it awarded the restart this tick.
  */
@@ -144,14 +157,14 @@ export function practiceRulesTick(s: SimState, ev: EventSink): number {
   if (m.finished === 1 || m.phase === MatchPhase.POST_MATCH) return 0;
   const team = practiceTeam(s.config);
   const r = m.restart;
+  practiceSpotPoint(s.config.practice, practiceSpotIndex(s.config), s.teams[team]!.dir, SPOT_OUT);
   if (isRestartPhase(m.phase)) {
     if (r.taken === 1) return 0;
-    if (r.kind === kind && r.team === team) return 0;
+    if (r.kind === kind && r.team === team && atPracticeSpot(kind, r.x, r.z)) return 0;
     setPhase(s, MatchPhase.IN_PLAY, ev);
   } else if (m.phase !== MatchPhase.IN_PLAY || !practiceAttemptDone(s, team, kind)) {
     return 0;
   }
-  practiceSpotPoint(s.config.practice, practiceSpotIndex(s.config), s.teams[team]!.dir, SPOT_OUT);
   awardRestart(s, kind, team, SPOT_OUT.x, SPOT_OUT.z, ev);
   return m.phase === RESTART_PHASE[kind] ? 1 : 0;
 }

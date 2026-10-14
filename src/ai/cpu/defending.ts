@@ -74,6 +74,7 @@ import { tackleKind } from '../../sim/control/resolveActions';
 import { ballEta, controlContext, Ctx } from '../../sim/control/resolveShared';
 import { aerialChance } from '../../sim/kicks/aerial';
 import { inSkillVulnerableWindow } from '../../sim/kicks/skills';
+import { comeOutWanted } from '../../sim/keeper/sweeper';
 import { ticksToReach } from '../../sim/players/locomotion';
 import { createInterceptEstimate, estimateIntercept } from '../steer';
 import { levelParams } from './levels';
@@ -192,6 +193,8 @@ export const LOCAL_TUNING = {
   chaseHoldDist: 0.4,
   /** Loose ball another teammate chases (team.chaser): the controlled player covers this far goal-side of it, m. */
   looseCoverDist: 7.0,
+  /** [QF-2] Our keeper's ball (TAI-07 chaser: his rush or save): ahead of it within this of its path, step off it, m. */
+  keeperLaneClear: 2.0,
   /** Reaction delay: keep running along the current velocity when faster than this, m/s. */
   momentumMinSpeed: 0.3,
 } as const; // TUNING-CR
@@ -462,8 +465,10 @@ function keeperRush(s: SimState, team: number, ctl: ControllerState, q: Readonly
     if ((kp.act === ActionKind.GK_RUSH || isFree(kp)) && throughOnGoal(s, team, q, L.rushKeepDist)) btn |= Btn.THROUGH;
     return;
   }
-  // Start only from a free keeper: an AI come-out already running (GKP-03) is left alone.
-  if (isFree(kp) && throughOnGoal(s, team, q, L.rushStartDist)) btn |= Btn.THROUGH;
+  // Start only from a free keeper: an AI come-out already running (GKP-03) is left alone. [QF-2] And only when GKP-03
+  // agrees there is a come-out to make: a held rush right after GKP-03 aborted its own one-on-one made the keeper
+  // start / stop / start on consecutive ticks.
+  if (isFree(kp) && throughOnGoal(s, team, q, L.rushStartDist) && comeOutWanted(s, team)) btn |= Btn.THROUGH;
 }
 
 // ---------------------------------------------------------------- the carrier
@@ -682,6 +687,33 @@ function coverLoose(s: SimState, team: number, p: Readonly<PlayerState>): void {
   steerTo(p, b.x + gx * c, b.z + gz * c, 1);
 }
 
+/** [QF-2] True when our keeper is the loose-ball chaser (TAI-07: his rush or his save on their ball). */
+function keepersBall(s: SimState, team: number): boolean {
+  const ch = s.teams[team]!.chaser;
+  return validSlot(ch) && ch === s.teams[team]!.keeperSlot && s.players[ch]!.active === 1 && s.players[ch]!.ctrl < 0;
+}
+
+/**
+ * [QF-2] The keeper takes this ball: stay out of its way. Ahead of the ball on its path and within keeperLaneClear m of
+ * the line, step sideways off it; otherwise hold (coverLoose would put him halfway between the ball and the goal, on
+ * the shot's path, where SIM-07 lets the controlled player trap it in front of his keeper).
+ */
+function clearKeeperLane(s: SimState, p: Readonly<PlayerState>): void {
+  const b = s.ball;
+  const v = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
+  stX = 0; stZ = 0; stM = 0;
+  if (!(v > EPS)) return;
+  const ux = b.vx / v, uz = b.vz / v;
+  const rx = p.x - b.x, rz = p.z - b.z;
+  if (rx * ux + rz * uz <= 0) return;
+  const off = rx * -uz + rz * ux;
+  const ao = off < 0 ? -off : off;
+  if (ao >= L.keeperLaneClear) return;
+  const side = off < 0 ? -1 : 1;
+  steerTo(p, p.x - uz * side * (L.keeperLaneClear - ao + 0.5), p.z + ux * side * (L.keeperLaneClear - ao + 0.5), 0);
+  stM = 1;
+}
+
 /** True when the team's loose-ball chaser (TAI-07, last tick) is another active, AI-driven teammate. */
 function otherChaser(s: SimState, team: number, slot: number): boolean {
   const ch = s.teams[team]!.chaser;
@@ -736,6 +768,8 @@ export function cpuDefend(s: SimState, team: number, out: InputFrame, ev: EventS
   if (validSlot(b.passTarget) && b.lastTouchTeam !== team && s.players[b.passTarget]!.team !== team &&
       s.players[b.passTarget]!.active === 1) {
     opponentPass(s, team, p);
+  } else if (keepersBall(s, team)) {
+    clearKeeperLane(s, p);
   } else if (otherChaser(s, team, slot)) {
     coverLoose(s, team, p);
   } else {

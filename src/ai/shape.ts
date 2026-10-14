@@ -60,7 +60,7 @@ import { otherTeam, possessingTeam, teamEnd, teamStart } from '../sim/core/query
 // Per-phase tables are indexed by TeamPhase: BUILD_UP, ATTACK, DEFEND, TRANSITION_ATTACK, TRANSITION_DEFEND,
 // SET_PIECE. SET_PIECE is resolved to BUILD_UP/ATTACK (restart team) or DEFEND (other team) before lookup, so its
 // column is only a fallback. Team-frame u: metres from the centre spot toward the opposition goal.
-const LOCAL_TUNING = {
+export const LOCAL_TUNING = {
   /** Back-line height: u = dataBack + lineOffset + lineSlope * ballU, clamped to [lineMin, lineMax]. dataBack is
    *  the formation's deepest outfield slot (its neutral back line). m, m/m, m (team frame), m (team frame). */
   lineOffset: [8, 14, 0, 14, -3, 0],

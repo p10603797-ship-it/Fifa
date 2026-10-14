@@ -36,6 +36,7 @@
 
 import { NUM_SLOTS } from '../../contracts/constants';
 import { ActionKind, KickKind, MatchPhase } from '../../contracts/enums';
+import { T_DRIBBLE, T_TOUCH } from '../../contracts/tuning';
 import { AnimId, createPose, POSE_SIZE, type Pose, type PoseFn } from '../../contracts/render';
 import type { ReadonlySimState } from '../../contracts/state';
 import type { RenderFrame } from '../types';
@@ -46,6 +47,7 @@ import {
   neutralPose, PP, SLEN, strideLengthForS, TLA, type PoseImpl,
 } from './locomotion';
 import { TAU } from './poseMath';
+import { kickReach, nearerLeg, RCH, REACH_SWITCH, reachClip, touchNeed, touchReach } from './reach';
 
 const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
   /** Idle below / locomotion above these speeds (m/s, hysteresis). */
@@ -80,10 +82,43 @@ const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
   weakFootSide: 0.2,
   /** A clip phase jumping forward by more than this in one frame (or backward) re-blends briefly. */
   phaseJump: 0.2,
+  // ---- ball contact [QF-4] (reach.ts)
+  /** Foot kicks: the reach toward the predicted ball fades in from reachLeadTicks before the contact tick (from the
+   *  start of a shorter wind-up) to reachFullTicks before it, and out over reachTailTicks after it. */
+  reachLeadTicks: 8,
+  reachFullTicks: 2.5,
+  reachTailTicks: 8,
+  /** Dribble: the owner's run cycle is phase-aligned so a foot comes through just before the next touch the sim has
+   *  scheduled (touchCd, or when he closes on the ball), within this stride-rate factor range; touchLead = phase (rad)
+   *  before touchdown the touch is aimed at. */
+  alignMin: 0.78,
+  alignMax: 1.3,
+  touchLead: 0.25,
+  /** Touch reach (dribble touches, first touches): fades in over the last touchIn s before a predicted touch, peaks on
+   *  the touch frame and fades over touchOut s after it. Below alignMinSpeed (m/s) there is no phase alignment. */
+  touchIn: 0.08,
+  touchOut: 0.12,
+  /** A touch reaches in at once when the foot has to move at most touchStepMax (m) this frame, else over more frames
+   *  (weight step = touchStepMax / distance), so the foot never pops; touchSnapStep is the weight step of the
+   *  scheduled fade-ins. */
+  touchSnapStep: 0.5,
+  touchStepMax: 0.34,
+  /** The predicted ball a kick reaches for moves at most this far per 60 Hz frame (m). */
+  kickTargetStep: 0.12,
+  /** Fastest an action clip's phase advances after its contact (phase per second): ~0.34 s for a whole follow-through. */
+  followRate: 1.6,
+  alignMinSpeed: 1.2,
+  /** Height scale clamp of the player model (players/model.ts minScale / maxScale). */
+  minScale: 0.85,
+  maxScale: 1.2,
 } as const;
 
 /** Exposed for tests / tools. */
 export const MAPPER_TUNING = LOCAL_TUNING;
+
+/** SIM-06's reach lookahead (sim/players/possession.ts LOCAL_TUNING.reachLookahead, s): a running owner touches a ball
+ *  up to T_DRIBBLE.controlRadius + speed x this from his feet. Mirrored here (render must not import sim modules). */
+const DRIBBLE_REACH_LOOKAHEAD = 0.08;
 
 // ============================================================ stub API types (kept from Wave 0)
 
@@ -694,6 +729,11 @@ function samplePoseS(sample: AnimSample, out: Pose): void {
 /** Anything with setPose (the player model, GFX-07 PoseSink). */
 export interface PoseSinkLike {
   setPose(slot: number, pose: ArrayLike<number>): void;
+  /**
+   * [QF-4] Render-only offsets (m, [dx0, dz0, ...]) the sink drew each player with on the last frame (players/drawn.ts:
+   * foot lock, set-piece stance); the ball-contact reach aims from the drawn body, not the sim position.
+   */
+  readonly drawnOffsets?: Float64Array;
 }
 
 /** Per-frame animation driver: same shape as GFX-07's PoseDriver. */
@@ -748,6 +788,19 @@ export function createAnimator(): Animator {
   const lastSide = new Float32Array(NUM_SLOTS);
   const lastFoot = new Uint8Array(NUM_SLOTS);
   const liveFrom = createPose();
+  // [QF-4] Ball contact (reach.ts): per slot the world ball target of the current kick (frozen at the contact), the
+  // touch reach (weight, leg, world contact point) and the dribble's last predicted touch.
+  const kickWX = new Float64Array(NUM_SLOTS), kickWY = new Float64Array(NUM_SLOTS), kickWZ = new Float64Array(NUM_SLOTS);
+  const kickInit = new Uint8Array(NUM_SLOTS);
+  const touchW = new Float64Array(NUM_SLOTS);
+  const touchSide = new Int8Array(NUM_SLOTS);
+  const touchWX = new Float64Array(NUM_SLOTS), touchWY = new Float64Array(NUM_SLOTS), touchWZ = new Float64Array(NUM_SLOTS);
+  const touchSeenTick = new Float64Array(NUM_SLOTS).fill(-1);
+  /** Frames left in which the touch reach keeps rising toward 1 after a touch. */
+  const touchRise = new Uint8Array(NUM_SLOTS);
+  /** [QF-4] The kick was charging on the previous frame / the release strike is being shown (phase rate limited). */
+  const wasCharging = new Uint8Array(NUM_SLOTS);
+  const strike = new Uint8Array(NUM_SLOTS);
 
   function reset(): void {
     seen.fill(0);
@@ -759,10 +812,13 @@ export function createAnimator(): Animator {
     blendDur.fill(0);
     fromLive.fill(0);
     mem.idle.fill(0); mem.strafe.fill(0); mem.lean.fill(0); mem.foot.fill(255); mem.act.fill(0); mem.actT.fill(0);
+    touchW.fill(0); touchSeenTick.fill(-1); touchRise.fill(0); wasCharging.fill(0); strike.fill(0);
+    kickInit.fill(0);
   }
 
   function update(f: RenderFrame, sink: PoseSinkLike | null): void {
     const s = f.curr, it = f.interp;
+    const drawn = sink !== null && sink.drawnOffsets !== undefined ? sink.drawnOffsets : null;
     let dt = f.frame.paused ? 0 : f.frame.dtMs / 1000;
     if (!(dt > 0)) dt = 0;
     if (dt > 0.1) dt = 0.1;
@@ -823,6 +879,57 @@ export function createAnimator(): Animator {
       } else {
         mem.lean[i] = 0;
       }
+      // [QF-4] A charged kick released: the sim kicks on the release tick, so the clip would jump from the backswing top
+      // (held while charging) to the contact pose in one frame; show that strike over two frames instead.
+      if (OUTX.kick === 1 && OUTX.action === 1) {
+        if (wasCharging[i] === 1 && p.actCharging === 0 && anim === prevAnim) strike[i] = 1;
+        if (strike[i] === 1) {
+          const cf = CF_TABLE[anim]!, hold = HOLD_TABLE[anim]!;
+          const step = cf > hold && hold >= 0 ? (cf - hold) * 0.5 : 1;
+          if (sample.t > lastT[i]! + step) sample.t = lastT[i]! + step;
+          if (sample.t >= cf || anim !== prevAnim) strike[i] = 0;
+        }
+        wasCharging[i] = p.actCharging === 1 ? 1 : 0;
+      } else {
+        wasCharging[i] = 0;
+        strike[i] = 0;
+      }
+      // [QF-4] Follow-through speed limit: after the contact a clip plays at most followRate of its phase per second (a
+      // whiffed or interrupted action shortens actDur and squeezed the swing into a few frames: a volley's leg moved
+      // 0.85 m per frame). The cut back to locomotion cross-fades from wherever the clip got to.
+      if (OUTX.action === 1 && anim === prevAnim && dt > 0) {
+        const cf = CF_TABLE[anim]!;
+        if (cf >= 0 && sample.t > cf && lastT[i]! >= cf && !(p.act === prevAct && p.actT < prevActT)) {
+          const mx = lastT[i]! + LOCAL_TUNING.followRate * dt;
+          if (sample.t > mx) sample.t = mx;
+        }
+      }
+      // [QF-4] Dribble: phase-align the run so a foot comes through just before the touch the sim has scheduled.
+      const owner = s.ball.owner === i && s.ball.heldBy < 0 && p.act === ActionKind.NONE ? 1 : 0;
+      let touchTau = -1;
+      if (owner === 1 && (anim === AnimId.JOG || anim === AnimId.SPRINT || anim === AnimId.TURN_LEAN)) {
+        const bx = it.ballX - x, bz = it.ballZ - z;
+        const dist = Math.sqrt(bx * bx + bz * bz);
+        const reach = T_DRIBBLE.controlRadius + speed * DRIBBLE_REACH_LOOKAHEAD;
+        let tau = p.touchCd > 0 ? p.touchCd - alpha : 0;
+        if (dist > reach && dist > 1e-6) {
+          const closing = ((vx - s.ball.vx) * bx + (vz - s.ball.vz) * bz) / dist;
+          const tr = closing > 0.3 ? ((dist - reach) / closing) * 60 : 1e9;
+          if (tr > tau) tau = tr;
+        }
+        if (tau < 60) touchTau = tau;
+        if (d > 0 && REACH_SWITCH.align === 1 && speed > LOCAL_TUNING.alignMinSpeed && tau >= 1 && tau < 60) {
+          SLEN[0] = speed;
+          strideLengthForS(OUTX.loco);
+          const nat = ((speed * tau) / 60 / SLEN[1]!) * TAU;
+          // Phase at the touch if nothing changes, and the nearest foot-through phase (right at -lead, left at pi - lead).
+          let e = -LOCAL_TUNING.touchLead - (bank.cycle[i]! + nat);
+          e -= Math.PI * Math.round(e / Math.PI);
+          let k = nat > 1e-6 ? 1 + e / nat : 1;
+          k = k < LOCAL_TUNING.alignMin ? LOCAL_TUNING.alignMin : k > LOCAL_TUNING.alignMax ? LOCAL_TUNING.alignMax : k;
+          d *= k;
+        }
+      }
       // Stride cycle: distance / stride of the locomotion clip in use.
       if (d > 0) {
         SLEN[0] = speed;
@@ -847,6 +954,52 @@ export function createAnimator(): Animator {
       }
       if (OUTF[OF_LEAN] !== 0) { TLA[0] = OUTF[OF_LEAN]!; applyTurnLeanS(target); }
       if (OUTF[OF_BREATH]! > 0) { BRA[0] = br; BRA[1] = OUTF[OF_BREATH]!; applyBreathS(target); }
+      // [QF-4] Foot kicks: the kicking boot reaches the ball the sim kicks (predicted to the contact tick, frozen there).
+      const offX = drawn !== null ? drawn[i * 2]! : 0, offZ = drawn !== null ? drawn[i * 2 + 1]! : 0;
+      let hs = s.attrs[i]!.height / 180;
+      if (!(hs >= LOCAL_TUNING.minScale)) hs = LOCAL_TUNING.minScale; else if (hs > LOCAL_TUNING.maxScale) hs = LOCAL_TUNING.maxScale;
+      if (!(OUTX.action === 1 && p.actContact >= 0 && reachClip(anim))) kickInit[i] = 0;
+      if (OUTX.action === 1 && p.actContact >= 0 && reachClip(anim)) {
+        // Weight by time to / since the contact tick (a phase window shrinks with short wind-ups and would pop).
+        const ua = p.actT + alpha - p.actContact;
+        // Full by reachFullTicks before the contact: the strike itself (the fastest part of the swing) adds no motion.
+        const full = LOCAL_TUNING.reachFullTicks;
+        let wu = ua <= 0 ? (ua + LOCAL_TUNING.reachLeadTicks) / (LOCAL_TUNING.reachLeadTicks - full) : 1 - ua / LOCAL_TUNING.reachTailTicks;
+        if (p.actDone === 0 && ua > 0) wu = 1; // charging past the planned contact: the backswing aims at the ball
+        wu = wu < 0 ? 0 : wu > 1 ? 1 : wu;
+        const w = wu * wu * (3 - 2 * wu);
+        if (p.actDone === 0) {
+          let tau = p.actCharging === 1 ? 0 : (p.actContact - (p.actT + alpha)) / 60;
+          if (!(tau > 0)) tau = 0;
+          const b = s.ball;
+          const px = it.ballX + b.vx * tau - vx * tau;
+          const pz = it.ballZ + b.vz * tau - vz * tau;
+          let py = it.ballY + b.vy * tau - 4.905 * tau * tau;
+          if (py < 0.11) py = 0.11;
+          // A new kick takes the prediction as it is; then it moves at most kickTargetStep per frame (a bounce or a
+          // deflection changes the prediction at once: the boot must not jump with it).
+          const fresh = p.act !== prevAct || p.actT < prevActT || kickInit[i] === 0;
+          if (fresh) {
+            kickWX[i] = px; kickWY[i] = py; kickWZ[i] = pz;
+            kickInit[i] = 1;
+          } else {
+            const ex = px - kickWX[i]!, ey = py - kickWY[i]!, ez = pz - kickWZ[i]!;
+            const el = Math.sqrt(ex * ex + ey * ey + ez * ez);
+            const mx = LOCAL_TUNING.kickTargetStep * (dt > 0 ? dt * 60 : 1);
+            const k = el > mx ? mx / el : 1;
+            kickWX[i] = kickWX[i]! + ex * k; kickWY[i] = kickWY[i]! + ey * k; kickWZ[i] = kickWZ[i]! + ez * k;
+          }
+        }
+        if (w > 0 && REACH_SWITCH.kick === 1) {
+          // World offset from the drawn player (prediction already relative to his motion) into model space.
+          const rx = kickWX[i]! - x - offX, rz = kickWZ[i]! - z - offZ;
+          RCH[0] = (rx * fx + rz * fz) / hs;
+          RCH[1] = kickWY[i]! / hs;
+          RCH[2] = (rx * -fz + rz * fx) / hs;
+          RCH[3] = w;
+          kickReach(target, anim, sample.foot);
+        }
+      }
       // Cross-fade on clip changes, action restarts and phase jumps.
       const restarted = prevAct === p.act && p.act !== ActionKind.NONE && p.actT < prevActT;
       const jump = OUTX.action === 1 && anim === prevAnim && (sample.t < lastT[i]! - 0.02 || sample.t > lastT[i]! + LOCAL_TUNING.phaseJump);
@@ -898,6 +1051,76 @@ export function createAnimator(): Animator {
           a = liveFrom;
         }
         for (let k = 0; k < POSE_SIZE; k++) out[k] = a[k]! + (target[k]! - a[k]!) * w;
+      }
+      // [QF-4] Touch reach (dribble touches, first touches): a touch this tick turns the reach on toward where the ball
+      // was touched (the frame shows it there); a dribble touch the sim has scheduled, or a pass about to reach him,
+      // fades it in beforehand; it fades out after. The weight wanted this frame is then rate-limited by how far the
+      // foot would move (touchStepMax per frame), so a reach never pops the leg.
+      if (teleport) { touchW[i] = 0; touchRise[i] = 0; }
+      const b = s.ball;
+      const touchedNow = b.lastTouch === i && b.lastTouchTick === s.tick && touchSeenTick[i] !== s.tick
+        && (p.act === ActionKind.NONE || p.act === ActionKind.FIRST_TOUCH || p.act === ActionKind.SHIELD) && b.y < 0.7;
+      let want = 0;
+      if (touchedNow) {
+        touchSeenTick[i] = s.tick;
+        touchWX[i] = it.ballX; touchWY[i] = it.ballY; touchWZ[i] = it.ballZ;
+        touchRise[i] = 4;
+        want = 1;
+      } else if (touchRise[i]! > 0) {
+        touchRise[i] = touchRise[i]! - 1;
+        want = 1;
+      } else if (touchTau < 0 && b.owner < 0 && b.heldBy < 0 && b.passTarget === i && p.act === ActionKind.NONE && b.y < 0.6) {
+        // A pass arriving: the sim's first touch comes when the ball enters his receive radius; reach ahead of it.
+        const rx = it.ballX - x, rz = it.ballZ - z, ux = b.vx - vx, uz = b.vz - vz;
+        const qa = ux * ux + uz * uz, qb = 2 * (rx * ux + rz * uz), qc = rx * rx + rz * rz - T_TOUCH.receiveRadius * T_TOUCH.receiveRadius;
+        const disc = qb * qb - 4 * qa * qc;
+        if (qc > 0 && qa > 1e-6 && qb < 0 && disc >= 0) {
+          const tt = (-qb - Math.sqrt(disc)) / (2 * qa);
+          if (tt <= LOCAL_TUNING.touchIn) {
+            const tin = 1 - tt / LOCAL_TUNING.touchIn;
+            want = tin * tin * (3 - 2 * tin);
+            touchWX[i] = it.ballX + ux * tt;
+            touchWY[i] = it.ballY;
+            touchWZ[i] = it.ballZ + uz * tt;
+          }
+        }
+      } else if (touchTau >= 0 && touchTau <= LOCAL_TUNING.touchIn * 60 && touchSeenTick[i] !== s.tick && b.y < T_DRIBBLE.controlHeight) {
+        // Scheduled dribble touch (a low ball): the foot coming through reaches ahead.
+        const tin = 1 - touchTau / (LOCAL_TUNING.touchIn * 60);
+        want = tin * tin * (3 - 2 * tin);
+        const tt = touchTau / 60;
+        touchWX[i] = it.ballX + (b.vx - vx) * tt;
+        touchWY[i] = it.ballY;
+        touchWZ[i] = it.ballZ + (b.vz - vz) * tt;
+        // The foot coming through to the touch: the phase alignment aims it just before its touchdown (right at 0,
+        // left at pi), so it is the one swinging now.
+        if (touchSide[i] === 0 && touchW[i] === 0) touchSide[i] = bank.cycle[i]! > Math.PI ? 1 : -1;
+      }
+      let tw = touchW[i]!;
+      if (want < tw) {
+        tw = dt > 0 ? Math.max(want, tw - dt / LOCAL_TUNING.touchOut) : tw;
+        if (tw <= 0) { tw = 0; touchRise[i] = 0; }
+      }
+      if (want > tw || tw > 0) {
+        const rx = touchWX[i]! - x - offX, rz = touchWZ[i]! - z - offZ;
+        RCH[0] = (rx * fx + rz * fz) / hs;
+        RCH[1] = touchWY[i]! / hs;
+        RCH[2] = (rx * -fz + rz * fx) / hs;
+        // The leg is chosen when the reach starts (the nearer toe) and kept: a switch mid-reach would pop.
+        if (touchSide[i] === 0) touchSide[i] = nearerLeg(out);
+        if (want > tw) {
+          const need = touchNeed(out, touchSide[i]!);
+          const step = need > LOCAL_TUNING.touchStepMax ? LOCAL_TUNING.touchStepMax / need : 1;
+          tw = Math.min(want, tw + step);
+        }
+        touchW[i] = tw;
+        if (tw > 0 && REACH_SWITCH.touch === 1) {
+          RCH[3] = tw;
+          touchReach(out, touchSide[i]!);
+        }
+      } else {
+        touchW[i] = 0;
+        touchSide[i] = 0;
       }
       seen[i] = 1;
       if (sink) sink.setPose(i, out);

@@ -478,19 +478,20 @@ describe('TAI-10 chooseSkill', () => {
     expect(chooseSkill(duel(5, 9, 0), SHOOTER)).toBe(SkillMove.NONE);
   });
 
-  it('a defender at 3 m with space beside him but none behind: step-over (2+ stars) or body feint (1 star)', () => {
+  it('a defender at 3 m with space beside him but none behind: step-over (3+ stars) or body feint (1-2 stars)', () => {
+    // [QF-2] T_SKILL.minStars: one new move per star (step-over at 3, roulette 4, heel flick 5).
     for (const stars of [1, 2, 3, 4, 5]) {
       const s = duel(stars, 3);
       place(s, 14, 7.5, 0); // covering behind him
       const m = chooseSkill(s, SHOOTER);
-      expect(m, `stars ${stars}`).toBe(stars >= 2 ? SkillMove.STEP_OVER : SkillMove.BODY_FEINT);
+      expect(m, `stars ${stars}`).toBe(stars >= 3 ? SkillMove.STEP_OVER : SkillMove.BODY_FEINT);
       expect(SKILL_CHOICE.move).toBe(m);
       expect(Math.abs(SKILL_CHOICE.side)).toBe(1);
     }
   });
 
-  it('a lunging defender at 1.8 m: roulette (3+ stars), ball roll (2), body feint (1)', () => {
-    const expected = [SkillMove.BODY_FEINT, SkillMove.BALL_ROLL, SkillMove.ROULETTE, SkillMove.ROULETTE, SkillMove.ROULETTE];
+  it('a lunging defender at 1.8 m: roulette (4+ stars), ball roll (2-3), body feint (1)', () => {
+    const expected = [SkillMove.BODY_FEINT, SkillMove.BALL_ROLL, SkillMove.BALL_ROLL, SkillMove.ROULETTE, SkillMove.ROULETTE];
     for (let stars = 1; stars <= 5; stars++) {
       const s = duel(stars, 1.8, 0, -4, 0);
       place(s, 14, 6, 0);
@@ -521,11 +522,11 @@ describe('TAI-10 chooseSkill', () => {
     expect(chooseSkill(covered, SHOOTER)).not.toBe(SkillMove.KNOCK_ON);
   });
 
-  it('a defender square at 2.5 m with space behind him: heel flick with 3+ stars', () => {
-    const s = duel(3, 2.5);
+  it('a defender square at 2.5 m with space behind him: heel flick with 5 stars', () => {
+    const s = duel(5, 2.5);
     place(s, 15, 3, 3.5); place(s, 16, 3, -3.5); // sides closed
     expect(chooseSkill(s, SHOOTER)).toBe(SkillMove.HEEL_FLICK);
-    s.attrs[SHOOTER]!.skillMoves = 2;
+    s.attrs[SHOOTER]!.skillMoves = 4;
     expect(chooseSkill(s, SHOOTER)).not.toBe(SkillMove.HEEL_FLICK);
   });
 
@@ -551,7 +552,7 @@ describe('TAI-10 chooseSkill', () => {
   });
 
   it('picks the side with the space and suggests an exit toward it', () => {
-    const s = duel(2, 3);
+    const s = duel(3, 3); // [QF-2] step-over needs 3 stars
     place(s, 14, 7.5, 0);
     place(s, 15, 4, 4.5); // the right side (+z is right of facing +x) is crowded
     expect(chooseSkill(s, SHOOTER)).toBe(SkillMove.STEP_OVER);
@@ -613,7 +614,7 @@ describe('TAI-10 chooseSkill', () => {
   it('works for the team attacking -x, and is pure and deterministic', () => {
     const s = empty([20, 0]);
     place(s, 0, -HALF_LENGTH + 1, 0);
-    place(s, 20, 0, 0); s.players[20]!.fx = -1; s.attrs[20]!.skillMoves = 2;
+    place(s, 20, 0, 0); s.players[20]!.fx = -1; s.attrs[20]!.skillMoves = 3; // [QF-2] step-over needs 3 stars
     own(s, 20);
     place(s, 3, -3, 0); place(s, 4, -7.5, 0);
     const h = hashState(s);

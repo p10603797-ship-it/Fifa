@@ -432,7 +432,10 @@ describe('INT-C framing: ball and taker clear of the HUD radar', () => {
         const sx = end * (HALF_LENGTH - 5.5);
         const aimX = -end * HALF_LENGTH; // up-field
         takerPose(sx, sz, aimX, sz, true, p);
-        expect(Math.abs(p.x)).toBeLessThanOrEqual(HALF_LENGTH - CT.goalKickLineInset + 1e-9);
+        // [QF-4] The rig now hangs over the goal-line area beside the goal (raised, around the ball); the own goal stays
+        // out of view.
+        const bar = project(p, end * HALF_LENGTH, 2.44, 0, 1180, 820);
+        expect(bar.y > 820 || bar.x < 0 || bar.x > 1180).toBe(true);
         const ball = project(p, sx, 0.11, sz, 1180, 820);
         // The keeper stands ~1.5 m behind the ball on the kick line (between the ball and the goal).
         const taker = project(p, sx + end * 1.5, 1.0, sz, 1180, 820);

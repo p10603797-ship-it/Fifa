@@ -158,7 +158,7 @@ export const LOCAL_TUNING = { // TUNING-CR
   maxAimY: 8,
   // ---- speed
   /** Shot speed multiplier at shotPower 1 (99 -> 1), dimensionless. */
-  shotPowerMulMin: 0.92,
+  shotPowerMulMin: 0.8, // [QF-2, DAT-05] was 0.92: shot speed moved only ~4% from shotPower 40 to 90
   /** Power shot speed at power 0 (power 1 = T_SHOT.powerShotMax), m/s. */
   powerShotMinSpeed: 22,
   /** Low driven speed at power 0 (power 1 = T_SHOT.speedMax), m/s. */
@@ -230,7 +230,7 @@ export const LOCAL_TUNING = { // TUNING-CR
   facingErrMul: 0.8,
   /** Pressure (core/query pressureOn 0..1): x (1 + pressureErrMul x pressure x (1 - composureRelief x composure)). */
   pressureErrMul: 1.0,
-  composureRelief: 0.5,
+  composureRelief: 0.8, // [QF-2, DAT-05] was 0.5: a 1 m press cut a calm striker's placement error by just 14%
   /** Ball height at contact: x (1 + heightErrMul x clamp01((y - heightErrFrom) / heightErrSpan)), m. */
   heightErrFrom: 0.25,
   heightErrSpan: 0.55,

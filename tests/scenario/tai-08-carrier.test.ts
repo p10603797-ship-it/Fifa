@@ -26,7 +26,12 @@ vi.mock('../../src/ai/cpu/passing', async (orig) => {
 });
 vi.mock('../../src/ai/cpu/shooting', async () => {
   const h = await import('./tai-08-helpers');
-  return { estimateXg: h.xgDouble, bestDribble: h.dribbleDouble, chooseSkill: h.skillDouble };
+  // [QF-2] lastXgBlock / shotLaneClear: the double's xG has no separate blocker factor and every lane is clear.
+  return {
+    estimateXg: h.xgDouble, bestDribble: h.dribbleDouble, chooseSkill: h.skillDouble, lastXgBlock: () => 1, shotLaneClear: () => 1,
+    // The double gives no exit suggestion: the carrier keeps its own side exit.
+    SKILL_CHOICE: { move: 0, side: 0, dirX: 0, dirZ: 0 },
+  };
 });
 vi.mock('../../src/ai/cpu/levels', async (orig) => {
   const h = await import('./tai-08-helpers');
@@ -474,7 +479,10 @@ describe('TAI-08 CPU carrier: timing and commitment', () => {
     resetCtl();
     all.push(...run(setup({ carrier: 9, at: { 9: [38, 10], 11: [45, 2] } }), 60).recs);
     for (const r of all) {
-      if ((r.f.buttons & Btn.SPRINT) !== 0) expect(stickMag(r.f)).toBeGreaterThanOrEqual(T_INPUT.stickIdle);
+      // [QF-2] Stop-ball inputs matter only with the ball at our feet: with our pass in flight TAI-11's receiver frame
+      // is SPRINT + idle stick on purpose (SIM-15: meet the ball at top speed).
+      if (r.owner < 0) continue;
+      if ((r.f.buttons & Btn.SPRINT) !== 0) expect(stickMag(r.f), JSON.stringify(r)).toBeGreaterThanOrEqual(T_INPUT.stickIdle);
       if ((r.f.buttons & Btn.MOD_L) !== 0) expect(r.f.buttons & Btn.SHOOT).toBe(Btn.SHOOT);
     }
   });
