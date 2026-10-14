@@ -68,10 +68,9 @@ describe('review FND-06 soak CLI', () => {
     // fmtFailure prints "re-run: npx tsx tools/soak.ts --seed S --enforce E --halfMinutes M --only K". With --only the
     // run has one match, and section 7 bands are enforced on that single match (not --short), so a reproduction
     // reports RESULT: FAIL / exit 1 on the bands even when the match itself passes the enforced set.
-    const failing = node([TSX, 'tools/soak.ts', '--short', '--matches', '1', '--enforce', 'all', '--workers', '1', '--quiet', '--max-replays', '0']);
-    const line = /re-run: npx tsx (.+)$/m.exec(failing.out);
-    expect(line).not.toBeNull();
-    const rerun = node([TSX, ...line![1]!.trim().split(/\s+/), '--quiet', '--max-replays', '0']);
+    // Since Wave 2 a single short match passes, so no failure prints a re-run line any more: build the same command
+    // fmtFailure would print (rerunCommand + --only K) and check it.
+    const rerun = node([TSX, 'tools/soak.ts', '--seed', '1', '--enforce', 'all', '--halfMinutes', '2', '--only', '0', '--quiet', '--max-replays', '0']);
     expect(rerun.out).toContain('[reported, not enforced]');
   }, 200_000);
 

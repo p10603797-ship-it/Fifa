@@ -144,11 +144,12 @@ describe('FND-06 invariant checker: phase and transitions', () => {
     expect(joined(createInvariantChecker('core').check(s, null))).toContain('[phase] invalid phase 99');
   });
 
-  it('catches an illegal transition reported by PHASE_CHANGE (PRE_MATCH -> IN_PLAY)', () => {
+  // PRE_MATCH -> IN_PLAY became legal with D-013 (practice free play, test setups); PRE_MATCH -> CORNER never is.
+  it('catches an illegal transition reported by PHASE_CHANGE (PRE_MATCH -> CORNER)', () => {
     const s = fresh();
-    const msgs = afterTick(s, (st) => { st.match.phase = MatchPhase.IN_PLAY; },
-      [[EventType.PHASE_CHANGE, MatchPhase.PRE_MATCH, MatchPhase.IN_PLAY]]);
-    expect(joined(msgs)).toContain('illegal transition PRE_MATCH -> IN_PLAY');
+    const msgs = afterTick(s, (st) => { st.match.phase = MatchPhase.CORNER; },
+      [[EventType.PHASE_CHANGE, MatchPhase.PRE_MATCH, MatchPhase.CORNER]]);
+    expect(joined(msgs)).toContain('illegal transition PRE_MATCH -> CORNER');
   });
 
   it('catches a phase change without a PHASE_CHANGE event', () => {
