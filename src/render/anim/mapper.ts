@@ -60,7 +60,7 @@ const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
   blendDive: 0.07,
   blendJump: 0.06,
   /** A cross-fade into a clip with a pending contact ends by this fraction of the time left to the contact. */
-  blendBeforeContact: 0.6,
+  blendBeforeContact: 0.9,
   /** Yaw-rate smoothing time constant (s) and the lean (rad) that reports TURN_LEAN (enter / leave). */
   yawRateTau: 0.12,
   leanEnter: 0.12,
