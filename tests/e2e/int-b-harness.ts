@@ -73,17 +73,6 @@ export async function frames(page: Page, n = 2): Promise<void> {
 
 export const route = (page: Page): Promise<string | null> => page.evaluate(() => window.__dotkick?.ctx.router.current ?? null);
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-/** Read from the live session (runs in the page). */
-export function sess<T>(page: Page, fn: string): Promise<T> {
-  return page.evaluate((src) => {
-    const s = (window as any).__dotkick.ctx.session;
-    const st = s.getState();
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    return new Function('s', 'st', `return (${src});`)(s, st);
-  }, fn) as Promise<T>;
-}
-/* eslint-enable @typescript-eslint/no-explicit-any */
 
 export async function waitRoute(page: Page, id: string, timeout = 45_000): Promise<void> {
   await expect.poll(() => route(page), { timeout, message: `route ${id}` }).toBe(id);
