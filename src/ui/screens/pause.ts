@@ -79,8 +79,9 @@ export type PauseAction = 'resume' | 'restart' | 'quit';
  * human; a system pause (pausedBy -1) is refused only while the page is hidden or the window is in portrait / too
  * small. Pure.
  */
-export function refusalMessage(pausedBy: number, action: PauseAction = 'resume'): string {
+export function refusalMessage(pausedBy: number, action: PauseAction = 'resume', gpuLost = false): string {
   if (pausedBy >= 0) return `Only Player ${pausedBy + 1} can ${action}`;
+  if (gpuLost) return 'Graphics are restarting - try again in a moment';
   return 'Turn to landscape or enlarge the window to resume';
 }
 
@@ -689,7 +690,8 @@ export function createPauseMenu(): PauseMenu {
   function showRefusal(action: PauseAction): void {
     if (!ctx) return;
     play(UiSound.ERROR);
-    const text = refusalMessage(ctx.session.pausedBy, action);
+    const gpuLost = (window.__dotkick?.app.renderer as { contextLost?: boolean } | undefined)?.contextLost === true;
+    const text = refusalMessage(ctx.session.pausedBy, action, gpuLost);
     if (who && page === 'main') {
       who.className = 'pause-who is-note';
       who.textContent = text;

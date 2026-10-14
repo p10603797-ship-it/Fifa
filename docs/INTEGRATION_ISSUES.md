@@ -46,3 +46,10 @@ Collected from Wave 1 reports. Each line: area — symptom — proposed owner/fi
 - int-b-app 'corner practice through the plain sim step never sees a corner' fails once QF-1 moves the practice hooks into src/sim; update that test and make src/app/loop.ts stepWithModes a plain step after QF-1 (lead or QF-5).
 - Suggestion: side select could offer the remap screen for a non-standard pad with no saved remap.
 - Loose-ball cluster swap waits looseSwapTicks (133 ms) — labels may briefly differ from the sim's context (deliberate anti-flicker).
+
+## From QF-5 / QF-6 (applied by the lead unless noted)
+- Diagnostics: Credits and licences button (createCreditsView) — applied.
+- review-fnd-06-tools postbuild fixture has an inline module script — applied.
+- net-07-online e2e share-link step follows the splash change — applied.
+- Pause: refusal while the GPU context restores says 'Graphics are restarting' — applied.
+- OPEN for QF-1 (or the lead after QF-1): FULL_TIME SKIP ends the match on its 2nd tick, so a last-second divergence online cannot be repaired. Add T_RULES.fullTimeMinTicks 90 and gate the skip in rules/machine.ts phaseTimers; flip tests/net/qf-6-cr-fulltime-skip.test.ts to it().

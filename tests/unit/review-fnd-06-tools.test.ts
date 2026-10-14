@@ -151,7 +151,8 @@ describe('review FND-06 postbuild', () => {
 
     const small = join(TMP, 'dist-small');
     mkdirSync(small, { recursive: true });
-    writeFileSync(join(small, 'index.html'), '<!doctype html><title>x</title>'.repeat(1000));
+    // postbuild rejects a page with no inline module script (the game code would be missing).
+    writeFileSync(join(small, 'index.html'), '<!doctype html><title>x</title>' + '<p>x</p>'.repeat(1000) + '<script type="module">1</script>');
     const ok = node(['tools/postbuild.mjs', small], 60_000);
     expect(ok.code).toBe(0);
     expect(ok.out).toContain('postbuild: PASS');

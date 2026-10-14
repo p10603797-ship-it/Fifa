@@ -72,6 +72,10 @@ These run on a developer's computer or in CI and are not part of the game files.
 
 ## Licence texts
 
+The same notices ship with the game: `tools/postbuild.mjs` writes the full licence texts of every shipped library and
+font as a comment at the top of `dist/index.html`, and Settings > Diagnostics > Credits and licences shows them.
+
+
 ### MIT (three.js)
 
 ```text

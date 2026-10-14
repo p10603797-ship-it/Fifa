@@ -9,11 +9,13 @@ const SKIP = new Set([KickKind.DRIBBLE_TOUCH, KickKind.FIRST_TOUCH, KickKind.DEF
 it('probe offside', () => {
   const out: string[] = [];
   let total = 0, kicksN = 0;
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 12; i++) {
     const config = soakConfig(i, 616, { halfMinutes: 3, cupShare: 0 });
     const snap = [null, null] as ({ t: number; kind: number; phase: number; kicker: number; bx: number; xs: Float64Array; dir: number } | null)[];
     let prevPhase = -1;
+    config.offside = 1;
     runMatch({ config, checker: 'core', fastCutscenes: true, onTick: (s, ev) => {
+      s.teams[0]!.offsideTrap = 1; s.teams[1]!.offsideTrap = 1;
       for (let k = 0; k < ev.count; k++) {
         const e = ev.get(k);
         if (e.type === EventType.KICK && !SKIP.has(e.b)) {

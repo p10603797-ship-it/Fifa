@@ -21,6 +21,8 @@ import { createEventBuffer } from '../../src/sim/core/events';
 import { initMatch } from '../../src/sim/init';
 import { step } from '../../src/sim/step';
 import { REACH_SWITCH } from '../../src/render/anim/reach';
+import { createAnimator } from '../../src/render/anim/mapper';
+import { ACTION_CONTACT } from '../../src/render/anim/actions';
 
 const TOE = [0.2, -0.08], HEEL = [-0.07, -0.08]; // fk.ts BODY.toeX / heelX, -ankleY
 const ANKLES = [9, 12];
@@ -55,6 +57,9 @@ function measure(seed: number, from: number, ticks: number, framesPerTick: numbe
   };
   const model = createPlayerModel(ctx);
   model.setMatch!(curr, CLUBS);
+  const am = createAnimator();
+  model.setPoseDriver(am.driver as never);
+  const chg = new Uint8Array(NUM_SLOTS); const chgPrev = new Uint8Array(NUM_SLOTS);
   const f: RenderFrame = { prev, curr, alpha: 0, frame: { nowMs: 0, dtMs: 1000 / (60 * framesPerTick), frame: 0, ticks: 0, paused: false }, interp: createInterpState() };
   const last: (number[] | null)[] = Array.from({ length: NUM_SLOTS * 4 }, () => null);
   const q = [0, 0, 0];
@@ -64,6 +69,7 @@ function measure(seed: number, from: number, ticks: number, framesPerTick: numbe
   let outOfReach = 0;
   for (let t = 0; t < from + ticks; t++) {
     copyState(prev, curr);
+    for (let i2 = 0; i2 < NUM_SLOTS; i2++) chgPrev[i2] = curr.players[i2]!.actCharging;
     step(curr, frames, ev);
     const live = t >= from && curr.match.phase === MatchPhase.IN_PLAY;
     for (let i = 0; i < ev.count; i++) {
@@ -74,7 +80,7 @@ function measure(seed: number, from: number, ticks: number, framesPerTick: numbe
       if (p.act !== ActionKind.KICK && p.act !== ActionKind.SHOT) continue;
       // A ball the sim kicks from beyond a boot's reach cannot be met by any pose (reported, not a render fault).
       if (Math.hypot(e.x - p.x, e.z - p.z) > 1 || e.y > 0.5) { outOfReach++; continue; }
-      pendingKicks.push({ slot: e.a, x: e.x, y: e.y, z: e.z, info: `t${curr.tick} act${p.act} anim? kk${e.b} actT${p.actT} actC${p.actContact} d${Math.hypot(e.x - p.x, e.z - p.z).toFixed(2)} y${e.y.toFixed(2)}` } as never);
+      pendingKicks.push({ slot: e.a, x: e.x, y: e.y, z: e.z, info: `chgPrev${chgPrev[e.a]} dur${p.actDur} ball(${(e.x-p.x).toFixed(2)},${(e.z-p.z).toFixed(2)}) face(${p.fx.toFixed(2)},${p.fz.toFixed(2)}) v(${p.vx.toFixed(1)},${p.vz.toFixed(1)}) t${curr.tick} act${p.act} anim? kk${e.b} actT${p.actT} actC${p.actContact} d${Math.hypot(e.x - p.x, e.z - p.z).toFixed(2)} y${e.y.toFixed(2)}` } as never);
     }
     if (t < from - 30) continue; // let the driver settle before measuring
     for (let k = 0; k < framesPerTick; k++) {
@@ -93,7 +99,7 @@ function measure(seed: number, from: number, ticks: number, framesPerTick: numbe
             worldPoint(model.skeletons[kk.slot]!, j, fp[0]!, fp[1]!, q);
             best = Math.min(best, Math.hypot(q[0]! - kk.x, q[1]! - kk.y, q[2]! - kk.z));
           }
-          contact.push(best); if (best > 0.25) console.log('bad', best.toFixed(3), (kk as never as {info:string}).info, model.poses ? '' : '');
+          contact.push(best); if (best > 0.25) process.stdout.write('\nbad ' + best.toFixed(3) + ' ' + (kk as never as {info:string}).info + ' anim' + am.samples[kk.slot]!.anim + ' t' + am.samples[kk.slot]!.t.toFixed(3) + ' cf' + ACTION_CONTACT[am.samples[kk.slot]!.anim] + ' blend' + am.bank.blend[kk.slot]);
         }
         pendingKicks.length = 0;
       }
@@ -132,10 +138,10 @@ function measure(seed: number, from: number, ticks: number, framesPerTick: numbe
 describe('tmp', () => {
   it('ab', () => {
     const on = measure(20261014, 600, 1500, 1);
-    console.log('ON', JSON.stringify(on));
+    process.stdout.write('\nON ' + JSON.stringify(on));
     REACH_SWITCH.kick = 0; REACH_SWITCH.touch = 0; REACH_SWITCH.align = 0;
     const off = measure(20261014, 600, 1500, 1);
-    console.log('OFF', JSON.stringify(off));
+    process.stdout.write('\nOFF ' + JSON.stringify(off));
     REACH_SWITCH.kick = 1; REACH_SWITCH.touch = 1; REACH_SWITCH.align = 1;
   }, 120000);
 });

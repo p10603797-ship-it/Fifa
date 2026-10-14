@@ -197,8 +197,9 @@ test.describe('NET-07 online screens', () => {
     await expect(host.getByTestId('net-room-code')).toBeVisible();
     const guest = await context.newPage();
     await installNetHook(guest);
-    await bootToMain(guest, `/?room=${ROOM_CODE}`);
-    await guest.evaluate(() => window.__dotkick!.ctx.router.go('online-lobby'));
+    await guest.goto(`/?room=${ROOM_CODE}`);
+    await guest.getByTestId('splash-start').click(); // the share link opens the room by itself
+    await expect.poll(() => route(guest)).toBe('online-lobby');
     await expect(guest.getByTestId('net-lobby')).toBeVisible({ timeout: 10_000 });
     await expect(host.getByTestId('net-peer')).not.toContainText('Waiting');
     await expect.poll(async () => (await onlineState(guest)).phase).toBe('lobby');

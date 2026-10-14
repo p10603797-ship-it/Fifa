@@ -23,6 +23,7 @@ import {
 } from '../../platform/replayRecorder';
 import type { Replay } from '../../sim/replay';
 import { createButton, copyText, createBackButton, h, injectStyle, showToast } from '../components';
+import { createCreditsView } from '../../platform/licences';
 import { createPointerTracker, readPads, type PadLike } from '../debugOverlay';
 
 const LOCAL_TUNING = { // TUNING-CR (UI, not gameplay)
@@ -215,6 +216,12 @@ export function createDiagnosticsScreen(): Screen {
         ctx.diagnostics.setDebug(!ctx.diagnostics.debug);
         debugBtn.textContent = debugLabel();
       }, { testId: 'diagnostics-debug', ctx });
+      // Third-party notices (postbuild writes them into dist/index.html; PLT-06 CR 2, SGN-05).
+      const creditsBtn = createButton('Credits and licences', () => {
+        const v = wrap.querySelector('[data-testid="credits-view"]');
+        if (v) v.remove();
+        else wrap.append(createCreditsView());
+      }, { testId: 'diagnostics-credits', ctx });
 
       // ---------------------------------------------------------------- input tester
       const tester = h('div', { class: 'diag-tester', testId: 'diagnostics-tester' });
@@ -387,7 +394,7 @@ export function createDiagnosticsScreen(): Screen {
       wrap.append(
         h('h1', { class: 'ui-title', text: 'Diagnostics', testId: 'diagnostics-title' }),
         version,
-        h('div', { class: 'ui-row diag-actions' }, benchBtn, testerBtn, saveBtn, loadBtn, copyBtn, debugBtn),
+        h('div', { class: 'ui-row diag-actions' }, benchBtn, testerBtn, saveBtn, loadBtn, copyBtn, debugBtn, creditsBtn),
         status,
         pre,
         tester,
