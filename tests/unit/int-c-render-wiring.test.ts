@@ -10,7 +10,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { PerspectiveCamera, Scene, type WebGLRenderer } from 'three';
 import { HALF_LENGTH, HALF_WIDTH, WORLD_MAX_X } from '../../src/contracts/constants';
-import { MatchPhase, QualityTier } from '../../src/contracts/enums';
+import { CameraType, MatchPhase, QualityTier } from '../../src/contracts/enums';
 import type { RenderStats } from '../../src/contracts/render';
 import { createDefaultSettings, type Settings } from '../../src/contracts/settings';
 import { createMatchConfig, type SimState } from '../../src/contracts/state';
@@ -374,8 +374,13 @@ describe('INT-C framing: ball and taker clear of the HUD radar', () => {
     expect(radarZoneMargin(630, 1260, 540, touchZones(createDefaultSettings(), z)) * 540).toBeLessThan(BT.radarMaxVh * 540 + 60);
   });
 
-  it('regression "ball hidden under the HUD radar": the broadcast camera keeps a ball on the near touchline above it', () => {
-    const ctx = ctxOf();
+  it('regression "ball hidden under the HUD radar": a close, zoomed broadcast camera keeps a near-touchline ball above it', () => {
+    // Close type, Height and Zoom at 20: the narrowest view, where the bottom margin binds for a ball on the near
+    // touchline (the look point follows only part of the ball's z). The lead puts the ball left of centre, over the
+    // radar's left half.
+    const st = createDefaultSettings();
+    st.camera = { type: CameraType.CLOSE, height: 20, zoom: 20 };
+    const ctx = ctxOf(1180, 820, st);
     const cam = createBroadcastCamera(ctx);
     const s = initMatch(createMatchConfig()) as SimState;
     s.match.phase = MatchPhase.IN_PLAY;
@@ -383,14 +388,14 @@ describe('INT-C framing: ball and taker clear of the HUD radar', () => {
     const frame: RenderFrame = { prev: s, curr: s, alpha: 1, frame: { nowMs: 0, dtMs: 1000 / 60, frame: 0, ticks: 1, paused: false }, interp: createInterpState() };
     const out = { x: 0, y: 0 };
     let inColumn = 0;
-    for (const bx of [-8, -4, 0, 4, 8]) {
-      s.ball.x = bx; s.ball.z = HALF_WIDTH - 0.5; s.ball.y = 0.11; s.ball.owner = -1;
+    for (const bx of [20, 24, 28, 32]) {
+      s.ball.x = bx; s.ball.z = HALF_WIDTH - 0.5; s.ball.y = 0.11; s.ball.owner = -1; s.ball.vx = 0; s.ball.vz = 0;
       fillInterp(frame.interp, s, s, 1);
       for (let i = 0; i < 300; i++) { frame.frame.frame++; cam.update(frame); }
       cam.pitchToScreen(s.ball.x, s.ball.y, s.ball.z, out);
-      if (Math.abs(out.x - 590) < BT.radarW / 2) {
+      if (Math.abs(out.x - 590) <= BT.radarW / 2 + 10) {
         inColumn++;
-        expect(out.y).toBeLessThan(radarTop(820));
+        expect(out.y).toBeLessThan(radarTop(820) - 5);
       }
     }
     expect(inColumn).toBeGreaterThan(0);

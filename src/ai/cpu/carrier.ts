@@ -115,13 +115,13 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   shotMissValue: 0.006,
   /** A shot's xG is weighted by this against the possession value of keeping the ball (that value is only an
    *  average; against a set block it is rarely realised) [INT-A]. */
-  shotXgMul: 1.5,
+  shotXgMul: 2.2,
   /** Extra urge to shoot inside the penalty area, goal probability. */
   boxShotBonus: 0.012,
   /** Beyond this distance from the goal centre a shot is a long shot, m ... */
   longShotDist: 20,
   /** ... whose xG threshold is T_LEVEL.shotThresholdXg x this at style longShot 0 / 1. */
-  longShotThreshMax: 1.2,
+  longShotThreshMax: 1.0,
   longShotThreshMin: 0.7,
   /** Shot power 0..1 at <= shotNearDist m / >= shotFarDist m from the goal centre (linear between). */
   shotPowerNear: 0.55,
@@ -199,6 +199,9 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
    *  a carrier never stalls behind a shield (glitch "CPU: shields forever"). ticks / evaluations. */
   shieldMaxTicks: 150,
   shieldRestEvals: 6,
+  /** Shielding only holds the ball: the kept possession value is discounted by this (it is realised only by a later
+   *  pass or turn) [INT-A: undiscounted, shield / skill / dribble cycles in the final third beat every shot]. */
+  shieldHoldMul: 0.85,
   // ---- clearance
   /** Clear only in the own third (progress below this) with an opponent within clearPressDist m. */
   clearProgress: -1 / 3,
@@ -614,7 +617,7 @@ function shieldOptionInto(s: SimState, p: Readonly<PlayerState>, cur: CpuPlan, a
   if (C.nearD > LT.shieldDist) return;
   const str = clamp01(s.attrs[p.slot]!.strength / 99);
   const loss = clamp01((LT.shieldLossWeak + (LT.shieldLossStrong - LT.shieldLossWeak) * str) * (1 + age / LT.shieldAgeRef));
-  let u = (1 - loss) * C.vHere - loss * lossCost(C.prog);
+  let u = (1 - loss) * C.vHere * LT.shieldHoldMul - loss * lossCost(C.prog);
   if (cur === CpuPlan.SHIELD) u += LT.switchMargin;
   noise(s);
   u += NZ[0]!;

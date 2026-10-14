@@ -293,6 +293,16 @@ export function createSession(deps: SessionDeps): AppSession {
 
   function pause(byHuman: number): void {
     if (!active || finished || paused) return;
+    const hooks = setup?.hooks;
+    if (hooks?.allowPause) {
+      let ok = true;
+      try {
+        ok = hooks.allowPause(byHuman, true);
+      } catch (err) {
+        onError(err, 'hooks.allowPause');
+      }
+      if (!ok) return;
+    }
     paused = true;
     pausedBy = byHuman;
     markPauseChange();
@@ -300,6 +310,7 @@ export function createSession(deps: SessionDeps): AppSession {
     if (provider) safe(() => provider!.releaseAll(), 'releaseAll');
     safe(() => audio.setPaused(true), 'audio.setPaused');
     if (deps.onPause) safe(() => deps.onPause!(byHuman), 'onPause');
+    if (hooks?.onPauseChange) safe(() => hooks.onPauseChange!(true, byHuman), 'hooks.onPauseChange');
     syncScreen();
   }
 
@@ -314,11 +325,22 @@ export function createSession(deps: SessionDeps): AppSession {
     }
     if (pausedBy !== -1 && byHuman !== pausedBy) return false;
     if (hidden || blocked) return false;
+    const hooks = setup?.hooks;
+    if (hooks?.allowPause) {
+      let ok = true;
+      try {
+        ok = hooks.allowPause(byHuman, false);
+      } catch (err) {
+        onError(err, 'hooks.allowPause');
+      }
+      if (!ok) return false;
+    }
     paused = false;
     pausedBy = -1;
     markPauseChange();
     if (provider) safe(() => provider!.releaseAll(), 'releaseAll');
     safe(() => audio.setPaused(false), 'audio.setPaused');
+    if (hooks?.onPauseChange) safe(() => hooks.onPauseChange!(false, byHuman), 'hooks.onPauseChange');
     syncScreen();
     return true;
   }
@@ -483,6 +505,7 @@ export function createSession(deps: SessionDeps): AppSession {
           onError(err, 'stats.summary');
         }
       }
+      if (s?.hooks?.onQuit) safe(() => s.hooks!.onQuit!(), 'hooks.onQuit');
       teardown();
       const navigated = needFinish ? callFinish(s, summary, true) : false;
       if (!navigated) router.resetTo('main');
