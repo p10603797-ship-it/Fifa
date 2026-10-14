@@ -67,9 +67,9 @@ export const T_PLAYER = {
   /** Shielding speed fraction. */
   shieldSpeedFraction: 0.45,
   /** Stamina drain per second sprinting (at stamina attribute 50), and recovery per second. */
-  staminaDrainSprint: 0.012,
-  staminaDrainJog: 0.002,
-  staminaRecover: 0.004,
+  staminaDrainSprint: 0.005,
+  staminaDrainJog: 0.0008,
+  staminaRecover: 0.003,
   /** Below this stamina, speed/accel/accuracy start to drop, linearly to the floor below. */
   staminaLowThreshold: 0.45,
   staminaFloorMul: 0.82,
@@ -138,7 +138,7 @@ export const T_PASS = {
   /** Weak-foot error multiplier at weakFoot 1 (5 -> 1.0). */
   weakFootErrorMul: 1.8,
   /** Lob launch angles, rad. */
-  lobAngle: 0.5,
+  lobAngle: 0.62,
   highLobAngle: 0.95,
   drivenLobAngle: 0.35,
   dinkedAngle: 0.45,
@@ -294,7 +294,7 @@ export const T_LEVEL = {
   executionError: [1.6, 1.35, 1.15, 1.0, 0.85, 0.72] as readonly number[],
   pressIntensity: [0.35, 0.5, 0.62, 0.75, 0.86, 0.95] as readonly number[],
   tackleTimingTicks: [14, 11, 8, 6, 4, 3] as readonly number[],
-  shotThresholdXg: [0.012, 0.014, 0.016, 0.018, 0.02, 0.022] as readonly number[],
+  shotThresholdXg: [0.0018, 0.002, 0.0025, 0.003, 0.0035, 0.004] as readonly number[],
 } as const;
 
 export const T_INPUT = {

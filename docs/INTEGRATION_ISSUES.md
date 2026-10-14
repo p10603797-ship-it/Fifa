@@ -26,3 +26,12 @@ Collected from Wave 1 reports. Each line: area — symptom — proposed owner/fi
 - Router back sound (AUD-05 CR 2, optional) and sfx.setCameraX from the renderer (AUD-03) still to wire.
 - tests/unit/fnd-04-review-fixes.test.ts recovery-screen cases fail while PLT-05 rewrites src/ui/screens/recovery.ts — PLT-05 must keep or update those FND-04 expectations.
 - Online crowd perspective: crowd backs home side in online 1v1 (AUD-02 risk).
+
+## Online (NET-B report) — app-side CRs to apply after INT-B finishes
+- splash.ts: after `ctx.router.replace('main')`, `const room = shareLinkRoom(); if (room) ctx.router.go('online-lobby', { room });` (import from ./online).
+- pause.ts: hide 'Restart match' when online (session.restart() does nothing with a custom provider).
+- fullTime.ts: label the online 'Change teams' button 'Rematch' (back to the room; hint 'Back to the room with your friend').
+- Audio crowd perspective online: local human = (setup.modeData as {session?: {localHuman: number}}).session?.localHuman; local side = setup.config.humans[localHuman].side.
+- Optional: match HUD mounts createNetIndicator().el (online.ts overlay already shows the pill).
+- Lead applied: session.load passes getProjector to custom providers (setProjector).
+- QF-6: transport.ts rejoin race ($full answer to an early re-dial must stay retryable; host replaces the link when the same peer reconnects); silence timeout 6 s reads long warm-up stalls as disconnects (10 s or pause the check while hidden / during warm-up).

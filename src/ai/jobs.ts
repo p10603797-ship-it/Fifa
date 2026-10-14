@@ -12,10 +12,10 @@ import { teamEnd, teamStart } from '../sim/core/query';
 const LOCAL_TUNING = { // TUNING-CR (INT-A): HOLD_SHAPE speed by distance from home
   /** Speed cap as a fraction of top speed near home (a jog, T_PLAYER.jogFraction) and far from it. */
   holdJogFraction: 0.6,
-  holdFarFraction: 0.88,
+  holdFarFraction: 0.92,
   /** Distance from home below which he jogs / beyond which he runs at holdFarFraction, m. */
-  holdNearDist: 6,
-  holdFarDist: 18,
+  holdNearDist: 4,
+  holdFarDist: 12,
 } as const;
 
 /** Previous tick's job per slot (derived scratch, rebuilt every tick; not state). */

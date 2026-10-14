@@ -77,6 +77,11 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
   goalKickTopMargin: 0.18,
   /** Goal-kick cameras stay this far inside the goal line (m): the goal frame stays behind them. */
   goalKickLineInset: 0.5,
+  /** [INT-C] Goal-kick camera offset sideways from the kick line toward the pitch's long axis (m), and the share of the
+   *  angle between the far kick-line point and the ball the view turns toward the ball. Straight behind the ball the
+   *  keeper taking the kick stood 3.5 m in front of the lens, filling the frame and hiding the ball. */
+  goalKickSide: 2.2,
+  goalKickBallYaw: 0.5,
   // ---- corner (raised view from behind the flag)
   cornerBack: 8,
   cornerHeight: 7,
@@ -259,8 +264,17 @@ function takerPoseIn(goalKick: boolean, out: CinePose): void {
   if (l > 1e-3) { dx /= l; dz /= l; } else { dx = spotX > 0 ? -1 : 1; dz = 0; }
   const back = goalKick ? LT.goalKickBack : LT.takerBack;
   const maxX = goalKick ? HALF_LENGTH - LT.goalKickLineInset : LT.maxX;
-  const cx = Math.max(-maxX, Math.min(maxX, spotX - dx * back));
-  const cz = Math.max(-LT.maxZ, Math.min(LT.maxZ, spotZ - dz * back));
+  let cx = spotX - dx * back;
+  let cz = spotZ - dz * back;
+  if (goalKick) {
+    // Sideways (perpendicular to the kick line) toward the pitch's long axis, so the taker is not in front of the lens.
+    const pz = dx;
+    const sgn = spotZ * pz > 0 ? -1 : 1;
+    cx += -dz * LT.goalKickSide * sgn;
+    cz += pz * LT.goalKickSide * sgn;
+  }
+  cx = Math.max(-maxX, Math.min(maxX, cx));
+  cz = Math.max(-LT.maxZ, Math.min(LT.maxZ, cz));
   const cy = goalKick ? LT.goalKickHeight : LT.takerHeight;
   const tanHalf = goalKick ? T_GOAL_KICK : T_TAKER;
   // Look point: the goal (free kick, penalty) or goalKickLook ahead on the kick line (goal kick).
@@ -268,6 +282,12 @@ function takerPoseIn(goalKick: boolean, out: CinePose): void {
   const lz = goalKick ? spotZ + dz * LT.goalKickLook : aimZ;
   out.x = cx; out.y = cy; out.z = cz; out.fov = goalKick ? LT.goalKickFov : LT.takerFov;
   out.yaw = Math.atan2(-(lx - cx), -(lz - cz));
+  if (goalKick) {
+    // Turn part of the way toward the ball (now off the view axis) so ball, taker and the far kick line share the frame.
+    let d = Math.atan2(-(spotX - cx), -(spotZ - cz)) - out.yaw;
+    d -= TWO_PI * Math.floor((d + Math.PI) / TWO_PI);
+    out.yaw += d * LT.goalKickBallYaw;
+  }
   const bx = spotX - cx, bz = spotZ - cz;
   const thetaBall = Math.atan2(cy - BALL_RADIUS, Math.max(0.5, Math.sqrt(bx * bx + bz * bz)));
   const ballY = goalKick ? LT.goalKickBallY : LT.takerBallY;

@@ -27,7 +27,7 @@ import { DT, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, GOAL_HALF_WIDTH, HALF_LENGTH
 import { ActionKind } from '../../contracts/enums';
 import type { EventSink } from '../../contracts/events';
 import { MoveMode, type SimState } from '../../contracts/state';
-import { T_GK, T_PLAYER } from '../../contracts/tuning';
+import { T_BALL, T_GK, T_PLAYER } from '../../contracts/tuning';
 import { arrive } from '../../ai/steer';
 import { clamp, clamp01, datan2, lerp, PI, smoothstep, unlerp } from '../core/dmath';
 import { isHumanSlot } from '../core/query';
@@ -171,6 +171,7 @@ export function keeperPositioning(s: SimState, team: number, ev: EventSink): voi
   if (isHumanSlot(s, k)) return;
   const b = s.ball;
   if (b.heldBy === k || b.owner === k) return;
+  if (receivePass(s, k)) return;
 
   idealKeeperSpot(s, team, spot);
   // Line guard: a keeper on or behind the safe line aims far enough out that arrival stops him in front of it.
@@ -206,4 +207,47 @@ export function keeperPositioning(s: SimState, team: number, ev: EventSink): voi
   p.lookAt = run ? 0 : 1;
   p.lookX = b.x;
   p.lookZ = b.z;
+}
+
+/** Back-pass reception: look-ahead step and horizon along the ball's roll, s; reach slack, m [INT-A]. */
+const RECEIVE_STEP_S = 0.1;
+const RECEIVE_HORIZON_S = 3;
+const RECEIVE_REACH = 0.6;
+
+/**
+ * [INT-A] A teammate's pass to the keeper (ball.passTarget === k, untouched since our kick, loose on the ground): he
+ * steps onto its path at the first point he can reach (top speed) instead of holding his positioning arc, so a back
+ * pass rolling across the goal mouth is collected (soak: it rolled past a keeper standing on his line until the
+ * 8 s ball-untouched watchdog fired). Returns true when it wrote his intent.
+ */
+function receivePass(s: SimState, k: number): boolean {
+  const b = s.ball;
+  const p = s.players[k]!;
+  if (b.owner >= 0 || b.heldBy >= 0 || b.passTarget !== k || b.lastTouchTeam !== p.team || b.lastTouch === k) return false;
+  if (b.y > T_PLAYER.bodyRadius * 3) return false;
+  const v = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
+  const top = s.attrs[k]!.topSpeed;
+  let tx = b.x, tz = b.z;
+  if (v >= 0.3) {
+    const ux = b.vx / v, uz = b.vz / v;
+    const a = T_BALL.rollDecel + T_BALL.rollDamping * v;
+    const n = Math.floor(RECEIVE_HORIZON_S / RECEIVE_STEP_S);
+    for (let i = 1; i <= n; i++) {
+      const t = i * RECEIVE_STEP_S;
+      const d = t > v / a ? (v * v) / (2 * a) : v * t - 0.5 * a * t * t;
+      tx = b.x + ux * d;
+      tz = b.z + uz * d;
+      const dx = tx - p.x, dz = tz - p.z;
+      if (Math.sqrt(dx * dx + dz * dz) <= top * t + RECEIVE_REACH) break;
+    }
+  }
+  p.moveMode = MoveMode.ARRIVE;
+  p.tgtX = tx;
+  p.tgtZ = tz;
+  p.tgtSpeed = top;
+  p.wantSprint = 1;
+  p.lookAt = 1;
+  p.lookX = b.x;
+  p.lookZ = b.z;
+  return true;
 }

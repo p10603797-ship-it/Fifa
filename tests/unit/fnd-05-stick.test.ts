@@ -14,11 +14,23 @@ import { createTouchButton, swipeDir, TAP_MS } from '../../src/input/touch/butto
 import { computeClusterLayout, PAUSE_SIZE, type ClusterLayout } from '../../src/input/touch/attack';
 import { createTouchMapper, heldToButtons } from '../../src/input/touch/mapper';
 import { chooseClusterMode } from '../../src/input/touch/cluster';
+import { MatchPhase } from '../../src/contracts/enums';
 import { initMatch } from '../../src/sim/init';
 
-function ctx(): InputSampleContext {
+/**
+ * A live open-play state with human 0's side on the ball. INT-B: TCH-04/07 treat PRE_MATCH (a fresh initMatch) as a
+ * cut-scene (cluster HIDDEN: every touch sends SKIP), so input expectations need play to be live.
+ */
+function liveState(): SimState {
   const s = initMatch(createMatchConfig()) as SimState;
-  return { tick: 1, human: 0, side: 0, state: s, projector: null };
+  s.match.phase = MatchPhase.IN_PLAY;
+  const slot = s.ctrl[0]!.slot >= 0 ? s.ctrl[0]!.slot : 9;
+  s.ball.owner = slot;
+  return s;
+}
+
+function ctx(): InputSampleContext {
+  return { tick: 1, human: 0, side: 0, state: liveState(), projector: null };
 }
 
 describe('FND-05 stick maths', () => {
@@ -59,10 +71,11 @@ describe('FND-05 stick maths', () => {
     stick.move(99, 0, 0, 20); // another pointer is ignored
     expect(st.stickX).toBeCloseTo(1, 6);
     stick.move(7, 250, 400, 32); // drags the origin
-    expect(st.stickOriginX).toBeCloseTo(180, 6);
-    stick.move(7, 110, 400, 48); // instant reverse
+    // TCH-02 (intended): the floating origin trails the thumb by followMul (1.4) radii, not one radius (INT-B update).
+    expect(st.stickOriginX).toBeCloseTo(250 - 1.4 * 70, 6);
+    stick.move(7, 60, 400, 48); // instant reverse
     expect(st.stickX).toBeCloseTo(-1, 6);
-    stick.up(7, 110, 400, 64);
+    stick.up(7, 60, 400, 64);
     expect(st.stickActive).toBe(false);
     expect(st.stickX).toBe(0);
     stick.down(8, 100, 400, 80);
@@ -197,32 +210,39 @@ describe('FND-05 touch mapper', () => {
     expect(f.mz).toBe(0);
   });
 
-  it('SPRINT held -> Btn.SPRINT; PASS/THROUGH/SHOOT held while down; a sub-tick tap is latched once', () => {
+  // INT-B: TCH-07 (intended) commits PASS / THROUGH / SHOOT when the recogniser classifies the press (tap, hold or
+  // swipe; tests/unit/tch-07-mapper.test.ts) and starts SPRINT at touch-down only while the stick is pushed (a tap with
+  // a released stick is a skill move). The FND-05 baseline "every face button held from touch-down" is obsolete.
+  it('SPRINT held with the stick pushed -> Btn.SPRINT from touch-down; a sub-tick PASS tap is reported once', () => {
     const st = createTouchIntentState();
     const m = createTouchMapper(st);
     const f = createInputFrame();
     const c = ctx();
     const sprint = createTouchButton({ state: st, id: TouchButtonId.SPRINT_SKILL, geom: { cx: 0, cy: 0, r: 48 } });
     const pass = createTouchButton({ state: st, id: TouchButtonId.PASS, geom: { cx: 0, cy: 0, r: 38 } });
-    const shoot = createTouchButton({ state: st, id: TouchButtonId.SHOOT, geom: { cx: 0, cy: 0, r: 38 } });
+    st.stickActive = true;
+    st.stickX = 1;
+    st.stickY = 0;
     sprint.down(1, 0, 0, 0);
     m.sample(f, c);
-    expect(f.buttons).toBe(Btn.SPRINT);
-    shoot.down(2, 0, 0, 5);
+    expect(f.buttons & Btn.SPRINT).toBe(Btn.SPRINT);
     m.sample(f, c);
-    expect(f.buttons).toBe(Btn.SPRINT | Btn.SHOOT);
-    m.sample(f, c);
-    expect(f.buttons).toBe(Btn.SPRINT | Btn.SHOOT);
-    shoot.up(2, 0, 0, 300);
+    expect(f.buttons & Btn.SPRINT).toBe(Btn.SPRINT);
     sprint.up(1, 0, 0, 300);
+    st.stickActive = false;
+    st.stickX = 0;
     m.sample(f, c);
-    expect(f.buttons).toBe(0);
+    expect(f.buttons & Btn.SPRINT).toBe(0);
     pass.down(3, 0, 0, 400);
     pass.up(3, 0, 0, 410);
+    let seen = 0;
+    for (let i = 0; i < 4; i++) {
+      m.sample(f, c);
+      if (f.buttons & Btn.PASS) seen++;
+    }
+    expect(seen).toBeGreaterThanOrEqual(1);
     m.sample(f, c);
-    expect(f.buttons).toBe(Btn.PASS);
-    m.sample(f, c);
-    expect(f.buttons).toBe(0);
+    expect(f.buttons & Btn.PASS).toBe(0);
     expect(st.buttonEventCount).toBe(0);
     expect(heldToButtons(1 << TouchButtonId.THROUGH)).toBe(Btn.THROUGH);
     expect(heldToButtons(1 << TouchButtonId.PAUSE)).toBe(0);

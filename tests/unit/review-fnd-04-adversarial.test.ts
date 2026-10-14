@@ -328,7 +328,7 @@ function sessionHarness(over: Partial<SessionDeps> = {}) {
       const p = {
         disposed: false,
         ready: () => true, take: vi.fn(), pump: vi.fn(), waiting: false, releaseAll: vi.fn(),
-        dispose: vi.fn(() => { p.disposed = true; }), queueCommand: vi.fn(), sourceCount: 0,
+        dispose: vi.fn(() => { p.disposed = true; }), queueCommand: vi.fn(), sourceCount: 0, rebind: vi.fn(), devicesOf: () => [] as string[],
       };
       providers.push(p);
       return p;

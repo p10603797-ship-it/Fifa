@@ -23,6 +23,7 @@ import { createPadManager, PadButton } from '../../src/input/pad/manager';
 import { createPadSource } from '../../src/input/pad/mapper';
 import { createRepeatState, stepRepeat, MENU_REPEAT_DELAY_MS } from '../../src/input/menuInput';
 import { createDeviceRegistry } from '../../src/input/devices';
+import { MatchPhase } from '../../src/contracts/enums';
 import { initMatch } from '../../src/sim/init';
 
 // ------------------------------------------------------------------ fakes
@@ -48,9 +49,20 @@ function kev(type: string, code: string, extra: Record<string, unknown> = {}): E
   return e;
 }
 
-function sampleCtx(): InputSampleContext {
+/**
+ * A live open-play state with human 0's side on the ball. INT-B: TCH-04/07 treat PRE_MATCH (a fresh initMatch) as a
+ * cut-scene (cluster HIDDEN: every touch sends SKIP), so input expectations need play to be live.
+ */
+function liveState(): SimState {
   const s = initMatch(createMatchConfig()) as SimState;
-  return { tick: 1, human: 0, side: 0, state: s, projector: null };
+  s.match.phase = MatchPhase.IN_PLAY;
+  const slot = s.ctrl[0]!.slot >= 0 ? s.ctrl[0]!.slot : 9;
+  s.ball.owner = slot;
+  return s;
+}
+
+function sampleCtx(): InputSampleContext {
+  return { tick: 1, human: 0, side: 0, state: liveState(), projector: null };
 }
 
 /** Real stick + SPRINT + SHOOT + mapper behind the real pointer manager. */

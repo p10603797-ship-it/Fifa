@@ -198,6 +198,8 @@ const LOCAL_TUNING = {
   /** AI defenders head clear within this of their own goal line, m; volley clear inside their area (depth), m. */
   aiClearDepth: 35,
   aiVolleyClearDepth: 18,
+  /** ... and head clear even an uncontested opponent ball within this of their own goal line, m [INT-A]. */
+  aiClearAlwaysDepth: 22,
   /** An opponent within this of the spot makes a trappable ball a contested header, m. */
   contestRadius: 2.5,
   /** AI header pass / clear power. */
@@ -205,14 +207,14 @@ const LOCAL_TUNING = {
   aiClearPower: 0.85,
   aiShotPower: 0.75,
   // ---- launch: header shot
-  headerShotMin: 12,
-  headerShotMax: 18.5,
+  headerShotMin: 14,
+  headerShotMax: 20,
   /** Share of power (rest: heading) in the header shot speed. */
   shotPowerW: 0.6,
   /** Incoming ball speed redirected into a header shot, fraction. */
   headerRedirect: 0.08,
   headerShotFloor: 10,
-  headerShotCap: 20,
+  headerShotCap: 22,
   // ---- launch: volley shot
   volleyShotMin: 21,
   volleyShotMax: 29,
@@ -228,8 +230,13 @@ const LOCAL_TUNING = {
   headerPassMaxSpeed: 16,
   volleyPassMaxSpeed: 22,
   /** Launch angle (rad) for short (5 m) .. long (25 m) header passes; volley passes. */
-  headerPassAngleNear: 0.4,
-  headerPassAngleFar: 0.22,
+  headerPassAngleNear: 0.3,
+  headerPassAngleFar: 0.18,
+  /** A header pass to a receiver is aimed to land this fraction of the distance short of him (at most
+   *  headerShortMax m), so it bounces up to him below head height instead of dropping onto a marker's head
+   *  [INT-A head tennis: 83% of header passes were headers of an opponent's ball, half of them of a header]. */
+  headerShortFrac: 0.25,
+  headerShortMax: 4,
   volleyPassAngle: 0.28,
   /** Receiver lead: expected ball speed to the receiver, m/s; max lead time, s. */
   passLeadSpeed: 12,
@@ -239,7 +246,7 @@ const LOCAL_TUNING = {
   aiCone: 1.1,
   /** Receiver choice: weight of openness (nearest opponent, capped at opennessCap m) and distance mismatch. */
   opennessCap: 6,
-  opennessW: 0.35,
+  opennessW: 0.8,
   distMismatchScale: 20,
   /** Receiver choice: bonus for a receiver further up the pitch (x unit progress toward the attacked goal). */
   progressW: 0.1,
@@ -1260,14 +1267,18 @@ function aiChoose(s: SimState, slot: number): void {
     if (inShoot) {
       AI.kind = KickKind.HEADER_SHOT;
       AI.power = LT.aiShotPower;
-    } else if (!ours && toOwn <= LT.aiClearDepth) {
-      AI.kind = KickKind.HEADER_PASS;
-      AI.flags |= F_CLEAR;
-      AI.power = LT.aiClearPower;
-    } else if (contested(s, slot, FIND.x, FIND.z) || (FIND.y > T_TOUCH.trapHeight && !ours)) {
-      // [INT-A head tennis] Our own uncontested ball is left to drop to chest / feet (SIM-07 first touch) instead of
-      // being headed on into another aerial ball; an opponent's high ball or any contested one is still headed.
-      AI.kind = KickKind.HEADER_PASS;
+    } else {
+      // [INT-A head tennis] An uncontested high ball is left to drop to chest / feet (SIM-07 first touch, the TAI-07
+      // chaser runs to where it comes down) instead of being headed on into another aerial ball; a contested one is
+      // headed (cleared near the own goal), and an opponent's ball is always cleared close to the own goal.
+      const cont = contested(s, slot, FIND.x, FIND.z);
+      if (!ours && toOwn <= LT.aiClearDepth && (cont || toOwn <= LT.aiClearAlwaysDepth)) {
+        AI.kind = KickKind.HEADER_PASS;
+        AI.flags |= F_CLEAR;
+        AI.power = LT.aiClearPower;
+      } else if (cont) {
+        AI.kind = KickKind.HEADER_PASS;
+      }
     }
   } else if (inShoot) {
     AI.kind = KickKind.VOLLEY_SHOT;
@@ -1751,7 +1762,14 @@ function solveAerial(s: SimState, slot: number, out: KickLaunch, header: boolean
   const dz = tz - b.z;
   const d = Math.sqrt(dx * dx + dz * dz);
   const ang = header ? lerp(LT.headerPassAngleNear, LT.headerPassAngleFar, clamp01((d - 5) / 20)) : LT.volleyPassAngle;
-  launchToPoint(s, tx, tz, ang, header ? LT.headerPassMaxSpeed : LT.volleyPassMaxSpeed, out);
+  let lx = tx, lz = tz;
+  if (header && recv >= 0 && d > 1e-6) {
+    let short = d * LT.headerShortFrac;
+    if (short > LT.headerShortMax) short = LT.headerShortMax;
+    lx = tx - (dx / d) * short;
+    lz = tz - (dz / d) * short;
+  }
+  launchToPoint(s, lx, lz, ang, header ? LT.headerPassMaxSpeed : LT.volleyPassMaxSpeed, out);
   let ux = dirX;
   let uz = dirZ;
   if (d > 1e-6) { ux = dx / d; uz = dz / d; }

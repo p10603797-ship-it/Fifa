@@ -390,6 +390,9 @@ export function createSession(deps: SessionDeps): AppSession {
       for (let h = 0; h < MAX_HUMANS; h++) frames.push(createInputFrame());
       let p: TickInputProvider;
       if (s.inputProvider) {
+        // Custom providers (online lockstep) sample local devices too: hand them the camera projector (NET-B CR 2).
+        const sp = (s.inputProvider as { setProjector?: (g: () => CameraProjector | null) => void }).setProjector;
+        if (typeof sp === 'function') sp.call(s.inputProvider, deps.getProjector);
         p = hasQueue(s.inputProvider) ? s.inputProvider : withCommandQueue(s.inputProvider, fallbackQueue);
       } else {
         p = createLocal(s.bindings, devices, () => (runtime ? runtime.curr : null), deps.getProjector, { onError });

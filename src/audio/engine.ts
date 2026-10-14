@@ -511,10 +511,11 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
     // Created (and so pre-rendered) in the order sounds are first needed: menus right after the tap, the match later.
     ui = create(4, createUi, c);
     const sfx = create(1, createSfx, c);
-    sfxMod = sfx;
-    if (sfx) {
+    sfxMod = sfx && typeof sfx.setCameraX === 'function' ? sfx : null;
+    // NaN is the module's own default (estimate from the ball): only a reported camera x needs handing over.
+    if (sfxMod && cameraX === cameraX) {
       try {
-        sfx.setCameraX(cameraX);
+        sfxMod.setCameraX(cameraX);
       } catch (err) {
         moduleFailed(1, err, 'setCameraX');
       }

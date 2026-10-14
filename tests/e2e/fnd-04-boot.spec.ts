@@ -94,6 +94,7 @@ test.describe('FND-04 app shell', () => {
     await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
     await expect(page.getByTestId('pause-menu')).toBeVisible();
     await page.getByTestId('pause-quit').tap();
+    await page.getByTestId('pause-quit-confirm').tap(); // UIX-08 quit confirmation (INT-B)
     await expect(page.getByTestId('main-kickoff')).toBeVisible();
     const after = await page.evaluate(() => {
       const c = window.__dotkick!.ctx;
@@ -115,6 +116,7 @@ test.describe('FND-04 app shell', () => {
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('pause-menu')).toBeVisible();
     await page.getByTestId('pause-quit').tap();
+    await page.getByTestId('pause-quit-confirm').tap(); // UIX-08 quit confirmation (INT-B)
     await expect(page.getByTestId('main-kickoff')).toBeVisible();
 
     expect(messages).toEqual([]);
@@ -207,6 +209,10 @@ test.describe('FND-04 app shell', () => {
     await page.keyboard.press('ArrowDown');
     await expect(page.getByTestId('pause-quit')).toHaveAttribute('data-focused', '');
     await page.keyboard.press('Enter');
+    // UIX-08 quit confirmation (INT-B): "Keep playing" has focus; move to "Quit match" and confirm by keyboard.
+    await expect(page.getByTestId('pause-quit-dialog')).toBeVisible();
+    await page.evaluate(() => window.__dotkick!.ctx.focus.focus(document.querySelector<HTMLElement>('[data-testid="pause-quit-confirm"]')!));
+    await page.keyboard.press('Enter');
     await expect(page.getByTestId('main-kickoff')).toBeVisible();
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => window.__dotkick!.ctx.session.active)).toBe(false);
@@ -221,6 +227,7 @@ test.describe('FND-04 app shell', () => {
     await kickOff(page);
     await page.keyboard.press('Escape');
     await page.getByTestId('pause-quit').tap();
+    await page.getByTestId('pause-quit-confirm').tap(); // UIX-08 quit confirmation (INT-B)
     await expect(page.getByTestId('main-kickoff')).toBeVisible();
     expect(pageErrors).toEqual([]);
   });

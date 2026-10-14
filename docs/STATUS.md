@@ -115,11 +115,11 @@ Total assignments: 201.
 | DAT-05 | 1 | done | tools/balance.ts + --audit; 50 tests; 29/29 attributes read and visibly change play (docs/ATTRIBUTE_AUDIT.md) | balance FAIL today (80-88% 0-0 draws) -> INT-A / QF-2 tuning |
 | NET-01 | 1 | done | NET-A squad: tests/net 60 pass; DoD 5 netsim (80 ms each way, 20 ms jitter, 5% loss) full match 0 desyncs, hashes equal | real PeerJS path only against a fake broker; needs the device check |
 | NET-02 | 1 | done | NET-A squad: tests/net 60 pass; DoD 5 netsim (80 ms each way, 20 ms jitter, 5% loss) full match 0 desyncs, hashes equal | real PeerJS path only against a fake broker; needs the device check |
-| NET-03 | 1 | running | NET-B squad running |  |
+| NET-03 | 1 | done | NET-B squad: tests/net 49 unit pass; e2e net-07-online + int-08-online + int-08-webrtc (real WebRTC via local PeerServer) 5/5 | transport rejoin race + 6 s silence timeout -> QF-6; app CRs -> lead after INT-B |
 | NET-04 | 1 | done | NET-A squad: tests/net 60 pass; DoD 5 netsim (80 ms each way, 20 ms jitter, 5% loss) full match 0 desyncs, hashes equal | real PeerJS path only against a fake broker; needs the device check |
 | NET-05 | 1 | done | NET-A squad: tests/net 60 pass; DoD 5 netsim (80 ms each way, 20 ms jitter, 5% loss) full match 0 desyncs, hashes equal | real PeerJS path only against a fake broker; needs the device check |
-| NET-06 | 1 | running | NET-B squad running |  |
-| NET-07 | 1 | running | NET-B squad running |  |
+| NET-06 | 1 | done | NET-B squad: tests/net 49 unit pass; e2e net-07-online + int-08-online + int-08-webrtc (real WebRTC via local PeerServer) 5/5 | transport rejoin race + 6 s silence timeout -> QF-6; app CRs -> lead after INT-B |
+| NET-07 | 1 | done | NET-B squad: tests/net 49 unit pass; e2e net-07-online + int-08-online + int-08-webrtc (real WebRTC via local PeerServer) 5/5 | transport rejoin race + 6 s silence timeout -> QF-6; app CRs -> lead after INT-B |
 | NET-08 | 1 | done | NET-A squad: tests/net 60 pass; DoD 5 netsim (80 ms each way, 20 ms jitter, 5% loss) full match 0 desyncs, hashes equal | real PeerJS path only against a fake broker; needs the device check |
 | MOD-01 | 1 | done | lane/squad agent report; 2 own test files pass |  |
 | MOD-02 | 1 | done | lane/squad agent report; 1 own test files pass |  |
@@ -139,7 +139,7 @@ Total assignments: 201.
 | INT-05 | 2 | running | INT-B running |  |
 | INT-06 | 2 | running | INT-B running |  |
 | INT-07 | 2 | running | INT-B running |  |
-| INT-08 | 2 | running | NET-B squad running |  |
+| INT-08 | 2 | done | two-page online e2e: share link, lockstep hashes equal, mirrored pause, 20 s rejoin, Finish against CPU; real WebRTC run through a local PeerServer | not yet run on real iPads (DEVICE_CHECKLIST step 7) |
 | INT-09 | 2 | running | INT-B running |  |
 | INT-10 | 2 | running | INT-B running |  |
 | QA-01 | 3 | queued |  |  |

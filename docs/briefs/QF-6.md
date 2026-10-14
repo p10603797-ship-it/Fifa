@@ -5,3 +5,7 @@ Charter (BRIEF §11 1v1 online, §14 determinism and glitch list online): desync
 resync or clean end), latency 80 ms each way + 20 ms jitter + 5% loss with no desync and playable input delay, both
 sides waiting forever (timeouts and a clear message), disconnects and reconnect window, rematch with fresh state, room
 codes (collisions, expiry, wrong code), pause rules online. Use the two-instance harness (DoD 5).
+Known from NET-B: transport.ts rejoin race (an early guest re-dial answered with $full fails for good; the host should
+replace a link when the same peer reconnects); 6 s silence timeout treats long warm-up stalls as disconnects; HAND_TO_CPU
+stays in the absent human's frame until applied (fine solo, document it); stats after a reload rejoin count from the
+rejoin tick only. Real iPad Safari untested (device checklist).

@@ -8,7 +8,7 @@
  * recording stubs (createModules); cameras, quality and replay are the real modules.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { PerspectiveCamera, Scene, type WebGLRenderer } from 'three';
+import { Color, PerspectiveCamera, Scene, type WebGLRenderer } from 'three';
 import { HALF_LENGTH, HALF_WIDTH, WORLD_MAX_X } from '../../src/contracts/constants';
 import { CameraType, MatchPhase, QualityTier } from '../../src/contracts/enums';
 import type { RenderStats } from '../../src/contracts/render';
@@ -20,6 +20,7 @@ import {
   createBroadcastCamera, followX, LOCAL_TUNING as BT, radarZoneMargin, touchZones, type TouchZones,
 } from '../../src/render/camera/broadcast';
 import { cornerPose, createCinePose, LOCAL_TUNING as CT, takerPose, type CinePose } from '../../src/render/camera/cinematic';
+import { crowdLightOf, DAY_LOOK, NIGHT_LOOK } from '../../src/render/stadium';
 import { createGameRenderer, fillInterp, msaaAtStart, type DotkickRenderer } from '../../src/render/index';
 import { onLowPowerSuspected, resetQualitySession } from '../../src/render/quality';
 import type { RebuildReport, RendererCore, RendererCoreOptions } from '../../src/render/renderer';
@@ -424,6 +425,26 @@ describe('INT-C framing: ball and taker clear of the HUD radar', () => {
     }
   });
 
+  it('regression "goal kick: the keeper fills the frame and hides the ball": the rig stands off the kick line', () => {
+    const p = createCinePose();
+    for (const end of [-1, 1]) {
+      for (const sz of [-4.58, 4.58]) {
+        const sx = end * (HALF_LENGTH - 5.5);
+        const aimX = -end * HALF_LENGTH; // up-field
+        takerPose(sx, sz, aimX, sz, true, p);
+        expect(Math.abs(p.x)).toBeLessThanOrEqual(HALF_LENGTH - CT.goalKickLineInset + 1e-9);
+        const ball = project(p, sx, 0.11, sz, 1180, 820);
+        // The keeper stands ~1.5 m behind the ball on the kick line (between the ball and the goal).
+        const taker = project(p, sx + end * 1.5, 1.0, sz, 1180, 820);
+        const far = project(p, sx - end * CT.goalKickLook, 0, sz, 1180, 820);
+        for (const q of [ball, taker, far]) { expect(q.x).toBeGreaterThan(0); expect(q.x).toBeLessThan(1180); }
+        expect(Math.abs(ball.x - taker.x)).toBeGreaterThan(80); // the ball is beside him, not behind his legs
+        expect(ball.y).toBeLessThan(radarTop(820));
+        expect(far.y).toBeGreaterThan(0.1 * 820);
+      }
+    }
+  });
+
   it('behind-the-taker camera: the taker behind the ball stays above the radar', () => {
     const p = createCinePose();
     for (const [sx, sz] of [[26, 0], [30, 12], [-28, -9], [41.5, 0]] as const) {
@@ -435,5 +456,14 @@ describe('INT-C framing: ball and taker clear of the HUD radar', () => {
       const ball = project(p, sx, 0.11, sz, 1180, 820);
       expect(ball.y).toBeGreaterThan(0.5 * 820);
     }
+  });
+});
+
+describe('INT-C night look', () => {
+  it('regression "night match reads as day": the bowl and crowd are clearly darker than by day, the pitch keeps its key light', () => {
+    expect(NIGHT_LOOK.standLight).toBeLessThanOrEqual(0.4);
+    const d = crowdLightOf(DAY_LOOK, new Color()), n = crowdLightOf(NIGHT_LOOK, new Color());
+    expect(n.r + n.g + n.b).toBeLessThan(0.4 * (d.r + d.g + d.b));
+    expect(NIGHT_LOOK.sunIntensity).toBeGreaterThan(0.85 * DAY_LOOK.sunIntensity);
   });
 });

@@ -349,6 +349,36 @@ describe('INT-B session hooks', () => {
     expect(s.players.map((p) => p.active)).toEqual(before);
   });
 
+  it('MatchHooks (online pause rules): allowPause can refuse a pause or a resume; onPauseChange / onQuit are told', async () => {
+    const h = harness();
+    const calls: string[] = [];
+    let allow = true;
+    await start(h, [{ human: 0, deviceIds: ['touch'] }], config(), {
+      hooks: {
+        allowPause: (by, pausing) => {
+          calls.push(`allow ${by} ${pausing ? 'pause' : 'resume'}`);
+          return allow;
+        },
+        onPauseChange: (p, by) => { calls.push(`change ${p ? 'paused' : 'resumed'} ${by}`); },
+        onQuit: () => { calls.push('quit'); },
+      },
+    });
+    allow = false;
+    h.session.pause(0);
+    expect(h.session.paused).toBe(false);
+    allow = true;
+    h.session.pause(0);
+    expect(h.session.paused).toBe(true);
+    allow = false;
+    expect(h.session.resume(0)).toBe(false);
+    allow = true;
+    expect(h.session.resume(0)).toBe(true);
+    h.session.quit();
+    expect(calls).toEqual([
+      'allow 0 pause', 'allow 0 pause', 'change paused 0', 'allow 0 resume', 'allow 0 resume', 'change resumed 0', 'quit',
+    ]);
+  });
+
   it('queueCommand reaches the frame after a rebind (the queue belongs to the provider, not the sources)', async () => {
     const h = harness();
     await start(h, [{ human: 0, deviceIds: ['touch'] }]);

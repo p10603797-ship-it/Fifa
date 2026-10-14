@@ -28,7 +28,7 @@
 
 import { AnimId, PoseIdx, type Pose, type PoseFn } from '../../contracts/render';
 import type { PoseTable } from '../types';
-import { clamp, HEEL_X, lerp, placeSwingFootS, plantToeS, PSA, PTA, TAU, TOE_X, wrap01 } from './poseMath';
+import { clamp, HEEL_X, lerp, PELVIS_Y, placeSwingFootS, plantToeS, PSA, PTA, TAU, TOE_X, wrap01 } from './poseMath';
 
 const P = PoseIdx;
 
@@ -422,9 +422,15 @@ export function applyTurnLean(out: Pose, lean: number): void {
   applyTurnLeanS(out);
 }
 
-/** applyTurnLean with the lean in TLA[0] (allocation-free internal form). */
+/**
+ * applyTurnLean with the lean in TLA[0] (allocation-free internal form). [INT-C] The roll pivots at the feet, not at the
+ * pelvis: ROOT_ROLL turns the whole body about the root, which swung the planted feet sideways by pelvis height x
+ * sin(lean) and made them slide whenever the lean changed (the yaw rate it follows moves all the time in live play);
+ * the root now shifts into the turn by the same amount, so the feet stay where they are and the body leans over them.
+ */
 export function applyTurnLeanS(out: Pose): void {
   const lean = TLA[0]!;
+  out[P.ROOT_SIDE] = out[P.ROOT_SIDE]! + (PELVIS_Y + out[P.ROOT_Y]!) * Math.sin(lean);
   out[P.ROOT_ROLL] = out[P.ROOT_ROLL]! + lean;
   out[P.SPINE_ROLL] = out[P.SPINE_ROLL]! - lean * 0.25; // head and shoulders stay a little more upright
   out[P.HEAD_YAW] = out[P.HEAD_YAW]! - lean * 0.6; // look into the turn

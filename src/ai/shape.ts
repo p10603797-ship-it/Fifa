@@ -63,15 +63,15 @@ import { otherTeam, possessingTeam, teamEnd, teamStart } from '../sim/core/query
 const LOCAL_TUNING = {
   /** Back-line height: u = dataBack + lineOffset + lineSlope * ballU, clamped to [lineMin, lineMax]. dataBack is
    *  the formation's deepest outfield slot (its neutral back line). m, m/m, m (team frame), m (team frame). */
-  lineOffset: [8, 16, 7, 14, 3, 7],
+  lineOffset: [8, 20, 7, 16, 3, 7],
   lineSlope: [0.55, 0.6, 0.55, 0.55, 0.55, 0.55],
   lineMin: [-40, -36, -46.5, -36, -46.5, -44],
-  lineMax: [2, 16, 9, 14, 3, 9],
+  lineMax: [2, 20, 9, 16, 3, 9],
   /** Absolute back-line limits after focus and TAI-04 lineX, m (floor = own goal-area edge + 0.5 m). */
   lineFloor: -46.5,
-  lineCeil: 18,
+  lineCeil: 22,
   /** Vertical stretch of formation depths relative to the deepest outfield slot (1 = data depths). */
-  depthScale: [1.25, 1.45, 1.0, 1.4, 0.95, 1],
+  depthScale: [1.35, 1.8, 1.1, 1.6, 0.95, 1],
   /** Back-line depth stagger kept in defending phases (0 = perfectly flat, 1 = data stagger). */
   defFlatten: 0.3,
   /** Lateral stretch of the formation width (1 = data width). */
@@ -88,7 +88,7 @@ const LOCAL_TUNING = {
   wingBackPush: [4, 6, -6, 6, -6, 0],
   wideMidPush: [0, 2, -2, 3, -2, 0],
   wingerPush: [2, 7, -2, 8, -2, 0],
-  forwardPush: [2, 6, 3, 8, 0, 0],
+  forwardPush: [2, 6, 6, 8, 0, 0],
   /** Tactical focus (DEFAULT, DEFENDING, ATTACKING): multiplier on the formation depths. The focus block push
    *  and width multipliers are DAT-04's (data/tactics resolveTactics), shared with every other module. */
   focusDepth: [1, 0.9, 1.08],
@@ -98,7 +98,7 @@ const LOCAL_TUNING = {
   lineGapFraction: 0.97,
   /** ... x this per phase [INT-A: a team in possession stretches (about 40 m from the back line to the forwards);
    *  one capped at 14 m gaps in possession had nobody between or beyond the opponents' lines]. */
-  lineGapScale: [1.35, 1.5, 1, 1.5, 1, 1],
+  lineGapScale: [1.6, 2, 1, 2, 1, 1],
   /** Formation slots of one line whose nx differ by at most this form one sub-line (normalised units). */
   subLineTolerance: 0.12,
   /** Span kept by a sub-line with k of n members: spreadMin + (1 - spreadMin) * (k - 1) / (n - 1). */

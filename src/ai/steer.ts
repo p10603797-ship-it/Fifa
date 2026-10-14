@@ -104,6 +104,12 @@ const LOCAL_TUNING = {
   /** Hold short of an occupied target from this distance, m (+ occupiedHoldExtra when already at rest). */
   occupiedStopDist: 1.5,
   occupiedHoldExtra: 0.5,
+  /** [INT-A trailing] A ball job chasing a loose ball that rolls away from him (faster than overshootMinSpeed m/s)
+   *  aims overshootSec x ball speed (at most overshootMax m) beyond his target along the ball's path, so SIM-04's
+   *  arrival braking does not leave him trailing 1-2 m behind it. m/s, s, m. */
+  overshootMinSpeed: 1,
+  overshootSec: 0.6,
+  overshootMax: 4,
 } as const; // TUNING-CR
 
 const LT = LOCAL_TUNING;
@@ -488,8 +494,17 @@ function steerJob(s: SimState, slot: number): void {
   const b = s.ball;
   const top = a.topSpeed > 0 ? a.topSpeed : T_PLAYER.topSpeedMin;
   const jog = top * T_PLAYER.jogFraction;
-  const tx = clampTo(finiteOr(p.tgtX, p.x), TGT_MAX_X);
-  const tz = clampTo(finiteOr(p.tgtZ, p.z), TGT_MAX_Z);
+  let tx = clampTo(finiteOr(p.tgtX, p.x), TGT_MAX_X);
+  let tz = clampTo(finiteOr(p.tgtZ, p.z), TGT_MAX_Z);
+  if (BALL_JOB[job] === 1 && b.owner < 0 && b.heldBy < 0) {
+    const bv = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
+    if (bv > LT.overshootMinSpeed && (b.x - p.x) * b.vx + (b.z - p.z) * b.vz > 0) {
+      let o = bv * LT.overshootSec;
+      if (o > LT.overshootMax) o = LT.overshootMax;
+      tx = clampTo(tx + (b.vx / bv) * o, TGT_MAX_X);
+      tz = clampTo(tz + (b.vz / bv) * o, TGT_MAX_Z);
+    }
+  }
   let req = p.tgtSpeed;
   if (!Number.isFinite(req)) req = jog;
   if (req < 0) req = 0;

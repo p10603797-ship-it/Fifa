@@ -193,6 +193,9 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-09): move into T_AI as pass* (ti
   throughLateS: 0.6,
   /** Fixed-point iterations of the own lead model. */
   throughIters: 3,
+  /** Completion multipliers for ground / lofted through balls (calibration, see throughBall) [INT-A]. */
+  throughGroundCompletionMul: 0.6,
+  throughLobCompletionMul: 0.25,
   // ---- crosses
   /** Own cross targets: near / far post depth from the goal line and |z|; penalty spot |z| toward the ball side, m. */
   nearPostDepth: 4.5,
@@ -209,6 +212,9 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-09): move into T_AI as pass* (ti
   crossDedupe: 2,
   /** Header xG multiplier on the spot's xG (x lerp(0.6, 1, heading)). */
   headerXgMul: 0.55,
+  /** Cross completion = min(1, lane safety x crossCompletionMul + crossCompletionAdd) (x lateness) [INT-A]. */
+  crossCompletionMul: 1.6,
+  crossCompletionAdd: 0.12,
   // ---- danger (xG-ish of the receiving spot)
   /** xG = xgK x angle^2 (angle subtended by the goal mouth, rad), capped at xgCap. */
   xgK: 0.48,
@@ -1017,6 +1023,8 @@ function throughBall(s: SimState, out: PassOption[], slot: number, q: Readonly<P
     ac = ac > 0 ? (ac < 1 ? ac : 1) : 0;
     F[O_C] = F[O_C]! * (LT.aerialMin + (LT.aerialMax - LT.aerialMin) * ac);
   }
+  // [INT-A] Calibration against soak outcomes (estimated 38% / 12%, completed 19% / 0%).
+  F[O_C] = F[O_C]! * (lofted === 1 ? LT.throughLobCompletionMul : LT.throughGroundCompletionMul);
   F[P_X] = lx; F[P_Z] = lz; spotDanger(1);
   F[E_X] = lx; F[E_Z] = lz; F[E_C] = F[O_C]!; F[E_PROG] = dir * dx; F[E_DANGER] = F[P_OUT]!;
   F[E_WP] = F[C_WPD]!; F[E_WD] = F[C_WDD]!;
@@ -1081,7 +1089,11 @@ function crosses(s: SimState, out: PassOption[], slot: number, team: number, dir
     laneKernel(1);
     let tl = (bestT - tf) / LT.crossLateS;
     tl = tl > 0 ? (tl < 1 ? tl : 1) : 0;
-    F[O_C] = F[L_SAFE]! * (1 - tl * tl * (3 - 2 * tl));
+    // [INT-A] Calibration: the lofted landing-duel model put crosses at 0.05-0.2 while soak crosses reached an
+    // attacker about half the time (a header at goal counts), so CPUs never crossed from the wings.
+    let cc = F[L_SAFE]! * LT.crossCompletionMul + LT.crossCompletionAdd;
+    if (cc > 1) cc = 1;
+    F[O_C] = cc * (1 - tl * tl * (3 - 2 * tl));
     F[O_ACC_D] = d; F[O_ACC_A] = F[C_CROSSING]!;
     applyAccuracy(1);
     F[P_X] = tx; F[P_Z] = tz; spotDanger(0);

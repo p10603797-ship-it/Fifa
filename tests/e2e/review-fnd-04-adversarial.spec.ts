@@ -191,6 +191,7 @@ test.describe('REVIEW FND-04 adversarial', () => {
     const inMatch1 = await domCounts();
     await page.keyboard.press('Escape');
     await page.getByTestId('pause-quit').tap();
+    await page.getByTestId('pause-quit-confirm').tap(); // UIX-08 quit confirmation (INT-B)
     await expect(page.getByTestId('main-kickoff')).toBeVisible();
     const base = await listenerCounts();
     const baseDom = await domCounts();
@@ -209,6 +210,7 @@ test.describe('REVIEW FND-04 adversarial', () => {
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('pause-menu')).toBeVisible();
       await page.getByTestId('pause-quit').tap();
+      await page.getByTestId('pause-quit-confirm').tap(); // UIX-08 quit confirmation (INT-B)
       await expect(page.getByTestId('main-kickoff')).toBeVisible();
     }
     expect(await listenerCounts()).toEqual(base);
@@ -233,6 +235,8 @@ test.describe('REVIEW FND-04 adversarial', () => {
     await kickOff(page);
     await page.keyboard.press('Escape');
     await page.getByTestId('pause-quit').tap();
+    // UIX-08: Quit asks for confirmation first (INT-B: updated for the pause menu's quit-confirm dialog).
+    await page.getByTestId('pause-quit-confirm').tap();
     await expect(page.getByTestId('main-kickoff')).toBeVisible();
     expect(messages).toEqual([]);
   });

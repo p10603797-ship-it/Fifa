@@ -36,7 +36,7 @@ import {
 } from 'three';
 import { NUM_SLOTS } from '../../contracts/constants';
 import type { Club, Kit } from '../../contracts/data';
-import { KitPattern, type QualityTier } from '../../contracts/enums';
+import { ActionKind, KitPattern, type QualityTier } from '../../contracts/enums';
 import { AnimId, createPose, POSE_SIZE, type Pose } from '../../contracts/render';
 import type { Settings } from '../../contracts/settings';
 import type { ReadonlySimState } from '../../contracts/state';
@@ -45,8 +45,8 @@ import { createKitNumberAtlas, resolveMatchKits, type KitNumberAtlas, type Match
 import { getTierParams } from '../quality';
 import type { RenderContext, RenderFrame, RenderModule } from '../types';
 import {
-  createSkeleton, FRAME_SIZE, groundSkeleton, Joint, PLACE_SIZE, placeSkeleton, solvePoseFK, writeHiddenMatrix,
-  writeJointMatrix,
+  BODY, createSkeleton, FRAME_SIZE, groundSkeleton, Joint, JOINT_COUNT, PLACE_SIZE, placeSkeleton, solvePoseFK,
+  writeHiddenMatrix, writeJointMatrix,
 } from './fk';
 import { buildPartGeometry, NUMBER_PANEL, Part, PART_COUNT, PART_NAMES, PART_PAIRED, TORSO_Y0, TORSO_Y1, trianglesPerPlayer } from './parts';
 
@@ -65,6 +65,18 @@ const LOCAL_TUNING = { // TUNING-CR (render-only; the ground snap distance lives
   closeUpDist: 6.5,
   closeUpEyeY: 1.7,
   closeUpLookY: 1.0,
+  // ---- foot lock [INT-C]
+  /** A boot point this close to the grass (m) is planted. */
+  lockGroundY: 0.003,
+  /** Only players moving faster than this (m/s) and in no action get the lock. */
+  lockMinSpeed: 0.8,
+  /** Largest visual offset from the sim position the lock may build (m). */
+  lockMaxOffset: 0.3,
+  /** The offset eases back to the sim position with this time constant while a boot is locked / otherwise (s). */
+  lockReturnLocked: 1.2,
+  lockReturnFree: 0.08,
+  /** Interpolated travel above this in one frame drops the lock (restart placement, replay cut) (m). */
+  lockTeleport: 1.5,
 } as const;
 
 /** Legacy envelope of a 180 cm player (m), kept from the Wave 0 capsule: radius and height. */
@@ -518,6 +530,15 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
   for (let i = 0; i < NUM_SLOTS; i++) { poses.push(createPose()); skeletons.push(createSkeleton()); }
   const modelSk = createSkeleton();
   const place = new Float64Array(PLACE_SIZE);
+  // Foot lock [INT-C]: per slot the visual offset from the sim position (x, z), the drawn world position of the four
+  // boot points (toe / heel, left / right) last frame and whether each was planted, and the last interpolated x, z.
+  const lockOff = new Float64Array(NUM_SLOTS * 2);
+  const lockPts = new Float64Array(NUM_SLOTS * 12);
+  const lockWas = new Uint8Array(NUM_SLOTS * 4);
+  const lockLast = new Float64Array(NUM_SLOTS * 2);
+  const lockSeen = new Uint8Array(NUM_SLOTS);
+  /** Per frame: [0] dt (s); scratch [1..12] the raw boot points of the slot being placed. */
+  const LK = new Float64Array(13);
   const hidden = new Uint8Array(NUM_SLOTS).fill(1);
   const held = new Uint8Array(NUM_SLOTS);
   const heldPoses: Pose[] = [];
@@ -632,6 +653,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     else if (h > LOCAL_TUNING.maxScale) h = LOCAL_TUNING.maxScale;
     place[0] = it.x[i]!; place[1] = it.z[i]!; place[2] = it.fx[i]!; place[3] = it.fz[i]!; place[4] = h;
     placeSkeleton(modelSk, sk, place);
+    footLock(i, s, it, sk);
     for (let k = 0; k < PART_JOINTS.length; k++) {
       const pj = PART_JOINTS[k]!;
       const part = pj[0], arr = mats[part]!;
@@ -643,6 +665,74 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
       }
     }
     hidden[i] = 0;
+  }
+
+  /**
+   * [INT-C] Foot lock. The procedural gait plants a boot exactly when the player runs straight at a steady speed; in
+   * live play facing turns (the body rotates about its root), speed changes and clip cross-fades still drag a planted
+   * boot over the grass. While a running player (no action) has a boot planted in this frame and the last one, the
+   * whole body is shifted by the opposite of that boot's drift, so it stays where it was put down; the offset from the
+   * sim position eases back (slowly while locked, quickly in the flight phases and outside the lock) and never exceeds
+   * lockMaxOffset. Teleports, held debug poses and sent-off slots drop it. No allocation (typed arrays only).
+   */
+  function footLock(i: number, s: ReadonlySimState, it: RenderFrame['interp'], sk: Float64Array): void {
+    const T = LOCAL_TUNING;
+    const p = s.players[i]!;
+    const x = it.x[i]!, z = it.z[i]!;
+    const jx = x - lockLast[i * 2]!, jz = z - lockLast[i * 2 + 1]!;
+    lockLast[i * 2] = x; lockLast[i * 2 + 1] = z;
+    const dt = LK[0]!;
+    const fresh = lockSeen[i] !== 1 || jx * jx + jz * jz > T.lockTeleport * T.lockTeleport || held[i] === 1;
+    lockSeen[i] = 1;
+    // Raw boot points (as placed at the sim position).
+    for (let k = 0; k < 4; k++) {
+      const o = (k < 2 ? Joint.ANKLE_L : Joint.ANKLE_R) * FRAME_SIZE;
+      const lx = (k & 1) === 0 ? BODY.toeX : BODY.heelX, ly = -BODY.ankleY;
+      LK[1 + k * 3] = sk[o]! * lx + sk[o + 3]! * ly + sk[o + 9]!;
+      LK[2 + k * 3] = sk[o + 1]! * lx + sk[o + 4]! * ly + sk[o + 10]!;
+      LK[3 + k * 3] = sk[o + 2]! * lx + sk[o + 5]! * ly + sk[o + 11]!;
+    }
+    let ox = 0, oz = 0;
+    let locked = 0;
+    if (!fresh) {
+      ox = lockOff[i * 2]!; oz = lockOff[i * 2 + 1]!;
+      const vx = it.vx[i]!, vz = it.vz[i]!;
+      const lockable = dt > 0 && p.act === ActionKind.NONE && vx * vx + vz * vz > T.lockMinSpeed * T.lockMinSpeed;
+      if (lockable) {
+        let dx = 0, dz = 0;
+        for (let k = 0; k < 4; k++) {
+          if (lockWas[i * 4 + k] !== 1 || !(LK[2 + k * 3]! < T.lockGroundY)) continue;
+          dx += LK[1 + k * 3]! + ox - lockPts[i * 12 + k * 3]!;
+          dz += LK[3 + k * 3]! + oz - lockPts[i * 12 + k * 3 + 2]!;
+          locked++;
+        }
+        if (locked > 0) { ox -= dx / locked; oz -= dz / locked; }
+      }
+      if (dt > 0) {
+        let f = 1 - dt / (locked > 0 ? T.lockReturnLocked : T.lockReturnFree);
+        if (f < 0) f = 0;
+        ox *= f; oz *= f;
+      }
+      const l2 = ox * ox + oz * oz;
+      if (l2 > T.lockMaxOffset * T.lockMaxOffset) {
+        const k = T.lockMaxOffset / Math.sqrt(l2);
+        ox *= k; oz *= k;
+      }
+      if (!(ox === ox) || !(oz === oz)) { ox = 0; oz = 0; }
+    }
+    lockOff[i * 2] = ox; lockOff[i * 2 + 1] = oz;
+    if (ox !== 0 || oz !== 0) {
+      for (let j = 0; j < JOINT_COUNT; j++) {
+        sk[j * FRAME_SIZE + 9] = sk[j * FRAME_SIZE + 9]! + ox;
+        sk[j * FRAME_SIZE + 11] = sk[j * FRAME_SIZE + 11]! + oz;
+      }
+    }
+    for (let k = 0; k < 4; k++) {
+      lockPts[i * 12 + k * 3] = LK[1 + k * 3]! + ox;
+      lockPts[i * 12 + k * 3 + 1] = LK[2 + k * 3]!;
+      lockPts[i * 12 + k * 3 + 2] = LK[3 + k * 3]! + oz;
+      lockWas[i * 4 + k] = LK[2 + k * 3]! < T.lockGroundY ? 1 : 0;
+    }
   }
 
   /** Debug close-up: overrides ctx.camera's pose (the cameras already ran this frame). */
@@ -703,6 +793,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
       }
       applyAll(state);
       for (let i = 0; i < NUM_SLOTS; i++) hideSlot(i);
+      lockSeen.fill(0);
       for (let p = 0; p < PART_COUNT; p++) meshes[p]!.instanceMatrix.needsUpdate = true;
       group.visible = true;
       matchOn = true;
@@ -724,10 +815,12 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
       }
       driver(f, api);
       for (let i = 0; i < NUM_SLOTS; i++) if (held[i] === 1) api.setPose(i, heldPoses[i]!);
+      const dtMs = f.frame.paused ? 0 : f.frame.dtMs;
+      LK[0] = dtMs > 0 ? (dtMs < 100 ? dtMs / 1000 : 0.1) : 0;
       for (let i = 0; i < NUM_SLOTS; i++) {
         const p = s.players[i]!;
         const x = it.x[i]!, z = it.z[i]!;
-        if (p.active !== 1 || !Number.isFinite(x) || !Number.isFinite(z)) { hideSlot(i); continue; }
+        if (p.active !== 1 || !Number.isFinite(x) || !Number.isFinite(z)) { hideSlot(i); lockSeen[i] = 0; continue; }
         placeSlot(i, s, it);
       }
       for (let p = 0; p < PART_COUNT; p++) meshes[p]!.instanceMatrix.needsUpdate = true;

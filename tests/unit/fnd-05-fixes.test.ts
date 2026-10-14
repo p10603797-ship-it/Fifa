@@ -97,10 +97,12 @@ describe('FND-05 fix: touch mapper drops cancelled presses', () => {
     m.sample(out, ctx);
     expect(out.buttons & Btn.SHOOT).toBe(0);
     expect(st.buttonEventCount).toBe(0);
-    // A held THROUGH (finger still down) keeps its bit via state.held regardless of the queue.
+    // INT-B: the FND-05 baseline also held a bit straight from state.held; TCH-07's mapper (intended) is driven by
+    // the button events only (a press commits when the recogniser classifies it, tests/unit/tch-07-mapper.test.ts),
+    // so a bare held bit without its DOWN event gives nothing.
     st.held = 1 << TouchButtonId.THROUGH;
     m.sample(out, ctx);
-    expect(out.buttons).toBe(Btn.THROUGH);
+    expect(out.buttons & Btn.THROUGH).toBe(0);
   });
 });
 

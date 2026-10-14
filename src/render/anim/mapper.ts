@@ -358,6 +358,40 @@ function breathFromIn(): void {
   OUTF[OF_BREATH] = 1 - x * x * (3 - 2 * x);
 }
 
+/** [INT-C] Run style of a run-family clip: 0 jog, 1 sprint (TURN_LEAN: its foot parameter), -1 not a run clip. */
+function runStyle(a: AnimId, foot: number): number {
+  if (a === AnimId.JOG) return 0;
+  if (a === AnimId.SPRINT) return 1;
+  if (a === AnimId.TURN_LEAN) return foot === 1 ? 1 : 0;
+  return -1;
+}
+
+/**
+ * [INT-C] JOG / SPRINT with the mapper's lean layer and TURN_LEAN of the same style are the same pose (one run gait,
+ * the same lean formula), so a switch between them needs no cross-fade. Jog <-> turn lean flips on small yaw-rate
+ * changes many times a minute; each started a 0.2 s fade (from a frozen snapshot when interrupted) for nothing.
+ */
+function sameRunPose(a: AnimId, footA: number, b: AnimId, footB: number): boolean {
+  const sa = runStyle(a, footA);
+  return sa >= 0 && sa === runStyle(b, footB);
+}
+
+/**
+ * [INT-C] The lean and breathing layers locomotionParams / update give locomotion clip `anim`, applied to `out` (the
+ * outgoing clip of a locomotion cross-fade, evaluated live). IN holds the slot's inputs of this frame. Clobbers
+ * OUTF[OF_LEAN] / OUTF[OF_BREATH] (read by update before the blend).
+ */
+function liveLocoLayers(anim: AnimId, out: Pose): void {
+  if (anim === AnimId.STRAFE || anim === AnimId.JOCKEY || anim === AnimId.KEEPER_READY || anim === AnimId.SHIELD) {
+    breathFromIn();
+    if (OUTF[OF_BREATH]! > 0) { BRA[0] = IN[IN_BREATH]!; BRA[1] = OUTF[OF_BREATH]!; applyBreathS(out); }
+  }
+  if (anim === AnimId.JOG || anim === AnimId.SPRINT || anim === AnimId.STRAFE) leanFromIn(0);
+  else if (anim === AnimId.JOCKEY || anim === AnimId.SHIELD || anim === AnimId.KEEPER_READY) leanFromIn(1);
+  else OUTF[OF_LEAN] = 0;
+  if (OUTF[OF_LEAN] !== 0) { TLA[0] = OUTF[OF_LEAN]!; applyTurnLeanS(out); }
+}
+
 function preferredFoot(s: ReadonlySimState, slot: number): number {
   return s.attrs[slot]!.foot === 1 ? 1 : 0;
 }
@@ -703,6 +737,17 @@ export function createAnimator(): Animator {
   const blendDur = new Float32Array(NUM_SLOTS);
   const lastT = new Float32Array(NUM_SLOTS);
   const mem = createSlotMemory();
+  // [INT-C] Locomotion -> locomotion cross-fades (jog / sprint / turn lean / strafe... flip often in live play) blend
+  // from the outgoing clip evaluated LIVE at this frame's stride cycle and speed, not from a frozen snapshot: both
+  // clips share the distance-driven gait, so their planted feet stay planted through the fade (a frozen "from" pose
+  // made the stance foot slide with the body for the whole fade). Interrupted fades keep the frozen snapshot.
+  const fromLive = new Uint8Array(NUM_SLOTS);
+  const fromAnim = new Uint8Array(NUM_SLOTS);
+  const fromT = new Float32Array(NUM_SLOTS), fromSide = new Float32Array(NUM_SLOTS);
+  const fromFoot = new Uint8Array(NUM_SLOTS);
+  const lastSide = new Float32Array(NUM_SLOTS);
+  const lastFoot = new Uint8Array(NUM_SLOTS);
+  const liveFrom = createPose();
 
   function reset(): void {
     seen.fill(0);
@@ -712,6 +757,7 @@ export function createAnimator(): Animator {
     yawRate.fill(0);
     blendT.fill(0);
     blendDur.fill(0);
+    fromLive.fill(0);
     mem.idle.fill(0); mem.strafe.fill(0); mem.lean.fill(0); mem.foot.fill(255); mem.act.fill(0); mem.actT.fill(0);
   }
 
@@ -808,8 +854,19 @@ export function createAnimator(): Animator {
       if (teleport) {
         blendT[i] = 0;
         blendDur[i] = 0;
-      } else if (anim !== prevAnim || restarted || jump) {
+      } else if ((anim !== prevAnim && !sameRunPose(prevAnim, lastFoot[i]!, anim, sample.foot)) || restarted || jump) {
         for (let k = 0; k < POSE_SIZE; k++) from[i]![k] = out[k]!;
+        // Settled fades only: an interrupted fade starts from the drawn mixture (frozen), so the pose stays continuous;
+        // the model's foot lock catches the slip of those short fades.
+        if (anim !== prevAnim && isLocomotion(prevAnim) && isLocomotion(anim) && blendT[i]! >= blendDur[i]!) {
+          fromLive[i] = 1;
+          fromAnim[i] = prevAnim;
+          fromT[i] = lastT[i]!;
+          fromSide[i] = lastSide[i]!;
+          fromFoot[i] = lastFoot[i]!;
+        } else {
+          fromLive[i] = 0;
+        }
         blendT[i] = 0;
         if (jump && anim === prevAnim && !restarted) blendDur[i] = LOCAL_TUNING.blendJump;
         else {
@@ -818,8 +875,11 @@ export function createAnimator(): Animator {
           blendDur[i] = BTA[4]!;
         }
       }
+      if (teleport) fromLive[i] = 0;
       bank.anim[i] = anim;
       lastT[i] = sample.t;
+      lastSide[i] = sample.side;
+      lastFoot[i] = sample.foot;
       const dur = blendDur[i]!;
       let w = 1;
       if (dur > 0 && blendT[i]! < dur) { const x = blendT[i]! / dur; w = x * x * (3 - 2 * x); }
@@ -828,7 +888,15 @@ export function createAnimator(): Animator {
       if (w >= 1) {
         for (let k = 0; k < POSE_SIZE; k++) out[k] = target[k]!;
       } else {
-        const a = from[i]!;
+        let a = from[i]!;
+        if (fromLive[i] === 1) {
+          const fa = fromAnim[i]! as AnimId;
+          PP[0] = fromT[i]!; PP[1] = cycle; PP[2] = speed;
+          PP[3] = fa === AnimId.TURN_LEAN ? yawRate[i]! : fromSide[i]!; PP[4] = fromFoot[i]!;
+          POSE_IMPLS[fa]!(liveFrom);
+          if (fa !== AnimId.TURN_LEAN) liveLocoLayers(fa, liveFrom);
+          a = liveFrom;
+        }
         for (let k = 0; k < POSE_SIZE; k++) out[k] = a[k]! + (target[k]! - a[k]!) * w;
       }
       seen[i] = 1;

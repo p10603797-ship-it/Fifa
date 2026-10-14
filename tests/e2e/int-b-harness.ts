@@ -204,3 +204,45 @@ export async function stopFastForward(page: Page): Promise<void> {
     w.__intbFF = 0;
   });
 }
+
+// ------------------------------------------------------------------ focus navigation by pad
+
+/** Test id of the element holding the FocusNavigator's focus, or null. */
+export const focusedId = (page: Page): Promise<string | null> =>
+  page.evaluate(() => document.querySelector<HTMLElement>('[data-focused]')?.dataset.testid ?? null);
+
+type Dir = 'up' | 'down' | 'left' | 'right';
+const DPAD: Record<Dir, number> = { up: PAD.UP, down: PAD.DOWN, left: PAD.LEFT, right: PAD.RIGHT };
+
+/** Directions from the focused control toward `want` by geometry: the dominant axis first. */
+function dirsToward(page: Page, want: string): Promise<Dir[]> {
+  return page.evaluate((id) => {
+    const cur = document.querySelector<HTMLElement>('[data-focused]');
+    const tgt = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    if (!cur || !tgt) return ['down'] as Dir[];
+    const c = cur.getBoundingClientRect();
+    const t = tgt.getBoundingClientRect();
+    const dx = (t.left + t.right - c.left - c.right) / 2, dy = (t.top + t.bottom - c.top - c.bottom) / 2;
+    const hd: Dir = dx > 0 ? 'right' : 'left', vd: Dir = dy > 0 ? 'down' : 'up';
+    const out: Dir[] = Math.abs(dx) > Math.abs(dy) ? [hd, vd] : [vd, hd];
+    return out.filter((d) => ((d === 'left' || d === 'right') ? Math.abs(dx) > 1 : Math.abs(dy) > 1));
+  }, want);
+}
+
+/** Move the pad's focus to `want` with D-pad presses (layout-agnostic), then press Cross. */
+export async function padActivate(page: Page, pad: number, want: string, max = 14): Promise<void> {
+  await expect(page.getByTestId(want).first()).toBeVisible();
+  let preferOther = false;
+  const seen = new Set<string>();
+  for (let i = 0; i < max && (await focusedId(page)) !== want; i++) {
+    const before = (await focusedId(page)) ?? '';
+    seen.add(before);
+    const dirs = await dirsToward(page, want);
+    const d = (preferOther && dirs.length > 1 ? dirs[1] : dirs[0]) ?? 'down';
+    await padTap(page, pad, DPAD[d]);
+    const now = (await focusedId(page)) ?? '';
+    preferOther = seen.has(now);
+  }
+  expect(await focusedId(page), `pad focus reached ${want}`).toBe(want);
+  await padTap(page, pad, PAD.CROSS);
+}

@@ -17,6 +17,7 @@ import {
 } from '../../src/input/touch/button';
 import { createTouchMapper } from '../../src/input/touch/mapper';
 import { createPointerRouter, type PointerRouter } from '../../src/input/touch/pointers';
+import { MatchPhase } from '../../src/contracts/enums';
 import { initMatch } from '../../src/sim/init';
 
 const W = 1180, H = 820;
@@ -425,7 +426,12 @@ describe('TCH-03 cancel and release', () => {
     const r = rig();
     const mapper = createTouchMapper(r.st);
     const out = createInputFrame();
-    const ctx: InputSampleContext = { tick: 1, human: 0, side: 0, state: initMatch(createMatchConfig()) as SimState, projector: null };
+    // INT-B: live open play with our side on the ball (a fresh initMatch is PRE_MATCH = cut-scene, where TCH-07 turns
+    // every touch into SKIP).
+    const live = initMatch(createMatchConfig()) as SimState;
+    live.match.phase = MatchPhase.IN_PLAY;
+    live.ball.owner = live.ctrl[0]!.slot >= 0 ? live.ctrl[0]!.slot : 9;
+    const ctx: InputSampleContext = { tick: 1, human: 0, side: 0, state: live, projector: null };
     const c = r.at(SHOOT);
     let t0 = 100;
     for (const end of ['up', 'cancel', 'releaseAll'] as const) {

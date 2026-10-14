@@ -162,9 +162,13 @@ export const DAY_LOOK: StadiumLook = {
   sky: 0x8fb8d8, ground: 0x2f5a2a, sunColour: 0xfff4e0, sunIntensity: 2.6, ambientColour: 0xdfe8ff, ambientIntensity: 1.25,
   skyTop: 0x3f7fc4, skyHorizon: 0xc4dcef, skyBottom: 0x9db5a0, lampColour: 0x9ca3ad, haloStrength: 0, boardBrightness: 1, standLight: 1,
 };
+/**
+ * [INT-C] Night: standLight 0.55 -> 0.38 and ambient 1.0 -> 0.9. The broadcast camera rarely shows the sky, so the dark
+ * bowl around a floodlit pitch is what makes a night match read as night; at 0.55 the live screenshots looked like day.
+ */
 export const NIGHT_LOOK: StadiumLook = {
-  sky: 0x0b1020, ground: 0x1d3a1c, sunColour: 0xf2f6ff, sunIntensity: 2.4, ambientColour: 0x9aa8d0, ambientIntensity: 1.0,
-  skyTop: 0x03050c, skyHorizon: 0x1c2640, skyBottom: 0x0c1218, lampColour: 0xfffbea, haloStrength: 0.55, boardBrightness: 0.9, standLight: 0.55,
+  sky: 0x0b1020, ground: 0x1d3a1c, sunColour: 0xf2f6ff, sunIntensity: 2.4, ambientColour: 0x9aa8d0, ambientIntensity: 0.9,
+  skyTop: 0x03050c, skyHorizon: 0x1c2640, skyBottom: 0x0c1218, lampColour: 0xfffbea, haloStrength: 0.55, boardBrightness: 0.9, standLight: 0.38,
 };
 
 /** The look for a match (config.night). */

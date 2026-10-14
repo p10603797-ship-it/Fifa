@@ -24,7 +24,7 @@
  *         c * max(PV(target), danger * dangerValueMul) - (1 - c) * lossCost(min(here, target)); a through ball's
  *         completion is discounted when the level's look-ahead is short; gains over keeping the ball are scaled by
  *         style progress (forward), directness (through / long balls), width (crosses); counter-attack bonus per metre
- *         gained; a settling penalty for a pass right after gaining the ball unless pressed;
+ *         gained (x completion); a settling penalty for a pass right after gaining the ball unless pressed;
  *       - shoot (TAI-10 estimateXg, only when xG >= the level's shotThresholdXg, raised / lowered for long shots by
  *         style longShot): shotXgMul * xG + (1 - xG) * shotMissValue (+ boxShotBonus in the box);
  *       - dribble (TAI-10 bestDribble direction and score; toward goal, away from the nearest opponent ahead when it
@@ -86,7 +86,12 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   pvBase: 0.004,
   /** ... plus this times ((progress + 1) / 2)^3 toward the opposition goal line, goal probability [INT-A: was
    *  0.01 + 0.07 t^2 — too flat, so a forward pass never paid for its risk and attacks went sideways forever]. */
-  pvSpan: 0.1,
+  pvSpan: 0.08,
+  /** Width discount: none within pvLatFree m of the centre line, down to x pvLatMin at pvLatFull m, weighted by the
+   *  progress share t (so it bites in the final third), m / m / 0..1. */
+  pvLatFree: 9,
+  pvLatFull: 30,
+  pvLatMin: 0.35,
   /** Losing the ball at progress p costs the opponents' possession value there, posValue(-p) (x style safety)
    *  [INT-A: replaces the linear lossOwn 0.07 .. lossOpp 0.01, which overcharged a loss in midfield]. */
   /** A receiving spot is worth at least its TAI-09 danger (xG-ish 0..1) times this. */
@@ -108,14 +113,16 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   settleTicks: 45,
   settlePenalty: 0.01,
   settlePressure: 0.5,
-  /** Counter-attack (team phase TRANSITION_ATTACK): bonus per metre of progress at style counter 0.5, goal probability. */
-  counterPerM: 0.0008,
+  /** Counter-attack (team phase TRANSITION_ATTACK): bonus per metre of progress at style counter 0.5, x the pass's
+   *  completion, goal probability [INT-A: was 0.0008 regardless of completion — a 40 m lofted through ball with a 3%
+   *  chance got +0.03 and won every counter, so lofted through balls were tried 7 times a match and never arrived]. */
+  counterPerM: 0.0003,
   // ---- shooting
   /** Value of a shot that does not score (corner, rebound), goal probability. */
   shotMissValue: 0.006,
   /** A shot's xG is weighted by this against the possession value of keeping the ball (that value is only an
    *  average; against a set block it is rarely realised) [INT-A]. */
-  shotXgMul: 2.2,
+  shotXgMul: 3.5,
   /** Extra urge to shoot inside the penalty area, goal probability. */
   boxShotBonus: 0.012,
   /** Beyond this distance from the goal centre a shot is a long shot, m ... */
@@ -124,15 +131,15 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   longShotThreshMax: 1.0,
   longShotThreshMin: 0.7,
   /** Shot power 0..1 at <= shotNearDist m / >= shotFarDist m from the goal centre (linear between). */
-  shotPowerNear: 0.55,
-  shotPowerFar: 0.8,
+  shotPowerNear: 0.65,
+  shotPowerFar: 0.84,
   shotNearDist: 8,
   shotFarDist: 28,
   /** Shot power clamp after noise (0..1). */
   shotPowerMin: 0.35,
   shotPowerMax: 0.92,
   /** Aim point inside the post, m. */
-  shotInset: 0.8,
+  shotInset: 0.5,
   /** Keeper this far (|z|) off the goal centre: aim at the other side, m. */
   keeperSideDead: 0.3,
   /** Finesse shot (MOD_R): distance window m, |z| of the shooter at least m, curve attribute at least. */
@@ -206,11 +213,13 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   /** Clear only in the own third (progress below this) with an opponent within clearPressDist m. */
   clearProgress: -1 / 3,
   clearPressDist: 4.5,
-  /** Utility of a clearance (+ clearBoxBonus in the own penalty area), goal probability. */
-  clearValue: 0.012,
-  clearBoxBonus: 0.008,
+  /** Utility of a clearance (+ clearBoxBonus in the own penalty area), goal probability [INT-A: was 0.012 / 0.008,
+   *  tuned to the old flat value model; against the cubic one a clearance beat every pass below ~95% completion, so
+   *  CPUs hoofed 15+ long balls a match: a clearance gives the ball away upfield, worth about 0]. */
+  clearValue: -0.0015,
+  clearBoxBonus: 0.006,
   /** Clearance LOB power 0..1 and target: this far upfield / toward the ball's touchline, m. */
-  clearPower: 0.7,
+  clearPower: 0.5,
   clearDist: 40,
   clearSide: 18,
   // ---- pressure
@@ -313,14 +322,18 @@ function setStep(b: CpuBrainState, step: number): void {
 function markStarted(b: CpuBrainState): void { b.p1 |= 1 << 6; }
 
 /** Possession value at progress (-1 own goal line .. +1 opposition goal line), goal probability. */
-function posValue(prog: number): number {
+function posValue(prog: number, z: number): number {
   const t = clamp01((prog + 1) * 0.5);
-  return LT.pvBase + LT.pvSpan * t * t * t;
+  // [INT-A] Width: toward the touchlines the spot is worth less, the more so the further up the pitch (a carrier at
+  // the corner flag is not 0.08 goals from scoring; with x alone he kept the ball there rather than cross or cut back).
+  const az = z < 0 ? -z : z;
+  const w = az <= LT.pvLatFree ? 1 : 1 - (1 - LT.pvLatMin) * clamp01((az - LT.pvLatFree) / (LT.pvLatFull - LT.pvLatFree));
+  return LT.pvBase + LT.pvSpan * t * t * t * (1 - t * (1 - w));
 }
 
-/** Cost of losing the ball at progress (x style safety): the opponents' possession value there, goal probability. */
-function lossCost(prog: number): number {
-  return posValue(-prog) * C.safetyMul;
+/** Cost of losing the ball at (progress, z) (x style safety): the opponents' possession value there, goal probability. */
+function lossCost(prog: number, z: number): number {
+  return posValue(-prog, z) * C.safetyMul;
 }
 
 function styleMul(w: number): number { return LT.styleMulMin + (LT.styleMulMax - LT.styleMulMin) * clamp01(w); }
@@ -426,7 +439,7 @@ function fillContext(s: SimState, team: number, p: Readonly<PlayerState>, lv: Re
   C.dir = t.dir;
   C.prog = (t.dir * p.x) / HALF_LENGTH;
   C.safetyMul = LT.safetyLossMin + (LT.safetyLossMax - LT.safetyLossMin) * clamp01(sw.safety);
-  C.vHere = posValue(C.prog);
+  C.vHere = posValue(C.prog, p.z);
   C.noiseSd = clamp01(lv.decisionNoise) * LT.noiseScale;
   C.lookFrac = clamp01(lv.lookAheadTicks / LT.lookAheadRef);
   C.counter = t.phase === TeamPhase.TRANSITION_ATTACK ? 1 : 0;
@@ -504,11 +517,11 @@ function passOptionsInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<Sty
     let c = clamp01(o.completion);
     if (plan === CpuPlan.THROUGH) c *= 1 - LT.throughLookPenalty * (1 - C.lookFrac);
     const tprog = (dir * ox) / HALF_LENGTH;
-    let vT = posValue(tprog);
+    let vT = posValue(tprog, oz);
     const dv = clamp01(o.danger) * LT.dangerValueMul;
     if (dv > vT) vT = dv;
     const lossProg = tprog < C.prog ? tprog : C.prog;
-    const raw = c * vT - (1 - c) * lossCost(lossProg);
+    const raw = c * vT - (1 - c) * lossCost(lossProg, tprog < C.prog ? oz : p.z);
     let gain = raw - C.vHere;
     if (gain > 0) {
       const dx = ox - p.x, dz = oz - p.z;
@@ -518,7 +531,7 @@ function passOptionsInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<Sty
     }
     let u = C.vHere + gain - settle;
     const prog = fin(o.progress);
-    if (C.counter === 1 && prog > 0) u += LT.counterPerM * prog * clamp01(sw.counter) * 2;
+    if (C.counter === 1 && prog > 0) u += c * LT.counterPerM * prog * clamp01(sw.counter) * 2;
     noise(s);
     u += NZ[0]!;
     CU[0] = u; CU[1] = ox; CU[2] = oz;
@@ -582,7 +595,7 @@ function dribbleOptionInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<S
   const step = LT.dribbleStep * (0.3 + 0.7 * sc);
   const nprog = (C.dir * (p.x + dx * step)) / HALF_LENGTH;
   const keep = clamp01(1 - LT.dribbleLossMax * C.pressure * (1.2 - (0.4 * s.attrs[p.slot]!.dribbling) / 99));
-  const raw = keep * posValue(nprog) - (1 - keep) * lossCost(C.prog);
+  const raw = keep * posValue(nprog, p.z + dz * step) - (1 - keep) * lossCost(C.prog, p.z);
   let gain = raw - C.vHere;
   if (gain > 0) gain *= styleMul(sw.dribble);
   let u = C.vHere + gain;
@@ -604,7 +617,7 @@ function skillOptionInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<Sty
   let succ = LT.skillBase + LT.skillPerStar * stars + (LT.skillDribbling * a.dribbling) / 99;
   if (succ > LT.skillMaxSuccess) succ = LT.skillMaxSuccess;
   const nprog = C.prog + LT.skillGain / HALF_LENGTH;
-  const raw = succ * posValue(nprog) - (1 - succ) * lossCost(C.prog);
+  const raw = succ * posValue(nprog, p.z) - (1 - succ) * lossCost(C.prog, p.z);
   let gain = raw - C.vHere;
   if (gain > 0) gain *= styleMul(sw.dribble);
   noise(s);
@@ -617,7 +630,7 @@ function shieldOptionInto(s: SimState, p: Readonly<PlayerState>, cur: CpuPlan, a
   if (C.nearD > LT.shieldDist) return;
   const str = clamp01(s.attrs[p.slot]!.strength / 99);
   const loss = clamp01((LT.shieldLossWeak + (LT.shieldLossStrong - LT.shieldLossWeak) * str) * (1 + age / LT.shieldAgeRef));
-  let u = (1 - loss) * C.vHere * LT.shieldHoldMul - loss * lossCost(C.prog);
+  let u = (1 - loss) * C.vHere * LT.shieldHoldMul - loss * lossCost(C.prog, p.z);
   if (cur === CpuPlan.SHIELD) u += LT.switchMargin;
   noise(s);
   u += NZ[0]!;

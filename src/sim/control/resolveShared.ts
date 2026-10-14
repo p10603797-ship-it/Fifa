@@ -58,6 +58,13 @@ export const LOCAL_TUNING = {
   volleyMaxHeight: 1.2,
   /** The receiver auto-collecting a pass meets the ball's track at most this far ahead, s. */
   receiveLookAheadSec: 2,
+  /** [INT-A] Receiver of a pass rolling away from him (faster than meetOvershootMinSpeed m/s): the meeting target is
+   *  pushed meetOvershootSec x ball speed (at most meetOvershootMax m) on along its path, and he runs at least
+   *  meetPaceMul x the ball's speed. m/s, s, m, x. */
+  meetOvershootMinSpeed: 1,
+  meetOvershootSec: 0.6,
+  meetOvershootMax: 4,
+  meetPaceMul: 1.15,
   /** Sampling step along the ball track for the receiver's meeting point, s. */
   meetStepSec: 0.125,
   /** Contain (PASS held in defence): shadow distance goal-side of the carrier, m. */
@@ -419,19 +426,24 @@ export function ballEta(s: SimState, slot: number): number {
   return eta > 0 ? eta : 0;
 }
 
-/** Meeting point written by meetPoint (scratch, read right after the call). */
-export const MEET = { x: 0, z: 0 };
+/** Meeting point written by meetPoint (scratch, read right after the call) and the run speed it planned (m/s). */
+export const MEET = { x: 0, z: 0, speed: 0 };
 
 /**
  * Earliest point on the loose ball's ground track that `slot` can reach in time (at top speed when sprint = 1, else
- * jog speed; samples every LT.meetStepSec up to LT.receiveLookAheadSec, grounded balls decelerating) into MEET; the
+ * jog speed or his current speed when faster; samples every LT.meetStepSec up to LT.receiveLookAheadSec, grounded balls decelerating) into MEET; the
  * last sample if none. Takes no double arguments (V8 boxes doubles across calls).
  */
 export function meetPoint(s: SimState, slot: number, sprint: number): void {
   const b = s.ball;
   const p = s.players[slot]!;
   const top = s.attrs[slot]!.topSpeed;
-  const speed = sprint === 1 ? top : top * T_PLAYER.jogFraction;
+  // [INT-A] Never plan slower than he is already running: a receiver sprinting onto a led pass keeps his pace
+  // (planning at jog speed dropped him from 9 to 5.5 m/s and the pass ran past him).
+  const cur = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
+  const jog = top * T_PLAYER.jogFraction;
+  const speed = sprint === 1 ? top : cur > jog ? (cur < top ? cur : top) : jog;
+  MEET.speed = speed;
   const v = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
   MEET.x = b.x;
   MEET.z = b.z;
