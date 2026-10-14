@@ -58,7 +58,7 @@ import type { SimState } from '../../contracts/state';
 import { ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
 import { T_PASS } from '../../contracts/tuning';
-import { createLaunchSolution, curlSpinY, groundPassSpeed, groundRollTime, solveLaunchSpin } from '../ball/flight';
+import { curlSpinY, groundPassSpeed, groundRollTime, solveLaunchSpin, type LaunchSolution } from '../ball/flight';
 import { dcos, dsin } from '../core/dmath';
 import { inCrossingZone } from '../pitch/geometry';
 import { ballInReach, kickErrorAim, LOCAL_TUNING as PASS_TUNING, selectReceiver } from './pass';
@@ -154,7 +154,6 @@ export const LOCAL_TUNING = { // TUNING-CR
 } as const;
 
 const LT = LOCAL_TUNING;
-const PT = PASS_TUNING;
 
 const NS = NUM_SLOTS;
 const PPT = PLAYERS_PER_TEAM;
@@ -171,7 +170,10 @@ for (const ph of RESTART_PHASES) RESTART_PHASE[ph] = 1;
 
 // ---------------------------------------------------------------- module scratch (no per-tick allocation)
 
-const SOL = createLaunchSolution();
+/** Launch solution scratch (a literal, not SIM-01's factory: nothing imported from a module that can sit in the
+ *  registry import cycle is read while this module evaluates). SIM-08 tuning (PASS_TUNING) is likewise read only inside
+ *  functions, at call time. */
+const SOL: LaunchSolution = { vx: 0, vy: 0, vz: 0, sx: 0, sy: 0, sz: 0, speed: 0, flightT: 0, landX: 0, landZ: 0, reached: 0 };
 /** Solver scratch (doubles handed between helpers without boxing). */
 const F = new Float64Array(12);
 /** Target point, its distance from the ball, travel / flight time (s). */
@@ -230,7 +232,7 @@ export function kickLiveFor(s: SimState, slot: number): boolean {
 function ballArriving(s: SimState, slot: number, ticks: number, lane: number): boolean {
   const b = s.ball;
   if (b.owner >= 0 || b.heldBy >= 0 || b.inNet !== 0) return false;
-  if (!(b.y <= PT.startArriveHeight)) return false;
+  if (!(b.y <= PASS_TUNING.startArriveHeight)) return false;
   const p = s.players[slot]!;
   const dx = b.x - p.x, dz = b.z - p.z;
   const rvx = b.vx - p.vx, rvz = b.vz - p.vz;
@@ -260,7 +262,7 @@ export function beginFootKick(s: SimState, slot: number, kind: KickKind, req: Ac
   if (b.heldBy >= 0) return 0;
   if (b.owner >= 0 && b.owner !== slot) return 0;
   if (b.owner !== slot && !ballInReach(s, slot) &&
-      !ballArriving(s, slot, T_PASS.windup + PT.startArriveTicks, PT.startArriveLane)) return 0;
+      !ballArriving(s, slot, T_PASS.windup + PASS_TUNING.startArriveTicks, PASS_TUNING.startArriveLane)) return 0;
   beginAction(p, ActionKind.KICK, T_PASS.windup + DEFAULT_REC, T_PASS.windup);
   p.actKick = kind;
   p.actSkill = SkillMove.NONE;
@@ -663,7 +665,8 @@ function solveCrossImpl(s: SimState, slot: number, out: KickLaunch): number {
   if (r < 0) r = attackerNear(s, slot, F[F_TX]!, F[F_TZ]!, F[F_T]!);
   // The power bar picks the cross's zone (the launch speed is solved), so it is no "extreme power" strike: the error
   // sees at most SIM-08's power knee.
-  const errPower = power < PT.powerKnee ? power : PT.powerKnee;
+  const knee = PASS_TUNING.powerKnee;
+  const errPower = power < knee ? power : knee;
   applyError(s, slot, errPower, attr01(s.attrs[slot]!.crossing), ground ? T_PASS.groundMax * T_PASS.drivenMul : LT.crossSpeedMax, out);
   out.kind = kind;
   out.target = r;

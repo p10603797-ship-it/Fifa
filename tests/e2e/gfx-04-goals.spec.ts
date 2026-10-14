@@ -114,12 +114,12 @@ async function run(page: Page, st: Step): Promise<Grab> {
     }
     const snap = goals.snapshot();
     const stats = app.renderer.stats();
-    // Goal box on screen: the close-up frames the goal around the centre.
+    // Goal box on screen: the close-up frames the goal around the centre; the box stays below the stand (crowd).
     const canvas = document.getElementById('game') as HTMLCanvasElement;
     const gl = canvas.getContext('webgl2')!;
     const bw = gl.drawingBufferWidth, bh = gl.drawingBufferHeight;
-    const x0 = Math.floor(bw * 0.2), x1 = Math.floor(bw * 0.8);
-    const y0 = Math.floor(bh * 0.2), y1 = Math.floor(bh * 0.8);
+    const x0 = Math.floor(bw * 0.15), x1 = Math.floor(bw * 0.85);
+    const y0 = Math.floor(bh * 0.22), y1 = Math.floor(bh * 0.68);
     const gw = x1 - x0, gh = y1 - y0;
     const px = new Uint8Array(gw * gh * 4);
     gl.readPixels(x0, y0, gw, gh, gl.RGBA, gl.UNSIGNED_BYTE, px);
@@ -162,6 +162,8 @@ test.describe('GFX-04 goals and nets', () => {
   test('goal close-up: frame, see-through net, ripple on NET, shake on POST, broadcast view (screenshots)', async ({ page }, testInfo) => {
     const errors = collectConsole(page);
     await kickOff(page);
+    // Fixed resolution scale: dynamic resolution would change the drawing buffer between the compared pictures.
+    await page.evaluate(() => window.__dotkick!.ctx.settings.update((s) => { s.graphics.resolutionScale = 0.75; }));
 
     // Close-up of the +x goal at rest; the ball sits in front of the back net.
     const rest = await run(page, { closeUp: 1, frames: 6, dtMs: 100, ball: [GL + 1.5, 1.2, 0.6], vel: [0, 0, 0], store: 'restA' });
@@ -172,11 +174,12 @@ test.describe('GFX-04 goals and nets', () => {
     expect(rest.colours, 'see-through net: the stand and pitch show through').toBeGreaterThan(60);
     console.log(`GFX-04 close-up: ${rest.frameDrawCalls} frame draw calls, ${rest.colours} colours, ${rest.white} white px`);
 
-    // Frame-to-frame noise of the animated scene (crowd) with the net at rest.
-    const restB = await run(page, { closeUp: 1, frames: 10, dtMs: 16, cmp: 'restA', store: 'restB' });
+    // Noise of the animated scene (crowd, boards) with the net at rest, over 1.6 s and over 160 ms.
+    const restLong = await run(page, { closeUp: 1, frames: 16, dtMs: 100, cmp: 'restA', store: 'restLong' });
+    const restB = await run(page, { closeUp: 1, frames: 10, dtMs: 16, cmp: 'restLong', store: 'restB' });
     expect(restB.ripples).toBe(0);
 
-    // NET: a 25 m/s shot enters the goal mouth; the ripple bulges where it meets the back net.
+    // NET: a 25 m/s shot enters the goal mouth; the ripple bulges where it meets the back net (160 ms later).
     const hit = await run(page, {
       closeUp: 1, frames: 10, dtMs: 16, vel: [25, 0, 0], cmp: 'restB',
       events: [[NET, 1, 0, 25, GL + 0.3, 1.2, 0.6]],
@@ -184,14 +187,16 @@ test.describe('GFX-04 goals and nets', () => {
     await shot(page, testInfo, 'gfx-04-ripple');
     expect(hit.ripples).toBeGreaterThanOrEqual(1);
     expect(hit.maxAmp).toBeGreaterThan(0.3);
-    console.log(`GFX-04 ripple: diff ${hit.diff.toFixed(2)} changed ${(hit.changed * 100).toFixed(2)}% (noise ${restB.diff.toFixed(2)} / ${(restB.changed * 100).toFixed(2)}%)`);
+    console.log(`GFX-04 ripple: diff ${hit.diff.toFixed(2)} changed ${(hit.changed * 100).toFixed(2)}% (noise 160 ms ${(restB.changed * 100).toFixed(2)}%, 1.6 s ${(restLong.changed * 100).toFixed(2)}%)`);
+    for (const g of [restLong, restB, hit]) expect(g.diff, 'pictures compared at the same size').toBeGreaterThanOrEqual(0);
     expect(hit.changed, 'the ripple visibly moves the net').toBeGreaterThan(restB.changed * 3 + 0.004);
 
-    // 1.5 s later the ripple is gone: no slot in use and the picture is back to rest (noise level).
-    const after = await run(page, { closeUp: 1, frames: 15, dtMs: 100, vel: [0, 0, 0], cmp: 'restB' });
+    // 1.6 s later the ripple is gone: no slot in use and the picture differs from rest only by the scene's own noise.
+    const after = await run(page, { closeUp: 1, frames: 16, dtMs: 100, vel: [0, 0, 0], cmp: 'restB' });
     console.log(`GFX-04 after: diff ${after.diff.toFixed(2)} changed ${(after.changed * 100).toFixed(2)}%`);
     expect(after.ripples).toBe(0);
-    expect(after.changed, 'net back at rest').toBeLessThan(restB.changed * 3 + 0.004);
+    expect(after.diff, 'pictures compared at the same size').toBeGreaterThanOrEqual(0);
+    expect(after.changed, 'net back at rest').toBeLessThan(restLong.changed * 2 + 0.004);
 
     // POST: a 20 m/s hit on the near post shakes the frame, which settles back to exactly 0.
     const post = await run(page, { closeUp: 1, frames: 3, dtMs: 16, events: [[POST, 1, 0, 20, GL - 0.06, 1.4, GW + 0.06]] });

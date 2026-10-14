@@ -15,13 +15,16 @@
  *    T_PASS.drivenMul for ReqFlag.DRIVEN) with v0 <= the max launch; slower = "early" (the ball waits, rolling softly
  *    ahead of him), faster relative to him = "firm", beyond the max launch = late (never).
  *  - lofted: the ball LANDS loftLandEarly before he arrives: drag-free tan(angle) = g T^2 / (2 D), inside the lobbed /
- *    dinked angle window (above it = early, below it = late) and loftSpeedMax.
+ *    dinked angle window (above it = early, below it = late) and loftSpeedMax (compared as tangents: no trig per
+ *    sample). The solver then refines the angle with drag (loftTimeIters Newton steps on solveLaunchSpin's flight time).
  * Power scales the lead: the pick is lerp(first, last ideal sample, power) (short lead with a firm ball .. long lead
  * weighted to die into space); a point an opponent reaches first (reaction + run at oppSpeed within oppReach; the
  * keeper inside his penalty area with keeperReach / keeperMargin: his claim zone) or, for a ground ball, whose path an
- * opponent reaches before the ball (SIM-01 groundRollTime to his projection on it), moves to the nearest safe ideal sample (shorter first), then the nearest safe
+ * opponent stands on (within blockReach) or reaches before the ball has rolled past his projection on it (closed-form
+ * roll distance at his arrival time), moves to the nearest safe ideal sample (shorter first), then the nearest safe
  * early / firm one; with none safe the power pick stays. No ideal sample: the first early sample (safe first), else the
- * last firm one. Returns 0 when no sample is feasible. Onside-ness is RUL-08's job.
+ * last firm one, else the least-late sample when it is at most maxLateSec late (ball at full speed / flattest angle).
+ * Returns 0 when nothing is playable. Onside-ness is RUL-08's job.
  * SOLVER (solveThrough): runner = actSlot, else selectRunner (Assisted / Semi): teammates (keeper excluded) in the cone
  * of T_PASS.coneHalfAngle x coneMul around the stick (facing when idle), scored by alignment, forward run speed, being
  * at / beyond the opponents' second-last defender, plus a bonus for SIM-08 selectReceiver(lofted)'s pick. Target:
@@ -33,23 +36,25 @@
  * kickErrorAim with accuracy = visionShare x vision + the rest x SIM-08 passAccuracy over the distance; rotation plus a
  * lengthwise speed scale (two calls, always eight rng draws). launch.target = runner (or a teammate within
  * spaceReceiverRadius of a ball played into space), tx/tz = the lead point.
- * Determinism / cost: dmath + Math.sqrt, slot-order scans, strict tie breaks, module scratch only. leadSearch is
- * O(leadSamples x 11) with one ticksToReach and one dexp per sample (CPU passing calls it a few times per evaluation);
- * the solver adds O(11 x 11) runner selection and at most one solveLaunchSpin.
+ * Determinism / cost: dmath + Math.sqrt + plain-arithmetic series, slot-order scans, strict tie breaks, module scratch
+ * only. leadSearch is O(leadSamples x 11) with one SIM-04 ticksToReach per sample and no double arguments / returns
+ * between its helpers (scratch Float64Array), so it allocates nothing of its own (CPU passing calls it a few times per
+ * evaluation; ~4 us); the solver adds O(11 x 11) runner selection and, lofted, a few solveLaunchSpin calls.
  */
 // Re-export the registry-facing shell FIRST: see throughHooks.ts (import-cycle safety with actions/registry).
 export { solveThrough } from './throughHooks';
 import { bindThroughImpl } from './throughHooks';
-import { HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PLAYERS_PER_TEAM, TICK_HZ } from '../../contracts/constants';
+import {
+  HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PENALTY_AREA_DEPTH, PENALTY_AREA_HALF_WIDTH, PLAYERS_PER_TEAM, TICK_HZ,
+} from '../../contracts/constants';
 import { AssistLevel, KickKind } from '../../contracts/enums';
 import type { EventSink } from '../../contracts/events';
 import type { SimState } from '../../contracts/state';
 import { ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { T_BALL, T_PASS, T_PLAYER } from '../../contracts/tuning';
-import { createLaunchSolution, groundPassSpeed, groundRollTime, solveLaunchSpin } from '../ball/flight';
-import { datan, dcos, dexp, dsin } from '../core/dmath';
+import { groundPassSpeed, solveLaunchSpin, type LaunchSolution } from '../ball/flight';
+import { datan, dcos, dlog, dsin } from '../core/dmath';
 import { secondLastDefenderX } from '../core/query';
-import { inPenaltyArea } from '../pitch/geometry';
 import { maxSpeed, ticksToReach } from '../players/locomotion';
 import { attackerNear, beginFootKick } from './lob';
 import { kickErrorAim, passAccuracy, selectReceiver } from './pass';
@@ -60,7 +65,7 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** Lead distance range ahead of the runner along his run, m, and the number of samples over it. */
   leadMin: 0,
   leadMax: 30,
-  leadSamples: 31,
+  leadSamples: 16,
   /** No sample in time: the least-late one is still played (ball at full speed / flattest angle) when it is at most
    *  this late for the runner, s. */
   maxLateSec: 0.6,
@@ -162,13 +167,14 @@ const SPACE_LIM_Z = HALF_WIDTH - 1;
 const COS_CONE = dcos(T_PASS.coneHalfAngle * LT.coneMul);
 const COS_CONE_SEMI = dcos(T_PASS.coneHalfAngle * LT.semiConeMul);
 const N = LT.leadSamples;
-/** tan of the lofted minimum angles by mode (index 1 lobbed, 2 dinked). */
+/** tan of the lofted minimum / maximum angles by mode (index 1 lobbed, 2 dinked). */
 const TAN_MIN = new Float64Array([0, dsin(LT.lobbedAngleMin) / dcos(LT.lobbedAngleMin), dsin(LT.dinkedAngleMin) / dcos(LT.dinkedAngleMin)]);
+const TAN_MAX = new Float64Array([0, dsin(LT.lobbedAngleMax) / dcos(LT.lobbedAngleMax), dsin(LT.dinkedAngleMax) / dcos(LT.dinkedAngleMax)]);
 const AIM_MIN_DIST = 0.25;
 
 // ---------------------------------------------------------------- module scratch (no per-tick allocation)
 
-/** Per-sample lead point, runner time (s), launch value (ground v0 m/s, lofted angle rad). */
+/** Per-sample lead point, runner time (s), launch value (ground v0 m/s, lofted tan(angle)). */
 const SX = new Float64Array(N);
 const SZ = new Float64Array(N);
 const STR = new Float64Array(N);
@@ -180,15 +186,19 @@ const SST = new Uint8Array(N);
 const SDG = new Uint8Array(N);
 const ST_LATE = 0, ST_IDEAL = 1, ST_EARLY = 2, ST_FIRM = 3;
 
-const SOL = createLaunchSolution();
+/** Launch solution scratch (a literal: nothing from a module in the registry import cycle is read at evaluation). */
+const SOL: LaunchSolution = { vx: 0, vy: 0, vz: 0, sx: 0, sy: 0, sz: 0, speed: 0, flightT: 0, landX: 0, landZ: 0, reached: 0 };
 /** Solver scratch. */
-const F = new Float64Array(12);
+const F = new Float64Array(24);
 /** Lead result: point, runner time (s), launch value, status. */
 const F_LX = 0, F_LZ = 1, F_LT = 2, F_LV = 3;
 /** Target point, distance, unit aim. */
 const F_TX = 4, F_TZ = 5, F_D = 6, F_UX = 7, F_UZ = 8;
 /** Launch velocity (x, y, z) being built. */
 const F_VX = 9, F_VY = 10, F_VZ = 11;
+/** Lead-search model inputs / outputs (handed between helpers without double arguments): point, ball start, distance,
+ *  time, launch speed, arrival speed, rolled distance, e^-x work slot. */
+const F_CPX = 12, F_CPZ = 13, F_CBX = 14, F_CBZ = 15, F_CD = 16, F_CT = 17, F_V0 = 18, F_VA = 19, F_CX = 20, F_EX = 21;
 
 // ---------------------------------------------------------------- small helpers
 
@@ -209,32 +219,78 @@ function isTeammate(s: SimState, slot: number, j: number): boolean {
 }
 
 /**
- * Ground launch speed (m/s) that covers D m in exactly T s under SIM-02's roll model (closed form); the arrival speed
- * goes to F[F_VY] (negative when the ball would have to stop first).
+ * e^-x for 0 <= x <= ~1 (the roll model's e^-cT, cT < 1 over any horizon used here): plain-arithmetic Taylor series
+ * (12 terms, error < 1e-9 there), evaluated in place from F[F_EX] into F[F_EX]. Allocation-free (dmath.dexp boxes its
+ * result in V8), deterministic.
  */
-function timedGroundSpeed(D: number, T: number): number {
-  if (ROLL_C > 0) {
-    const e = dexp(-ROLL_C * T);
-    const v0 = (D + ROLL_K * T) * ROLL_C / (1 - e) - ROLL_K;
-    F[F_VY] = (v0 + ROLL_K) * e - ROLL_K;
-    return v0;
-  }
-  const v0 = D / T + 0.5 * ROLL_A * T;
-  F[F_VY] = v0 - ROLL_A * T;
-  return v0;
+function expNegInPlace(): void {
+  const x = F[F_EX]!;
+  let sum = 1, term = 1;
+  for (let k = 1; k <= 12; k++) { term *= -x / k; sum += term; }
+  F[F_EX] = sum;
 }
 
 /**
- * True if an opponent of `team` reaches (px, pz) before the runner (who needs tr s) with the margin, or, for a ground
- * ball launched at v0 m/s (D m long, from (bx, bz); v0 <= 0 = no path check), reaches its path before the ball does
- * (SIM-01 groundRollTime to his projection on the path).
+ * Ground launch speed (m/s) that covers D m in exactly T s under SIM-02's roll model, closed form (dv/dt = -a - c v:
+ * v0 = (D + kT) c / (1 - e^-cT) - k, k = a / c). Reads D = F[F_CD], T = F[F_CT]; writes the launch speed to F[F_V0]
+ * and the arrival speed to F[F_VA] (negative when the ball would have to stop first). No double arguments (V8 boxes
+ * them), no allocation.
  */
-function contested(s: SimState, team: number, px: number, pz: number, tr: number, v0: number, bx: number, bz: number, D: number): boolean {
+function timedGroundSpeed(): void {
+  const D = F[F_CD]!, T = F[F_CT]!;
+  if (ROLL_C > 0) {
+    F[F_EX] = ROLL_C * T;
+    expNegInPlace();
+    const e = F[F_EX]!;
+    const v0 = (D + ROLL_K * T) * ROLL_C / (1 - e) - ROLL_K;
+    F[F_V0] = v0;
+    F[F_VA] = (v0 + ROLL_K) * e - ROLL_K;
+    return;
+  }
+  const v0 = D / T + 0.5 * ROLL_A * T;
+  F[F_V0] = v0;
+  F[F_VA] = v0 - ROLL_A * T;
+}
+
+/**
+ * Distance (m) a ground ball launched at F[F_V0] m/s has rolled after F[F_CT] s under SIM-02's roll model (closed form;
+ * it stops at v = 0), into F[F_CX]. No allocation.
+ */
+function rolledDist(): void {
+  const v0 = F[F_V0]!;
+  let t = F[F_CT]!;
+  if (!(v0 > 0) || !(t > 0)) { F[F_CX] = 0; return; }
+  if (ROLL_C > 0) {
+    F[F_EX] = ROLL_C * t;
+    expNegInPlace();
+    const e = F[F_EX]!;
+    if ((v0 + ROLL_K) * e - ROLL_K >= 0) {
+      F[F_CX] = (v0 + ROLL_K) * (1 - e) / ROLL_C - ROLL_K * t;
+      return;
+    }
+    // Stopped before t: the full stopping distance x(v0, 0) = v0 / c - (k / c) ln((v0 + k) / k).
+    F[F_CX] = v0 / ROLL_C - (ROLL_K / ROLL_C) * dlog((v0 + ROLL_K) / ROLL_K);
+    return;
+  }
+  const ts = v0 / ROLL_A;
+  if (t > ts) t = ts;
+  F[F_CX] = v0 * t - 0.5 * ROLL_A * t * t;
+}
+
+/**
+ * True if an opponent of `team` reaches the point (F_CPX, F_CPZ) before the runner (who needs F_CT s) with the margin,
+ * or, for a ground ball launched at F_V0 m/s (0 = no path check) from (F_CBX, F_CBZ) over F_CD m, reaches its path before
+ * the ball has passed his projection on it (or stands on it). Inputs in F (no boxed double arguments); allocation-free.
+ */
+function contested(s: SimState, team: number): boolean {
+  const px = F[F_CPX]!, pz = F[F_CPZ]!, tr = F[F_CT]!, v0 = F[F_V0]!, bx = F[F_CBX]!, bz = F[F_CBZ]!, D = F[F_CD]!;
   const oFirst = team === 0 ? PPT : 0;
   const attDir = s.teams[team]!.dir >= 0 ? 1 : -1;
-  const inBox = inPenaltyArea(px, pz, attDir);
+  // geometry.inPenaltyArea of the attacked end, inlined (no double arguments).
+  const u = attDir * px;
+  const inBox = u >= HALF_LENGTH - PENALTY_AREA_DEPTH && u <= HALF_LENGTH && pz >= -PENALTY_AREA_HALF_WIDTH && pz <= PENALTY_AREA_HALF_WIDTH;
   const lx = px - bx, lz = pz - bz;
-  const ground = v0 > 0;
+  const ground = v0 > 0 && D > 1e-6;
   for (let j = oFirst; j < oFirst + PPT; j++) {
     const o = s.players[j]!;
     if (o.active !== 1) continue;
@@ -247,22 +303,22 @@ function contested(s: SimState, team: number, px: number, pz: number, tr: number
     const d = Math.sqrt(dx * dx + dz * dz);
     const to = LT.oppReact + (d > reach ? (d - reach) / spd : 0);
     if (to < tr + margin) return true;
-    if (ground && D > 1e-6) {
-      const ox = o.x - bx, oz = o.z - bz;
-      const along = (ox * lx + oz * lz) / D;
-      if (along > 0 && along < D) {
-        let perp = (ox * lz - oz * lx) / D;
-        if (perp < 0) perp = -perp;
-        // On the path: the ball runs into him whatever his reaction.
-        if (perp <= LT.blockReach) return true;
-        const tOpp = LT.oppReact + (perp > LT.oppReach ? (perp - LT.oppReach) / spd : 0);
-        // Cheap reject first: the ball is never faster than its launch speed.
-        if (tOpp < along / v0) {
-          const tb = groundRollTime(v0, along);
-          if (!(tb >= 0) || tOpp < tb) return true;
-        }
-      }
-    }
+    if (!ground) continue;
+    const ox = o.x - bx, oz = o.z - bz;
+    const along = (ox * lx + oz * lz) / D;
+    if (!(along > 0 && along < D)) continue;
+    let perp = (ox * lz - oz * lx) / D;
+    if (perp < 0) perp = -perp;
+    // On the path: the ball runs into him whatever his reaction.
+    if (perp <= LT.blockReach) return true;
+    const tOpp = LT.oppReact + (perp > LT.oppReach ? (perp - LT.oppReach) / spd : 0);
+    // Cheap reject first: the ball is never faster than its launch speed.
+    if (!(tOpp < along / v0)) continue;
+    // Has the ball passed his projection by the time he gets there?
+    F[F_CT] = tOpp;
+    rolledDist();
+    F[F_CT] = tr;
+    if (F[F_CX]! < along) return true;
   }
   return false;
 }
@@ -281,7 +337,7 @@ function nearestSafe(from: number, mask: number, n: number): number {
 /**
  * Lead search for a through ball from slot to runner r (see the header). mode 0 = ground, 1 = lobbed, 2 = dinked;
  * driven scales the ground arrival window. Writes F_LX / F_LZ (point), F_LT (runner time, s), F_LV (ground v0 or
- * lofted angle). Returns 1, or 0 when no sample is feasible.
+ * lofted tan(angle)). Returns 1, or 0 when no sample is feasible.
  */
 function leadSearch(s: SimState, slot: number, r: number, power: number, mode: number, driven: boolean): number {
   const p = s.players[slot]!;
@@ -298,8 +354,6 @@ function leadSearch(s: SimState, slot: number, r: number, power: number, mode: n
   const vmaxG = LT.groundSpeedMax * amul;
   const top = maxSpeed(s, r, true);
   const acc = s.attrs[r]!.accel > 0 ? s.attrs[r]!.accel : T_PLAYER.accelMin;
-  const thMin = mode === 2 ? LT.dinkedAngleMin : LT.lobbedAngleMin;
-  const thMax = mode === 2 ? LT.dinkedAngleMax : LT.lobbedAngleMax;
   const step = (LT.leadMax - LT.leadMin) / (N - 1);
   const ground = mode === 0;
   let n = 0;
@@ -319,15 +373,23 @@ function leadSearch(s: SimState, slot: number, r: number, power: number, mode: n
     let st = ST_LATE;
     SV[i] = 0;
     SLATE[i] = Infinity;
+    F[F_CD] = D; F[F_CT] = tr;
     if (D >= LT.minBallDist && tr >= LT.minRunnerTime) {
       if (ground) {
-        const v0 = timedGroundSpeed(D, tr);
-        const va = F[F_VY]!;
+        timedGroundSpeed();
+        const v0 = F[F_V0]!;
+        const va = F[F_VA]!;
         SV[i] = v0;
         if (v0 > vmaxG) {
           st = ST_LATE;
-          const tb = groundRollTime(vmaxG, D);
-          if (tb >= 0) SLATE[i] = tb - tr;
+          // Lateness of a full-speed ball: its shortfall at tr over its speed then (closed form).
+          F[F_V0] = vmaxG;
+          rolledDist();
+          const short = D - F[F_CX]!;
+          F[F_EX] = ROLL_C * tr;
+          expNegInPlace();
+          const vt = ROLL_C > 0 ? (vmaxG + ROLL_K) * F[F_EX]! - ROLL_K : vmaxG - ROLL_A * tr;
+          if (vt > 0.5) SLATE[i] = short / vt;
         }
         else if (va < amin || v0 < LT.groundSpeedMin) st = ST_EARLY;
         else {
@@ -341,26 +403,36 @@ function leadSearch(s: SimState, slot: number, r: number, power: number, mode: n
           st = rvx * rvx + rvz * rvz > relMax * relMax ? ST_FIRM : ST_IDEAL;
         }
       } else {
+        // Drag-free flight time T = sqrt(2 D tan(th) / g): the angle for T = tf is tan(th) = g tf^2 / (2 D). Compared
+        // and stored as tangents (no trig per sample); speed^2 = g D / sin(2 th) = g D (1 + t^2) / (2 t).
         const tf = tr - LT.loftLandEarly;
         if (tf >= LT.minFlight) {
-          const th = datan(G * tf * tf / (2 * D));
-          if (th < thMin) {
-            SV[i] = thMin;
-            SLATE[i] = Math.sqrt(2 * D * TAN_MIN[mode]! / G) - tf;
+          const t = G * tf * tf / (2 * D);
+          const tMin = TAN_MIN[mode]!, tMax = TAN_MAX[mode]!;
+          if (t < tMin) {
+            SV[i] = tMin;
+            SLATE[i] = Math.sqrt(2 * D * tMin / G) - tf;
           } else {
-            const thc = th > thMax ? thMax : th;
-            const s2 = dsin(2 * thc);
-            const v = s2 > 1e-6 ? Math.sqrt(G * D / s2) : 1e9;
-            SV[i] = thc;
-            st = v > LT.loftSpeedMax ? ST_LATE : th > thMax ? ST_EARLY : ST_IDEAL;
+            const tc = t > tMax ? tMax : t;
+            const v2 = G * D * (1 + tc * tc) / (2 * tc);
+            SV[i] = tc;
+            st = v2 > LT.loftSpeedMax * LT.loftSpeedMax ? ST_LATE : t > tMax ? ST_EARLY : ST_IDEAL;
           }
         }
       }
     }
     SST[i] = st;
     let v0 = 0;
-    if (ground) { v0 = st === ST_LATE ? vmaxG : SV[i]!; if (st === ST_EARLY) v0 = groundPassSpeed(D, amin); }
-    SDG[i] = (st !== ST_LATE || SLATE[i]! <= LT.maxLateSec) && contested(s, team, px, pz, tr, v0, b.x, b.z, D) ? 1 : 0;
+    if (ground) {
+      v0 = st === ST_LATE ? vmaxG : SV[i]!;
+      // An early ball is launched to arrive at amin (no-damping estimate: a little slow, so the check errs safe).
+      if (st === ST_EARLY) v0 = Math.sqrt(amin * amin + 2 * ROLL_A * D);
+    }
+    SDG[i] = 1;
+    if (st !== ST_LATE || SLATE[i]! <= LT.maxLateSec) {
+      F[F_CPX] = px; F[F_CPZ] = pz; F[F_CT] = tr; F[F_V0] = v0; F[F_CBX] = b.x; F[F_CBZ] = b.z; F[F_CD] = D;
+      SDG[i] = contested(s, team) ? 1 : 0;
+    }
   }
   // Power picks within the ideal samples; danger moves the pick.
   let lo = -1, hi = -1;
@@ -547,8 +619,10 @@ function solveThroughImpl(s: SimState, slot: number, out: KickLaunch): number {
   if (mode === 0) {
     let v: number;
     if (timed) {
-      v = timedGroundSpeed(D, tr);
-      if (F[F_VY]! < LT.arriveMin * amul) v = groundPassSpeed(D, LT.arriveMin * amul);
+      F[F_CD] = D; F[F_CT] = tr;
+      timedGroundSpeed();
+      v = F[F_V0]!;
+      if (F[F_VA]! < LT.arriveMin * amul) v = groundPassSpeed(D, LT.arriveMin * amul);
     } else {
       v = groundPassSpeed(D, LT.spaceArrive * amul);
     }

@@ -155,6 +155,8 @@ export const THIGH = BODY.thigh;
 export const SHIN = BODY.shin;
 /** Longest hip -> ankle distance IK uses (a hair under a straight leg so the knee direction stays defined). */
 export const LEG_MAX = (BODY.thigh + BODY.shin) * 0.9995;
+/** Fraction of LEG_MAX beyond which legIK softens the reach (no knee snap at full extension). */
+export const SOFT_FROM = 0.97;
 
 /**
  * IK diagnostics of the last legIK call: [0] reach ratio (hip-ankle distance / straight leg, before clamping),
@@ -194,11 +196,15 @@ export function legIK(out: Pose, side: number, ax: number, ay: number, az: numbe
   z -= left ? -BODY.hipZ : BODY.hipZ;
   let L = Math.sqrt(x * x + y * y + z * z);
   IK_INFO[0] = L / (THIGH + SHIN);
-  IK_INFO[1] = 0;
+  IK_INFO[1] = L > LEG_MAX ? 1 : 0;
+  // Soft IK: past SOFT_FROM of the leg length the reach saturates smoothly toward LEG_MAX, so a leg reaching its
+  // full length never snaps the knee straight (the foot falls a few mm short instead).
   const lMin = 0.12;
-  if (L > LEG_MAX || L < lMin) {
-    IK_INFO[1] = L > LEG_MAX ? 1 : 0;
-    const want = L > LEG_MAX ? LEG_MAX : lMin;
+  const l0 = LEG_MAX * SOFT_FROM;
+  let want = L;
+  if (L > l0) want = l0 + (LEG_MAX - l0) * (1 - Math.exp(-(L - l0) / (LEG_MAX - l0)));
+  else if (L < lMin) want = lMin;
+  if (want !== L) {
     if (L < 1e-6) { x = 0; y = -want; z = 0; } else { const k = want / L; x *= k; y *= k; z *= k; }
     L = want;
   }
@@ -206,8 +212,10 @@ export function legIK(out: Pose, side: number, ax: number, ay: number, az: numbe
   const knee = Math.acos(ck < -1 ? -1 : ck > 1 ? 1 : ck);
   const vx = -SHIN * Math.sin(knee);
   const vy = -(THIGH + SHIN * Math.cos(knee));
+  // A folded knee (ankle level with the hip in the leg plane) makes the roll ill-conditioned: cap it there.
   let sr = z / vy;
-  sr = sr < -1 ? -1 : sr > 1 ? 1 : sr;
+  const srMax = clamp((-vy - 0.05) / 0.3, 0.12, 1);
+  sr = sr < -srMax ? -srMax : sr > srMax ? srMax : sr;
   const rD = Math.asin(sr);
   const hp = wrapPi(Math.atan2(y, x) - Math.atan2(vy * Math.cos(rD), vx));
   // Joint limits win over the target (an extreme target leaves the foot a little short instead of a broken hip).
@@ -475,7 +483,7 @@ const KEY_OUT = new Float64Array(KEY_SIZE);
  * foot pitch). Allocation-free.
  */
 export function evalClip(clip: Clip, t: number, out: Pose): void {
-  let u = t < 0 ? 0 : t > 1 ? 1 : t;
+  let u = t < 0 ? 0 : t > 1 ? 1 : t === t ? t : 0;
   if (clip.repeat > 1) {
     u *= clip.repeat;
     u = u >= clip.repeat ? 1 : wrap01(u);

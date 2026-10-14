@@ -4,7 +4,7 @@
  * cross landing on its zone; determinism.
  */
 import { describe, expect, it } from 'vitest';
-import { ActionKind, ControllerKind, KickKind, MatchPhase } from '../../src/contracts/enums';
+import { ActionKind, AutoSwitch, ControllerKind, KickKind, MatchPhase } from '../../src/contracts/enums';
 import { EventType, type SimEvent } from '../../src/contracts/events';
 import { Btn, type InputFrame } from '../../src/contracts/input';
 import type { SimState } from '../../src/contracts/state';
@@ -13,9 +13,14 @@ import { crossTarget } from '../../src/sim/kicks/lob';
 import { findEvents, makeScenario, runTicks } from '../harness/scenario';
 import { giveBall, KICKER, MATE_A, OPP_A, place, skill } from '../unit/sim-09-helpers';
 
-/** IN_PLAY, offside off, no CPU brains; P1 on the kicker at (kx, kz) with the ball; everybody else far away. */
+/**
+ * IN_PLAY, offside off, no CPU brains; P1 on the kicker at (kx, kz) with the ball (auto switching off, so the receiver
+ * stays job-driven: TAI-14 RECEIVE); everybody else far away.
+ */
 function live(kx: number, kz: number, fx: number, fz: number, seed = 3): SimState {
-  const s = makeScenario({ phase: MatchPhase.IN_PLAY, seed, config: { offside: 0 }, humans: [{ side: 0, slot: KICKER }] });
+  const s = makeScenario({
+    phase: MatchPhase.IN_PLAY, seed, config: { offside: 0 }, humans: [{ side: 0, slot: KICKER, autoSwitch: AutoSwitch.OFF }],
+  });
   for (let t = 0; t < 2; t++) { const c = s.ctrl[2 + t]!; c.kind = ControllerKind.NONE; c.slot = -1; s.teams[t]!.cpu.active = 0; }
   for (let i = 0; i < 22; i++) {
     if (i === 0 || i === 11 || i === KICKER) continue;

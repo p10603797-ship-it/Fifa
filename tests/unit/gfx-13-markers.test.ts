@@ -13,7 +13,7 @@ import { createBallState, createMatchConfig, type BallState, type SimState } fro
 import { touchZones, type TouchZones } from '../../src/render/camera/broadcast';
 import { fillInterp } from '../../src/render/index';
 import {
-  GLYPH_1, GLYPH_2, HUMAN_COLOURS, HUMAN_SHAPES, MARKER_TUNING, MARKER_Y, MarkerShape, QuadBatch, aidsActive,
+  GLYPH_1, GLYPH_2, HUMAN_COLOURS, SHAPE_ARROW, SHAPE_BADGE, HUMAN_SHAPES, MARKER_TUNING, MARKER_Y, MarkerShape, QuadBatch, aidsActive,
   createAidPlan, createEdgeArrow, createLandingTracker, createMarkers, edgeArrow, landingRadius, liftArrowAboveZones,
   markerUnit, metresPerPx, planAids, updateLanding,
 } from '../../src/render/markers';
@@ -580,16 +580,26 @@ describe('GFX-13 markers module (headless)', () => {
     expect(mod.arrow.x).toBeCloseTo(W - MARKER_TUNING.arrowInset, 6);
     const n = mod.overlay.geometry.drawRange.count / 6;
     expect(n).toBeGreaterThan(o0);
-    // The arrow's (unshadowed) quads project around the arrow centre, within ~arrowPx.
+    // An ink badge, then the white arrow inside it; both project around the arrow centre, within ~arrowPx.
+    const badgeQuads = SHAPE_BADGE.length / 8, arrowQuads = SHAPE_ARROW.length / 8;
+    expect(n - o0).toBe(badgeQuads + arrowQuads);
     const pos = mod.overlay.geometry.attributes.position!.array as Float32Array;
-    const arrowQuads = (n - o0) / 2;
-    let maxD = 0;
-    for (let v = (o0 + arrowQuads) * 4; v < n * 4; v++) {
-      const p = toScreen(ctx.camera, pos[v * 3]!, pos[v * 3 + 1]!, pos[v * 3 + 2]!);
-      maxD = Math.max(maxD, Math.hypot(p.x - mod.arrow.x, p.y - mod.arrow.y));
-    }
-    expect(maxD).toBeGreaterThan(MARKER_TUNING.arrowPx * 0.4);
-    expect(maxD).toBeLessThan(MARKER_TUNING.arrowPx * 0.9);
+    const col = mod.overlay.geometry.attributes.color!.array as Uint8Array;
+    const spread = (q0: number, q1: number): number => {
+      let maxD = 0;
+      for (let v = q0 * 4; v < q1 * 4; v++) {
+        const p = toScreen(ctx.camera, pos[v * 3]!, pos[v * 3 + 1]!, pos[v * 3 + 2]!);
+        maxD = Math.max(maxD, Math.hypot(p.x - mod.arrow.x, p.y - mod.arrow.y));
+      }
+      return maxD;
+    };
+    const arrowD = spread(o0 + badgeQuads, n);
+    expect(arrowD).toBeGreaterThan(MARKER_TUNING.arrowPx * 0.4);
+    expect(arrowD).toBeLessThan(MARKER_TUNING.arrowPx * 0.9);
+    // The badge surrounds the arrow (its rim lies outside every arrow corner) and is dark; the arrow is white.
+    expect(spread(o0, o0 + badgeQuads)).toBeGreaterThan(arrowD);
+    expect(col[o0 * 16]! + col[o0 * 16 + 1]! + col[o0 * 16 + 2]!).toBeLessThan(30);
+    expect(col[(o0 + badgeQuads) * 16]).toBe(255);
     // Back on screen: no arrow.
     s.ball.x = 0;
     mod.update(frame(s));

@@ -31,7 +31,8 @@
  * SKY: a gradient dome (unlit shader) that follows the camera, drawn after the opaque scene without writing depth.
  *
  * LIGHTING: exactly one directional light (sun / floodlight key) and one ambient light. DAY_LOOK / NIGHT_LOOK
- * (config.night) set their colours and intensities, the sky gradient, the lamp glow and the board brightness.
+ * (config.night) set their colours and intensities, the sky gradient, the lamp glow, the board brightness and the
+ * stand light (at night the bowl is darker than the floodlit pitch: the stand material colour scales it).
  * crowdLightOf(look) gives the matching light for unlit materials (the crowd). QUALITY tier only: the key light
  * casts one shadow map (getTierParams(tier).shadowMap / shadowMapSize, GFX-02); other tiers have none.
  *
@@ -73,14 +74,19 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-05, render only)
   backWallMain: 3.0,
   backWallNear: 1.1,
   backCap: 0.6,
-  /** Near profile: rows and riser (one low tier under the broadcast camera). */
+  /**
+   * Near profile: walkway, rows and riser (one low tier under the broadcast camera). The rake (riser / rowDepth) stays
+   * below the flattest sightline from the lowest broadcast camera to the near touchline, so neither the stand nor a
+   * cheering crowd ever hides the pitch.
+   */
+  nearWalkway: 2.4,
   nearRows: 12,
-  nearRiser: 0.48,
+  nearRiser: 0.3,
   // ---- roof (main profile only)
   /** Roof front depth measured back from the upper tier's front wall (negative = overhangs the balcony). */
   roofFrontOverhang: 2.8,
-  /** Roof underside above the back wall top at the back, and extra rise toward the front. */
-  roofClearance: 0.5,
+  /** Roof underside above the back wall top at the back (0: the roof rests on the wall), and rise toward the front. */
+  roofClearance: 0,
   roofRise: 1.5,
   roofThickness: 1.2,
   /** Roof depth past the back wall cap. */
@@ -144,15 +150,20 @@ export interface StadiumLook {
   haloStrength: number;
   /** LED board brightness multiplier (unlit). */
   boardBrightness: number;
+  /**
+   * Light reaching the stands and the crowd relative to the pitch (multiplier). 1 by day; at night the floodlights are
+   * aimed at the pitch, so the bowl around it is darker and the pitch reads as the bright stage.
+   */
+  standLight: number;
 }
 
 export const DAY_LOOK: StadiumLook = {
   sky: 0x8fb8d8, ground: 0x2f5a2a, sunColour: 0xfff4e0, sunIntensity: 2.6, ambientColour: 0xdfe8ff, ambientIntensity: 1.25,
-  skyTop: 0x3f7fc4, skyHorizon: 0xc4dcef, skyBottom: 0x9db5a0, lampColour: 0x9ca3ad, haloStrength: 0, boardBrightness: 1,
+  skyTop: 0x3f7fc4, skyHorizon: 0xc4dcef, skyBottom: 0x9db5a0, lampColour: 0x9ca3ad, haloStrength: 0, boardBrightness: 1, standLight: 1,
 };
 export const NIGHT_LOOK: StadiumLook = {
   sky: 0x0b1020, ground: 0x1d3a1c, sunColour: 0xf2f6ff, sunIntensity: 2.4, ambientColour: 0x9aa8d0, ambientIntensity: 1.0,
-  skyTop: 0x03050c, skyHorizon: 0x1c2640, skyBottom: 0x0c1218, lampColour: 0xfffbea, haloStrength: 0.55, boardBrightness: 0.9,
+  skyTop: 0x03050c, skyHorizon: 0x1c2640, skyBottom: 0x0c1218, lampColour: 0xfffbea, haloStrength: 0.55, boardBrightness: 0.9, standLight: 0.55,
 };
 
 /** The look for a match (config.night). */
@@ -165,13 +176,14 @@ const CROWD_KEY_SHARE = 0.55;
 const tmpLightColour = new Color();
 
 /**
- * Light for unlit materials that must match the Lambert scene (the crowd): (sun * CROWD_KEY_SHARE + ambient) / pi in
- * linear RGB, the same Lambert sum three.js applies to an upright surface. Writes `out`; no allocation.
+ * Light for unlit materials in the stands that must match the Lambert stands (the crowd):
+ * (sun * CROWD_KEY_SHARE + ambient) / pi * standLight in linear RGB, the Lambert sum three.js applies to an upright
+ * surface, times the look's stand light. Writes `out`; no allocation.
  */
 export function crowdLightOf(look: StadiumLook, out: Color): Color {
   out.setHex(look.ambientColour).multiplyScalar(look.ambientIntensity);
   tmpLightColour.setHex(look.sunColour).multiplyScalar(look.sunIntensity * CROWD_KEY_SHARE);
-  out.add(tmpLightColour).multiplyScalar(1 / Math.PI);
+  out.add(tmpLightColour).multiplyScalar(look.standLight / Math.PI);
   return out;
 }
 
@@ -208,7 +220,7 @@ export const STAND_COLOURS = {
   backWall: 0x4a525e,
   cap: 0x8a919b,
   roofTop: 0xc5cbd3,
-  roofUnder: 0x2a2f37,
+  roofUnder: 0x353b45,
   roofBack: 0x5d6570,
   tower: 0x6b7280,
   head: 0x3b414a,
@@ -234,7 +246,7 @@ export function standProfile(kind: number): StandProfile {
     }
   };
   to(0, T.frontWallHeight, C.frontWall);
-  to(T.walkway, h, C.walkway);
+  to(kind === PROFILE_MAIN ? T.walkway : T.nearWalkway, h, C.walkway);
   let upperFront = 0;
   if (kind === PROFILE_MAIN) {
     tier(T.lowerRows, T.lowerRiser, 0, 0);
@@ -654,7 +666,6 @@ const BOARD_STYLE: readonly (readonly [string, string, string])[] = [
 /** LED strip texture size (px): panels side by side in the top STRIP_H rows; the rest is the dark board body. */
 export const BOARD_TEX_W = 4096;
 export const BOARD_TEX_H = 128;
-const PANEL_W = BOARD_TEX_W / BOARD_BRANDS.length;
 const STRIP_H = 80;
 /** v range of the LED strip and v of the dark body (flipY: canvas row 0 is v = 1). */
 export const BOARD_STRIP_V0 = 1 - STRIP_H / BOARD_TEX_H;
@@ -1045,7 +1056,6 @@ export function createStadium(ctx: RenderContext): StadiumModule {
 
   let look: StadiumLook = DAY_LOOK;
   let night = false;
-  let time = 0;
   let viewName = '';
   let shadowSize = 0;
   const viewTarget = new Vector3();
@@ -1067,6 +1077,7 @@ export function createStadium(ctx: RenderContext): StadiumModule {
     haloUniforms.uStrength.value = l.haloStrength;
     halos.visible = l.haloStrength > 0;
     boardMat.color.setScalar(l.boardBrightness);
+    standMat.color.setScalar(l.standLight);
   }
 
   function applyTier(tier: QualityTier): void {
@@ -1146,7 +1157,6 @@ export function createStadium(ctx: RenderContext): StadiumModule {
       night = state.config.night === 1;
       apply(lookFor(night));
       applyTier(ctx.tier);
-      time = 0;
       boardTex.offset.x = 0;
       root.visible = true;
     },
@@ -1155,7 +1165,6 @@ export function createStadium(ctx: RenderContext): StadiumModule {
       let dt = f.frame.paused ? 0 : f.frame.dtMs / 1000;
       if (!(dt > 0)) dt = 0;
       if (dt > 0.1) dt = 0.1;
-      time += dt;
       if (!ctx.reducedMotion && dt > 0) {
         let o = boardTex.offset.x + (dt * T.boardScroll) / BOARD_STRIP_LENGTH;
         if (o >= 1) o -= Math.floor(o);

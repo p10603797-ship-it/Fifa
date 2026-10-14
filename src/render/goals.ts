@@ -35,7 +35,9 @@
  *
  * DEBUG: window.__dotkickGoals (GoalsDebug): closeUp(end) overrides ctx.camera's pose and FOV after the cameras ran
  * (goal close-up for e2e screenshots), snapshot() reports ripples, sway, detail and draw-call counts.
- * No allocation in update() / onEvents().
+ * No allocation in update() or in hot onEvents() code (V8 sampling heap profiler: tests/unit/gfx-04-alloc-probe.ts);
+ * doubles cross calls only through typed-array registers. Rare paths (a net entry, a POST) allocate a few hundred bytes
+ * while V8 still interprets them.
  */
 
 import {

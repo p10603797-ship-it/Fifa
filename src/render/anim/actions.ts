@@ -60,7 +60,7 @@ const PASS = createClip([
     t: 0.8, pose: { ROOT_Y: -0.05, SPINE_PITCH: 0.1, ROOT_ROLL: -0.03, SHOULDER_L_ROLL: 0.3, SHOULDER_R_ROLL: 0.15, SHOULDER_R_PITCH: 0.1 },
     ikR: [0.16, 0.16, 0.13, 0.05],
   },
-  { t: 1, pose: NEUTRAL, ikL: [0.03, AY, -0.13, 0], ikR: [0.04, AY, 0.13, 0] },
+  { t: 1, pose: NEUTRAL, ikL: [0.06, AY, -0.2, 0], ikR: [0.06, AY, 0.06, 0] },
 ], { contact: 0.42 });
 
 const SHOT = createClip([
@@ -86,7 +86,7 @@ const SHOT = createClip([
     t: 0.8, pose: { ROOT_Y: -0.05, SPINE_PITCH: 0.1, SPINE_YAW: -0.05, ROOT_ROLL: -0.03, SHOULDER_L_ROLL: 0.4, SHOULDER_R_PITCH: 0.1 },
     ikR: [0.15, 0.18, 0.14, -0.1],
   },
-  { t: 1, pose: NEUTRAL, ikL: [0.03, AY, -0.13, 0], ikR: [0.05, AY, 0.13, 0] },
+  { t: 1, pose: NEUTRAL, ikL: [0.08, AY, -0.22, 0], ikR: [0.1, AY, 0.04, 0] },
 ], { contact: 0.42 });
 
 const POWER_SHOT = createClip([
@@ -112,7 +112,7 @@ const POWER_SHOT = createClip([
     t: 0.88, pose: { ROOT_Y: -0.08, SPINE_PITCH: 0.12, SPINE_YAW: -0.08, ROOT_ROLL: -0.04, SHOULDER_L_ROLL: 0.5, SHOULDER_R_PITCH: 0.15 },
     ikR: [0.2, 0.15, 0.15, -0.05],
   },
-  { t: 1, pose: NEUTRAL, ikL: [0.03, AY, -0.13, 0], ikR: [0.08, AY, 0.13, 0] },
+  { t: 1, pose: NEUTRAL, ikL: [0.1, AY, -0.23, 0], ikR: [0.14, AY, 0.03, 0] },
 ], { contact: 0.58 });
 
 /** Finesse: open body (hips and shoulders turned), inside of the foot swings from outside-back across the ball. */
@@ -139,7 +139,7 @@ const FINESSE = createClip([
     t: 0.8, pose: { ROOT_Y: -0.05, SPINE_PITCH: 0.08, ROOT_YAW: 0.12, SPINE_YAW: 0, ROOT_ROLL: -0.02, SHOULDER_L_ROLL: 0.4, SHOULDER_R_PITCH: 0.1 },
     ikR: [0.14, 0.16, 0.06, 0.05],
   },
-  { t: 1, pose: NEUTRAL, ikL: [0.03, AY, -0.13, 0], ikR: [0.04, AY, 0.13, 0] },
+  { t: 1, pose: NEUTRAL, ikL: [0.06, AY, -0.21, 0], ikR: [0.08, AY, 0.04, 0] },
 ], { contact: 0.42 });
 
 /** Volley: side-on, body leaning away, the leg swings up and across to meet the ball about knee-hip height. */
@@ -163,7 +163,7 @@ const VOLLEY = createClip([
     ikR: [0.12, 0.58, 0.03, -0.2],
   },
   { t: 0.82, pose: { ROOT_Y: -0.06, ROOT_ROLL: -0.1, SPINE_YAW: 0.1, SHOULDER_L_ROLL: 0.4, SHOULDER_R_ROLL: 0.3 }, ikR: [0.08, 0.16, 0.14, 0] },
-  { t: 1, pose: NEUTRAL, ikL: [0.02, AY, -0.14, 0], ikR: [0.04, AY, 0.13, 0] },
+  { t: 1, pose: NEUTRAL, ikL: [0.02, AY, -0.26, 0], ikR: [0.04, AY, 0.0, 0] },
 ], { contact: 0.45 });
 
 /** First touch: the receiving foot meets the ball and withdraws to cushion it; soft knees, eyes on the ball. */
@@ -270,7 +270,7 @@ const GK_KICK = createClip([
   { t: 0.5, pose: { ROOT_Y: -0.1, SPINE_PITCH: -0.1, ROOT_ROLL: -0.12, HEAD_PITCH: 0.15 }, ikR: [0.42, 0.3, 0.08, -0.6] },
   { t: 0.66, pose: { ROOT_Y: -0.04, SPINE_PITCH: -0.15, ROOT_ROLL: -0.08, HEAD_PITCH: 0, SHOULDER_L_ROLL: 1.1 }, ikR: [0.33, 0.66, 0.04, -0.4] },
   { t: 0.85, pose: { ROOT_Y: -0.06, SPINE_PITCH: 0.08, ROOT_ROLL: -0.02, SHOULDER_L_ROLL: 0.4, SHOULDER_R_ROLL: 0.3 }, ikR: [0.14, 0.15, 0.13, 0] },
-  { t: 1, pose: NEUTRAL, ikL: [0.12, AY, -0.13, 0], ikR: [0.08, AY, 0.13, 0] },
+  { t: 1, pose: NEUTRAL, ikL: [0.2, AY, -0.16, 0], ikR: [0.16, AY, 0.06, 0] },
 ], { contact: 0.5 });
 
 // ============================================================ table

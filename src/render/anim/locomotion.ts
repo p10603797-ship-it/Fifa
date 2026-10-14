@@ -106,7 +106,7 @@ interface GaitStyle {
 }
 
 const RUN: GaitStyle = {
-  shuffle: 0, baseRest: 0.115, baseMove: 0.085, crouchRest: -0.015, crouchRun: -0.09, swingH: 0.3, heelLift: 0.8, ballLift: 0,
+  shuffle: 0, baseRest: 0.115, baseMove: 0.085, crouchRest: -0.015, crouchRun: -0.09, swingH: 0.3, heelLift: 0.9, ballLift: 0,
   centreRest: 0.15, centreMove: 0.05,
 };
 const STRAFE_STYLE: GaitStyle = {
@@ -128,16 +128,16 @@ const KEEPER_STYLE: GaitStyle = {
 
 /** Gait values of the current call (gaitParams): duty, stride, travel, base, pelvis drop, swing height, heel lift,
  *  left-foot phase offset, stance centre, ball-of-foot lift. */
-const G = new Float64Array(10);
+const G = new Float64Array(11);
 const G_DUTY = 0, G_STRIDE = 1, G_TRAVEL = 2, G_BASE = 3, G_DROP = 4, G_SWING = 5, G_HEEL = 6, G_OFFSET = 7, G_CENTRE = 8;
-const G_BALL = 9;
+const G_BALL = 9, G_TANGENT = 10;
 
 /** Run duty factor (fraction of the cycle a foot is planted) at speed. */
 export function runDuty(speed: number): number {
   const v = speed > 0 ? speed : 0;
   if (v <= 1.6) return 0.56;
   if (v <= 4) return lerp(0.56, 0.34, (v - 1.6) / 2.4);
-  return Math.max(0.28, 0.34 - 0.012 * (v - 4));
+  return Math.max(0.27, 0.34 - 0.012 * (v - 4));
 }
 
 function gaitParams(st: GaitStyle, speed: number, forward: number, sideways: number, sprintStyle: number): void {
@@ -153,7 +153,8 @@ function gaitParams(st: GaitStyle, speed: number, forward: number, sideways: num
     G[G_DUTY] = runDuty(v);
     G[G_STRIDE] = strideLength(v);
     G[G_OFFSET] = 0.5;
-    G[G_DROP] = st.crouchRest + (st.crouchRun - st.crouchRest) * smoothRange(0.3, 3, v) - 0.02 * smoothRange(6, 9.5, v);
+    G[G_DROP] = st.crouchRest + (st.crouchRun - st.crouchRest) * smoothRange(0, 1.2, v) - 0.04 * smoothRange(4, 8, v)
+      - 0.03 * smoothRange(6.5, 10, v);
     const h = v < 1.6 ? 0.1 * (v / 1.6) : lerp(0.1, st.swingH, smoothRange(1.6, 5, v)) + 0.012 * Math.max(0, v - 5);
     G[G_SWING] = h * (1 + 0.15 * sprintStyle) * move;
   }
@@ -163,8 +164,14 @@ function gaitParams(st: GaitStyle, speed: number, forward: number, sideways: num
   G[G_HEEL] = st.heelLift * smoothRange(0.2, 1.2, v);
   // A crouched pelvis puts the feet further forward so the shins stay near vertical (ankles in range).
   const deep = -G[G_DROP]! - 0.06;
-  G[G_CENTRE] = lerp(st.centreRest, st.centreMove, smoothRange(0.5, 3, v)) + (deep > 0 ? deep * 1.1 : 0);
+  // Walking steps sit under the hips; running ones land a little further ahead (centreMove).
+  const centre = st.shuffle === 1
+    ? lerp(st.centreRest, st.centreMove, smoothRange(0.5, 3, v))
+    : lerp(st.centreRest, 0, smoothRange(0.3, 1.5, v)) + st.centreMove * smoothRange(2, 4.5, v);
+  G[G_CENTRE] = centre + (deep > 0 ? deep * 1.1 : 0);
   G[G_BALL] = st.ballLift;
+  // Swing end tangents (fraction of the stance velocity): a smaller pull-back at speed keeps the feet in reach.
+  G[G_TANGENT] = lerp(0.55, 0.25, smoothRange(4, 8, v));
   // The heel rolls up only when stepping forward (a backward or side step leaves the foot flat / on its ball).
   if (forward < 1) G[G_HEEL] = G[G_HEEL]! * (forward > 0 ? forward : 0);
   if (G[G_HEEL]! < st.ballLift) G[G_HEEL] = st.ballLift;
@@ -193,7 +200,7 @@ function footAt(u: number): void {
   // Hermite from the toe-off point (-travel/2) to the touchdown point (+travel/2). End tangents follow the stance
   // velocity (scaled) so the foot leaves and arrives nearly still in the world.
   const p0 = -0.5 * travel, p1 = 0.5 * travel;
-  const m = -travel * ((1 - duty) / duty) * 0.55;
+  const m = -travel * ((1 - duty) / duty) * G[G_TANGENT]!;
   const s2 = s * s, s3 = s2 * s;
   F[0] = (2 * s3 - 3 * s2 + 1) * p0 + (s3 - 2 * s2 + s) * m + (-2 * s3 + 3 * s2) * p1 + (s3 - s2) * m;
   const sn = Math.sin(Math.PI * s);
@@ -231,6 +238,28 @@ function gaitLegs(out: Pose, cycle: number, dirX: number, dirZ: number, bob: num
   }
 }
 
+/** Finite number or a default (pose functions accept garbage input and still write a valid pose). */
+function fin(x: number, d: number): number {
+  return x === x && x < 1e6 && x > -1e6 ? x : d;
+}
+
+/**
+ * Stance progress (0 = touchdown .. 1 = toe-off) of leg `side` (-1 left / +1 right) for a locomotion clip at the
+ * given cycle, speed (m/s) and movement direction (fraction of a turn; 0 for JOG / SPRINT), or -1 while that foot is
+ * swinging. For tests and effects (footsteps); mirrors the gait the pose functions use.
+ */
+export function footPhase(anim: AnimId, cycle: number, speed: number, dir: number, side: number): number {
+  const st = anim === AnimId.STRAFE ? STRAFE_STYLE : anim === AnimId.JOCKEY ? JOCKEY_STYLE : anim === AnimId.SHIELD ? SHIELD_STYLE
+    : anim === AnimId.KEEPER_READY ? KEEPER_STYLE : RUN;
+  const a = TAU * fin(dir, 0);
+  if (st === RUN) gaitParams(RUN, fin(speed, 0), 1, 0, 0);
+  else gaitParams(st, fin(speed, 0), Math.cos(a), Math.sin(a), 0);
+  const u = wrap01(fin(cycle, 0) / TAU);
+  const lu = side > 0 ? u : wrap01(u - G[G_OFFSET]!);
+  const duty = G[G_DUTY]!;
+  return lu < duty ? lu / duty : -1;
+}
+
 // ============================================================ upper body helpers
 
 /** Arm swing: right arm forward when the left leg is forward (cycle PI). */
@@ -260,6 +289,7 @@ export const neutralPose: PoseFn = (out: Pose) => {
 /** Idle: feet planted shoulder-width, soft knees, breathing sway (t = breathing phase 0..1). */
 export const idlePose: PoseFn = (out, t) => {
   out.fill(0);
+  t = fin(t, 0);
   const b = Math.sin(TAU * t);
   out[P.ROOT_Y] = -0.02 + 0.004 * b;
   out[P.ROOT_SIDE] = LOCAL_TUNING.breathSway * Math.sin(TAU * t);
@@ -280,7 +310,8 @@ export const idlePose: PoseFn = (out, t) => {
 /** Run gait + upper body. sprint 0..1 blends the jog / sprint upper body and knee lift. */
 function runPose(out: Pose, cycle: number, speed: number, sprint: number): void {
   clearUpper(out);
-  const v = speed > 0 ? speed : 0;
+  cycle = fin(cycle, 0);
+  const v = fin(speed, 0) > 0 ? fin(speed, 0) : 0;
   gaitParams(RUN, v, 1, 0, sprint);
   gaitLegs(out, cycle, 1, 0, 0.05 * smoothRange(2, 5, v));
   const run = smoothRange(1.5, 4, v);
@@ -290,7 +321,8 @@ function runPose(out: Pose, cycle: number, speed: number, sprint: number): void 
   const lean = 0.04 + 0.1 * run + 0.012 * v + 0.1 * sprint * smoothRange(4, 8, v);
   out[P.SPINE_PITCH] = lean;
   out[P.HEAD_PITCH] = -lean * 0.75;
-  const amp = (0.25 + 0.45 * run + 0.03 * v) * (1 + 0.3 * sprint) * smoothRange(0.1, 1.2, v);
+  let amp = (0.25 + 0.45 * run + 0.03 * v) * (1 + 0.3 * sprint) * smoothRange(0.1, 1.2, v);
+  if (amp > 1.1) amp = 1.1;
   const elbow = lerp(0.25, 1.35 + 0.15 * sprint, run);
   arms(out, cycle, amp, elbow, 0.25 * run, 0.1 + 0.04 * run, -0.05 * run);
 }
@@ -312,11 +344,12 @@ export function applyTurnLean(out: Pose, lean: number): void {
 
 export const turnLeanPose: PoseFn = (out, _t, cycle, speed, side, foot) => {
   runPose(out, cycle, speed, foot === 1 ? 1 : 0);
-  applyTurnLean(out, turnLeanAngle(speed, side));
+  applyTurnLean(out, turnLeanAngle(fin(speed, 0), fin(side, 0)));
 };
 
 /** Directional shuffle legs: t = motion direction (fraction of a turn). Returns nothing; reads/writes `out`. */
 function shuffleLegs(out: Pose, st: GaitStyle, t: number, cycle: number, speed: number): void {
+  t = fin(t, 0); cycle = fin(cycle, 0); speed = fin(speed, 0);
   const a = TAU * t;
   const dx = Math.cos(a), dz = Math.sin(a);
   gaitParams(st, speed, dx, dz, 0);
@@ -334,6 +367,7 @@ function leanInto(out: Pose, t: number, speed: number, k: number): void {
 /** Strafe: sideways / backward steps, upright jog posture, arms swinging lightly. */
 export const strafePose: PoseFn = (out, t, cycle, speed) => {
   clearUpper(out);
+  t = fin(t, 0); cycle = fin(cycle, 0); speed = fin(speed, 0);
   shuffleLegs(out, STRAFE_STYLE, t, cycle, speed);
   out[P.SPINE_PITCH] = 0.08;
   out[P.HEAD_PITCH] = -0.06;
@@ -345,6 +379,7 @@ export const strafePose: PoseFn = (out, t, cycle, speed) => {
 /** Jockey: low, side-on crouch, arms out low for balance, quick small steps (any direction). */
 export const jockeyPose: PoseFn = (out, t, cycle, speed) => {
   clearUpper(out);
+  t = fin(t, 0); cycle = fin(cycle, 0); speed = fin(speed, 0);
   shuffleLegs(out, JOCKEY_STYLE, t, cycle, speed);
   out[P.SPINE_PITCH] = 0.32;
   out[P.SPINE_YAW] = -0.18;
@@ -363,6 +398,7 @@ export const jockeyPose: PoseFn = (out, t, cycle, speed) => {
 /** Shield: wide, low stance, back leaning into the opponent, arm out on `side` (-1 left / +1 right). */
 export const shieldPose: PoseFn = (out, t, cycle, speed, side) => {
   clearUpper(out);
+  t = fin(t, 0); cycle = fin(cycle, 0); speed = fin(speed, 0);
   shuffleLegs(out, SHIELD_STYLE, t, cycle, speed);
   const sd = side < 0 ? -1 : 1;
   out[P.SPINE_PITCH] = 0.22;
@@ -390,6 +426,7 @@ export const shieldPose: PoseFn = (out, t, cycle, speed, side) => {
 /** Keeper ready: crouched on the balls of the feet, hands up in front, shuffling in any direction. */
 export const keeperReadyPose: PoseFn = (out, t, cycle, speed) => {
   clearUpper(out);
+  t = fin(t, 0); cycle = fin(cycle, 0); speed = fin(speed, 0);
   shuffleLegs(out, KEEPER_STYLE, t, cycle, speed);
   out[P.SPINE_PITCH] = 0.34;
   out[P.HEAD_PITCH] = -0.32;

@@ -23,7 +23,8 @@
  *   predicted path), not per frame. Shots in flight get no marker.
  * - Off-screen ball arrow: when the ball centre projects outside the viewport (or behind the camera) the arrow sits
  *   on the screen edge (inset), points toward the ball, and stays above the touch-control zones on the bottom edge
- *   (GFX-14 touchZones). Drawn in the 3D overlay (no DOM), constant ~30 CSS px.
+ *   (GFX-14 touchZones). A white arrow (with a small ball behind it) inside a round ink badge, so it reads over the
+ *   crowd, boards, sky or grass. Drawn in the 3D overlay (no DOM), constant ~30 CSS px.
  * Aids show in play and restart phases (aidsActive); not in goal, celebration, replay or breaks.
  *
  * DRAW CALLS: 2 — one depth-tested ground batch (rings, landing target) and one always-on-top overlay batch (overhead
@@ -91,8 +92,8 @@ const LOCAL_TUNING = { // TUNING-CR (GFX-13 on-pitch aids)
   markerMinPx: 20,
   markerMaxPx: 40,
   /** Next-switch marker: size relative to the human's marker, opacity. */
-  switchScale: 0.6,
-  switchAlpha: 0.55,
+  switchScale: 0.75,
+  switchAlpha: 0.6,
   /** Colour-blind label: glyph scale (marker units) and offset right of the marker (marker units). */
   labelScale: 1.25,
   labelOffsetU: 0.56,
@@ -105,6 +106,8 @@ const LOCAL_TUNING = { // TUNING-CR (GFX-13 on-pitch aids)
   /** Off-screen arrow size (CSS px) and inset of its centre from the screen edges (CSS px). */
   arrowPx: 30,
   arrowInset: 30,
+  /** Opacity of the ink badge behind the off-screen arrow (reads over crowd, boards, sky or grass). */
+  arrowBadgeAlpha: 0.72,
   /** View depth (m) at which screen-space overlays are placed (in front of the near plane). */
   overlayDepth: 10,
   /** Drop shadow offset (CSS px) and opacity of overlay shapes. */
@@ -557,6 +560,18 @@ export const SHAPE_ARROW = new Float32Array((() => {
   }
   return a;
 })());
+/**
+ * Round ink badge behind the off-screen arrow (arrow units): a disc of radius 0.8 around the arrow's bounding-box
+ * centre (-0.135, 0), so the white arrow and its ball sit inside a dark rim on any background.
+ */
+export const SHAPE_BADGE = new Float32Array((() => {
+  const a: number[] = [];
+  const cx = -0.135, r = 0.8;
+  for (let i = 0; i < SEGS; i += 2) {
+    a.push(cx, 0, cx + CS[i]! * r, SN[i]! * r, cx + CS[i + 1]! * r, SN[i + 1]! * r, cx + CS[i + 2]! * r, SN[i + 2]! * r);
+  }
+  return a;
+})());
 /** "1" and "2" glyphs (box 0.34 x 0.5, origin bottom left), seven-segment style strokes. */
 export const GLYPH_1 = new Float32Array([...rect(0.13, 0, 0.22, 0.5), ...rect(0.04, 0.4, 0.13, 0.5), ...rect(0.04, 0, 0.31, 0.08)]);
 export const GLYPH_2 = new Float32Array([
@@ -809,12 +824,11 @@ export function createMarkers(ctx: RenderContext): MarkersModule {
     RG[B_AY] = mw[1]! * vx + mw[5]! * vy + mw[9]! * vz + mw[13]!;
     RG[B_AZ] = mw[2]! * vx + mw[6]! * vy + mw[10]! * vz + mw[14]!;
     const mpp = (2 * D) / (pe[5]! * h);
-    const sh = LOCAL_TUNING.shadowPx * mpp;
-    // Screen direction (y down) -> camera plane (v up).
+    // Screen direction (y down) -> camera plane (v up). Ink badge first, then the white arrow inside it.
     RG[B_UNIT] = LOCAL_TUNING.arrowPx * mpp; RG[B_CS] = arrow.dx; RG[B_SN] = -arrow.dy;
-    RG[B_OU] = sh; RG[B_OV] = -sh; RG[B_ALPHA] = LOCAL_TUNING.shadowAlpha;
-    billboard(overlayBatch, SHAPE_ARROW, C_INK);
-    RG[B_OU] = 0; RG[B_OV] = 0; RG[B_ALPHA] = 1;
+    RG[B_OU] = 0; RG[B_OV] = 0; RG[B_ALPHA] = LOCAL_TUNING.arrowBadgeAlpha;
+    billboard(overlayBatch, SHAPE_BADGE, C_INK);
+    RG[B_ALPHA] = 1;
     billboard(overlayBatch, SHAPE_ARROW, C_WHITE);
   }
 

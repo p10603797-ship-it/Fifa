@@ -37,7 +37,7 @@ import {
 import { slotTeam } from '../contracts/constants';
 import type { Club, Kit } from '../contracts/data';
 import type { QualityTier } from '../contracts/enums';
-import { EventType, type EventBuffer } from '../contracts/events';
+import { EventType, type EventBuffer, type SimEvent } from '../contracts/events';
 import type { Settings } from '../contracts/settings';
 import type { ReadonlySimState } from '../contracts/state';
 import { resolveMatchKits } from './kits';
@@ -265,8 +265,8 @@ function classify(x: number, y: number, back: boolean, armsUp: boolean, edge: Fl
   const ax = Math.abs(x);
   take(sdBox(x, y, 0, 0.37, 0.22, 0.37, 0.08), 1); // torso
   if (armsUp) {
-    take(sdCapsule(ax, y, 0.19, 0.66, 0.28, 1.06, 0.055), 1); // sleeves up
-    take(sdCapsule(ax, y, 0.28, 1.06, 0.3, 1.3, 0.045), 2); // forearms and hands
+    take(sdCapsule(ax, y, 0.19, 0.66, 0.25, 1.06, 0.055), 1); // sleeves up
+    take(sdCapsule(ax, y, 0.25, 1.06, 0.26, 1.3, 0.045), 2); // forearms and hands (inside the tile padding)
   } else {
     take(sdCapsule(ax, y, 0.235, 0.66, 0.265, 0.38, 0.055), 1); // sleeves down
     take(sdCircle(ax, y, 0.265, 0.33, 0.05), 2); // hands
@@ -320,17 +320,27 @@ export function buildCrowdAtlas(): Uint8Array {
 
 // ============================================================ reactions
 
-/** Event record slots (Float64Array): times on the crowd clock (s) and teams. */
-const EV_GOAL_T = 0, EV_GOAL_TEAM = 1, EV_SHOT_T = 2, EV_SHOT_TEAM = 3, EV_MISS_T = 4, EV_MISS_TEAM = 5;
-const EV_SAVE_T = 6, EV_SAVE_TEAM = 7, EV_BUILD0 = 8, EV_BUILD1 = 9;
-export const CROWD_EVENT_SLOTS = 10;
+/**
+ * Event record (Float64Array, CROWD_EVENT_SLOTS): the crowd clock (EV_NOW), and per reaction kind the time (crowd
+ * clock, s) and team of its latest event; the build-up level per team. Every per-frame function reads and writes it
+ * (no double ever crosses a call boundary, so V8 never boxes one).
+ */
+export const EV_NOW = 0;
+const EV_GOAL_T = 1, EV_GOAL_TEAM = 2, EV_SHOT_T = 3, EV_SHOT_TEAM = 4, EV_MISS_T = 5, EV_MISS_TEAM = 6;
+const EV_SAVE_T = 7, EV_SAVE_TEAM = 8, EV_BUILD0 = 9, EV_BUILD1 = 10;
+export const CROWD_EVENT_SLOTS = 11;
 const NEVER = -1e9;
 
-/** Reset an event record (no reactions pending). */
+/** Reset an event record (no reactions pending; the clock is kept). */
 export function resetCrowdEvents(ev: Float64Array): void {
   ev[EV_GOAL_T] = NEVER; ev[EV_SHOT_T] = NEVER; ev[EV_MISS_T] = NEVER; ev[EV_SAVE_T] = NEVER;
   ev[EV_GOAL_TEAM] = 0; ev[EV_SHOT_TEAM] = 0; ev[EV_MISS_TEAM] = 0; ev[EV_SAVE_TEAM] = 0;
   ev[EV_BUILD0] = 0; ev[EV_BUILD1] = 0;
+}
+
+/** Set the crowd clock (s) the next recordCrowdEvent / crowdLevels use. */
+export function setCrowdClock(ev: Float64Array, now: number): void {
+  ev[EV_NOW] = now;
 }
 
 /** Trapezoid envelope: 0 before 0, ramps up over rise, holds, ramps down over fall, 0 after. Pure. */
@@ -343,49 +353,46 @@ export function envelope(age: number, env: readonly number[]): number {
   return t < fall ? 1 - t / fall : 0;
 }
 
+/** The fields of a sim event the crowd reads. */
+export type CrowdEvent = Pick<SimEvent, 'type' | 'a' | 'c'>;
+
 /**
- * Record one sim event on the crowd clock. Needs the state for POST (which team attacks that end). Returns true when
- * the event is one the crowd reacts to. No allocation.
+ * Record one sim event at the crowd clock (ev[EV_NOW]). Needs the state for POST (which team attacks that end).
+ * Returns true when the crowd reacts to the event. No allocation.
  */
-export function recordCrowdEvent(ev: Float64Array, now: number, type: number, a: number, c: number, state: ReadonlySimState | null): boolean {
-  switch (type) {
+export function recordCrowdEvent(ev: Float64Array, e: Readonly<CrowdEvent>, state: ReadonlySimState | null): boolean {
+  const a = e.a;
+  switch (e.type) {
     case EventType.GOAL:
-      ev[EV_GOAL_T] = now; ev[EV_GOAL_TEAM] = a === 1 ? 1 : 0;
+      ev[EV_GOAL_T] = ev[EV_NOW]!; ev[EV_GOAL_TEAM] = a === 1 ? 1 : 0;
       return true;
     case EventType.SHOT:
       if (a < 0) return false;
-      ev[EV_SHOT_T] = now; ev[EV_SHOT_TEAM] = slotTeam(a);
+      ev[EV_SHOT_T] = ev[EV_NOW]!; ev[EV_SHOT_TEAM] = slotTeam(a);
       return true;
     case EventType.NEAR_MISS:
       if (a < 0) return false;
-      ev[EV_MISS_T] = now; ev[EV_MISS_TEAM] = slotTeam(a);
+      ev[EV_MISS_T] = ev[EV_NOW]!; ev[EV_MISS_TEAM] = slotTeam(a);
       return true;
     case EventType.POST: {
       // a = end (-1 / +1): the team attacking that end.
       const t0 = state ? state.teams[0]!.dir : 1;
-      ev[EV_MISS_T] = now; ev[EV_MISS_TEAM] = t0 === (a < 0 ? -1 : 1) ? 0 : 1;
+      ev[EV_MISS_T] = ev[EV_NOW]!; ev[EV_MISS_TEAM] = t0 === (a < 0 ? -1 : 1) ? 0 : 1;
       return true;
     }
     case EventType.SAVE:
       if (a < 0) return false;
-      ev[EV_SAVE_T] = now; ev[EV_SAVE_TEAM] = slotTeam(a);
+      ev[EV_SAVE_T] = ev[EV_NOW]!; ev[EV_SAVE_TEAM] = slotTeam(a);
       return true;
     case EventType.ATTACK_BUILD: {
       const slot = a === 1 ? EV_BUILD1 : EV_BUILD0;
-      const v = c > 1 ? 1 : c > 0 ? c : 0;
-      if (v > ev[slot]!) ev[slot] = v;
+      const c = e.c;
+      if (c > ev[slot]!) ev[slot] = c > 1 ? 1 : c;
       return true;
     }
     default:
       return false;
   }
-}
-
-/** Decay the build-up levels by dt seconds. */
-export function decayCrowdBuild(ev: Float64Array, dt: number): void {
-  const k = T.buildDecay * dt;
-  ev[EV_BUILD0] = Math.max(0, ev[EV_BUILD0]! - k);
-  ev[EV_BUILD1] = Math.max(0, ev[EV_BUILD1]! - k);
 }
 
 /** Levels layout: [stand home, away, neutral, jump home, away, neutral, sit home, away, neutral]. */
@@ -394,51 +401,68 @@ export const LV_JUMP = 3;
 export const LV_SIT = 6;
 export const CROWD_LEVELS = 9;
 
-function raise(out: Float32Array, i: number, v: number): void {
-  if (v > out[i]!) out[i] = v;
-}
+/**
+ * Reaction table, one row per (event kind, envelope): time slot, team slot, envelope [rise, hold, fall] and nine
+ * weights [stand, jump, sit] x [the event's team, the other team, neutrals]. Built once from LOCAL_TUNING.
+ */
+const R_TIME = [EV_GOAL_T, EV_GOAL_T, EV_SHOT_T, EV_MISS_T, EV_SAVE_T, EV_SAVE_T];
+const R_TEAM = [EV_GOAL_TEAM, EV_GOAL_TEAM, EV_SHOT_TEAM, EV_MISS_TEAM, EV_SAVE_TEAM, EV_SAVE_TEAM];
+const R_ENV = new Float64Array([...T.goalEnv, ...T.goalSitEnv, ...T.shotEnv, ...T.missEnv, ...T.saveEnv, ...T.saveSitEnv]);
+const R_W = new Float64Array([
+  // stand: team, other, neutral | jump: team, other, neutral | sit: team, other, neutral
+  0, 0, 0, 1, 0, T.neutralShare, 0, 0, 0, // goal: scorers cheer, neutrals half
+  0, 0, 0, 0, 0, 0, 0, 1, 0, // goal: the other side slumps
+  T.shotAttack, T.shotDefend, T.shotAttack * T.neutralShare, 0, 0, 0, 0, 0, 0, // shot
+  T.missAttack, T.missDefend, (T.missAttack + T.missDefend) / 2, 0, 0, 0, 0, 0, 0, // near miss / woodwork
+  0, 0, 0, T.saveCheer, 0, 0, 0, 0, 0, // save: keeper's side cheers
+  0, 0, 0, 0, 0, 0, 0, T.saveSit, 0, // save: shooters' side sits back
+]);
+const REACTIONS = R_TIME.length;
 
-/** Reaction levels 0..1 per section at crowd time `now` (see LV_*). Pure apart from writing out. */
-export function crowdLevels(ev: Float64Array, now: number, out: Float32Array): Float32Array {
+/**
+ * Reaction levels 0..1 per section at the crowd clock ev[EV_NOW] (see LV_*). One loop over the reaction table, no
+ * calls: allocation-free in optimised code. Pure apart from writing out.
+ */
+export function crowdLevels(ev: Float64Array, out: Float32Array): Float32Array {
   out.fill(0);
-  // Goal: scoring side jumps, the other side slumps, neutrals half-cheer.
-  const g = envelope(now - ev[EV_GOAL_T]!, T.goalEnv);
-  if (g > 0) {
-    const s = ev[EV_GOAL_TEAM]!;
-    raise(out, LV_JUMP + s, g);
-    raise(out, LV_JUMP + FAN_NEUTRAL, g * T.neutralShare);
-    raise(out, LV_SIT + (1 - s), envelope(now - ev[EV_GOAL_T]!, T.goalSitEnv));
-  }
-  // Shot: attacking side rises (anticipation).
-  const sh = envelope(now - ev[EV_SHOT_T]!, T.shotEnv);
-  if (sh > 0) {
-    const s = ev[EV_SHOT_TEAM]!;
-    raise(out, LV_STAND + s, sh * T.shotAttack);
-    raise(out, LV_STAND + (1 - s), sh * T.shotDefend);
-    raise(out, LV_STAND + FAN_NEUTRAL, sh * T.shotAttack * T.neutralShare);
-  }
-  // Near miss / woodwork: everybody up, the attacking side most.
-  const m = envelope(now - ev[EV_MISS_T]!, T.missEnv);
-  if (m > 0) {
-    const s = ev[EV_MISS_TEAM]!;
-    raise(out, LV_STAND + s, m * T.missAttack);
-    raise(out, LV_STAND + (1 - s), m * T.missDefend);
-    raise(out, LV_STAND + FAN_NEUTRAL, m * (T.missAttack + T.missDefend) / 2);
-  }
-  // Save: the keeper's side cheers briefly, the shooters' side sits back.
-  const sv = envelope(now - ev[EV_SAVE_T]!, T.saveEnv);
-  if (sv > 0) {
-    const k = ev[EV_SAVE_TEAM]!;
-    raise(out, LV_JUMP + k, sv * T.saveCheer);
-    raise(out, LV_SIT + (1 - k), envelope(now - ev[EV_SAVE_T]!, T.saveSitEnv) * T.saveSit);
+  const now = ev[EV_NOW]!;
+  for (let r = 0; r < REACTIONS; r++) {
+    const age = now - ev[R_TIME[r]!]!;
+    if (!(age >= 0)) continue;
+    const rise = R_ENV[r * 3]!, hold = R_ENV[r * 3 + 1]!, fall = R_ENV[r * 3 + 2]!;
+    let g = 0;
+    if (age < rise) g = age / rise;
+    else if (age < rise + hold) g = 1;
+    else if (age < rise + hold + fall) g = 1 - (age - rise - hold) / fall;
+    if (g <= 0) continue;
+    const team = ev[R_TEAM[r]!] === 1 ? 1 : 0;
+    for (let q = 0; q < 3; q++) {
+      for (let role = 0; role < 3; role++) {
+        const w = R_W[r * 9 + q * 3 + role]!;
+        if (w === 0) continue;
+        const section = role === 0 ? team : role === 1 ? 1 - team : FAN_NEUTRAL;
+        const idx = q * 3 + section;
+        const v = g * w;
+        if (v > out[idx]!) out[idx] = v;
+      }
+    }
   }
   // Attack build-up.
-  raise(out, LV_STAND + 0, ev[EV_BUILD0]! * T.buildStand);
-  raise(out, LV_STAND + 1, ev[EV_BUILD1]! * T.buildStand);
-  raise(out, LV_STAND + FAN_NEUTRAL, Math.max(ev[EV_BUILD0]!, ev[EV_BUILD1]!) * T.buildStand * T.neutralShare);
-  // A goal cheer overrides sitting from an earlier save for the same side.
-  for (let s = 0; s < 3; s++) if (out[LV_JUMP + s]! > out[LV_SIT + s]!) out[LV_SIT + s] = 0;
+  const b0 = ev[EV_BUILD0]! * T.buildStand, b1 = ev[EV_BUILD1]! * T.buildStand;
+  if (b0 > out[LV_STAND]!) out[LV_STAND] = b0;
+  if (b1 > out[LV_STAND + 1]!) out[LV_STAND + 1] = b1;
+  const bn = (b0 > b1 ? b0 : b1) * T.neutralShare;
+  if (bn > out[LV_STAND + FAN_NEUTRAL]!) out[LV_STAND + FAN_NEUTRAL] = bn;
+  // A cheer overrides sitting back for the same side (e.g. a goal right after a save).
+  for (let sec = 0; sec < 3; sec++) if (out[LV_JUMP + sec]! > out[LV_SIT + sec]!) out[LV_SIT + sec] = 0;
   return out;
+}
+
+/** Decay the build-up levels over `dt` seconds (tests and tools; update() does the same inline). */
+export function decayCrowdBuild(ev: Float64Array, dt: number): void {
+  const k = T.buildDecay * dt;
+  ev[EV_BUILD0] = Math.max(0, ev[EV_BUILD0]! - k);
+  ev[EV_BUILD1] = Math.max(0, ev[EV_BUILD1]! - k);
 }
 
 /** Overall excitement target 0..1 from levels (highest stand or jump of any section). Pure. */
@@ -613,9 +637,11 @@ export function createCrowd(ctx: RenderContext): CrowdModule {
   const ev = new Float64Array(CROWD_EVENT_SLOTS);
   resetCrowdEvents(ev);
   const levels = new Float32Array(CROWD_LEVELS);
-  let clock = 0;
-  let excitement = 0;
-  let density = 1;
+  // Doubles live in typed arrays (closure variables holding doubles would box on every write); the crowd clock is
+  // ev[EV_NOW].
+  const S_EXCITEMENT = 0, S_DENSITY = 1;
+  const st = new Float64Array(2);
+  st[S_DENSITY] = 1;
   let animated = true;
   let matchState: ReadonlySimState | null = null;
   let matchClubs: readonly Club[] = [];
@@ -623,9 +649,9 @@ export function createCrowd(ctx: RenderContext): CrowdModule {
 
   function applyTier(tier: QualityTier): void {
     const p = getTierParams(tier);
-    density = p.crowdDensity;
+    st[S_DENSITY] = p.crowdDensity;
     animated = p.crowdAnimation;
-    geo.instanceCount = instancesFor(total, density);
+    geo.instanceCount = instancesFor(total, p.crowdDensity);
     uniforms.uAnim.value = animated ? 1 : 0;
   }
 
@@ -639,7 +665,7 @@ export function createCrowd(ctx: RenderContext): CrowdModule {
   function resetReactions(): void {
     resetCrowdEvents(ev);
     levels.fill(0);
-    excitement = 0;
+    st[S_EXCITEMENT] = 0;
     uniforms.uStand.value.set(0, 0, 0);
     uniforms.uJump.value.set(0, 0, 0);
     uniforms.uSit.value.set(0, 0, 0);
@@ -648,9 +674,9 @@ export function createCrowd(ctx: RenderContext): CrowdModule {
   const debug: CrowdDebug = {
     snapshot(): CrowdSnapshot {
       return {
-        visible: mesh.visible, seats: total, instances: geo.instanceCount, density, animated,
+        visible: mesh.visible, seats: total, instances: geo.instanceCount, density: st[S_DENSITY]!, animated,
         triangles: mesh.visible ? geo.instanceCount * 2 : 0, drawCalls: mesh.visible ? 1 : 0,
-        excitement, levels: Array.from(levels), clock, night: ctx.night,
+        excitement: st[S_EXCITEMENT]!, levels: Array.from(levels), clock: ev[EV_NOW]!, night: ctx.night,
       };
     },
   };
@@ -659,7 +685,7 @@ export function createCrowd(ctx: RenderContext): CrowdModule {
   applyTier(ctx.tier);
 
   return {
-    get excitement() { return excitement; },
+    get excitement() { return st[S_EXCITEMENT]!; },
     mesh,
     debug,
 
@@ -671,7 +697,7 @@ export function createCrowd(ctx: RenderContext): CrowdModule {
       crowdLightOf(lookFor(ctx.night), uniforms.uLight.value);
       applyTier(ctx.tier);
       resetReactions();
-      clock = 0;
+      ev[EV_NOW] = 0;
       uniforms.uTime.value = 0;
       mesh.visible = true;
     },
@@ -680,22 +706,27 @@ export function createCrowd(ctx: RenderContext): CrowdModule {
       let dt = fr.frame.paused ? 0 : fr.frame.dtMs / 1000;
       if (!(dt > 0)) dt = 0;
       if (dt > T.maxDt) dt = T.maxDt;
-      clock += dt;
-      decayCrowdBuild(ev, dt);
-      crowdLevels(ev, clock, levels);
-      uniforms.uTime.value = clock;
-      uniforms.uStand.value.set(levels[LV_STAND]!, levels[LV_STAND + 1]!, levels[LV_STAND + 2]!);
-      uniforms.uJump.value.set(levels[LV_JUMP]!, levels[LV_JUMP + 1]!, levels[LV_JUMP + 2]!);
-      uniforms.uSit.value.set(levels[LV_SIT]!, levels[LV_SIT + 1]!, levels[LV_SIT + 2]!);
-      const target = excitementOf(levels);
-      const rate = target > excitement ? T.excitementRise : T.excitementFall;
-      excitement += (target - excitement) * (1 - Math.exp(-rate * dt));
+      ev[EV_NOW] += dt;
+      const k = T.buildDecay * dt;
+      ev[EV_BUILD0] = Math.max(0, ev[EV_BUILD0]! - k);
+      ev[EV_BUILD1] = Math.max(0, ev[EV_BUILD1]! - k);
+      crowdLevels(ev, levels);
+      uniforms.uTime.value = ev[EV_NOW]!;
+      // Field stores, not Vector3.set: no double crosses a call.
+      const vs = uniforms.uStand.value, vj = uniforms.uJump.value, vt = uniforms.uSit.value;
+      vs.x = levels[LV_STAND]!; vs.y = levels[LV_STAND + 1]!; vs.z = levels[LV_STAND + 2]!;
+      vj.x = levels[LV_JUMP]!; vj.y = levels[LV_JUMP + 1]!; vj.z = levels[LV_JUMP + 2]!;
+      vt.x = levels[LV_SIT]!; vt.y = levels[LV_SIT + 1]!; vt.z = levels[LV_SIT + 2]!;
+      let target = 0;
+      for (let i = 0; i < LV_SIT; i++) if (levels[i]! > target) target = levels[i]!;
+      const e = st[S_EXCITEMENT]!;
+      const rate = target > e ? T.excitementRise : T.excitementFall;
+      st[S_EXCITEMENT] = e + (target - e) * (1 - Math.exp(-rate * dt));
     },
 
     onEvents(events: EventBuffer, state: ReadonlySimState) {
       for (let i = 0; i < events.count; i++) {
-        const e = events.get(i);
-        recordCrowdEvent(ev, clock, e.type, e.a, e.c, state);
+        recordCrowdEvent(ev, events.get(i), state);
       }
     },
 
