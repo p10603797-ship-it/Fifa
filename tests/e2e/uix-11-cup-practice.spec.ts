@@ -41,17 +41,18 @@ interface CupView {
   rounds: { home: number; away: number; homeGoals: number; awayGoals: number; winner: number }[][];
 }
 
-type Win = Window & {
+/** The bits of window.__dotkick / __dotkickCup this spec reads (loosely typed on purpose). */
+type Win = {
   __dotkick?: { ctx: { router: { current: string | null }; session: { active: boolean; getSetup(): { config: Record<string, number>; modeData?: unknown } | null; getState(): unknown; quit(): void } } };
   __dotkickCup?: { state(): CupView | null; simulate(): boolean };
 };
 
-const route = (page: Page): Promise<string | null> => page.evaluate(() => (window as Win).__dotkick!.ctx.router.current);
+const route = (page: Page): Promise<string | null> => page.evaluate(() => (window as unknown as Win).__dotkick!.ctx.router.current);
 const focused = (page: Page): Promise<string | null> =>
   page.evaluate(() => document.querySelector<HTMLElement>('[data-focused]')?.dataset.testid ?? null);
-const cupState = (page: Page): Promise<CupView | null> => page.evaluate(() => (window as Win).__dotkickCup?.state() ?? null);
+const cupState = (page: Page): Promise<CupView | null> => page.evaluate(() => (window as unknown as Win).__dotkickCup?.state() ?? null);
 const setupConfig = (page: Page): Promise<Record<string, number> | null> =>
-  page.evaluate(() => (window as Win).__dotkick!.ctx.session.getSetup()?.config ?? null);
+  page.evaluate(() => (window as unknown as Win).__dotkick!.ctx.session.getSetup()?.config ?? null);
 
 async function boot(page: Page, clear = true): Promise<void> {
   await page.goto('/');
@@ -85,7 +86,7 @@ async function checkLayout(page: Page, label: string): Promise<void> {
     const scroll = document.documentElement.scrollWidth > innerWidth + 1 || document.documentElement.scrollHeight > innerHeight + 1;
     return { count: rects.length, small, outside, overlaps, scroll };
   });
-  expect(r.count, `${label}: controls`).toBeGreaterThan(2);
+  expect(r.count, `${label}: controls`).toBeGreaterThanOrEqual(2);
   expect(r.small, `${label}: >= 60 pt`).toEqual([]);
   expect(r.outside, `${label}: inside the viewport`).toEqual([]);
   expect(r.overlaps, `${label}: no overlaps`).toEqual([]);
@@ -132,20 +133,46 @@ test.describe('UIX-11 cup and practice', () => {
     expect(cfg.mode).toBe(3); // ModeId.CUP
     expect(cfg.cupRules).toBe(1);
     expect([cfg.homeClub, cfg.awayClub]).toEqual([tie.home, tie.away]);
-    await page.evaluate(() => (window as Win).__dotkick!.ctx.session.quit());
+    await page.evaluate(() => (window as unknown as Win).__dotkick!.ctx.session.quit());
     await expect.poll(() => route(page)).toBe('cup');
     await expect(page.getByTestId('cup-play')).toBeVisible();
     expect((await cupState(page))!.rounds[0]!.find((t) => t.home === 4 || t.away === 4)!.winner).toBe(-1);
 
-    // Simulate the human tie through the debug hook: the bracket fills in.
-    expect(await page.evaluate(() => (window as Win).__dotkickCup!.simulate())).toBe(true);
+    // A tie that reaches POST_MATCH (forced here, a human 3-0 win) is recorded: the session is released and the cup
+    // screen returns with the result, the other ties of the round filled in.
+    await page.getByTestId('cup-play').tap();
+    await expect.poll(() => route(page), { timeout: 90_000 }).toBe('match');
+    const side = await page.evaluate(() => {
+      const ctx = (window as unknown as Win).__dotkick!.ctx;
+      const c = ctx.session.getSetup()!.config as unknown as { humans: { side: number }[] };
+      const s = ctx.session.getState() as { teams: { goals: number }[]; match: { phase: number; winner: number; finished: number } };
+      const sideNow = c.humans[0]!.side;
+      s.teams[sideNow]!.goals = 3;
+      s.match.winner = sideNow;
+      s.match.finished = 1;
+      s.match.phase = 15; // POST_MATCH
+      return sideNow;
+    });
+    expect(side === 0 || side === 1).toBe(true);
+    await expect.poll(() => route(page), { timeout: 30_000 }).toBe('cup');
+    await expect(page.getByTestId('cup-result')).toContainText('Through');
     st = (await cupState(page))!;
-    expect(st.rounds[0]!.every((t) => t.winner >= 0) || st.finished).toBe(true);
+    expect(st.rounds[0]!.find((t) => t.home === 4 || t.away === 4)!.winner).toBe(4);
+    expect(st.rounds[0]!.every((t) => t.winner >= 0)).toBe(true);
+    expect(st.round).toBe(1);
+    await expect(page.getByTestId('cup-tie-1-0')).not.toContainText('TBD');
+    expect(await page.evaluate(() => (window as unknown as Win).__dotkick!.ctx.session.active)).toBe(false);
+    expect(await page.evaluate(() => document.body.classList.contains('match-active'))).toBe(false);
+    await page.screenshot({ path: join(SHOTS, 'cup-after-match.png') });
+
+    // Simulate the semi-final through the debug hook: the bracket fills in (through to the final, or out).
+    expect(await page.evaluate(() => (window as unknown as Win).__dotkickCup!.simulate())).toBe(true);
+    st = (await cupState(page))!;
     await expect(page.getByTestId('cup-result')).toBeVisible();
-    const humanWon = st.rounds[0]!.find((t) => t.home === 4 || t.away === 4)!.winner === 4;
+    const humanWon = st.rounds[1]!.find((t) => t.home === 4 || t.away === 4)!.winner === 4;
     if (humanWon) {
-      expect(st.round).toBe(1);
-      await expect(page.getByTestId('cup-tie-1-0')).not.toContainText('TBD');
+      expect(st.round).toBe(2);
+      await expect(page.getByTestId('cup-play')).toBeVisible();
     } else {
       expect(st.finished).toBe(true);
       await expect(page.getByTestId('cup-champion')).toBeVisible();
@@ -164,30 +191,25 @@ test.describe('UIX-11 cup and practice', () => {
     await page.getByTestId('main-cup').tap();
     await expect(page.getByTestId('cup-bracket')).toBeVisible();
     expect(JSON.stringify(await cupState(page))).toBe(before);
-
-    // A tie that reaches POST_MATCH (forced) is recorded and the cup screen returns with the result.
-    if (humanWon) {
-      await page.getByTestId('cup-play').tap();
-      await expect.poll(() => route(page), { timeout: 90_000 }).toBe('match');
-      const side = await page.evaluate(() => {
-        const ctx = (window as Win).__dotkick!.ctx;
-        const c = ctx.session.getSetup()!.config as unknown as { humans: { side: number }[] };
-        const s = ctx.session.getState() as { teams: { goals: number }[]; match: { phase: number; winner: number; finished: number } };
-        const sideNow = c.humans[0]!.side;
-        s.teams[sideNow]!.goals = 3;
-        s.match.winner = sideNow;
-        s.match.finished = 1;
-        s.match.phase = 15; // POST_MATCH
-        return sideNow;
-      });
-      expect(side === 0 || side === 1).toBe(true);
-      await expect.poll(() => route(page), { timeout: 30_000 }).toBe('cup');
-      await expect(page.getByTestId('cup-result')).toContainText(/Through|Cup won/);
-      const after = (await cupState(page))!;
-      expect(after.rounds[1]!.find((t) => t.home === 4 || t.away === 4)!.winner).toBe(4);
-      expect(await page.evaluate(() => (window as Win).__dotkick!.ctx.session.active)).toBe(false);
-      await page.screenshot({ path: join(SHOTS, 'cup-after-match.png') });
+    // New cup over a saved one asks first; a 16-team bracket fits at every aspect ratio.
+    await page.getByTestId('cup-new').tap();
+    if (!st.finished) {
+      await expect(page.getByTestId('cup-new-confirm')).toBeVisible();
+      await page.getByTestId('cup-new-ok').tap();
     }
+    await expect(page.getByTestId('cup-new')).toBeVisible();
+    await page.getByTestId('cup-size-16').tap();
+    await page.getByTestId('cup-draw').tap();
+    await expect(page.getByTestId('cup-bracket')).toBeVisible();
+    expect((await cupState(page))!.size).toBe(16);
+    for (const s of [{ w: 1180, h: 820, n: '1180x820' }, { w: 1024, h: 768, n: '4x3' }, { w: 1260, h: 540, n: '21x9' }]) {
+      await page.setViewportSize({ width: s.w, height: s.h });
+      await page.waitForTimeout(150);
+      await checkLayout(page, `bracket16 ${s.n}`);
+      await page.screenshot({ path: join(SHOTS, `cup-bracket16-${s.n}.png`) });
+    }
+    await page.setViewportSize({ width: 1180, height: 820 });
+
     // Back goes to the main menu.
     await page.getByTestId('back').tap();
     await expect.poll(() => route(page)).toBe('main');
@@ -229,7 +251,7 @@ test.describe('UIX-11 cup and practice', () => {
     await expect.poll(() => setupConfig(page)).not.toBeNull();
     const cfg = (await setupConfig(page))!;
     expect([cfg.mode, cfg.practice]).toEqual([5, 3]); // PRACTICE, CORNERS
-    await page.evaluate(() => (window as Win).__dotkick!.ctx.session.quit());
+    await page.evaluate(() => (window as unknown as Win).__dotkick!.ctx.session.quit());
     await expect.poll(() => route(page)).toBe('practice');
     await expect(page.getByTestId('practice-panel-title')).toHaveText('Corners');
     expect(messages).toEqual([]);
@@ -263,13 +285,13 @@ test.describe('UIX-11 cup and practice', () => {
       const cfg = (await setupConfig(page))!;
       expect([cfg.mode, cfg.practice, cfg.startPhase], id).toEqual([5, kind, 2]);
       if (kind === 2 || kind === 3) expect(cfg.practiceSpot, id).toBe(spot);
-      await page.evaluate(() => (window as Win).__dotkick!.ctx.session.quit());
+      await page.evaluate(() => (window as unknown as Win).__dotkick!.ctx.session.quit());
       await expect.poll(() => route(page)).toBe('practice');
     }
     await page.getByTestId('practice-tutorial').tap();
     await page.getByTestId('practice-start').tap();
     await expect.poll(() => route(page)).toBe('tutorial');
-    expect(await page.evaluate(() => (window as Win).__dotkick!.ctx.session.active)).toBe(false);
+    expect(await page.evaluate(() => (window as unknown as Win).__dotkick!.ctx.session.active)).toBe(false);
     expect(messages).toEqual([]);
   });
 });

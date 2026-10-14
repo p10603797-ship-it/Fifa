@@ -243,7 +243,7 @@ export function installDebugOverlay(ctx: AppContext, sources: DebugOverlaySource
     const hh = Math.round(GRAPH_H * dpr);
     if (canvas.width !== w) canvas.width = w;
     if (canvas.height !== hh) canvas.height = hh;
-    let g: CanvasRenderingContext2D | null = null;
+    let g: CanvasRenderingContext2D | null;
     try {
       g = canvas.getContext('2d');
     } catch {

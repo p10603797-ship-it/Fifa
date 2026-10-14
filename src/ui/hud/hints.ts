@@ -31,7 +31,7 @@ import {
   type TutorialStepId,
 } from '../screens/tutorialSteps';
 import { GLYPH_CSS, linesFor, renderHintLines, type DeviceLines } from './controlGlyphs';
-import { HUD_SHARED_CSS, bindLargerHud, humanDevice, touchBoundToMatch, type ControlDevice, type DeviceSpec } from './hudShared';
+import { HUD_SHARED_CSS, bindLargerHud, humanDevice, setRadarEnabled, touchBoundToMatch, type ControlDevice, type DeviceSpec } from './hudShared';
 import { TOAST_LANE_PX, TOAST_NARROW_PX } from './toasts';
 
 /** Hint constants (UI, not gameplay; no TUNING-CR needed). */
@@ -206,9 +206,40 @@ const KEY_TUTORIAL = 2000;
 const KEY_TUTORIAL_DONE = 3000;
 const KEY_TUTORIAL_COMPLETE = 4000;
 
+/** Setup modeData of a tutorial: MOD-04 PracticeData ({ kind, spot, device }) plus the start step from the screen. */
 interface TutorialModeData {
+  device?: ControlDevice | null;
   tutorial?: { device?: ControlDevice; startStep?: number };
 }
+
+function isDeviceKind(v: unknown): v is ControlDevice {
+  return v === 'touch' || v === 'pad' || v === 'keyboard';
+}
+
+/** The hints part that runs a tutorial right now (one HUD per app), for the pause menu's Skip step. */
+let activeTutorial: { skip(): boolean } | null = null;
+
+/** True while a tutorial practice match has an open step (the pause menu can offer "Skip step"). */
+export function tutorialStepActive(): boolean {
+  return activeTutorial !== null;
+}
+
+/**
+ * Skip the tutorial's current step (counts as done, the coach card moves on). For a controller or keyboard player,
+ * whose inputs drive the match, from the pause menu. Returns false when no tutorial step is open.
+ */
+export function skipTutorialStep(): boolean {
+  return activeTutorial ? activeTutorial.skip() : false;
+}
+
+declare global {
+  interface Window {
+    /** HUD menu hooks (e2e tests, debug overlay): radar toggle and tutorial skip, as the menus call them. */
+    __dotkickHud?: { setRadarEnabled: typeof setRadarEnabled; skipTutorialStep: typeof skipTutorialStep; tutorialStepActive: typeof tutorialStepActive };
+  }
+}
+
+if (typeof window !== 'undefined') window.__dotkickHud = { setRadarEnabled, skipTutorialStep, tutorialStepActive };
 
 export function createHints(): HudPart {
   let root: HTMLElement | null = null;
@@ -352,6 +383,20 @@ export function createHints(): HudPart {
     doneBeat = HINT_TUNING.doneBeatMs;
   }
 
+  const tutorialHandle = {
+    skip(): boolean {
+      if (!tracker || tracker.complete) return false;
+      onStepDone(tracker.skip());
+      return true;
+    },
+  };
+
+  function syncActiveTutorial(): void {
+    const open = !!tracker && !tracker.complete;
+    if (open) activeTutorial = tutorialHandle;
+    else if (activeTutorial === tutorialHandle) activeTutorial = null;
+  }
+
   function countDirectionHintMatch(s: ReadonlySimState): void {
     if (matchCounted || practice || !ctxRef) return;
     if (s.match.finished !== 1 && s.match.phase !== MatchPhase.POST_MATCH) return;
@@ -397,11 +442,12 @@ export function createHints(): HudPart {
           data = undefined;
         }
         const dev = humanDevice(ctxRef, 0);
-        const kind = data?.tutorial?.device ?? dev.kind;
+        const kind = isDeviceKind(data?.tutorial?.device) ? data.tutorial.device : isDeviceKind(data?.device) ? data.device : dev.kind;
         tutDevice = { kind, family: dev.family };
         tracker = new TutorialTracker(kind, 0);
         tracker.start(tutorialProgress(ctxRef.settings, kind), data?.tutorial?.startStep ?? 0);
       }
+      syncActiveTutorial();
       shownKey = -1;
       setOn(false);
     },
@@ -438,6 +484,7 @@ export function createHints(): HudPart {
           }
         }
         onStepDone(tracker.observeState(state, frame.ticks));
+        if (tracker.complete && activeTutorial === tutorialHandle) activeTutorial = null;
       }
       countDirectionHintMatch(state);
       // Card.
@@ -461,6 +508,9 @@ export function createHints(): HudPart {
     },
     setVisible(v: boolean) {
       if (root) root.hidden = !v;
+      // Hidden between matches: no tutorial to skip from a menu.
+      if (!v && activeTutorial === tutorialHandle) activeTutorial = null;
+      else if (v) syncActiveTutorial();
     },
     dispose() {
       unbindLarge?.();
@@ -469,6 +519,7 @@ export function createHints(): HudPart {
       root = card = progressBar = null;
       ctxRef = null;
       tracker = null;
+      if (activeTutorial === tutorialHandle) activeTutorial = null;
     },
   };
 }

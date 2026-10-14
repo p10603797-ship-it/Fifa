@@ -21,7 +21,8 @@
  *   pitch solved so the ball sits at takerBallY of the screen with the top of the goal in view; goal kicks use a lower,
  *   wider rig in front of the goal looking up-field. Corner: cornerBack beyond the flag on the line from the penalty
  *   spot through the flag, cornerHeight up, ball at cornerBallY. Replay side: near-side close-up trailing the ball;
- *   replay goal: low behind the goal; both frame a constant height of pitch (FOV from distance).
+ *   replay goal: low behind the goal, just above the bar so the view clears the net; both frame a constant height of
+ *   pitch (FOV from distance).
  * PROJECTOR: while active the camera owns ctx.camera; screenToPitch / pitchToScreen follow it, and stickRotation()
  *   rotates the stick with the view for BEHIND_TAKER and CORNER so "up" aims where the camera looks (toward goal; up-field
  *   for goal kicks): rotation = -yaw (contracts/input.ts CameraProjector convention). 0 otherwise.
@@ -38,7 +39,7 @@ import type { CameraSettings } from '../../contracts/settings';
 import type { ReadonlySimState } from '../../contracts/state';
 import { T_CAMERA } from '../../contracts/tuning';
 import { ReplayAngle, replayPlaybackOf } from '../replay';
-import type { CameraModule, RenderContext, RenderFrame } from '../types';
+import { createInterpState, type CameraModule, type RenderContext, type RenderFrame } from '../types';
 import { projectPitchToScreen, projectScreenToPitch } from './project';
 
 export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
@@ -98,9 +99,10 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
   sideHeight: 7,
   sideLag: 6,
   sideFrame: 12,
-  /** Behind the goal: distance behind the goal line m, height m, framed height m, share of the goal z followed. */
-  goalCamBack: 4.6,
-  goalCamHeight: 2.1,
+  /** Behind the goal: distance behind the goal line m (in front of the boards), height m (just above the bar: the line
+   *  of sight clears the net roof and the keeper), framed height m, share of the goal z followed. */
+  goalCamBack: 5,
+  goalCamHeight: 3.4,
   goalFrame: 10,
   goalCamZFollow: 0.5,
   replayFovMin: 18,
@@ -117,10 +119,13 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
   minY: 1.2,
   /** Longest real frame time a step advances, s. */
   maxStep: 0.1,
+  /** setMatch warm-up iterations of the per-frame paths (pose solvers, blend, look smoothing). */
+  warmUpIterations: 2000,
 } as const;
 
 const LT = LOCAL_TUNING;
 const DEG = Math.PI / 180;
+const TWO_PI = 2 * Math.PI;
 
 /** Camera shots the director can choose. */
 export enum CineShot {
@@ -231,19 +236,45 @@ function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-/** Yaw that looks along the horizontal direction (dx, dz). */
-function yawOf(dx: number, dz: number): number {
-  return Math.atan2(-dx, -dz);
-}
-
-/** Pitch that puts a point at depression angle theta (rad) at screen height y (0 top .. 1 bottom). */
-function pitchForScreenY(theta: number, y: number, fovDeg: number): number {
-  return theta - Math.atan((2 * y - 1) * Math.tan(fovDeg * DEG * 0.5));
-}
-
 /** Screen height (0 top .. 1 bottom) of a point at depression theta for a camera pitch (point on the view plane). */
 export function screenYAt(theta: number, pitch: number, fovDeg: number): number {
   return (1 + Math.tan(theta - pitch) / Math.tan(fovDeg * DEG * 0.5)) * 0.5;
+}
+
+// Pose solvers. Per-frame code calls the *In forms, which read their double inputs from PIN and use only inline maths
+// (a double crossing a call boundary can box: one allocation per frame); the exported forms are thin wrappers.
+const PIN = new Float64Array(8);
+const TAN_HALF = (fovDeg: number): number => Math.tan(fovDeg * DEG * 0.5);
+const T_TAKER = TAN_HALF(LT.takerFov), T_GOAL_KICK = TAN_HALF(LT.goalKickFov), T_CORNER = TAN_HALF(LT.cornerFov);
+
+/** takerPose on PIN = [spotX, spotZ, aimX, aimZ]. */
+function takerPoseIn(goalKick: boolean, out: CinePose): void {
+  const spotX = PIN[0]!, spotZ = PIN[1]!, aimX = PIN[2]!, aimZ = PIN[3]!;
+  let dx = aimX - spotX, dz = aimZ - spotZ;
+  const l = Math.sqrt(dx * dx + dz * dz);
+  if (l > 1e-3) { dx /= l; dz /= l; } else { dx = spotX > 0 ? -1 : 1; dz = 0; }
+  const back = goalKick ? LT.goalKickBack : LT.takerBack;
+  const maxX = goalKick ? HALF_LENGTH - LT.goalKickLineInset : LT.maxX;
+  const cx = Math.max(-maxX, Math.min(maxX, spotX - dx * back));
+  const cz = Math.max(-LT.maxZ, Math.min(LT.maxZ, spotZ - dz * back));
+  const cy = goalKick ? LT.goalKickHeight : LT.takerHeight;
+  const tanHalf = goalKick ? T_GOAL_KICK : T_TAKER;
+  // Look point: the goal (free kick, penalty) or goalKickLook ahead on the kick line (goal kick).
+  const lx = goalKick ? spotX + dx * LT.goalKickLook : aimX;
+  const lz = goalKick ? spotZ + dz * LT.goalKickLook : aimZ;
+  out.x = cx; out.y = cy; out.z = cz; out.fov = goalKick ? LT.goalKickFov : LT.takerFov;
+  out.yaw = Math.atan2(-(lx - cx), -(lz - cz));
+  const bx = spotX - cx, bz = spotZ - cz;
+  const thetaBall = Math.atan2(cy - BALL_RADIUS, Math.max(0.5, Math.sqrt(bx * bx + bz * bz)));
+  const ballY = goalKick ? LT.goalKickBallY : LT.takerBallY;
+  let pitch = thetaBall - Math.atan((2 * ballY - 1) * tanHalf);
+  // Keep the top of the goal (or the far point of the kick line) in view.
+  const ax = lx - cx, az = lz - cz;
+  const thetaTop = Math.atan2(cy - (goalKick ? 0 : GOAL_HEIGHT), Math.max(0.5, Math.sqrt(ax * ax + az * az)));
+  const topY = goalKick ? LT.goalKickTopMargin : LT.takerTopMargin;
+  const maxPitch = thetaTop - Math.atan((2 * topY - 1) * tanHalf);
+  if (pitch > maxPitch) pitch = maxPitch;
+  out.pitch = pitch;
 }
 
 /**
@@ -251,49 +282,45 @@ export function screenYAt(theta: number, pitch: number, fovDeg: number): number 
  * penalties). goalKick: the low, wide rig in front of the own goal looking up-field along the aim. Pure; writes out.
  */
 export function takerPose(spotX: number, spotZ: number, aimX: number, aimZ: number, goalKick: boolean, out: CinePose): CinePose {
-  let dx = aimX - spotX, dz = aimZ - spotZ;
-  const l = Math.sqrt(dx * dx + dz * dz);
-  if (l > 1e-3) { dx /= l; dz /= l; } else { dx = spotX > 0 ? -1 : 1; dz = 0; }
-  const back = goalKick ? LT.goalKickBack : LT.takerBack;
-  const maxX = goalKick ? HALF_LENGTH - LT.goalKickLineInset : LT.maxX;
-  const cx = clamp(spotX - dx * back, -maxX, maxX);
-  const cz = clamp(spotZ - dz * back, -LT.maxZ, LT.maxZ);
-  const cy = goalKick ? LT.goalKickHeight : LT.takerHeight;
-  const fov = goalKick ? LT.goalKickFov : LT.takerFov;
-  // Look point: the goal (free kick, penalty) or goalKickLook ahead on the kick line (goal kick).
-  const lx = goalKick ? spotX + dx * LT.goalKickLook : aimX;
-  const lz = goalKick ? spotZ + dz * LT.goalKickLook : aimZ;
-  out.x = cx; out.y = cy; out.z = cz; out.fov = fov;
-  out.yaw = yawOf(lx - cx, lz - cz);
-  const bx = spotX - cx, bz = spotZ - cz;
-  const thetaBall = Math.atan2(cy - BALL_RADIUS, Math.max(0.5, Math.sqrt(bx * bx + bz * bz)));
-  let pitch = pitchForScreenY(thetaBall, goalKick ? LT.goalKickBallY : LT.takerBallY, fov);
-  // Keep the top of the goal (or the far point of the kick line) in view.
-  const ax = lx - cx, az = lz - cz;
-  const topY = goalKick ? 0 : GOAL_HEIGHT;
-  const thetaTop = Math.atan2(cy - topY, Math.max(0.5, Math.sqrt(ax * ax + az * az)));
-  const maxPitch = pitchForScreenY(thetaTop, goalKick ? LT.goalKickTopMargin : LT.takerTopMargin, fov);
-  if (pitch > maxPitch) pitch = maxPitch;
-  out.pitch = pitch;
+  PIN[0] = spotX; PIN[1] = spotZ; PIN[2] = aimX; PIN[3] = aimZ;
+  takerPoseIn(goalKick, out);
   return out;
 }
 
-/** Raised corner pose for a corner taken from (cornerX, cornerZ). Pure; writes out. */
-export function cornerPose(cornerX: number, cornerZ: number, out: CinePose): CinePose {
+/** cornerPose on PIN = [cornerX, cornerZ]. */
+function cornerPoseIn(out: CinePose): void {
+  const cornerX = PIN[0]!, cornerZ = PIN[1]!;
   const end = cornerX < 0 ? -1 : 1;
   const tx = end * (HALF_LENGTH - LT.cornerLookIn), tz = 0;
   let dx = cornerX - tx, dz = cornerZ - tz;
   const l = Math.sqrt(dx * dx + dz * dz);
   if (l > 1e-3) { dx /= l; dz /= l; } else { dx = end; dz = 0; }
-  const cx = clamp(cornerX + dx * LT.cornerBack, -LT.maxX, LT.maxX);
-  const cz = clamp(cornerZ + dz * LT.cornerBack, -LT.maxZ, LT.maxZ);
+  const cx = Math.max(-LT.maxX, Math.min(LT.maxX, cornerX + dx * LT.cornerBack));
+  const cz = Math.max(-LT.maxZ, Math.min(LT.maxZ, cornerZ + dz * LT.cornerBack));
   const cy = LT.cornerHeight;
   out.x = cx; out.y = cy; out.z = cz; out.fov = LT.cornerFov;
-  out.yaw = yawOf(tx - cx, tz - cz);
+  out.yaw = Math.atan2(-(tx - cx), -(tz - cz));
   const bx = cornerX - cx, bz = cornerZ - cz;
   const thetaBall = Math.atan2(cy - BALL_RADIUS, Math.max(0.5, Math.sqrt(bx * bx + bz * bz)));
-  out.pitch = pitchForScreenY(thetaBall, LT.cornerBallY, LT.cornerFov);
+  out.pitch = thetaBall - Math.atan((2 * LT.cornerBallY - 1) * T_CORNER);
+}
+
+/** Raised corner pose for a corner taken from (cornerX, cornerZ). Pure; writes out. */
+export function cornerPose(cornerX: number, cornerZ: number, out: CinePose): CinePose {
+  PIN[0] = cornerX; PIN[1] = cornerZ;
+  cornerPoseIn(out);
   return out;
+}
+
+/** establishingPose on PIN = [t]. */
+function establishingPoseIn(dir: number, reduced: boolean, out: CinePose): void {
+  const t = PIN[0]!;
+  const swept = reduced ? 0 : Math.min(LT.orbitArc, LT.orbitSpeed * Math.max(0, t));
+  const az = (LT.orbitStart + swept) * DEG * (dir < 0 ? -1 : 1);
+  const cx = LT.orbitRadiusX * Math.sin(az), cz = LT.orbitRadiusZ * Math.cos(az), cy = LT.orbitHeight;
+  out.x = cx; out.y = cy; out.z = cz; out.fov = LT.orbitFov;
+  out.yaw = Math.atan2(cx, cz);
+  out.pitch = Math.atan2(cy, Math.sqrt(cx * cx + cz * cz));
 }
 
 /**
@@ -301,45 +328,49 @@ export function cornerPose(cornerX: number, cornerZ: number, out: CinePose): Cin
  * time). Reduced motion: holds the start pose. Pure; writes out.
  */
 export function establishingPose(t: number, dir: number, reduced: boolean, out: CinePose): CinePose {
-  const swept = reduced ? 0 : Math.min(LT.orbitArc, LT.orbitSpeed * Math.max(0, t));
-  const az = (LT.orbitStart + swept) * DEG * (dir < 0 ? -1 : 1);
-  const cx = LT.orbitRadiusX * Math.sin(az), cz = LT.orbitRadiusZ * Math.cos(az), cy = LT.orbitHeight;
-  out.x = cx; out.y = cy; out.z = cz; out.fov = LT.orbitFov;
-  out.yaw = yawOf(-cx, -cz);
-  out.pitch = Math.atan2(cy, Math.sqrt(cx * cx + cz * cz));
+  PIN[0] = t;
+  establishingPoseIn(dir, reduced, out);
   return out;
 }
 
-/** FOV (deg) that frames `frame` metres of height at distance d, clamped to the replay range. */
-function frameFov(frame: number, d: number): number {
-  return clamp((2 * Math.atan(frame / (2 * Math.max(0.5, d)))) / DEG, LT.replayFovMin, LT.replayFovMax);
+/** Shared tail of the replay poses: camera at (cx, cy, cz) looking at PIN[0..2], framing `frame` metres. */
+function lookAtFramed(cx: number, cy: number, cz: number, frame: number, out: CinePose): void {
+  const lx = PIN[0]!, ly = PIN[1]!, lz = PIN[2]!;
+  const dx = lx - cx, dz = lz - cz;
+  const h = Math.max(0.5, Math.sqrt(dx * dx + dz * dz));
+  const dy = cy - ly;
+  out.x = cx; out.y = cy; out.z = cz;
+  out.yaw = Math.atan2(-dx, -dz);
+  out.pitch = Math.atan2(dy, h);
+  const d = Math.max(0.5, Math.sqrt(h * h + dy * dy));
+  out.fov = Math.max(LT.replayFovMin, Math.min(LT.replayFovMax, (2 * Math.atan(frame / (2 * d))) / DEG));
+}
+
+/** replaySidePose on PIN = [lx, ly, lz]. */
+function replaySidePoseIn(goalEnd: number, out: CinePose): void {
+  const cx = Math.max(-LT.maxX, Math.min(LT.maxX, PIN[0]! - (goalEnd < 0 ? -1 : 1) * LT.sideLag));
+  const cz = Math.max(-LT.maxZ, Math.min(LT.maxZ, PIN[2]! + LT.sideDist));
+  lookAtFramed(cx, LT.sideHeight, cz, LT.sideFrame, out);
 }
 
 /** Replay side close-up looking at (lx, ly, lz), trailing toward the attacked goal `goalEnd`. Pure; writes out. */
 export function replaySidePose(lx: number, ly: number, lz: number, goalEnd: number, out: CinePose): CinePose {
-  const cx = clamp(lx - (goalEnd < 0 ? -1 : 1) * LT.sideLag, -LT.maxX, LT.maxX);
-  const cz = clamp(lz + LT.sideDist, -LT.maxZ, LT.maxZ);
-  const cy = LT.sideHeight;
-  const dx = lx - cx, dz = lz - cz;
-  const h = Math.max(0.5, Math.sqrt(dx * dx + dz * dz));
-  out.x = cx; out.y = cy; out.z = cz;
-  out.yaw = yawOf(dx, dz);
-  out.pitch = Math.atan2(cy - ly, h);
-  out.fov = frameFov(LT.sideFrame, Math.sqrt(h * h + (cy - ly) * (cy - ly)));
+  PIN[0] = lx; PIN[1] = ly; PIN[2] = lz;
+  replaySidePoseIn(goalEnd, out);
   return out;
+}
+
+/** replayGoalPose on PIN = [lx, ly, lz, goalZ]. */
+function replayGoalPoseIn(goalEnd: number, out: CinePose): void {
+  const cx = (goalEnd < 0 ? -1 : 1) * Math.min(LT.maxX, HALF_LENGTH + LT.goalCamBack);
+  const cz = Math.max(-LT.maxZ, Math.min(LT.maxZ, PIN[3]! * LT.goalCamZFollow));
+  lookAtFramed(cx, LT.goalCamHeight, cz, LT.goalFrame, out);
 }
 
 /** Replay low camera behind the goal at end goalEnd, looking at (lx, ly, lz). Pure; writes out. */
 export function replayGoalPose(lx: number, ly: number, lz: number, goalEnd: number, goalZ: number, out: CinePose): CinePose {
-  const cx = (goalEnd < 0 ? -1 : 1) * Math.min(LT.maxX, HALF_LENGTH + LT.goalCamBack);
-  const cz = clamp(goalZ * LT.goalCamZFollow, -LT.maxZ, LT.maxZ);
-  const cy = LT.goalCamHeight;
-  const dx = lx - cx, dz = lz - cz;
-  const h = Math.max(0.5, Math.sqrt(dx * dx + dz * dz));
-  out.x = cx; out.y = cy; out.z = cz;
-  out.yaw = yawOf(dx, dz);
-  out.pitch = Math.atan2(cy - ly, h);
-  out.fov = frameFov(LT.goalFrame, Math.sqrt(h * h + (cy - ly) * (cy - ly)));
+  PIN[0] = lx; PIN[1] = ly; PIN[2] = lz; PIN[3] = goalZ;
+  replayGoalPoseIn(goalEnd, out);
   return out;
 }
 
@@ -372,16 +403,22 @@ export function blendWeight(t: number, dur: number): number {
 
 /** out = a + (b - a) * w (yaw along the short arc). Pure. */
 export function mixPose(a: Readonly<CinePose>, b: Readonly<CinePose>, w: number, out: CinePose): CinePose {
+  PIN[7] = w;
+  mixPoseIn(a, b, out);
+  return out;
+}
+
+/** mixPose with the weight in PIN[7]. */
+function mixPoseIn(a: Readonly<CinePose>, b: Readonly<CinePose>, out: CinePose): void {
+  const w = PIN[7]!;
   let dy = b.yaw - a.yaw;
-  while (dy > Math.PI) dy -= 2 * Math.PI;
-  while (dy < -Math.PI) dy += 2 * Math.PI;
+  dy -= TWO_PI * Math.round(dy / TWO_PI); // short arc, branch-free
   out.x = a.x + (b.x - a.x) * w;
   out.y = a.y + (b.y - a.y) * w;
   out.z = a.z + (b.z - a.z) * w;
   out.yaw = a.yaw + dy * w;
   out.pitch = a.pitch + (b.pitch - a.pitch) * w;
   out.fov = a.fov + (b.fov - a.fov) * w;
-  return out;
 }
 
 function copyPose(src: Readonly<CinePose>, dst: CinePose): void {
@@ -453,9 +490,14 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
   let cuts = 0;
   let blends = 0;
   let lastPhase = -1;
+  /** Stick rotation of the current behind-the-taker / corner view (a ready number: returning it never allocates). */
+  let stickRot = 0;
+  /** The static shot's target pose is solved (BEHIND_TAKER / CORNER); cleared on every switch. */
+  let targetFresh = false;
 
-  /** Aspect + FOV into the projection (only elements 0 and 5 depend on them for this symmetric frustum). */
-  function applyProjection(fov: number): void {
+  /** Aspect + the pose's FOV into the projection (only elements 0 and 5 depend on them for this symmetric frustum). */
+  function applyProjection(p: Readonly<CinePose>): void {
+    const fov = p.fov;
     const a = Math.max(1, ctx.size.cssW) / Math.max(1, ctx.size.cssH);
     if (cam.zoom !== 1 || cam.filmOffset !== 0 || (cam.view !== null && cam.view.enabled)) {
       cam.aspect = a; cam.fov = fov;
@@ -476,7 +518,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     cam.position.set(p.x, p.y, p.z);
     euler.set(-p.pitch, p.yaw, 0, 'YXZ');
     cam.quaternion.setFromEuler(euler);
-    applyProjection(p.fov);
+    applyProjection(p);
     cam.updateMatrixWorld(true);
   }
 
@@ -550,28 +592,75 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
   function computeTarget(): void {
     switch (shot) {
       case CineShot.BEHIND_TAKER:
-        takerPose(S[S_SPOT_X]!, S[S_SPOT_Z]!, S[S_AIM_X]!, S[S_AIM_Z]!, goalKick, target);
+        if (targetFresh) return; // static shot: solved once per shot (transition / new spot)
+        PIN[0] = S[S_SPOT_X]!; PIN[1] = S[S_SPOT_Z]!; PIN[2] = S[S_AIM_X]!; PIN[3] = S[S_AIM_Z]!;
+        takerPoseIn(goalKick, target);
         break;
       case CineShot.CORNER:
-        cornerPose(S[S_SPOT_X]!, S[S_SPOT_Z]!, target);
+        if (targetFresh) return;
+        PIN[0] = S[S_SPOT_X]!; PIN[1] = S[S_SPOT_Z]!;
+        cornerPoseIn(target);
         break;
       case CineShot.ESTABLISHING:
-        establishingPose(S[S_SHOT_T]!, orbitDir, reduced, target);
+        PIN[0] = S[S_SHOT_T]!;
+        establishingPoseIn(orbitDir, reduced, target);
         break;
       case CineShot.REPLAY_SIDE:
-        replaySidePose(S[S_LOOK_X]!, S[S_LOOK_Y]!, S[S_LOOK_Z]!, link.goalEnd, target);
+        PIN[0] = S[S_LOOK_X]!; PIN[1] = S[S_LOOK_Y]!; PIN[2] = S[S_LOOK_Z]!;
+        replaySidePoseIn(link.goalEnd < 0 ? -1 : 1, target);
         break;
       case CineShot.REPLAY_GOAL:
-        replayGoalPose(S[S_LOOK_X]!, S[S_LOOK_Y]!, S[S_LOOK_Z]!, link.goalEnd, link.goalZ, target);
+        PIN[0] = S[S_LOOK_X]!; PIN[1] = S[S_LOOK_Y]!; PIN[2] = S[S_LOOK_Z]!; PIN[3] = link.goalZ;
+        replayGoalPoseIn(link.goalEnd < 0 ? -1 : 1, target);
         break;
       default:
         readCamera(target);
         break;
     }
     if (shot !== CineShot.NONE) {
-      target.y = Math.max(LT.minY, target.y);
-      S[S_YAW_TGT] = target.yaw;
+      if (target.y < LT.minY) target.y = LT.minY;
+      if (rotatesStick(shot) && target.yaw !== S[S_YAW_TGT]) {
+        // Stick rotation = -yaw in (-pi, pi]; kept as a ready number so stickRotation() never boxes a new one.
+        let r = -target.yaw;
+        while (r > Math.PI) r -= 2 * Math.PI;
+        while (r <= -Math.PI) r += 2 * Math.PI;
+        stickRot = r === 0 ? 0 : r;
+        S[S_YAW_TGT] = target.yaw;
+      }
     }
+    targetFresh = shot === CineShot.BEHIND_TAKER || shot === CineShot.CORNER;
+  }
+
+  /**
+   * Warm-up (setMatch, off screen, ~1 ms): run the pose solvers, the blend and the look smoothing on scratch data often
+   * enough for the JIT to optimise them, so the first set piece, blend or replay angle never allocates (unoptimised
+   * code boxes the doubles of its maths). Restores the module state afterwards.
+   */
+  function warmUpPaths(): void {
+    const a = createCinePose(), b = createCinePose(), c = createCinePose();
+    const f: RenderFrame = {
+      prev: null as unknown as ReadonlySimState, curr: null as unknown as ReadonlySimState, alpha: 1,
+      frame: { nowMs: 0, dtMs: 1000 / 60, frame: 0, ticks: 1, paused: false }, interp: createInterpState(),
+    };
+    for (let i = 0; i < LT.warmUpIterations; i++) {
+      const u = (i % 100) * 0.01;
+      PIN[0] = 20 + u * 15; PIN[1] = u * 20 - 10; PIN[2] = HALF_LENGTH; PIN[3] = 0;
+      takerPoseIn((i & 1) === 0, a);
+      PIN[0] = (i & 2) === 0 ? 51.9 : -51.9; PIN[1] = (i & 4) === 0 ? 33.4 : -33.4;
+      cornerPoseIn(b);
+      PIN[0] = u * 4;
+      establishingPoseIn((i & 1) === 0 ? 1 : -1, false, c);
+      PIN[0] = u * 50 - 25; PIN[1] = 1.5 + u; PIN[2] = u * 10 - 5; PIN[3] = 1.25;
+      replaySidePoseIn((i & 1) === 0 ? 1 : -1, a);
+      replayGoalPoseIn((i & 1) === 0 ? 1 : -1, b);
+      PIN[7] = u;
+      a.yaw = (i % 13) * 0.6 - 3.6; // wrap cases too
+      mixPoseIn(a, b, c);
+      if (canBlend(a, c)) S[0] = poseAngle(a, b);
+      f.interp.ballX = u * 30; f.interp.ballY = 0.5 + u; f.interp.ballZ = u * 5;
+      stepLook(f, (i % 50) === 0);
+    }
+    S.fill(0);
   }
 
   function isReplay(sh: CineShot): boolean {
@@ -584,6 +673,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     else readCamera(from);
     const prevShot = shot;
     shot = next;
+    targetFresh = false;
     S[S_SHOT_T] = 0;
     if (isReplay(next)) stepLook(f, true);
     computeTarget();
@@ -661,10 +751,19 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     }
     computeTarget();
     if (blending) {
-      S[S_BLEND_T] = S[S_BLEND_T]! + dt;
-      const w = blendWeight(S[S_BLEND_T]!, T_CAMERA.blendTime);
-      mixPose(from, target, w, out);
-      if (S[S_BLEND_T]! >= T_CAMERA.blendTime) blending = false;
+      const bt = S[S_BLEND_T]! + dt;
+      S[S_BLEND_T] = bt;
+      const u = T_CAMERA.blendTime > 0 ? Math.max(0, Math.min(1, bt / T_CAMERA.blendTime)) : 1;
+      const w = u * u * (3 - 2 * u); // blendWeight (smoothstep); mixPose written out (hot path, no call)
+      let dyaw = target.yaw - from.yaw;
+      dyaw -= TWO_PI * Math.round(dyaw / TWO_PI);
+      out.x = from.x + (target.x - from.x) * w;
+      out.y = from.y + (target.y - from.y) * w;
+      out.z = from.z + (target.z - from.z) * w;
+      out.yaw = from.yaw + dyaw * w;
+      out.pitch = from.pitch + (target.pitch - from.pitch) * w;
+      out.fov = from.fov + (target.fov - from.fov) * w;
+      if (bt >= T_CAMERA.blendTime) blending = false;
     } else copyPose(target, out);
     writeCamera(out);
     copyPose(out, last);
@@ -679,6 +778,8 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     get blends() { return blends; },
     get pose() { return last; },
     setMatch(state: ReadonlySimState) {
+      warmUpPaths();
+      targetFresh = false;
       matchOn = true;
       shot = CineShot.NONE;
       active = false;
@@ -690,6 +791,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
       keyCuts = link.cuts;
       S.fill(0);
       S[S_GOAL_DIST] = 100;
+      stickRot = 0;
     },
     update,
     onEvents(events: EventBuffer, _state: ReadonlySimState) {
@@ -719,7 +821,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     },
     resize() {
       if (!active) return;
-      applyProjection(last.fov);
+      applyProjection(last);
       cam.updateMatrixWorld(true);
     },
     establishing(kind: 'kickoff' | 'fulltime') {
@@ -736,7 +838,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     },
     screenToPitch(sx, sy, o) { return projectScreenToPitch(cam, ctx.size.cssW, ctx.size.cssH, sx, sy, o); },
     pitchToScreen(x, y, z, o) { return projectPitchToScreen(cam, ctx.size.cssW, ctx.size.cssH, x, y, z, o); },
-    stickRotation() { return active && rotatesStick(shot) ? stickRotationForYaw(S[S_YAW_TGT]!) : 0; },
+    stickRotation() { return active && rotatesStick(shot) ? stickRot : 0; },
     clearMatch() {
       matchOn = false;
       active = false;

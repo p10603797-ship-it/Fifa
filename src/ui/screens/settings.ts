@@ -125,6 +125,22 @@ export function pct(v: number): string {
   return `${Math.round(v * 100)}%`;
 }
 
+/**
+ * Sections into two columns (each section goes to the column with fewer controls so far, in order), so a tall section
+ * never leaves a hole beside a short one. Narrow screens stack the columns (CSS). Pure DOM helper.
+ */
+function intoColumns(sections: readonly Node[]): HTMLElement[] {
+  const cols = [h('div', { class: 'set-col' }), h('div', { class: 'set-col' })];
+  const load = [0, 0];
+  for (const sec of sections) {
+    const n = sec instanceof HTMLElement ? Math.max(1, sec.querySelectorAll('[data-focus], .set-note, .set-version').length) : 1;
+    const i = load[1]! < load[0]! ? 1 : 0;
+    cols[i]!.append(sec);
+    load[i]! += n;
+  }
+  return load[1] === 0 ? [cols[0]!] : cols;
+}
+
 let lastTab: SettingsTab = 'controls';
 let lastFixedScale: number = RES_SCALE_MAX;
 
@@ -135,14 +151,18 @@ const CSS = `
 .screen--settings .set-top .ui-back { position:static; }
 .set-title { margin:0; font-size: var(--fs-xl); font-weight: var(--fw-bold); line-height: var(--lh-tight); flex: 1 1 auto; }
 .set-store { margin:0; font: var(--fw-num) var(--fs-xs) / 1.3 var(--font-num); color: var(--text-3); }
-.set-body { flex: 1 1 auto; min-height:0; overflow-y:auto; display:grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
-  gap: var(--space-5) var(--space-6); align-content:start; padding: 2px 2px var(--space-6); }
+.set-body { flex: 1 1 auto; min-height:0; overflow-y:auto; display:grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-5) var(--space-6); align-items:start; align-content:start; padding: 2px 2px var(--space-6); }
+.set-col { display:flex; flex-direction:column; gap: var(--space-6); min-width:0; }
+.set-col:only-child { grid-column: 1 / -1; width: min(640px, 100%); }
+.screen--settings .tab { padding: 0 var(--space-4); }
+.screen--settings .seg__opt { font-size: var(--fs-sm); padding-left: var(--space-2); padding-right: var(--space-2); white-space:nowrap; min-width:0; }
 .set-body .ui-section { gap: var(--space-3); }
 .set-body .ctl, .set-body .seg { width:100%; }
 .set-body .btn { width:100%; justify-content:flex-start; text-align:left; }
 .set-note { margin:0; font-size: var(--fs-sm); color: var(--text-3); line-height: var(--lh); }
 .set-version { margin:0; font: var(--fw-num-bold) var(--fs-lg) / 1.2 var(--font-num); font-variant-numeric: tabular-nums; }
-@media (max-width: 860px) { .set-body { grid-template-columns: 1fr; } }
+@media (max-width: 860px) { .set-body { grid-template-columns: minmax(0, 1fr); } }
 @media (max-height: 600px) { .set-wrap { gap: var(--space-3); } .set-title { font-size: var(--fs-lg); } }
 `;
 
@@ -191,7 +211,7 @@ export function createSettingsScreen(): Screen {
     if (!c || !body) return;
     const prev = body.querySelector<HTMLElement>('[data-focused]')?.dataset.testid ?? null;
     body.dataset.tab = tab;
-    body.replaceChildren(...buildTab());
+    body.replaceChildren(...intoColumns(buildTab()));
     if (storeLine) storeLine.textContent = storeText(c);
     const target =
       (!focusFirst && prev ? body.querySelector<HTMLElement>(`[data-testid="${prev}"]`) : null) ??
@@ -369,9 +389,9 @@ export function createSettingsScreen(): Screen {
     return [
       createSection(
         'Quality',
-        createSegmented('Quality', QUALITY_OPTIONS, g.tier, (v) => set((m) => {
+        createSegmented('', QUALITY_OPTIONS, g.tier, (v) => set((m) => {
           m.graphics.tier = v;
-        }), { ctx: c, testId: 'set-gfx-tier' }).el,
+        }), { ctx: c, testId: 'set-gfx-tier', ariaLabel: 'Quality' }).el,
         h('p', { class: 'set-note', text: 'Auto picks a level for this device and steps down when frames run late.' }),
         createToggle('FPS counter', g.showFps, (v) => set((m) => {
           m.graphics.showFps = v;

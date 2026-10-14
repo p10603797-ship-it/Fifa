@@ -1,0 +1,9 @@
+{
+  "network": "Chromium emulation, 20 Mbit/s down, 20 ms latency",
+  "download done (ms)": 1349,
+  "DOMContentLoaded (ms)": 1833,
+  "splash interactive (ms)": 2029,
+  "tap to main menu (ms)": 380,
+  "device": "dev container, software WebGL (an iPad is faster)",
+  "measured": "2026-10-14"
+}

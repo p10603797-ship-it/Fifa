@@ -261,7 +261,7 @@ describe('GFX-15 shot framing', () => {
         replayGoalPose(bx, by, bz, end, 1, p);
         expect(insideLimits(p)).toBe(true);
         expect(Math.abs(p.x)).toBeGreaterThan(HALF_LENGTH + 2); // behind the goal (and its net)
-        expect(p.y).toBeLessThan(GOAL_HEIGHT + 0.5); // low
+        expect(p.y).toBeLessThan(GOAL_HEIGHT + 1.5); // low: just above the bar
         q = screen(p, 1180, 820, bx, by, bz)!;
         expect(Math.abs(q.x - 0.5)).toBeLessThan(0.01);
       }

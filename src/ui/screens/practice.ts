@@ -12,6 +12,10 @@
  */
 import type { AppContext, Screen, ScreenParams } from '../../contracts/app';
 import { MenuAction, UiSound } from '../../contracts/app';
+import {
+  GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, GOAL_HALF_WIDTH, HALF_LENGTH, HALF_WIDTH, PENALTY_AREA_DEPTH, PENALTY_AREA_HALF_WIDTH,
+  PENALTY_SPOT_DIST,
+} from '../../contracts/constants';
 import { PracticeKind } from '../../contracts/enums';
 import { buildPracticeSetup, clampSpot, PRACTICE_SPOTS, tutorialDeviceFor, type TutorialDevice } from '../../modes/practice';
 import { createButton, createSegmented, createSelector, h, injectStyle, setSelected } from '../components';
@@ -69,6 +73,14 @@ const CSS = `
 .pr-panel h2 { margin: 0; font-size: var(--fs-xl); }
 .pr-detail { margin: 0; color: var(--text-2); font-size: var(--fs-md); max-width: 36em; }
 .pr-note { margin: 0; color: var(--text-3); font-size: var(--fs-sm); }
+.pr-map { width: 100%; max-width: 420px; height: auto; max-height: 34vh; align-self: flex-start; }
+.pr-map .ln { fill: none; stroke: var(--hairline-strong); stroke-width: 0.35; }
+.pr-map .turf { fill: var(--surface-2); stroke: none; }
+.pr-map .goal { fill: none; stroke: var(--text-3); stroke-width: 0.5; }
+.pr-map .spot { fill: var(--ember); }
+.pr-map .ring { fill: none; stroke: var(--ember); stroke-width: 0.4; opacity: 0.6; }
+.pr-map .gk { fill: var(--text-2); }
+.pr-map .mate { fill: var(--ember); opacity: 0.55; }
 .pr-actions { margin-top: auto; display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .pr-actions .btn { min-width: calc(var(--target) * 3.2); }
 @media (max-height: 600px) {
@@ -76,8 +88,49 @@ const CSS = `
   .pr-panel h2 { font-size: var(--fs-lg); }
   .pr-detail { font-size: var(--fs-sm); }
   .pr-note { display: none; }
+  .pr-map { display: none; }
 }
 `;
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svg(tag: string, attrs: Record<string, string | number>): SVGElement {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const k of Object.keys(attrs)) el.setAttribute(k, String(attrs[k]));
+  return el;
+}
+
+/**
+ * Top-down map of the attacking half (goal on the right; the attacker's right is down) with the practice spot for set
+ * pieces, or the lone keeper for free play. Decorative (aria-hidden); the spot picker carries the information.
+ */
+export function practiceMap(kind: PracticeKind, spot: number): SVGElement | null {
+  if (kind === PracticeKind.TUTORIAL || typeof document === 'undefined') return null;
+  const L = HALF_LENGTH;
+  const W = HALF_WIDTH;
+  const root = svg('svg', { class: 'pr-map', viewBox: `-2 ${-W - 2} ${L + 6} ${2 * W + 4}`, 'aria-hidden': 'true', 'data-testid': 'practice-map' });
+  root.append(
+    svg('rect', { class: 'turf', x: 0, y: -W, width: L, height: 2 * W, rx: 1 }),
+    svg('rect', { class: 'ln', x: 0, y: -W, width: L, height: 2 * W }),
+    svg('rect', { class: 'ln', x: L - PENALTY_AREA_DEPTH, y: -PENALTY_AREA_HALF_WIDTH, width: PENALTY_AREA_DEPTH, height: 2 * PENALTY_AREA_HALF_WIDTH }),
+    svg('rect', { class: 'ln', x: L - GOAL_AREA_DEPTH, y: -GOAL_AREA_HALF_WIDTH, width: GOAL_AREA_DEPTH, height: 2 * GOAL_AREA_HALF_WIDTH }),
+    svg('path', { class: 'ln', d: `M 0 -9.15 A 9.15 9.15 0 0 1 0 9.15` }),
+    svg('path', { class: 'ln', d: `M ${L - PENALTY_AREA_DEPTH} -7.3 A 9.15 9.15 0 0 0 ${L - PENALTY_AREA_DEPTH} 7.3` }),
+    svg('circle', { class: 'ln', cx: L - PENALTY_SPOT_DIST, cy: 0, r: 0.4 }),
+    svg('rect', { class: 'goal', x: L, y: -GOAL_HALF_WIDTH, width: 2, height: 2 * GOAL_HALF_WIDTH }),
+    svg('circle', { class: 'gk', cx: L - 1, cy: 0, r: 1.3 }),
+  );
+  const sp = PRACTICE_SPOTS[kind]?.[clampSpot(kind, spot)];
+  if (sp) {
+    const x = Math.min(L, L - sp.dist);
+    const y = Math.max(-W, Math.min(W, sp.right));
+    root.append(svg('circle', { class: 'ring', cx: x, cy: y, r: 3.2 }), svg('circle', { class: 'spot', cx: x, cy: y, r: 1.2 }));
+  } else if (kind === PracticeKind.FREE_PLAY) {
+    for (const [x, y] of [[8, -14], [14, 4], [22, -6], [26, 14], [34, 0]] as const) root.append(svg('circle', { class: 'mate', cx: x, cy: y, r: 1.1 }));
+    root.append(svg('circle', { class: 'spot', cx: 0.8, cy: 0, r: 0.9 }));
+  }
+  return root;
+}
 
 /** Entry for a kind (unknown: Free play). */
 export function practiceEntryFor(kind: unknown): PracticeEntry {
@@ -123,10 +176,17 @@ export function createPracticeScreen(): Screen {
         const e = current;
         const parts: Node[] = [h('h2', { text: e.label, testId: 'practice-panel-title' }), h('p', { class: 'pr-detail', text: e.detail })];
         const spots = PRACTICE_SPOTS[e.kind];
+        let map = practiceMap(e.kind, spot);
+        if (map) parts.push(map);
         if (spots && spots.length > 1) {
           const options = spots.map((sp, i) => ({ value: i, label: sp.label, testId: `practice-spot-${sp.id}` }));
           const onSpot = (v: number): void => {
             spot = clampSpot(e.kind, v);
+            const next = practiceMap(e.kind, spot);
+            if (map && next) {
+              map.replaceWith(next);
+              map = next;
+            }
           };
           parts.push(spots.length <= 3
             ? createSegmented<number>('Spot', options, spot, onSpot, { ctx, testId: 'practice-spot' }).el

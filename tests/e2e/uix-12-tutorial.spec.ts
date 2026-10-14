@@ -8,7 +8,7 @@
  *    not; a card is dismissed by the action; a penalty against the human shows the saving hint
  */
 import { expect, test, type Page } from '@playwright/test';
-import { collectConsole, freeze, hudEvents, hudUpdate, shot, waitTicking } from './uix-06-harness';
+import { collectConsole, freeze, hudEvents, hudUpdate, reachInPlay, shot, waitTicking } from './uix-06-harness';
 
 const EV_KICK = 0;
 const KICK_GROUND_PASS = 1;
@@ -31,34 +31,20 @@ async function done(page: Page, key: string): Promise<boolean> {
   return page.evaluate((k) => window.__dotkick!.ctx.settings.get().tutorialDone[k] === true, key);
 }
 
-async function reachInPlay(page: Page): Promise<void> {
-  for (let i = 0; i < 40; i++) {
-    const st = await page.evaluate(() => {
-      const s = window.__dotkick!.ctx.session.getState()!;
-      return { phase: s.match.phase, ours: s.match.restart.team === s.ctrl[0]!.side };
-    });
-    if (st.phase === 2) return;
-    if (st.phase === 1 && st.ours) {
-      await page.keyboard.down('KeyJ');
-      await page.waitForTimeout(120);
-      await page.keyboard.up('KeyJ');
-    }
-    await page.waitForTimeout(500);
-  }
-  throw new Error('match never reached IN_PLAY');
-}
-
 /** Hold movement keys (alternating directions, optionally sprinting) until the step is stored as done. */
 async function performUntil(page: Page, key: string, sprint: boolean): Promise<void> {
   const dirs = ['ArrowRight', 'ArrowLeft'];
-  if (sprint) await page.keyboard.down('ShiftLeft');
-  for (let i = 0; i < 16 && !(await done(page, key)); i++) {
+  for (let i = 0; i < 24 && !(await done(page, key)); i++) {
+    // The ball may go out meanwhile: take our restart (or wait for theirs) before running on.
+    const phase = await page.evaluate(() => window.__dotkick!.ctx.session.getState()!.match.phase);
+    if (phase !== 2) await reachInPlay(page);
     const d = dirs[i % 2]!;
+    if (sprint) await page.keyboard.down('ShiftLeft');
     await page.keyboard.down(d);
     await page.waitForTimeout(900);
     await page.keyboard.up(d);
+    if (sprint) await page.keyboard.up('ShiftLeft');
   }
-  if (sprint) await page.keyboard.up('ShiftLeft');
   expect(await done(page, key)).toBe(true);
 }
 
@@ -143,16 +129,23 @@ test.describe('UIX-12 tutorial and control hints', () => {
       await expect(page.getByTestId('hint-count')).toHaveText('3/9');
       await page.waitForTimeout(250);
       await page.screenshot({ path: shot('uix-12-coach.png') });
+      // A controller / keyboard player skips a step from the pause menu (hook the pause menu calls).
+      expect(await page.evaluate(() => window.__dotkickHud!.tutorialStepActive())).toBe(true);
+      expect(await page.evaluate(() => window.__dotkickHud!.skipTutorialStep())).toBe(true);
+      expect(await done(page, 'keyboard.through')).toBe(true);
+      await hudUpdate(page, 1, 1300);
+      await expect(page.getByTestId('hint-title')).toHaveText('Shoot');
     });
 
     await test.step('quitting the practice returns to the tutorial with the steps done', async () => {
       await page.evaluate(() => window.__dotkick!.ctx.session.quit());
       await expect.poll(() => page.evaluate(() => window.__dotkick!.ctx.router.current)).toBe('tutorial');
       await page.addStyleTag({ content: '#ui { visibility: visible !important; }' });
-      for (const id of ['move', 'sprint', 'pass']) await expect(page.getByTestId(`tut-step-${id}`)).toHaveAttribute('data-done', '');
-      await expect(page.getByTestId('tut-step-through')).not.toHaveAttribute('data-done', '');
-      await expect(page.getByTestId('tut-progress')).toHaveText('3/9 done');
-      await expect(page.getByTestId('tut-detail-title')).toHaveText('Through ball');
+      expect(await page.evaluate(() => window.__dotkickHud!.tutorialStepActive())).toBe(false);
+      for (const id of ['move', 'sprint', 'pass', 'through']) await expect(page.getByTestId(`tut-step-${id}`)).toHaveAttribute('data-done', '');
+      await expect(page.getByTestId('tut-step-shoot')).not.toHaveAttribute('data-done', '');
+      await expect(page.getByTestId('tut-progress')).toHaveText('4/9 done');
+      await expect(page.getByTestId('tut-detail-title')).toHaveText('Shoot');
     });
 
     await test.step('set-piece hints: the first three corners show a card, the fourth does not', async () => {
@@ -174,7 +167,9 @@ test.describe('UIX-12 tutorial and control hints', () => {
         if (i <= 3) {
           await expect(page.getByTestId('hud-hint')).toHaveClass(/is-on/);
           await expect(page.getByTestId('hint-title')).toHaveText('Corner');
-          await expect(page.getByTestId('hint-lines')).toContainText('Short pass');
+          // Kick-Off was tapped: the card shows the touch way (brief section 9 "Set pieces on touch").
+          await expect(page.getByTestId('hud-hint')).toHaveAttribute('data-device', 'touch');
+          await expect(page.getByTestId('hint-lines')).toContainText('Play it short');
           if (i === 1) {
             await page.waitForTimeout(250);
             await page.screenshot({ path: shot('uix-12-hint-corner.png') });

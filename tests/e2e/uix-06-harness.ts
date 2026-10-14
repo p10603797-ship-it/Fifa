@@ -155,3 +155,21 @@ export function expectInside(a: Box[], vw: number, vh: number, label: string): v
     expect(r.x >= 0 && r.y >= 0 && r.x + r.w <= vw + 0.5 && r.y + r.h <= vh + 0.5, `${label}: ${r.name} outside the viewport`).toBe(true);
   }
 }
+
+/** Get the match into open play: take our restart (kick-off, throw-in, ...) with PASS (J), else wait for the CPU's. */
+export async function reachInPlay(page: Page): Promise<void> {
+  for (let i = 0; i < 40; i++) {
+    const st = await page.evaluate(() => {
+      const s = window.__dotkick!.ctx.session.getState()!;
+      return { phase: s.match.phase, ours: s.match.restart.team === s.ctrl[0]!.side };
+    });
+    if (st.phase === 2) return;
+    if (st.phase >= 1 && st.phase <= 7 && st.ours) {
+      await page.keyboard.down('KeyJ');
+      await page.waitForTimeout(120);
+      await page.keyboard.up('KeyJ');
+    }
+    await page.waitForTimeout(500);
+  }
+  throw new Error('match never reached IN_PLAY');
+}

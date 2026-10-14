@@ -191,7 +191,7 @@ export function createTutorialScreen(): Screen {
     const ctx = ctxRef;
     if (!ctx || ctx.session.active) return;
     ctx.audio.unlock().catch(() => undefined);
-    const setup = buildPracticeSetup(ctx, PracticeKind.TUTORIAL);
+    const setup = buildPracticeSetup(ctx, PracticeKind.TUTORIAL, { device: device.kind });
     const base = setup.modeData && typeof setup.modeData === 'object' ? (setup.modeData as Record<string, unknown>) : {};
     setup.modeData = { ...base, tutorial: { device: device.kind, startStep: selected } };
     const prevFinish = setup.onFinish;

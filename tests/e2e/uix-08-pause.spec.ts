@@ -27,6 +27,13 @@ test.describe('UIX-08 pause menu', () => {
     expect(await page.evaluate(() => window.__dotkick!.ctx.session.pausedBy)).toBe(1);
     await expect(page.locator('.pause-who')).toHaveText('Paused by Player 2');
     await shot(page, 'uix08-pause-main-1180');
+    for (const [w, hgt, name] of [[1024, 768, '4x3'], [1260, 540, '21x9-small']] as const) {
+      await page.setViewportSize({ width: w, height: hgt });
+      await page.waitForTimeout(100);
+      await shot(page, `uix08-pause-main-${name}`);
+      expect(await checkTargets(page, '[data-testid="pause-page-main"]'), name).toEqual([]);
+    }
+    await page.setViewportSize({ width: 1180, height: 820 });
 
     // P1 (touch) may not resume or quit.
     await page.getByTestId('pause-resume').tap();
@@ -174,6 +181,27 @@ test.describe('UIX-08 pause menu', () => {
     await expect(page.getByTestId('pause-bench-9')).toBeDisabled();
     await expect(page.getByTestId('pause-formation')).toContainText('4-3-3');
     await shot(page, 'uix08-team-after');
+
+    // Quick sub (D-pad down, down -> Command.QUICK_SUB in the human's frame): the compact prompt pauses the match.
+    await page.getByTestId('pause-back').tap();
+    await page.getByTestId('pause-resume').tap();
+    await page.waitForFunction(() => !window.__dotkick!.ctx.session.paused);
+    await expect.poll(async () => {
+      const shown = await page.getByTestId('pause-page-quick').isVisible().catch(() => false);
+      if (!shown) {
+        await page.evaluate(() => {
+          const c = window.__dotkick!.ctx;
+          if (!c.session.paused) c.session.queueCommand(0, 8 /* Command.QUICK_SUB */, 0);
+        });
+      }
+      return shown;
+    }, { timeout: 30_000, intervals: [400] }).toBe(true);
+    expect(await page.evaluate(() => window.__dotkick!.ctx.session.pausedBy)).toBe(0);
+    await expect(page.locator('[data-testid="pause-tired"] [data-drop="xi"]')).toHaveCount(4);
+    await shot(page, 'uix08-quick-sub');
+    expect(await checkTargets(page, '[data-testid="pause-page-quick"]')).toEqual([]);
+    await page.getByTestId('pause-quick-done').tap();
+    await page.waitForFunction(() => !window.__dotkick!.ctx.session.paused);
     expect(messages).toEqual([]);
   });
 });

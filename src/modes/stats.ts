@@ -44,6 +44,8 @@
  * home side, then the lower squad index. null when nobody played.
  *
  * Per-tick cost: O(events + 22); onTick allocates nothing except one GoalRecord per goal. summary() allocates.
+ * Robust to partial states (test doubles, a state missing players or config): missing parts count as nothing; the
+ * tracker never throws into the loop.
  */
 import type { GoalRecord, MatchSummary, PlayerMatchStats, StatsTracker, TeamMatchStats } from '../contracts/app';
 import { NUM_SLOTS, PLAYERS_PER_TEAM, SQUAD_SIZE } from '../contracts/constants';
@@ -228,15 +230,20 @@ export function createStatsTracker(): StatsTracker {
   function idxOf(state: ReadonlySimState, slot: number): number {
     const t = teamOfSlot(slot);
     if (t < 0) return -1;
-    const r = state.players[slot]!.rosterIdx;
+    const p = state.players?.[slot];
+    if (!p) return -1;
+    const r = p.rosterIdx;
     return r === (r | 0) && r >= 0 && r < SQUAD_SIZE ? t * SQUAD_SIZE + r : -1;
   }
 
   /** Mark active players as appeared, remember roles and add clock time. */
   function scanPlayers(state: ReadonlySimState, clockTick: boolean): void {
-    for (let slot = 0; slot < NUM_SLOTS; slot++) {
-      const p = state.players[slot]!;
-      if (p.active !== 1) continue;
+    const players = state.players;
+    if (!players) return;
+    const n = players.length < NUM_SLOTS ? players.length : NUM_SLOTS;
+    for (let slot = 0; slot < n; slot++) {
+      const p = players[slot];
+      if (!p || p.active !== 1) continue;
       const i = idxOf(state, slot);
       if (i < 0) continue;
       pc.appeared[i] = 1;
@@ -268,9 +275,11 @@ export function createStatsTracker(): StatsTracker {
     }
     if (aIdx >= 0 && aIdx !== sIdx) pc.assists[aIdx]!++;
     const conceding = 1 - team;
-    for (let slot = 0; slot < NUM_SLOTS; slot++) {
-      const p = state.players[slot]!;
-      if (p.active !== 1 || teamOfSlot(slot) !== conceding) continue;
+    const players = state.players;
+    const n = players ? (players.length < NUM_SLOTS ? players.length : NUM_SLOTS) : 0;
+    for (let slot = 0; slot < n; slot++) {
+      const p = players[slot];
+      if (!p || p.active !== 1 || teamOfSlot(slot) !== conceding) continue;
       const i = idxOf(state, slot);
       if (i >= 0) pc.conceded[i]!++;
     }
@@ -294,7 +303,8 @@ export function createStatsTracker(): StatsTracker {
     },
     onTick(state, events: EventBuffer) {
       const m = state.match;
-      if (m.phase === MatchPhase.IN_PLAY) {
+      if (!m) return;
+      if (m.phase === MatchPhase.IN_PLAY && state.ball) {
         const ot = teamOfSlot(state.ball.owner);
         if (ot >= 0) possTeam = ot;
         if (possTeam >= 0) possTicks[possTeam]!++;
@@ -420,18 +430,19 @@ export function createStatsTracker(): StatsTracker {
       const total = possTicks[0]! + possTicks[1]!;
       out[0].possession = total > 0 ? possTicks[0]! / total : 0.5;
       out[1].possession = 1 - out[0].possession;
-      out[0].goals = state.teams[0]!.goals;
-      out[1].goals = state.teams[1]!.goals;
-      const so = state.match.shootout;
-      const shootout: [number, number] | null = so.active === 1 || so.winner >= 0 ? [so.goals[0]!, so.goals[1]!] : null;
-      let winner = state.match.winner;
+      out[0].goals = state.teams?.[0]?.goals ?? teams[0].goals;
+      out[1].goals = state.teams?.[1]?.goals ?? teams[1].goals;
+      const so = state.match?.shootout;
+      const shootout: [number, number] | null = so && (so.active === 1 || so.winner >= 0) ? [so.goals[0]!, so.goals[1]!] : null;
+      let winner = state.match?.winner ?? -1;
       if (winner !== 0 && winner !== 1) {
         if (out[0].goals > out[1].goals) winner = 0;
         else if (out[1].goals > out[0].goals) winner = 1;
         else if (shootout && shootout[0] !== shootout[1]) winner = shootout[0] > shootout[1] ? 0 : 1;
         else winner = -1;
       }
-      const halfTicks = Math.max(1, state.config.halfMinutes * TICKS_PER_MIN);
+      const halfMinutes = state.config?.halfMinutes;
+      const halfTicks = Math.max(1, (typeof halfMinutes === 'number' && halfMinutes > 0 ? halfMinutes : 4) * TICKS_PER_MIN);
       const players: PlayerMatchStats[] = [];
       for (let i = 0; i < NP; i++) {
         if (pc.appeared[i] !== 1) continue;
@@ -461,7 +472,7 @@ export function createStatsTracker(): StatsTracker {
         playerOfMatch: pom >= 0 ? { team: players[pom]!.team, rosterIdx: players[pom]!.rosterIdx } : null,
         shootout,
         winner,
-        forfeit: state.match.forfeitTeam,
+        forfeit: state.match?.forfeitTeam ?? -1,
         ticks: state.tick,
       };
     },

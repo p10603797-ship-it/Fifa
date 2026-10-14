@@ -428,17 +428,17 @@ const CSS = `
 .dk-ce-pause::before { content:''; width:14px; height:16px; box-sizing:border-box; border-left:4px solid rgba(242,242,245,.5);
   border-right:4px solid rgba(242,242,245,.5); }
 .dk-ce-panel { position:absolute; left:50%; top: calc(var(--safe-top, 0px) + 72px); transform: translateX(-50%);
-  width: min(470px, calc(100% - 32px)); max-height: calc(100% - var(--safe-top, 0px) - var(--safe-bottom, 0px) - 300px);
-  min-height: 200px; display:flex; flex-direction:column; gap: var(--space-3, 12px); box-sizing:border-box;
+  width: min(470px, calc(100% - 32px)); max-height: calc(100% - var(--safe-top, 0px) - var(--safe-bottom, 0px) - 150px);
+  min-height: 0; display:flex; flex-direction:column; gap: var(--space-3, 12px); box-sizing:border-box;
   padding: var(--space-4, 16px); background: rgba(14,14,22,.94); border:1px solid var(--hairline, rgba(242,242,245,.14));
   border-radius: var(--radius-lg, 18px); box-shadow: 0 18px 48px rgba(0,0,0,.4); touch-action: pan-y; }
 .dk-ce-panel[hidden] { display:none; }
 .dk-ce-panel__head { display:flex; align-items:center; justify-content:space-between; gap: var(--space-3, 12px); }
 .dk-ce-panel__title { margin:0; font-size: var(--fs-lg, 22px); }
-.dk-ce-panel__body { overflow-y:auto; overscroll-behavior: contain; display:flex; flex-direction:column; gap: var(--space-2, 8px);
+.dk-ce-panel__body { overflow-y:auto; overscroll-behavior: contain; touch-action: pan-y; display:flex; flex-direction:column; gap: var(--space-2, 8px);
   min-height:0; -webkit-overflow-scrolling: touch; }
 .dk-ce-note { margin:0; font-size: var(--fs-sm, 14px); color: var(--text-2, #c9c9d1); }
-.dk-ce-tip { position:absolute; left:50%; bottom: calc(var(--safe-bottom, 0px) + 28px); transform: translateX(-50%);
+.dk-ce-tip { position:absolute; left:50%; bottom: calc(var(--safe-bottom, 0px) + 24px); transform: translateX(-50%);
   max-width: min(520px, calc(100% - 32px)); margin:0; text-align:center; font-size: var(--fs-sm, 14px);
   color: var(--text-2, #c9c9d1); pointer-events:none; }
 .dk-ce-show { position:absolute; right: calc(var(--safe-right, 0px) + 24px); top: calc(var(--safe-top, 0px) + 100px); }
@@ -803,6 +803,7 @@ export function createControlsEditorScreen(): Screen {
           }).el,
           createSlider('Opacity', fin(draft.opacity, 0.85), (v) => edit(() => { draft.opacity = Math.round(clamp(v, LOCAL_TUNING.opacityMin, LOCAL_TUNING.opacityMax) * 100) / 100; }), {
             min: LOCAL_TUNING.opacityMin, max: LOCAL_TUNING.opacityMax, step: LOCAL_TUNING.opacityStep, testId: 'ce-opacity', ctx,
+            format: (v) => `${Math.round(v * 100)}%`,
           }).el,
           createToggle('Mirror for left-handers', draft.mirror, (v) => editD(() => setMirror(draft, v, env())), { testId: 'ce-mirror', ctx }).el,
           createSegmented('Stick', [

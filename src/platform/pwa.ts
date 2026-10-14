@@ -2,8 +2,9 @@
  * [PLT-01] Service worker registration and the update flow (brief section 3: install, offline, secure context).
  *
  * - Registers ./sw.js (scope ./, updateViaCache 'none') only in a secure context (HTTPS or localhost), never in the
- *   Vite dev server and never as a requirement: if sw.js is missing (index.html deployed alone) the failure is
- *   logged to diagnostics and the game runs on.
+ *   Vite dev server and never as a requirement: sw.js is fetched first (swScriptAvailable) and, when it is missing
+ *   (index.html deployed alone) or offline, registration is skipped quietly (no browser console error), logged to
+ *   diagnostics, and the game runs on. An already installed worker keeps serving offline either way.
  * - Update flow: when a new worker has installed while an older one controls the page (a new build was deployed),
  *   a toast "Update available" with a Reload button appears. Accepting posts SKIP_WAITING to the waiting worker;
  *   when it takes control (controllerchange) the page reloads once. Declining keeps the old version until the next
@@ -167,12 +168,32 @@ declare global {
   }
 }
 
+/**
+ * True when the worker script is really there: a 2xx JavaScript response. index.html deployed alone (or a host that
+ * answers missing files with an HTML page) then skips registration quietly instead of making the browser log a
+ * failed script fetch. Never throws.
+ */
+export async function swScriptAvailable(url: string, fetchFn: typeof fetch = fetch): Promise<boolean> {
+  try {
+    const res = await fetchFn(url, { cache: 'no-store', credentials: 'same-origin' });
+    const type = res.headers.get('content-type') ?? '';
+    return res.ok && /javascript|ecmascript/i.test(type);
+  } catch {
+    return false;
+  }
+}
+
 export async function registerServiceWorker(opts: RegisterOptions = {}): Promise<ServiceWorkerRegistration | null> {
   if (!canRegisterServiceWorker()) return null;
   const log = (m: string, data?: unknown): void => opts.diagnostics?.log('pwa', m, data);
+  const url = opts.url ?? './sw.js';
+  if (!(await swScriptAvailable(url))) {
+    log('service worker not registered: sw.js is not beside index.html (or offline); the game runs without it');
+    return null;
+  }
   let reg: ServiceWorkerRegistration;
   try {
-    reg = await navigator.serviceWorker.register(opts.url ?? './sw.js', { scope: './', updateViaCache: 'none' });
+    reg = await navigator.serviceWorker.register(url, { scope: './', updateViaCache: 'none' });
     log('service worker registered');
   } catch (err) {
     log('service worker not registered', String(err));

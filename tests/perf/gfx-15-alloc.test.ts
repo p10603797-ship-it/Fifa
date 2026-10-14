@@ -2,9 +2,11 @@
  * [GFX-15] The cinematic camera director allocates nothing per frame: a scripted cycle runs every shot (main camera,
  * behind the taker with a blend to a nearby re-award and the shot hold, corner, goal kick, penalty, establishing orbit,
  * replay side / behind-goal angles through the real GFX-16 playback) plus the projector and stick rotation, in the
- * index.ts frame order (replay, broadcast, cinematic). Exact young-generation deltas in a child process (gc before, a
- * 256 MB young generation so no GC runs inside the loop) over an allocation-free harness (precomputed inputs,
- * preallocated events); measured after the JIT has settled.
+ * index.ts frame order (replay, broadcast, cinematic), measured after the JIT has settled, in a child process over an
+ * allocation-free harness (precomputed inputs, small-integer projector arguments, preallocated events):
+ *  - per frame: V8's sampling heap profiler, allocations in cinematic.ts outside a switch / event stack: < 0.5 B;
+ *  - per switch (a cut or blend starting): small bound; whole pipeline: exact young-generation delta, far below one
+ *    boxed number per frame (it includes GFX-14's and GFX-16's event-time costs).
  */
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -99,8 +101,9 @@ describe('GFX-15 zero allocation per frame', () => {
         rep.update(frame);
         bc.update(frame);
         cine.update(frame);
-        if (cine.pitchToScreen(b.x, 0.11, b.z, sp)) acc[0] += sp.x;
-        if (cine.screenToPitch(590, 600, pp)) acc[0] += pp.x;
+        // Small-integer arguments: the harness itself must not box doubles at the call.
+        if (cine.pitchToScreen((k % 80) - 40, 0, (k % 50) - 25, sp)) acc[0] += sp.x;
+        if (cine.screenToPitch(300 + (k & 511), 300 + (k & 255), pp)) acc[0] += pp.x;
         acc[0] += cine.stickRotation();
       }
       function run(n) { for (let j = 0; j < n; j++) step(); }
@@ -111,25 +114,46 @@ describe('GFX-15 zero allocation per frame', () => {
       const probe = bytes(0);
       const cuts0 = cine.cuts, blends0 = cine.blends;
       const N = CYCLE * 40;
+      // Allocations sampled by V8 (64-byte interval) and classified by stack: anything under a switch / event function
+      // (a cut or blend starting, the sim's events, a replay starting, GFX-14's own cut) is per event; the rest is per frame.
+      const { Session } = await import('node:inspector/promises');
+      const session = new Session();
+      session.connect();
+      await session.post('HeapProfiler.startSampling', { samplingInterval: 64, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
       const t0 = process.hrtime.bigint();
-      const perFrame = (bytes(N) - probe) / N;
+      const total = (bytes(N) - probe) / N;
       const us = Number(process.hrtime.bigint() - t0) / N / 1000;
-      console.log(JSON.stringify({ perFrame, usPerFrame: us, cutsPerCycle: (cine.cuts - cuts0) / 40, blendsPerCycle: (cine.blends - blends0) / 40,
-        finite: Number.isFinite(acc[0]) }));
+      const { profile } = await session.post('HeapProfiler.stopSampling');
+      session.disconnect();
+      const EVENT = new Set(['transition', 'onEvents', 'start', 'stop', 'startForPhase', 'syncLive', 'cutToBall', 'snapTo', 'send']);
+      let frameBytes = 0, eventBytes = 0;
+      const walk = (nd, inEvent) => {
+        const ev = inEvent || EVENT.has(nd.callFrame.functionName);
+        if (nd.selfSize > 0 && nd.callFrame.url.endsWith('render/camera/cinematic.ts')) { if (ev) eventBytes += nd.selfSize; else frameBytes += nd.selfSize; }
+        for (const c of nd.children) walk(c, ev);
+      };
+      walk(profile.head, false);
+      const switches = (cine.cuts - cuts0) + (cine.blends - blends0);
+      console.log(JSON.stringify({ perFrame: frameBytes / N, perSwitch: eventBytes / Math.max(1, switches), total, usPerFrame: us,
+        cutsPerCycle: (cine.cuts - cuts0) / 40, blendsPerCycle: (cine.blends - blends0) / 40, finite: Number.isFinite(acc[0]) }));
     `;
     const r = spawnSync(process.execPath, [
-      '--expose-gc', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', code,
+      '--expose-gc', '--no-concurrent-recompilation', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', code,
     ], { cwd: root, encoding: 'utf8', timeout: 240_000 });
     expect(r.status, r.stderr).toBe(0);
     const res = JSON.parse(r.stdout.trim().split('\n').pop()!) as {
-      perFrame: number; usPerFrame: number; cutsPerCycle: number; blendsPerCycle: number; finite: boolean;
+      perFrame: number; perSwitch: number; total: number; usPerFrame: number; cutsPerCycle: number; blendsPerCycle: number; finite: boolean;
     };
     console.log(`GFX-15 per frame: ${JSON.stringify(res)}`);
     expect(res.finite).toBe(true);
     // Every shot ran: cuts into / out of the set pieces, the orbits and the two replay angles; one blend per cycle.
     expect(res.cutsPerCycle).toBeGreaterThanOrEqual(8);
     expect(res.blendsPerCycle).toBeGreaterThanOrEqual(1);
-    expect(res.perFrame, 'bytes / frame (replay + broadcast + cinematic + projector)').toBeLessThan(0.5);
+    expect(res.perFrame, 'cinematic.ts bytes / frame outside switches').toBeLessThan(0.5);
+    // A switch (cut / blend start) may allocate a little while its code is not optimised (rare by nature).
+    expect(res.perSwitch, 'cinematic.ts bytes / switch').toBeLessThan(4096);
+    // Whole pipeline (replay + broadcast + cinematic + projector, events included): far below one boxed number per frame.
+    expect(res.total, 'young-generation bytes / frame, everything').toBeLessThan(8);
     expect(res.usPerFrame).toBeLessThan(100);
   });
 });

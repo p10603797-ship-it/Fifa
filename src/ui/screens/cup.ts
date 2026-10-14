@@ -58,10 +58,15 @@ const CSS = `
 .screen.cup { justify-content: flex-start; align-items: stretch; gap: var(--space-4); }
 .cup-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); width: 100%; max-width: 1240px;
   margin: 0 auto; }
-.cup-new { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(260px, 0.75fr) minmax(0, 1.6fr);
+.cup-new { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(320px, 0.85fr) minmax(0, 1.6fr);
   gap: var(--space-5); width: 100%; max-width: 1240px; margin: 0 auto; }
 .cup-settings { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; overflow: auto; padding: 4px; }
 .cup-settings .seg__opt { min-width: 0; flex: 1 1 0; padding: 0 var(--space-3); }
+.cup-settings .sel__value { min-width: 6.5em; flex: 1 1 auto; }
+.cup-settings .sel { padding-left: 0; }
+.cup-settings .sel .ctl__text { display: none; }
+.cup-settings .sel__box { flex: 1 1 auto; }
+.cup-field { display: flex; flex-direction: column; gap: var(--space-2); }
 .cup-clubs-panel { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; padding: 4px; }
 .cup-clubs-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; min-height: var(--target); }
 .cup-clubs-head .seg { flex-direction: row; align-items: center; gap: var(--space-3); }
@@ -262,7 +267,7 @@ export function createCupScreen(): Screen {
   function renderNew(ctx: AppContext, root: HTMLElement): void {
     const d = draft!;
     const clubs = ctx.clubs;
-    const grid = h('div', { class: 'cup-clubs', testId: 'cup-clubs', attrs: { 'data-focus-group': 'both', role: 'group', 'aria-label': 'Clubs' } });
+    const grid = h('div', { class: 'cup-clubs', testId: 'cup-clubs', attrs: { 'data-focus-group': 'none', role: 'group', 'aria-label': 'Clubs' } });
     const clubButtons: HTMLButtonElement[] = [];
     const paint = (): void => {
       for (let i = 0; i < clubButtons.length; i++) {
@@ -323,9 +328,9 @@ export function createCupScreen(): Screen {
         d.size = v === 16 ? 16 : 8;
       }, { ctx, testId: 'cup-size' }).el,
       createSegmented<Players>('Players', [
-        { value: 'one', label: 'One', testId: 'cup-players-one' },
-        { value: 'coop', label: 'Two, together', testId: 'cup-players-coop' },
-        { value: 'rivals', label: 'Two, rivals', testId: 'cup-players-rivals' },
+        { value: 'one', label: 'Solo', testId: 'cup-players-one' },
+        { value: 'coop', label: 'Co-op', testId: 'cup-players-coop' },
+        { value: 'rivals', label: 'Rivals', testId: 'cup-players-rivals' },
       ], d.players, (v) => {
         d.players = v;
         d.picking = 0;
@@ -333,12 +338,14 @@ export function createCupScreen(): Screen {
         renderPicking();
         paint();
       }, { ctx, testId: 'cup-players' }).el,
-      createSelector<number>('Difficulty', DIFFICULTY_LABELS.map((label, value) => ({ value, label })), d.difficulty, (v) => {
-        d.difficulty = v as Difficulty;
-      }, { ctx, testId: 'cup-difficulty', wrap: false }).el,
-      createSelector<number>('Half length', HALF_OPTIONS.map((v) => ({ value: v, label: `${v} min` })), d.halfMinutes, (v) => {
-        d.halfMinutes = v;
-      }, { ctx, testId: 'cup-half', wrap: false }).el,
+      h('div', { class: 'cup-field' }, h('div', { class: 'seg__label eyebrow', text: 'Difficulty' }),
+        createSelector<number>('Difficulty', DIFFICULTY_LABELS.map((label, value) => ({ value, label })), d.difficulty, (v) => {
+          d.difficulty = v as Difficulty;
+        }, { ctx, testId: 'cup-difficulty', wrap: false }).el),
+      h('div', { class: 'cup-field' }, h('div', { class: 'seg__label eyebrow', text: 'Half length' }),
+        createSelector<number>('Half length', HALF_OPTIONS.map((v) => ({ value: v, label: `${v} min` })), d.halfMinutes, (v) => {
+          d.halfMinutes = v;
+        }, { ctx, testId: 'cup-half', wrap: false }).el),
     );
 
     renderPicking();

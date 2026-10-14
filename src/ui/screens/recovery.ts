@@ -126,7 +126,9 @@ export function createRecoveryScreen(): Screen {
         h('h1', { class: 'ui-title', text: 'Something went wrong', testId: 'recovery-title' }),
         h('p', {
           class: 'ui-subtitle',
-          text: resumable ? 'The game paused to keep your match safe.' : 'The match cannot continue safely. Restart it or go back to the menu.',
+          text: resumable ? 'The game paused to keep your match safe.'
+            : ctx.session.active ? 'The match cannot continue safely. Restart it or go back to the menu.'
+              : 'Copy the diagnostics to report it, then go back to the menu.',
         }),
         note,
         col,

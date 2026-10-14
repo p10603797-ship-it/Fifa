@@ -28,7 +28,9 @@ import { cloneSetup, isFlowMode } from './matchFlow';
 export { scoreLine };
 
 const CSS = `
-.ft-panel { width: min(1080px, 100%); }
+.ft-panel { width: min(1080px, 100%); overflow:hidden; }
+.ft-panel .ft-grid { flex: 1 1 auto; min-height:0; overflow-y:auto; padding: 2px; }
+.ft-panel .brk-actions { flex: 0 0 auto; }
 .ft-grid { display:grid; grid-template-columns: minmax(0, 1.6fr) minmax(240px, 1fr); gap: var(--space-6); align-items:start; }
 .ft-grid--solo { grid-template-columns: minmax(0, 1fr); }
 .ft-stats .brk-stats { gap: var(--space-2); }
@@ -41,6 +43,9 @@ const CSS = `
 .ft-potm__shirt { font: var(--fw-num-bold) var(--fs-hero) / 1 var(--font-num); color: var(--ember); }
 @media (max-width: 900px) { .ft-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-height: 640px) { .ft-potm__shirt { font-size: var(--fs-xl); } }
+@media (max-height: 780px) and (min-width: 1200px) {
+  .ft-stats .brk-stats { display:grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-3) var(--space-6); }
+}
 `;
 
 /** Result line under the score: forfeit, penalties, after extra time, or ''. Pure. */

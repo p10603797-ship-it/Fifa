@@ -6,7 +6,7 @@
  *  - zero DOM writes while nothing changes; screenshot reports/uix-07-power.png
  */
 import { expect, test, type Page } from '@playwright/test';
-import { collectConsole, freeze, hudUpdate, shot, startMatch, startMutations, takeMutations } from './uix-06-harness';
+import { collectConsole, freeze, hudUpdate, reachInPlay, shot, startMatch, startMutations, takeMutations } from './uix-06-harness';
 
 interface Ctl { slot: number; stamina: number; fill: number; phase: number }
 
@@ -18,24 +18,6 @@ async function controlled(page: Page): Promise<Ctl> {
     const m = /scaleX\(([\d.]+)\)/.exec(fillEl.style.transform);
     return { slot, stamina: slot >= 0 ? s.players[slot]!.stamina : -1, fill: m ? Number(m[1]) : -1, phase: s.match.phase };
   });
-}
-
-/** Get the match into open play: take the kick-off with PASS (J) when it is ours, else wait for the CPU's. */
-async function reachInPlay(page: Page): Promise<void> {
-  for (let i = 0; i < 40; i++) {
-    const st = await page.evaluate(() => {
-      const s = window.__dotkick!.ctx.session.getState()!;
-      return { phase: s.match.phase, ours: s.match.restart.team === s.ctrl[0]!.side };
-    });
-    if (st.phase === 2) return;
-    if (st.phase === 1 && st.ours) {
-      await page.keyboard.down('KeyJ');
-      await page.waitForTimeout(120);
-      await page.keyboard.up('KeyJ');
-    }
-    await page.waitForTimeout(500);
-  }
-  throw new Error('match never reached IN_PLAY');
 }
 
 test.describe('UIX-07 radar, player name and stamina, power bar', () => {
@@ -63,6 +45,17 @@ test.describe('UIX-07 radar, player name and stamina, power bar', () => {
       expect(draws / secs).toBeLessThanOrEqual(21);
     });
 
+    await test.step('radar toggle (settings / pause menus): hides the radar, the panel moves in, shows again', async () => {
+      const before = (await page.getByTestId('pi-p1').boundingBox())!;
+      await page.evaluate(() => window.__dotkickHud!.setRadarEnabled(window.__dotkick!.ctx.settings, false));
+      await expect(page.getByTestId('hud-radar')).toBeHidden();
+      const moved = (await page.getByTestId('pi-p1').boundingBox())!;
+      expect(moved.x).toBeGreaterThan(before.x + 50);
+      await page.evaluate(() => window.__dotkickHud!.setRadarEnabled(window.__dotkick!.ctx.settings, true));
+      await expect(page.getByTestId('hud-radar')).toBeVisible();
+      expect(await page.evaluate(() => window.__dotkick!.ctx.settings.loadProgress<{ on: boolean }>('hud.radar'))).toEqual({ on: true });
+    });
+
     await test.step('player 1 panel: controlled player name and number', async () => {
       await expect(page.getByTestId('pi-p1')).toBeVisible();
       await expect(page.getByTestId('pi-p2')).toBeHidden();
@@ -81,7 +74,13 @@ test.describe('UIX-07 radar, player name and stamina, power bar', () => {
       let matched = false;
       const dirs = ['ArrowRight', 'ArrowLeft'];
       await page.keyboard.down('ShiftLeft');
-      for (let i = 0; i < 6 && minFill >= 1; i++) {
+      for (let i = 0; i < 8 && minFill >= 1; i++) {
+        const phase = await page.evaluate(() => window.__dotkick!.ctx.session.getState()!.match.phase);
+        if (phase !== 2) {
+          await page.keyboard.up('ShiftLeft');
+          await reachInPlay(page);
+          await page.keyboard.down('ShiftLeft');
+        }
         const dir = dirs[i % 2]!;
         await page.keyboard.down(dir);
         for (let k = 0; k < 6; k++) {
@@ -103,6 +102,7 @@ test.describe('UIX-07 radar, player name and stamina, power bar', () => {
     await test.step('power bar shows while PASS is held with the ball', async () => {
       let shown = false;
       for (let attempt = 0; attempt < 4 && !shown; attempt++) {
+        await reachInPlay(page);
         await page.evaluate(() => {
           const s = window.__dotkick!.ctx.session.getState()! as unknown as {
             tick: number; ctrl: { slot: number }[]; players: { x: number; z: number; team: number }[];

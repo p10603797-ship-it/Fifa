@@ -493,7 +493,7 @@ export function createRemapController(deps: RemapControllerDeps): RemapControlle
     family() {
       const s = slot();
       if (!s) return PadFamily.GENERIC;
-      let st = null;
+      let st: ReturnType<typeof settings.get> | null;
       try {
         st = settings.get();
       } catch {

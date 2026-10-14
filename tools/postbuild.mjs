@@ -180,10 +180,12 @@ function copyDir(src, dst) {
 }
 
 /**
- * Run every check on `dist`. Returns a report object; does not exit. `publicDir` is where missing extras come from.
+ * Run every check on `dist`. Returns a report object; does not exit. `publicDir` is where missing extras come from;
+ * `gzipBudget` overrides the 4 MB budget (tests).
  */
 export function runPostbuild(dist, opts = {}) {
   const publicDir = opts.publicDir ?? join(root, 'public');
+  const gzipBudget = opts.gzipBudget ?? GZIP_BUDGET_BYTES;
   const errors = [];
   const warnings = [];
   const notes = [];
@@ -254,7 +256,7 @@ export function runPostbuild(dist, opts = {}) {
   const sizes = sizesOf(htmlBuf);
   let total = 0;
   for (const f of files) total += statSync(join(dist, f)).size;
-  if (sizes.gzip > GZIP_BUDGET_BYTES) errors.push(`index.html gzip ${kb(sizes.gzip)} exceeds the ${kb(GZIP_BUDGET_BYTES)} budget`);
+  if (sizes.gzip > gzipBudget) errors.push(`index.html gzip ${kb(sizes.gzip)} exceeds the ${kb(gzipBudget)} budget`);
   return { ok: errors.length === 0, errors, warnings, notes, sizes, totalBytes: total, files, fonts: a.fonts, build };
 }
 

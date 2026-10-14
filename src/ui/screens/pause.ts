@@ -352,11 +352,17 @@ export function resetTeamOrders(): void {
 
 const pumpScratch: OrderCommand[] = [];
 
+function ordersEmpty(o: TeamOrders): boolean {
+  return o.formation < 0 && o.focus < 0 && o.subs.length === 0 && o.tactics[0]! < 0 && o.tactics[1]! < 0 && o.tactics[2]! < 0 && o.tactics[3]! < 0;
+}
+
 /**
  * Reconcile both teams' orders with the state and hand up to `max` unsent ones to `send` (through the human playing
  * that team; a team without a human drops its orders). Returns the number sent.
  */
 export function pumpTeamOrders(s: ReadonlySimState, send: (human: number, cmd: Command, arg: number) => void, max: number): number {
+  // Per-frame fast path: nothing ordered for this match.
+  if (ORDERS.state !== s || (ordersEmpty(ORDERS.teams[0]) && ordersEmpty(ORDERS.teams[1]))) return 0;
   let sent = 0;
   for (let team = 0; team < 2; team++) {
     const o = teamOrders(s, team);
@@ -383,18 +389,22 @@ export function pumpTeamOrders(s: ReadonlySimState, send: (human: number, cmd: C
 
 const ROLE_LABEL: readonly string[] = ['GK', 'RB', 'CB', 'LB', 'RWB', 'LWB', 'CDM', 'CM', 'CAM', 'RM', 'LM', 'RW', 'LW', 'ST', 'CF'];
 
+/** Token centres keep this far from the pitch's left / right and top / bottom edges, CSS px (half a token wide; the
+ *  vertical inset is smaller so short pitches keep 60 pt between rows; a role label may poke out by a few px). */
+export const TOKEN_INSET = { x: 40, y: 24 } as const;
+
 /**
- * Where a formation slot sits on the team-management pitch, in percent of its box (team attacking to the right, its
- * right flank at the bottom). The neutral shapes live in the team's own half, so their x range is stretched over the
- * pitch; the keeper stands at the left goal.
+ * Where a formation slot sits on the team-management pitch as fractions 0..1 of the inset box (team attacking to the
+ * right, its right flank at the bottom). The neutral shapes live in the team's own half, so their x range is
+ * stretched over the pitch; the keeper stands at the left goal. CSS: left = inset.x + (100% - 2 inset.x) * x.
  */
-export function tokenPosition(formation: FormationId, idx: number): { left: number; top: number } {
+export function tokenPosition(formation: FormationId, idx: number): { x: number; y: number } {
   const sl = getFormation(formation).slots[idx] ?? getFormation(formation).slots[0]!;
-  if (idx === 0 || sl.role === Role.GK) return { left: 7, top: 50 };
-  const fx = (sl.nx - -0.56) / (-0.02 - -0.56);
-  const fz = (sl.nz - -0.8) / 1.6;
+  if (idx === 0 || sl.role === Role.GK) return { x: 0, y: 0.5 };
   const cl = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
-  return { left: 21 + cl(fx) * 71, top: 7 + cl(fz) * 86 };
+  const fx = cl((sl.nx - -0.56) / (-0.02 - -0.56));
+  const fz = cl((sl.nz - -0.8) / 1.6);
+  return { x: 0.16 + fx * 0.84, y: fz };
 }
 
 /** Stamina band for the bar colour. */
@@ -516,7 +526,7 @@ const CSS = `
   border-radius: var(--radius); background:
     linear-gradient(90deg, transparent calc(50% - 0.5px), var(--hairline-strong) calc(50% - 0.5px), var(--hairline-strong) calc(50% + 0.5px), transparent calc(50% + 0.5px)),
     var(--surface-2);
-  border: var(--line) solid var(--hairline-strong); overflow:hidden; }
+  border: var(--line) solid var(--hairline-strong); }
 .tm-pitch::before { content:''; position:absolute; left:50%; top:50%; width:17%; aspect-ratio:1; transform: translate(-50%, -50%);
   border: var(--line) solid var(--hairline-strong); border-radius:50%; }
 .tm-pitch::after { content:''; position:absolute; left:0; top:20.5%; width:15.7%; height:59%; border: var(--line) solid var(--hairline-strong);
@@ -987,8 +997,8 @@ export function createPauseMenu(): PauseMenu {
       );
     } else {
       const pos = tokenPosition(formation, idx);
-      b.style.left = `${pos.left}%`;
-      b.style.top = `${pos.top}%`;
+      b.style.left = `calc(${TOKEN_INSET.x}px + (100% - ${2 * TOKEN_INSET.x}px) * ${pos.x.toFixed(4)})`;
+      b.style.top = `calc(${TOKEN_INSET.y}px + (100% - ${2 * TOKEN_INSET.y}px) * ${pos.y.toFixed(4)})`;
       b.append(
         h('span', { class: 'tm-tok__role', text: ROLE_LABEL[role] ?? '' }),
         h('span', { class: 'tm-tok__num', text: String(info.shirt) }),
@@ -1092,6 +1102,10 @@ export function createPauseMenu(): PauseMenu {
     }
 
     if (quick) {
+      if (!readOnly && message === '') {
+        message = left > 0 ? 'Pick a tired player and a substitute, or drag one onto the other.' : 'No substitutions left.';
+        messageKind = 'info';
+      }
       const tired: number[] = [];
       for (let i = first; i < first + PLAYERS_PER_TEAM; i++) {
         const p = s.players[i]!;

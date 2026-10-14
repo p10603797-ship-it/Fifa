@@ -133,7 +133,7 @@ describe('GFX-16 zero allocation per frame', () => {
       console.log(JSON.stringify({ steady, full, firstGoal, usPerFrame: us, playbackFrames: st[3], steadyPlayback, recorded: rep.ring.count }));
     `;
     const r = spawnSync(process.execPath, [
-      '--expose-gc', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', code,
+      '--expose-gc', '--no-concurrent-recompilation', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', code,
     ], { cwd: root, encoding: 'utf8', timeout: 240_000 });
     expect(r.status, r.stderr).toBe(0);
     const res = JSON.parse(r.stdout.trim().split('\n').pop()!) as {
