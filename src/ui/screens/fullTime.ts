@@ -162,7 +162,9 @@ export function createFullTimeScreen(): Screen {
       }
       if (acts.changeTeams) {
         const target = acts.changeTeams;
-        row.append(createButton('Change teams', () => changeTeams(ctx, target), { testId: 'ft-change-teams', ctx, hint: 'Pick new teams and kits' }));
+        row.append(target === 'online-lobby'
+          ? createButton('Rematch', () => changeTeams(ctx, target), { testId: 'ft-change-teams', ctx, hint: 'Back to the room with your friend' })
+          : createButton('Change teams', () => changeTeams(ctx, target), { testId: 'ft-change-teams', ctx, hint: 'Pick new teams and kits' }));
       }
       row.append(createButton('Quit', () => ctx.session.quit(), { testId: 'ft-quit', ctx, hint: 'Back to the main menu', autofocus: !acts.cup && !acts.rematch }));
       panel.append(row);

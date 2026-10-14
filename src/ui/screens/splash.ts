@@ -26,6 +26,7 @@ import type { Settings } from '../../contracts/settings';
 import { getPadManager, padAnyPressedEdge, type PadManager } from '../../input/pad/manager';
 import { createButton, h, injectStyle } from '../components';
 import { attachDotField, sharedDotField } from '../dotfield';
+import { shareLinkRoom } from './online';
 
 /** How the splash was left (tests and diagnostics). */
 export type SplashStartSource = 'pointer' | 'key' | 'pad';
@@ -212,6 +213,9 @@ export function createSplashScreen(): Screen {
         if (showHint) ctx.settings.update((s) => { s.homeScreenHintShown = true; });
         ctx.diagnostics.log('ui', `splash start (${source}${fullscreen ? ', full screen' : ''})`);
         ctx.router.replace('main');
+        // A friend's share link (?room=CODE) goes straight to the online lobby after the splash (NET-07).
+        const room = shareLinkRoom();
+        if (room) ctx.router.go('online-lobby', { room });
         // Keyboard and controller players see where they are on the main menu straight away.
         if (source !== 'pointer') (ctx.focus as RingNavigator).showRing?.();
       };

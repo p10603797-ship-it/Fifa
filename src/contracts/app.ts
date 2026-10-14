@@ -116,6 +116,8 @@ export interface GameRenderer {
   setCamera(c: CameraSettings, reducedMotion: boolean): void;
   setQuality(tier: QualityTier): void;
   stats(): RenderStats;
+  /** X of the camera drawn last (broadcast camera in open play), for stereo panning of sim events (AUD-03). */
+  cameraX?(): number;
   /** Goal replay from the render ring buffer (GFX-16). */
   startReplay(seconds: number): boolean;
   stopReplay(): void;

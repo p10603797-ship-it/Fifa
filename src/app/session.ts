@@ -40,6 +40,7 @@ import type { EventBuffer } from '../contracts/events';
 import { createInputFrame, type CameraProjector, type InputFrame } from '../contracts/input';
 import type { MatchConfig, SimState } from '../contracts/state';
 import { preparePracticeState } from '../modes/practice';
+import { setLocalPerspective } from '../audio/crowd';
 import { createStatsTracker } from '../modes/stats';
 import { cloneState as simCloneState } from '../sim/core/clone';
 import { createEventBuffer as simCreateEventBuffer } from '../sim/core/events';
@@ -167,6 +168,14 @@ export function cleanDeviceIds(devs: readonly unknown[]): string[] | null {
     if (!out.includes(d)) out.push(d);
   }
   return out;
+}
+
+/** Online 1v1: the local player's side (crowd perspective), else -1. Reads only the setup, no network code. */
+export function onlineLocalSide(setup: MatchSetup): number {
+  const md = setup.modeData as { kind?: string; session?: { localHuman?: number } } | undefined;
+  if (!md || md.kind !== 'online' || !md.session || typeof md.session.localHuman !== 'number') return -1;
+  const h = setup.config.humans[md.session.localHuman];
+  return h ? h.side : -1;
 }
 
 /** Human bound to `deviceId` in `setup` (explicit binding first, then an ANY_DEVICE binding), or -1. Pure. */
@@ -347,6 +356,7 @@ export function createSession(deps: SessionDeps): AppSession {
 
   function teardown(): void {
     gen++;
+    setLocalPerspective(-1);
     const p = provider;
     provider = null;
     if (p) safe(() => p.dispose(), 'provider.dispose');
@@ -403,6 +413,7 @@ export function createSession(deps: SessionDeps): AppSession {
       if (gen !== myGen) return;
       hud.setMatch(curr, clubs);
       hud.setVisible(true);
+      setLocalPerspective(onlineLocalSide(s));
       audio.matchStart(curr);
       runtime = { prev, curr, provider: p, frames, events, stats };
       lastPhase = curr.match.phase;

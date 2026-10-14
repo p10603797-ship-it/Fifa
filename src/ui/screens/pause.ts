@@ -846,7 +846,8 @@ export function createPauseMenu(): PauseMenu {
         testId: 'pause-resume', variant: 'primary', size: 'lg', autofocus: true, ctx: c,
       }),
       h('div', { class: 'pause-main__gap' }),
-      createButton('Restart match', doRestart, { testId: 'pause-restart', ctx: c }),
+      // Online matches cannot restart (session.restart() needs a local provider); Quit leaves the room.
+      online() ? null : createButton('Restart match', doRestart, { testId: 'pause-restart', ctx: c }),
       createButton('Quit to menu', doQuit, { testId: 'pause-quit', variant: 'danger', ctx: c }),
     );
     const manage = s !== null && manageableTeams(s, acting(), online()).length > 0;

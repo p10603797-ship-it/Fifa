@@ -68,6 +68,7 @@ These run on a developer's computer or in CI and are not part of the game files.
 | typescript-eslint | 8.71.1 | MIT | [typescript-eslint.io](https://typescript-eslint.io/) |
 | tsx | 4.23.15 | MIT | [tsx.hirok.io](https://tsx.hirok.io/) |
 | `@types/node`, `@types/three` | 22.19.1, 0.186.0 | MIT | [github.com/DefinitelyTyped/DefinitelyTyped](https://github.com/DefinitelyTyped/DefinitelyTyped) |
+| PeerServer (`peer`), e2e only: local broker for the real-WebRTC online test | 1.0.2 | MIT | [github.com/peers/peerjs-server](https://github.com/peers/peerjs-server) |
 
 ## Licence texts
 

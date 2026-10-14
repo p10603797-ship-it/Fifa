@@ -161,8 +161,20 @@ export interface CrowdModule extends AudioModule {
   readonly stats: CrowdStats;
 }
 
-/** The side the crowd supports: the humans' side when exactly one side has humans, else the home side (0). */
+let localPerspective = -1;
+
+/**
+ * Online 1v1: each device's crowd backs that player's side (both sides are human, so the default would be home).
+ * Set at match load from the online setup; -1 clears it.
+ */
+export function setLocalPerspective(side: number): void {
+  localPerspective = side === 0 || side === 1 ? side : -1;
+}
+
+/** The side the crowd supports: the local online player's side if set, else the humans' side when exactly one side
+ * has humans, else the home side (0). */
 export function perspectiveTeam(state: ReadonlySimState | null): number {
+  if (localPerspective >= 0) return localPerspective;
   if (!state) return 0;
   let home = false;
   let away = false;

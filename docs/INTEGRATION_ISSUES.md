@@ -27,7 +27,7 @@ Collected from Wave 1 reports. Each line: area — symptom — proposed owner/fi
 - tests/unit/fnd-04-review-fixes.test.ts recovery-screen cases fail while PLT-05 rewrites src/ui/screens/recovery.ts — PLT-05 must keep or update those FND-04 expectations.
 - Online crowd perspective: crowd backs home side in online 1v1 (AUD-02 risk).
 
-## Online (NET-B report) — app-side CRs to apply after INT-B finishes
+## Online (NET-B report) — app-side CRs (applied by the lead after INT-B: splash share link, pause hides Restart online, online Rematch label, crowd backs the local online side, GameRenderer.cameraX optional in the contract)
 - splash.ts: after `ctx.router.replace('main')`, `const room = shareLinkRoom(); if (room) ctx.router.go('online-lobby', { room });` (import from ./online).
 - pause.ts: hide 'Restart match' when online (session.restart() does nothing with a custom provider).
 - fullTime.ts: label the online 'Change teams' button 'Rematch' (back to the room; hint 'Back to the room with your friend').
@@ -35,3 +35,9 @@ Collected from Wave 1 reports. Each line: area — symptom — proposed owner/fi
 - Optional: match HUD mounts createNetIndicator().el (online.ts overlay already shows the pill).
 - Lead applied: session.load passes getProjector to custom providers (setProjector).
 - QF-6: transport.ts rejoin race ($full answer to an early re-dial must stay retryable; host replaces the link when the same peer reconnects); silence timeout 6 s reads long warm-up stalls as disconnects (10 s or pause the check while hidden / during warm-up).
+
+## From INT-B
+- Practice hooks run in the app tick (loop stepWithModes / prepareModeState); move preparePracticeState into sim/init and practiceRulesTick into sim/step after rulesTick (INT-A / QF-1), then make stepWithModes a plain step.
+- Swipe-hint labels around the bottom-right big button go partly off screen (first matches only) — QF-3/QF-4.
+- Keyboard bound to the same human does not hide touch controls (pads only) — QF-3.
+- aud-05-alloc, pad-08-alloc, tch-06-alloc allocation tests are load-sensitive (fail at load 16+) — QF-7.
