@@ -189,8 +189,8 @@ test('INT-C night debug', async ({ page }, testInfo) => {
   console.log(JSON.stringify(await h.run(300, 2, 0, 99, true, 16.7)));
   const info = await page.evaluate(() => {
     const s = window.__dotkick!.ctx.session.getState() as unknown as { config: { night: number } };
-    const w = window as unknown as Record<string, () => Record<string, unknown>>;
-    const st = w.__dotkickStadium ? w.__dotkickStadium() : null;
+    const w = window as unknown as Record<string, { snapshot(): unknown }>;
+    const st = w.__dotkickStadium ? w.__dotkickStadium.snapshot() : null;
     return { night: s.config.night, stadium: st ? JSON.stringify(st).slice(0, 600) : 'none' };
   });
   console.log(JSON.stringify(info));

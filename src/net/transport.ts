@@ -221,7 +221,9 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
   }
 
   function dropLink(l: Link): void {
+    // Detach first: closing a channel fires 'close' synchronously, which must not re-enter linkLost for this link.
     l.dead = true;
+    if (link === l) link = null;
     l.timer = clear(l.timer);
     l.codec.reset();
     for (const c of [l.control, l.inputs]) {
@@ -231,7 +233,6 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
         // already closed
       }
     }
-    if (link === l) link = null;
   }
 
   function teardown(): void {

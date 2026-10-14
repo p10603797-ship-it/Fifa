@@ -14,7 +14,7 @@ import { ControllerKind, Difficulty, KitSlot, MatchPhase, ModeId } from '../../s
 import type { SimState } from '../../src/contracts/state';
 import { CLUBS } from '../../src/data/clubs';
 import {
-  AUDIT_BEGIN, AUDIT_END, AUDIT_KEYS, balanceConfig, balanceRequestFromArgs, balanceSpecs, bottomClub, defaultBalanceOptions,
+  AUDIT_BEGIN, AUDIT_END, AUDIT_KEYS, balanceConfig, balanceWarnings, balanceRequestFromArgs, balanceSpecs, bottomClub, defaultBalanceOptions,
   equalPair, errorResult, formatAuditTable, formatMatchup, matchesFor, matchOutcome, matchSeed, matchupsFor, medianClub,
   medianRating, parseClub, parseSuites, replaceAuditBlock, runBalance, runBalanceMatch, runOnWorkers, staticAttributeAudit,
   summarizeMatchup, topClub, wilson, type BalanceMatchResult, type BalanceOptions, type Matchup,
@@ -221,6 +221,20 @@ describe('DAT-05 balance: outcomes and the verdict', () => {
     const other: Matchup = { suite: 'mirror', a: 7, b: 7, mirrorLegs: false };
     expect(summarizeMatchup(other, [res(m, 'W')], o).n).toBe(0);
     expect(summarizeMatchup(other, [res(m, 'W')], o).met).toBe(false);
+  });
+
+  it('warns (without changing the verdict) when draws dominate or hardly anyone scores', () => {
+    const m: Matchup = { suite: 'equal', a: 14, b: 7, mirrorLegs: true };
+    const o = { topTarget: 0.8, evenTol: 0.1 };
+    const dull = summarizeMatchup(m, [res(m, 'D', 0, 0, 0), res(m, 'D', 1, 0, 0), res(m, 'W', 0, 1, 0)], o);
+    expect(dull.met).toBe(true);
+    const w = balanceWarnings([dull]);
+    expect(w).toHaveLength(1);
+    expect(w[0]).toContain('66.7% draws');
+    expect(w[0]).toContain('0.33 goals per match');
+    const lively = summarizeMatchup(m, [res(m, 'W', 0, 3, 1), res(m, 'L', 1, 0, 2), res(m, 'D', 0, 1, 1)], o);
+    expect(balanceWarnings([lively])).toEqual([]);
+    expect(balanceWarnings([summarizeMatchup(m, [], o)])).toEqual([]);
   });
 });
 

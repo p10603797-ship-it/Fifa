@@ -432,6 +432,7 @@ function setup(): { clock: ManualClock; broker: FakeBroker; make: (version?: str
     createPeerTransport(config, { createPeer: broker.factory, timers, version });
   const run = async (ms: number): Promise<void> => {
     for (let t = 0; t < ms; t += 5) {
+      await settle(); // let open() attach its Peer handlers first (real PeerJS events always come later)
       clock.advance(5);
       await settle();
     }
@@ -593,8 +594,8 @@ describe('NET-02 PeerJS transport (mocked Peer / DataConnection)', () => {
     const guestPeer = broker.created[1]!;
     for (const c of guestPeer.conns) c.close();
     await run(50);
-    expect(gc.events.at(-1)).toEqual({ type: 'disconnected', reason: 'disconnected' });
-    expect(hc.events.at(-1)).toEqual({ type: 'disconnected', reason: 'disconnected' });
+    expect(gc.events.filter((e) => e.type === 'disconnected')).toEqual([{ type: 'disconnected', reason: 'disconnected' }]);
+    expect(hc.events.filter((e) => e.type === 'disconnected')).toEqual([{ type: 'disconnected', reason: 'disconnected' }]);
     expect(host.state).toBe('connecting');
     expect(guest.state).toBe('closed');
     const hostBack = host.reconnect();

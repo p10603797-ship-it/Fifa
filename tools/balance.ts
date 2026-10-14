@@ -616,6 +616,25 @@ export function formatMatchup(x: MatchupSummary, enforced = true): string[] {
   ];
 }
 
+/** Above this draw share a matchup's verdict says little (the equal / mirror targets pass on 0-0s alone). */
+export const WARN_DRAW_RATE = 0.5;
+/** Below this many goals per match (both sides) the sim is not scoring like football yet. */
+export const WARN_GOALS_PER_MATCH = 1;
+
+/** Advisory lines (never change the verdict): matchups dominated by draws or hardly any goals. */
+export function balanceWarnings(sums: readonly MatchupSummary[]): string[] {
+  const out: string[] = [];
+  for (const x of sums) {
+    if (x.n === 0) continue;
+    const goals = x.aGoalsAvg + x.bGoalsAvg;
+    const why: string[] = [];
+    if (x.drawRate > WARN_DRAW_RATE) why.push(`${pct(x.drawRate)} draws`);
+    if (goals < WARN_GOALS_PER_MATCH) why.push(`${goals.toFixed(2)} goals per match`);
+    if (why.length > 0) out.push(`  WARN ${x.name}: ${why.join(', ')}: the verdict mostly reflects how rarely anyone scores`);
+  }
+  return out;
+}
+
 // ================================================================ worker threads
 
 const WORKER_FLAG = 'dat05BalanceWorker';
@@ -826,6 +845,7 @@ export async function runBalance(o: BalanceOptions, clubs: readonly Club[] = CLU
   const results = workers === 0 ? runInProcess(specs, progress) : await runOnWorkers(specs, { workers, jobTimeoutSeconds: o.jobTimeoutSeconds }, progress);
   const sums = matchups.map((m) => summarizeMatchup(m, results, o, clubs));
   for (const x of sums) for (const l of formatMatchup(x, enforceTarget)) log(l);
+  for (const l of balanceWarnings(sums)) log(l);
   const failed = results.filter((r) => r.aResult === 'E');
   if (failed.length > 0) {
     log(`  failed matches (${failed.length}):`);

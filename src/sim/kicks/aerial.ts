@@ -1264,7 +1264,9 @@ function aiChoose(s: SimState, slot: number): void {
       AI.kind = KickKind.HEADER_PASS;
       AI.flags |= F_CLEAR;
       AI.power = LT.aiClearPower;
-    } else if (FIND.y > T_TOUCH.trapHeight || contested(s, slot, FIND.x, FIND.z)) {
+    } else if (contested(s, slot, FIND.x, FIND.z) || (FIND.y > T_TOUCH.trapHeight && !ours)) {
+      // [INT-A head tennis] Our own uncontested ball is left to drop to chest / feet (SIM-07 first touch) instead of
+      // being headed on into another aerial ball; an opponent's high ball or any contested one is still headed.
       AI.kind = KickKind.HEADER_PASS;
     }
   } else if (inShoot) {
