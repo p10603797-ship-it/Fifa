@@ -18,7 +18,10 @@
     "fuzz": "tsx tools/fuzz.ts --matches 500",
     "bench": "npm run build && tsx tools/bench.ts",
     "e2e": "playwright test",
-    "gen:data": "tsx tools/gen-data.ts"
+    "gen:data": "tsx tools/gen-data.ts",
+    "icons": "node tools/gen-icons.mjs",
+    "icons:check": "node tools/gen-icons.mjs --check",
+    "size": "tsx tools/size-check.ts"
   },
   "dependencies": {
     "three": "0.186.1",

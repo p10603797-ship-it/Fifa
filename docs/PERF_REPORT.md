@@ -8,15 +8,15 @@ single-file `index.html` (brief section 3; `tools/postbuild.mjs` enforces it on 
 module code as the bundler renders it, before minification (the shares are what matters); "gzip" compresses each
 group on its own. The total line is the real minified, inlined file.
 
-**index.html: 2049.8 KB raw, 707.8 KB gzip, 586.3 KB brotli — 17.3 % of the gzip budget (PASS).**
+**index.html: 2050.2 KB raw, 708.0 KB gzip, 586.3 KB brotli — 17.3 % of the gzip budget (PASS).**
 Fonts: 5 woff2 faces inlined (Latin subsets of Space Grotesk and JetBrains Mono), 80.6 KB.
 
 | Group | Modules | Code KB | Gzip KB | Share | Budget KB | Status |
 |---|---:|---:|---:|---:|---:|---|
 | three | 2 | 834.1 | 160.1 | 24.5 % | 1100 | ok |
 | src/sim | 69 | 755.0 | 191.2 | 22.2 % | 1100 | ok |
-| src/ui | 38 | 396.8 | 103.4 | 11.6 % | 650 | ok |
-| src/render | 28 | 388.0 | 106.8 | 11.4 % | 650 | ok |
+| src/ui | 38 | 397.3 | 103.5 | 11.7 % | 650 | ok |
+| src/render | 28 | 388.1 | 106.8 | 11.4 % | 650 | ok |
 | src/ai | 17 | 281.1 | 75.1 | 8.2 % | 450 | ok |
 | src/input | 22 | 231.3 | 60.9 | 6.8 % | 350 | ok |
 | src/data | 4 | 143.2 | 26.2 | 4.2 % | 250 | ok |
@@ -36,10 +36,10 @@ Measured by `tests/e2e/plt-04-build.spec.ts` in Chromium with network throttling
 | Metric | Value |
 |---|---|
 | network | Chromium emulation, 20 Mbit/s down, 20 ms latency |
-| download done (ms) | 1349 |
-| DOMContentLoaded (ms) | 1833 |
-| splash interactive (ms) | 2029 |
-| tap to main menu (ms) | 380 |
+| download done (ms) | 1178 |
+| DOMContentLoaded (ms) | 1685 |
+| splash interactive (ms) | 2011 |
+| tap to main menu (ms) | 311 |
 | device | dev container, software WebGL (an iPad is faster) |
 | measured | 2026-10-14 |
 

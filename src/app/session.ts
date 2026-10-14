@@ -424,6 +424,15 @@ export function createSession(deps: SessionDeps): AppSession {
       if (p && hasQueue(p)) p.queueCommand(human, cmd, arg);
       else fallbackQueue.push(human, cmd, arg);
     },
+    setHumanDevice(human, devs) {
+      // Interim (lead): the CPU hand-off goes through the frame; device rebinding lands with INT-B.
+      if (!active || !loaded || finished || !setup || setup.inputProvider) return false;
+      if (devs === 'cpu') {
+        session.queueCommand(human, Command.HAND_TO_CPU, human);
+        return true;
+      }
+      return false;
+    },
     getState: () => (runtime ? runtime.curr : null),
     getSetup: () => setup,
     runtime: () => runtime,

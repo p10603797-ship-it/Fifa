@@ -217,6 +217,8 @@ export enum Command {
   SKIP = 15,
   /** cmdArg = roster swap a | (b << 8) inside the pitch (position swap, no sub used). */
   SWAP_POSITIONS = 16,
+  /** cmdArg = human index: hand that human's side to its CPU brain for the rest of the match (local play only). */
+  HAND_TO_CPU = 17,
 }
 
 /** Team-level phase used by team AI. */

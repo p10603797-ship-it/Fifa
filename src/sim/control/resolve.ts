@@ -34,6 +34,7 @@ import { requestSub } from '../rules/subs';
 import { SETPIECE_INPUT } from '../rules/restart';
 import { shootoutInput } from '../rules/shootout';
 import { canManualSwitch, switchTick } from './switching';
+import { handToCpu } from './handoff';
 import {
   adoptCharge, chargeTick, convertPresses, modifierTick, resolveFacePress, resolveKnockOn, resolveSkill,
 } from './resolveActions';
@@ -71,7 +72,7 @@ function sanitize(src: Readonly<InputFrame>): InputFrame {
   f.power = intIn(src.power, 0, 127, 0);
   f.curve = axis(src.curve);
   f.skill = intIn(src.skill, 0, SkillMove.HARD_STOP, SkillMove.NONE);
-  f.cmd = intIn(src.cmd, 0, Command.SWAP_POSITIONS, Command.NONE);
+  f.cmd = intIn(src.cmd, 0, Command.HAND_TO_CPU, Command.NONE);
   f.cmdArg = intIn(src.cmdArg, -0x7fffffff, 0x7fffffff, 0);
   f.gesture = intIn(src.gesture, 0, GestureKind.BACK_FORTH_SWIPE, GestureKind.NONE);
   f.gx = intIn(src.gx, -1023, 1023, 0);
@@ -337,6 +338,7 @@ export function resolveControllers(s: SimState, humanFrames: readonly InputFrame
     if (c < MAX_HUMANS) {
       if (ctl.kind === ControllerKind.HUMAN) {
         const h = humanFrames[c];
+        if (h && h.cmd === Command.HAND_TO_CPU) { handToCpu(s, c); continue; }
         if (h) f = h;
       }
     } else {

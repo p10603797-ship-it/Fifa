@@ -206,7 +206,7 @@ Frozen after Wave 0 (lead-owned): `src/render/types.ts`, `src/render/index.ts` (
 | PLT-02 | `src/platform/ipados.ts`, `src/platform/viewport.css` |
 | PLT-03 | `src/platform/storage.ts`, `src/platform/settingsStore.ts` |
 | PLT-04 | `tools/postbuild.mjs`, `tools/size-check.ts`, `src/ui/fonts/**` (subsetted fonts) |
-| PLT-05 | `src/platform/recovery.ts`, `src/ui/screens/diagnostics.ts`, `src/ui/screens/recovery.ts`, `src/platform/diagnostics.ts` |
+| PLT-05 | `src/platform/recovery.ts`, `src/ui/screens/diagnostics.ts`, `src/ui/screens/recovery.ts`, `src/platform/diagnostics.ts`, `src/ui/debugOverlay.ts`, `src/platform/replayRecorder.ts` |
 | PLT-06 | `README.md`, `docs/ASSETS.md`, `docs/DEVICE_CHECKLIST.md`, `docs/DEPLOY.md`, `.github/workflows/pages.yml` |
 
 Waves 2-5 (INT, QA, FIX, SGN) own the files named in their briefs; fixes go to the owner area's FIX agent.

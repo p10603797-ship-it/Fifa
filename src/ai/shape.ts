@@ -63,15 +63,15 @@ import { otherTeam, possessingTeam, teamEnd, teamStart } from '../sim/core/query
 const LOCAL_TUNING = {
   /** Back-line height: u = dataBack + lineOffset + lineSlope * ballU, clamped to [lineMin, lineMax]. dataBack is
    *  the formation's deepest outfield slot (its neutral back line). m, m/m, m (team frame), m (team frame). */
-  lineOffset: [6, 10, 0, 12, -3, 0],
-  lineSlope: [0.55, 0.55, 0.55, 0.5, 0.55, 0.55],
+  lineOffset: [8, 16, 0, 14, -3, 0],
+  lineSlope: [0.55, 0.6, 0.55, 0.55, 0.55, 0.55],
   lineMin: [-40, -36, -46.5, -36, -46.5, -44],
-  lineMax: [0, 12, 4, 12, -2, 4],
+  lineMax: [2, 16, 4, 14, -2, 4],
   /** Absolute back-line limits after focus and TAI-04 lineX, m (floor = own goal-area edge + 0.5 m). */
   lineFloor: -46.5,
-  lineCeil: 14,
+  lineCeil: 18,
   /** Vertical stretch of formation depths relative to the deepest outfield slot (1 = data depths). */
-  depthScale: [1.15, 1.3, 0.9, 1.3, 0.95, 1],
+  depthScale: [1.15, 1.3, 1.0, 1.3, 0.95, 1],
   /** Back-line depth stagger kept in defending phases (0 = perfectly flat, 1 = data stagger). */
   defFlatten: 0.3,
   /** Lateral stretch of the formation width (1 = data width). */
@@ -88,7 +88,7 @@ const LOCAL_TUNING = {
   wingBackPush: [4, 6, -6, 6, -6, 0],
   wideMidPush: [0, 2, -2, 3, -2, 0],
   wingerPush: [2, 7, -2, 8, -2, 0],
-  forwardPush: [2, 6, 0, 8, 0, 0],
+  forwardPush: [2, 6, 3, 8, 0, 0],
   /** Tactical focus (DEFAULT, DEFENDING, ATTACKING): multiplier on the formation depths. The focus block push
    *  and width multipliers are DAT-04's (data/tactics resolveTactics), shared with every other module. */
   focusDepth: [1, 0.9, 1.08],

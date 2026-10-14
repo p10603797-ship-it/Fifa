@@ -28,8 +28,20 @@ export function resetJobs(s: SimState, team: number): void {
     p.jobSlot = -1;
     p.tgtX = p.homeX;
     p.tgtZ = p.homeZ;
-    p.tgtSpeed = s.attrs[i]!.topSpeed * 0.6;
+    p.tgtSpeed = holdShapeSpeed(s.attrs[i]!.topSpeed, p.homeX - p.x, p.homeZ - p.z);
   }
+}
+
+/**
+ * HOLD_SHAPE speed cap (m/s): a jog near the home spot, rising to LOCAL_TUNING.holdFarFraction of top speed when far
+ * from it, so a team that wins the ball pushes up (and one that loses it drops back) in time instead of jogging
+ * 20 m behind its shape [INT-A].
+ */
+export function holdShapeSpeed(top: number, dx: number, dz: number): number {
+  const d = Math.sqrt(dx * dx + dz * dz);
+  const k = d <= LOCAL_TUNING.holdNearDist ? 0
+    : d >= LOCAL_TUNING.holdFarDist ? 1 : (d - LOCAL_TUNING.holdNearDist) / (LOCAL_TUNING.holdFarDist - LOCAL_TUNING.holdNearDist);
+  return top * (LOCAL_TUNING.holdJogFraction + (LOCAL_TUNING.holdFarFraction - LOCAL_TUNING.holdJogFraction) * k);
 }
 
 /**

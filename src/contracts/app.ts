@@ -294,6 +294,11 @@ export interface SessionControl {
   quit(): void;
   /** Queue a command (tactics, subs) into the given human's next InputFrame. */
   queueCommand(human: number, cmd: Command, arg: number): void;
+  /**
+   * Rebind a human to other local devices, or hand the side to the CPU ('cpu' -> Command.HAND_TO_CPU through the
+   * frame, deterministic). Returns false when not possible (online, no match).
+   */
+  setHumanDevice(human: number, devices: readonly string[] | 'cpu'): boolean;
   getState(): ReadonlySimState | null;
   getSetup(): MatchSetup | null;
 }
