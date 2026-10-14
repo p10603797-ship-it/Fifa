@@ -1,15 +1,22 @@
 /**
  * TAI-05 budget: assignPressing for both teams < 0.05 ms per tick, and no source-level allocation per tick.
  *
- * Measured in a plain Node child process (node --import tsx), not inside the Vitest worker: Vitest's SSR transform
- * turns every imported binding into a getter on a module namespace object, which makes hot loops several times
- * slower than the shipped (bundled) code and would measure the test runner instead of the module. Best of many
+ * Measured in a plain Node child process on an esbuild bundle of the probe (one scope, like the production build), not
+ * inside the Vitest worker: Vitest's SSR transform turns every imported binding into a getter on a module namespace
+ * object, which makes hot loops several times slower than the shipped (bundled) code and would measure the test runner
+ * instead of the module. [QF-2] The probe used to run unbundled under node --import tsx, where V8 boxed far more
+ * at SIM-04 ticksToReach's call boundary (65-75 B a call, ~6 B bundled) and a scavenge inside the measuring window
+ * made the reading jump between 6 and 390 B a tick for the same code: it now runs bundled with a large young
+ * generation (as TAI-09's probe does), so the number is TAI-05's and SIM-04's real per-tick garbage. Best of many
  * short batches so a busy machine does not make the check flaky. Scenarios cover the expensive paths: a carrier in
  * our third with three runners (presser + cover + trackers), team press with a human front presser and a called
  * second defender (two pressers, side spots), and an opponent pass in flight (receiver pressed at the reception
  * point). The players move every tick (scripted drift) so arrival times are re-evaluated on fresh geometry.
  */
+import { buildSync } from 'esbuild';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -83,9 +90,15 @@ const PROBE = `
 `;
 
 describe('TAI-05 budget', () => {
-  const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', '--input-type=module', '-e', PROBE], {
+  const dir = mkdtempSync(join(tmpdir(), 'tai-05-budget-'));
+  const entry = join(dir, 'probe.mjs');
+  const bundle = join(dir, 'probe.bundle.mjs');
+  writeFileSync(entry, PROBE);
+  buildSync({ entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', outfile: bundle, logLevel: 'error' });
+  const r = spawnSync(process.execPath, ['--expose-gc', '--max-semi-space-size=128', bundle], {
     cwd: ROOT, encoding: 'utf8', timeout: 240_000,
   });
+  rmSync(dir, { recursive: true, force: true });
   const ok = r.status === 0;
   const res = ok
     ? JSON.parse(r.stdout.trim().split('\n').pop()!) as {

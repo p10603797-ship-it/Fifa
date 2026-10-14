@@ -19,7 +19,7 @@ import { ControllerKind, KickKind } from '../../contracts/enums';
 import { Btn } from '../../contracts/input';
 import type { ControllerState, PlayerState, SimState } from '../../contracts/state';
 import { createActionRequest, ReqFlag, type ActionRequest } from '../../contracts/systems';
-import { T_BALL, T_INPUT, T_PASS, T_PLAYER, T_SHOT } from '../../contracts/tuning';
+import { T_BALL, T_INPUT, T_PASS, T_PLAYER, T_SHOT, T_TOUCH } from '../../contracts/tuning';
 
 export const LOCAL_TUNING = {
   /** A tapped kick (released before T_INPUT.tapTicks) of the ball at the kicker's feet that a second press can still
@@ -58,15 +58,13 @@ export const LOCAL_TUNING = {
   volleyMaxHeight: 1.2,
   /** The receiver auto-collecting a pass meets the ball's track at most this far ahead, s. */
   receiveLookAheadSec: 2,
-  /** [INT-A] Receiver of a pass rolling away from him (faster than meetOvershootMinSpeed m/s): the meeting target is
-   *  pushed meetOvershootSec x ball speed (at least meetOvershootMin: beyond his braking distance; at most
-   *  meetOvershootMax m) on along its path. m/s, s, m, m. */
-  meetOvershootMinSpeed: 1,
-  meetOvershootSec: 0.6,
-  meetOvershootMin: 3.5,
-  meetOvershootMax: 5,
-  /** ... and while more than meetCatchDist m behind it he runs at top speed (sprinting), m. */
-  meetCatchDist: 1.2,
+  /** [INT-A] Receiver of a pass rolling away from him: overshoot of the meeting target and catch-up sprint (moved to
+   *  T_TOUCH by QF-2; see there). m/s, s, m, m, m. */
+  meetOvershootMinSpeed: T_TOUCH.meetOvershootMinSpeed,
+  meetOvershootSec: T_TOUCH.meetOvershootSec,
+  meetOvershootMin: T_TOUCH.meetOvershootMin,
+  meetOvershootMax: T_TOUCH.meetOvershootMax,
+  meetCatchDist: T_TOUCH.meetCatchDist,
   /** Sampling step along the ball track for the receiver's meeting point, s. */
   meetStepSec: 0.125,
   /** Contain (PASS held in defence): shadow distance goal-side of the carrier, m. */

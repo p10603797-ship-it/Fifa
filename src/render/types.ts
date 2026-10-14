@@ -64,7 +64,8 @@ export interface RenderContext {
 
 /**
  * Interpolated render positions for the current animation frame, filled once per frame by index.ts:
- * value = prev + (curr - prev) * alpha. Preallocated; length NUM_SLOTS for player arrays.
+ * value = prev + (curr - prev) * alpha, except a teleport (a move > INTERP_TELEPORT in one tick, render/index.ts),
+ * which index.ts snapTeleports draws at curr at once. Preallocated; length NUM_SLOTS for player arrays.
  * Facing is interpolated and re-normalised (falls back to curr facing when the blend is degenerate).
  */
 export interface InterpState {

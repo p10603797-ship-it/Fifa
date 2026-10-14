@@ -121,6 +121,9 @@ export function textureMemory(scene: Object3D): TextureMemory {
       for (const k of Object.keys(m)) add((m as unknown as Record<string, unknown>)[k]);
       const u = (m as { uniforms?: Record<string, { value?: unknown }> }).uniforms;
       if (u) for (const k of Object.keys(u)) add(u[k]!.value);
+      // onBeforeCompile uniforms held in a closure are exposed as userData.uniforms.
+      const uu = (m.userData as { uniforms?: Record<string, { value?: unknown } | undefined> } | undefined)?.uniforms;
+      if (uu) for (const k of Object.keys(uu)) add(uu[k]?.value);
     }
   });
   return { textures: seen.size, bytes };
@@ -207,18 +210,13 @@ export const INTERP_TELEPORT = {
 
 /**
  * Interpolate render state: value = prev + (curr - prev) * alpha for every player and the ball. Facing is
- * blended and re-normalised. [QF-4] A teleport (a move longer than INTERP_TELEPORT in one tick: restart placements,
- * RUL-11's set-up legalisation, kick-off formations) is drawn at its new spot at once instead of sliding halfway on
- * the frames between the two ticks, so the camera cut that hides it really does. Pure; no allocation.
+ * blended and re-normalised. Pure; no allocation.
  */
 export function fillInterp(out: InterpState, prev: ReadonlySimState, curr: ReadonlySimState, alpha: number): void {
-  const a0 = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
-  const tp = INTERP_TELEPORT.player * INTERP_TELEPORT.player, tb = INTERP_TELEPORT.ball * INTERP_TELEPORT.ball;
+  const a = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
   for (let i = 0; i < NUM_SLOTS; i++) {
     const p = prev.players[i]!;
     const c = curr.players[i]!;
-    const jx = c.x - p.x, jz = c.z - p.z;
-    const a = jx * jx + jz * jz > tp ? 1 : a0;
     out.x[i] = p.x + (c.x - p.x) * a;
     out.z[i] = p.z + (c.z - p.z) * a;
     out.vx[i] = p.vx + (c.vx - p.vx) * a;
@@ -231,11 +229,37 @@ export function fillInterp(out: InterpState, prev: ReadonlySimState, curr: Reado
     out.fz[i] = fz;
   }
   const pb = prev.ball, cb = curr.ball;
+  out.ballX = pb.x + (cb.x - pb.x) * a;
+  out.ballY = pb.y + (cb.y - pb.y) * a;
+  out.ballZ = pb.z + (cb.z - pb.z) * a;
+}
+
+/**
+ * [QF-4] After fillInterp: a teleport (a move longer than INTERP_TELEPORT in one tick: restart placements, RUL-11's
+ * set-up legalisation, kick-off formations) is drawn at its new spot at once instead of sliding halfway on the frames
+ * between the two ticks, so the camera cut that hides it really does. Returns how many players / the ball snapped
+ * (ball = 1 more). Pure; no allocation.
+ */
+export function snapTeleports(out: InterpState, prev: ReadonlySimState, curr: ReadonlySimState): number {
+  const tp = INTERP_TELEPORT.player * INTERP_TELEPORT.player, tb = INTERP_TELEPORT.ball * INTERP_TELEPORT.ball;
+  let n = 0;
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    const p = prev.players[i]!;
+    const c = curr.players[i]!;
+    const jx = c.x - p.x, jz = c.z - p.z;
+    if (!(jx * jx + jz * jz > tp)) continue;
+    out.x[i] = c.x; out.z[i] = c.z;
+    out.vx[i] = c.vx; out.vz[i] = c.vz;
+    out.fx[i] = c.fx; out.fz[i] = c.fz;
+    n++;
+  }
+  const pb = prev.ball, cb = curr.ball;
   const bx = cb.x - pb.x, by = cb.y - pb.y, bz = cb.z - pb.z;
-  const ab = bx * bx + by * by + bz * bz > tb ? 1 : a0;
-  out.ballX = pb.x + (cb.x - pb.x) * ab;
-  out.ballY = pb.y + (cb.y - pb.y) * ab;
-  out.ballZ = pb.z + (cb.z - pb.z) * ab;
+  if (bx * bx + by * by + bz * bz > tb) {
+    out.ballX = cb.x; out.ballY = cb.y; out.ballZ = cb.z;
+    n++;
+  }
+  return n;
 }
 
 const MISSING_ID = 'dk-webgl-missing';
@@ -521,6 +545,7 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
     render(prev: ReadonlySimState, curr: ReadonlySimState, alpha: number, frame: FrameInfo) {
       if (!matchActive || !core || !core.renderer || core.lost || lost) return;
       fillInterp(interp, prev, curr, alpha);
+      snapTeleports(interp, prev, curr);
       frameObj.prev = prev;
       frameObj.curr = curr;
       frameObj.alpha = alpha;

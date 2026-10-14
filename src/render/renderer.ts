@@ -418,6 +418,11 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: RendererCoreOpti
         if (uniforms && typeof uniforms === 'object') {
           for (const key in uniforms) visitValue(uniforms[key]?.value);
         }
+        // [QF-4] onBeforeCompile uniforms held in a closure, exposed as userData.uniforms.
+        const ud = (rec.userData as { uniforms?: Record<string, { value?: unknown } | undefined> } | undefined)?.uniforms;
+        if (ud && typeof ud === 'object') {
+          for (const key in ud) visitValue(ud[key]?.value);
+        }
       };
       scene.traverse((o) => {
         const mat = (o as Object3D & { material?: Material | Material[] }).material;

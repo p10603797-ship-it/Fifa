@@ -151,7 +151,9 @@ describe('RUL-01 clock', () => {
       // kick-off is taken counts, D-013; a tick that ends in GOAL does not) or ends the period.
       if (CLOCK_PHASES.includes(m.phase) || tickEv.some((e) => e.type === EventType.PERIOD_END)) clockTicks++;
       return m.phase === MatchPhase.HALF_TIME;
-    }, 9000, undefined, 'core');
+      // [QF-1] 9000 ticks was too tight once goals happen: 7200 clock ticks + added time + every stoppage, and each goal's
+      // GOAL -> CELEBRATION -> REPLAY -> KICK_OFF (~1440 ticks for two goals, half-time at tick 9648 with seed default).
+    }, 20000, undefined, 'core');
     expect(reached).toBe(true);
     // Every tick whose rules stage ended in a clock phase advanced the clock by exactly one.
     expect(s.match.periodT).toBe(clockTicks);

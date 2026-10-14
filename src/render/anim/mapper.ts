@@ -47,7 +47,7 @@ import {
   neutralPose, PP, SLEN, strideLengthForS, TLA, type PoseImpl,
 } from './locomotion';
 import { TAU } from './poseMath';
-import { kickReach, nearerLeg, RCH, REACH_SWITCH, reachClip, touchNeed, touchReach } from './reach';
+import { kickApply, kickOffset, KOF, nearerLeg, RCH, REACH_SWITCH, reachClip, touchNeed, touchReach } from './reach';
 
 const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
   /** Idle below / locomotion above these speeds (m/s, hysteresis). */
@@ -73,6 +73,9 @@ const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
   /** Upper-body clips keep the clip's legs below / take the locomotion legs above (m/s, smoothstep). */
   layerFrom: 0.4,
   layerTo: 1.3,
+  /** [QF-4] First touches / headers take the run's legs from runLegsFrom to runLegsTo (m/s, smoothstep). */
+  runLegsFrom: 0.8,
+  runLegsTo: 2,
   /** Breathing period (s). */
   breathPeriod: 3.6,
   /** A keeper in play takes the ready stance while the ball is within this distance (m) and he is slower (m/s). */
@@ -96,15 +99,15 @@ const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
   touchLead: 0.25,
   /** Touch reach (dribble touches, first touches): fades in over the last touchIn s before a predicted touch, peaks on
    *  the touch frame and fades over touchOut s after it. Below alignMinSpeed (m/s) there is no phase alignment. */
-  touchIn: 0.08,
+  touchIn: 0.12, // [QF-4 skeptic] 0.08: too short for the rate-limited reach to get a boot out to a 1.1 m first touch
   touchOut: 0.12,
   /** A touch reaches in at once when the foot has to move at most touchStepMax (m) this frame, else over more frames
    *  (weight step = touchStepMax / distance), so the foot never pops; touchSnapStep is the weight step of the
    *  scheduled fade-ins. */
   touchSnapStep: 0.5,
   touchStepMax: 0.34,
-  /** The predicted ball a kick reaches for moves at most this far per 60 Hz frame (m). */
-  kickTargetStep: 0.12,
+  /** The kicking boot's reach offset moves at most this far per 60 Hz frame (m). */
+  kickEffectStep: 0.15,
   /** Fastest an action clip's phase advances after its contact (phase per second): ~0.34 s for a whole follow-through. */
   followRate: 1.6,
   alignMinSpeed: 1.2,
@@ -331,6 +334,14 @@ function actionPhaseS(): void {
     }
   }
   APA[8] = t;
+}
+
+/** [QF-4] Animator scratch: share of this frame's target legs that are the run cycle's. */
+const LEGS = new Float64Array(1);
+
+/** [QF-4] Full-body action clips that take the run's legs while the player moves (see chooseClip). */
+function runLegsUnder(anim: AnimId): boolean {
+  return anim === AnimId.FIRST_TOUCH || anim === AnimId.HEADER || anim === AnimId.THROW_IN;
 }
 
 /** Clips that are upper-body actions layered over the locomotion legs while the player moves. */
@@ -567,6 +578,14 @@ function chooseClip(s: ReadonlySimState, slot: number, out: AnimSample, mem: Slo
     OUTF[OF_LAYER] = w;
     leanFromIn(0);
     OUTF[OF_LEAN] = OUTF[OF_LEAN]! * w;
+  } else if (runLegsUnder(anim)) {
+    // [QF-4] A first touch or header on the run: the run cycle's legs (distance driven, planted boots stay put) under
+    // the clip's upper body; standing still the clip keeps its own legs. The clip's legs alone slid the planted boot at
+    // body speed (live p50 4.8 m/s for first touches, 6.8 m/s for headers above 3 m/s). The touch reach still brings a
+    // boot to the ball on a first touch.
+    let x = (speed - LOCAL_TUNING.runLegsFrom) / (LOCAL_TUNING.runLegsTo - LOCAL_TUNING.runLegsFrom);
+    x = x < 0 ? 0 : x > 1 ? 1 : x;
+    OUTF[OF_LAYER] = x * x * (3 - 2 * x);
   }
 }
 
@@ -788,10 +807,17 @@ export function createAnimator(): Animator {
   const lastSide = new Float32Array(NUM_SLOTS);
   const lastFoot = new Uint8Array(NUM_SLOTS);
   const liveFrom = createPose();
+  /** [QF-4] Share of the drawn legs that are the run cycle's: this frame's target (runLegs) and, for the fade in
+   *  progress, the outgoing pose's at its switch (fromRunLegs). A fade between two poses whose legs are both the run's
+   *  takes the target's legs at once (they are the same gait, a frame later), instead of sliding from frozen legs. */
+  const runLegs = new Float32Array(NUM_SLOTS);
+  const fromRunLegs = new Float32Array(NUM_SLOTS);
   // [QF-4] Ball contact (reach.ts): per slot the world ball target of the current kick (frozen at the contact), the
   // touch reach (weight, leg, world contact point) and the dribble's last predicted touch.
   const kickWX = new Float64Array(NUM_SLOTS), kickWY = new Float64Array(NUM_SLOTS), kickWZ = new Float64Array(NUM_SLOTS);
   const kickInit = new Uint8Array(NUM_SLOTS);
+  /** [QF-4] The kicking boot's reach offset applied last frame (model metres, rate limited). */
+  const kickEX = new Float64Array(NUM_SLOTS), kickEY = new Float64Array(NUM_SLOTS), kickEZ = new Float64Array(NUM_SLOTS);
   const touchW = new Float64Array(NUM_SLOTS);
   const touchSide = new Int8Array(NUM_SLOTS);
   const touchWX = new Float64Array(NUM_SLOTS), touchWY = new Float64Array(NUM_SLOTS), touchWZ = new Float64Array(NUM_SLOTS);
@@ -811,9 +837,10 @@ export function createAnimator(): Animator {
     blendT.fill(0);
     blendDur.fill(0);
     fromLive.fill(0);
+    runLegs.fill(0); fromRunLegs.fill(0);
     mem.idle.fill(0); mem.strafe.fill(0); mem.lean.fill(0); mem.foot.fill(255); mem.act.fill(0); mem.actT.fill(0);
     touchW.fill(0); touchSeenTick.fill(-1); touchRise.fill(0); wasCharging.fill(0); strike.fill(0);
-    kickInit.fill(0);
+    kickInit.fill(0); kickEX.fill(0); kickEY.fill(0); kickEZ.fill(0);
   }
 
   function update(f: RenderFrame, sink: PoseSinkLike | null): void {
@@ -944,6 +971,11 @@ export function createAnimator(): Animator {
       PP[0] = sample.t; PP[1] = cycle; PP[2] = speed; PP[3] = sample.side; PP[4] = sample.foot;
       POSE_IMPLS[anim]!(target);
       const lw = OUTF[OF_LAYER]!;
+      // Share of this target's legs that are the run cycle's (a running clip: all; an action: its leg layer).
+      // (Through a typed scratch: a ternary mixing small-integer constants with doubles boxes them in V8.)
+      LEGS[0] = 0;
+      if (anim === AnimId.JOG || anim === AnimId.SPRINT || anim === AnimId.TURN_LEAN) LEGS[0] = 1;
+      else if (OUTX.loco === AnimId.JOG || OUTX.loco === AnimId.SPRINT || OUTX.loco === AnimId.TURN_LEAN) LEGS[0] = lw;
       if (lw > 0) {
         PP[0] = OUTX.loco === AnimId.IDLE ? br : OUTF[OF_DIR]!; PP[1] = cycle; PP[2] = speed; PP[3] = 1; PP[4] = 0;
         POSE_IMPLS[OUTX.loco]!(layer);
@@ -968,28 +1000,24 @@ export function createAnimator(): Animator {
         if (p.actDone === 0 && ua > 0) wu = 1; // charging past the planned contact: the backswing aims at the ball
         wu = wu < 0 ? 0 : wu > 1 ? 1 : wu;
         const w = wu * wu * (3 - 2 * wu);
-        if (p.actDone === 0) {
-          let tau = p.actCharging === 1 ? 0 : (p.actContact - (p.actT + alpha)) / 60;
+        const fresh = p.act !== prevAct || p.actT < prevActT || kickInit[i] === 0;
+        if (p.actDone === 0 || fresh) {
+          let tau = p.actCharging === 1 || p.actDone !== 0 ? 0 : (p.actContact - (p.actT + alpha)) / 60;
           if (!(tau > 0)) tau = 0;
+          // Where the sim will have the ball on the contact tick, a world point: the frame showing the contact pose
+          // (u = actT + alpha = actContact) draws the state one tick earlier, so the ball is carried one tick further.
+          const tb = tau + 1 / 60;
           const b = s.ball;
-          const px = it.ballX + b.vx * tau - vx * tau;
-          const pz = it.ballZ + b.vz * tau - vz * tau;
-          let py = it.ballY + b.vy * tau - 4.905 * tau * tau;
+          const px = it.ballX + b.vx * tb;
+          const pz = it.ballZ + b.vz * tb;
+          let py = it.ballY + b.vy * tb - 4.905 * tb * tb;
           if (py < 0.11) py = 0.11;
-          // A new kick takes the prediction as it is; then it moves at most kickTargetStep per frame (a bounce or a
-          // deflection changes the prediction at once: the boot must not jump with it).
-          const fresh = p.act !== prevAct || p.actT < prevActT || kickInit[i] === 0;
-          if (fresh) {
-            kickWX[i] = px; kickWY[i] = py; kickWZ[i] = pz;
-            kickInit[i] = 1;
-          } else {
-            const ex = px - kickWX[i]!, ey = py - kickWY[i]!, ez = pz - kickWZ[i]!;
-            const el = Math.sqrt(ex * ex + ey * ey + ez * ez);
-            const mx = LOCAL_TUNING.kickTargetStep * (dt > 0 ? dt * 60 : 1);
-            const k = el > mx ? mx / el : 1;
-            kickWX[i] = kickWX[i]! + ex * k; kickWY[i] = kickWY[i]! + ey * k; kickWZ[i] = kickWZ[i]! + ez * k;
-          }
+          // The prediction follows the ball freely (a first-time kick that starts before the pass is struck first
+          // predicts the ball at the passer's feet); the boot's offset is what is rate limited below.
+          kickWX[i] = px; kickWY[i] = py; kickWZ[i] = pz;
         }
+        if (fresh) { kickEX[i] = 0; kickEY[i] = 0; kickEZ[i] = 0; }
+        kickInit[i] = 1;
         if (w > 0 && REACH_SWITCH.kick === 1) {
           // World offset from the drawn player (prediction already relative to his motion) into model space.
           const rx = kickWX[i]! - x - offX, rz = kickWZ[i]! - z - offZ;
@@ -997,9 +1025,23 @@ export function createAnimator(): Animator {
           RCH[1] = kickWY[i]! / hs;
           RCH[2] = (rx * -fz + rz * fx) / hs;
           RCH[3] = w;
-          if ((globalThis as never as {__kd?: (a: number[]) => void}).__kd) (globalThis as never as {__kd: (a: number[]) => void}).__kd([i, RCH[0]!, RCH[1]!, RCH[2]!, w, sample.foot, sample.t, ((it.ballX - x) * fx + (it.ballZ - z) * fz), ((it.ballX - x) * -fz + (it.ballZ - z) * fx), s.ball.vx, s.ball.vz, vx, vz, p.actT, p.actContact, s.ball.owner]);
-          kickReach(target, anim, sample.foot);
+          kickOffset(anim, sample.foot);
+        } else {
+          KOF[0] = 0; KOF[1] = 0; KOF[2] = 0;
         }
+        // The boot's reach offset moves at most kickEffectStep per 60 Hz frame (a bounce, a deflection or a pass
+        // struck after the kick began changes the prediction at once: the boot must not jump with it).
+        const ex = KOF[0]! - kickEX[i]!, ey = KOF[1]! - kickEY[i]!, ez = KOF[2]! - kickEZ[i]!;
+        const el = Math.sqrt(ex * ex + ey * ey + ez * ez);
+        const mx = LOCAL_TUNING.kickEffectStep * (dt > 0 ? dt * 60 : 1);
+        const k = el > mx ? mx / el : 1;
+        kickEX[i] = kickEX[i]! + ex * k; kickEY[i] = kickEY[i]! + ey * k; kickEZ[i] = kickEZ[i]! + ez * k;
+        if (REACH_SWITCH.kick === 1) {
+          KOF[0] = kickEX[i]!; KOF[1] = kickEY[i]!; KOF[2] = kickEZ[i]!;
+          kickApply(target, anim, sample.foot);
+        }
+      } else {
+        kickEX[i] = 0; kickEY[i] = 0; kickEZ[i] = 0;
       }
       // Cross-fade on clip changes, action restarts and phase jumps.
       const restarted = prevAct === p.act && p.act !== ActionKind.NONE && p.actT < prevActT;
@@ -1010,6 +1052,7 @@ export function createAnimator(): Animator {
         blendDur[i] = 0;
       } else if ((anim !== prevAnim && !sameRunPose(prevAnim, lastFoot[i]!, anim, sample.foot)) || restarted || jump) {
         for (let k = 0; k < POSE_SIZE; k++) from[i]![k] = out[k]!;
+        fromRunLegs[i] = runLegs[i]!;
         // Settled fades only: an interrupted fade starts from the drawn mixture (frozen), so the pose stays continuous;
         // the model's foot lock catches the slip of those short fades.
         if (anim !== prevAnim && isLocomotion(prevAnim) && isLocomotion(anim) && blendT[i]! >= blendDur[i]!) {
@@ -1052,7 +1095,16 @@ export function createAnimator(): Animator {
           a = liveFrom;
         }
         for (let k = 0; k < POSE_SIZE; k++) out[k] = a[k]! + (target[k]! - a[k]!) * w;
+        // [QF-4] Run legs on both sides of the fade (into / out of a first touch, header or throw-in on the run).
+        const kl = Math.min(fromRunLegs[i]!, LEGS[0]!);
+        if (kl > 0 && fromLive[i] === 0) {
+          for (let k = 0; k < LOWER_BODY.length; k++) {
+            const c = LOWER_BODY[k]!;
+            out[c] = out[c]! + (target[c]! - out[c]!) * kl;
+          }
+        }
       }
+      runLegs[i] = LEGS[0]!;
       // [QF-4] Touch reach (dribble touches, first touches): a touch this tick turns the reach on toward where the ball
       // was touched (the frame shows it there); a dribble touch the sim has scheduled, or a pass about to reach him,
       // fades it in beforehand; it fades out after. The weight wanted this frame is then rate-limited by how far the

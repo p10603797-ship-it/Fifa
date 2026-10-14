@@ -103,6 +103,7 @@ test.describe('QF-4 look: HUD layout, resize / rotation, budgets per scene', () 
       if (await page.evaluate(() => window.__dotkick!.ctx.session.getState()!.match.phase === 2)) break;
     }
     const sizes: [number, number][] = [[1180, 820], [1024, 768], [1280, 800], [1688, 780]];
+    let hintsShown = 0;
     for (const [w, h] of sizes) {
       await page.setViewportSize({ width: w, height: h });
       await frames(page, 2);
@@ -110,6 +111,32 @@ test.describe('QF-4 look: HUD layout, resize / rotation, budgets per scene', () 
       const L = await layout(page);
       await shot(page, `hud-${w}x${h}`);
       checkLayout(L, `${w}x${h}`);
+      // Swipe hints around a held big button (first matches): inside the viewport and clear of the HUD.
+      const big = await page.evaluate(() => {
+        const el = document.querySelector<HTMLElement>('.dk-tbtn--big');
+        const r = el?.getBoundingClientRect();
+        return r && r.width > 0 ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+      });
+      if (big) {
+        await t.down(1, big.x, big.y);
+        let on = 0;
+        for (let k = 0; k < 60 && on === 0; k++) {
+          await step(2);
+          await page.waitForTimeout(50);
+          on = await page.locator('.dk-tbtn--big .dk-hint.is-on').count();
+        }
+        if (on > 0) {
+          hintsShown++;
+          await page.waitForTimeout(250); // the fade-in
+          await step(2);
+          await shot(page, `hud-${w}x${h}-swipe-hints`);
+          const H = await layout(page);
+          expect(H.touch.some((r) => r.name.startsWith('swipeHint')), `${w}x${h}: swipe hints measured`).toBe(true);
+          checkLayout(H, `${w}x${h} swipe hints`);
+        }
+        await t.up();
+        await step(4);
+      }
       // Camera follows the aspect: the projector maps the ball onto the canvas where it is drawn.
       const cam = await page.evaluate(() => {
         const d = window.__dotkick!;
@@ -127,6 +154,7 @@ test.describe('QF-4 look: HUD layout, resize / rotation, budgets per scene', () 
       expect(cam.y).toBeGreaterThan(0);
       expect(cam.y).toBeLessThan(h * 0.86);
     }
+    expect(hintsShown, 'swipe hints shown on a held big button').toBeGreaterThan(0);
     // A set-piece hint card (first corners) with the touch controls: still clear.
     await page.setViewportSize({ width: 1024, height: 768 });
     await frames(page, 2);
@@ -224,7 +252,7 @@ test.describe('QF-4 look: HUD layout, resize / rotation, budgets per scene', () 
             const rs = d.app.renderer.stats();
             const tm = window.__dotkickTextureMemory!();
             const c = w.__dotkickCinematic as { shot?: number } | undefined;
-            return { calls: rs.drawCalls, tris: rs.triangles, texMB: +(tm.bytes / (1024 * 1024)).toFixed(2), textures: tm.textures, phase: st().match.phase, shot: c?.shot ?? -1 };
+            return { calls: rs.drawCalls, tris: rs.triangles, texMB: +(tm.bytes / (1024 * 1024)).toFixed(2), textures: tm.textures, gpuTextures: rs.textures, geometries: rs.geometries, phase: st().match.phase, shot: c?.shot ?? -1 };
           },
           loose(x: number, z: number, vx: number, defTouch: boolean) {
             const s = st();
@@ -277,6 +305,8 @@ test.describe('QF-4 look: HUD layout, resize / rotation, budgets per scene', () 
       expect(r.calls, `${name} drew`).toBeGreaterThan(5);
       expect(r.tris, `${name} triangles`).toBeLessThanOrEqual(200_000);
       expect(r.texMB, `${name} texture MB`).toBeLessThanOrEqual(64);
+      // Every texture the GPU holds is one the scene references (textureMemory counts them all).
+      expect(r.gpuTextures, `${name} GPU textures vs counted`).toBeLessThanOrEqual(r.textures);
       return r;
     };
     await start(0, 20261014);

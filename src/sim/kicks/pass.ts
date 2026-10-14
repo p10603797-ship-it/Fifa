@@ -157,8 +157,8 @@ export const LOCAL_TUNING = { // TUNING-CR
   // ---- speed and lead
   /** Assisted arrival speed of a ground pass at power 0 and 1, m/s (INT-A: was 3.5 / 8 — soft passes took 2+ s over
    *  20 m, closing every forward lane). */
-  arriveMin: 7,
-  arriveMax: 12,
+  arriveMin: T_PASS.assistArriveMin, // (contracts/tuning.ts since QF-2)
+  arriveMax: T_PASS.assistArriveMax,
   /** Semi assistance: share of the power-only speed blended into the assisted speed, 0..1. */
   semiPowerBlend: 0.5,
   /** Power floor of a pass (an instant tap), 0..1. */
@@ -173,7 +173,7 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** [QF-2] A receiver's run is extrapolated only until it comes within this of a touchline / goal line (he pulls up
    *  there, so the lead stops too and is no longer "running away"): extrapolating a wide player's run out of the pitch
    *  and clamping the point onto the line sent ~3 passes a match rolling out for throw-ins, m. */
-  leadLineMargin: 4,
+  leadLineMargin: T_PASS.leadLineMargin,
   /** No receiver: a teammate within this distance of the ball's line (before it stops) becomes the target, m. */
   laneReceiverWidth: 2.5,
   // ---- dinked pass

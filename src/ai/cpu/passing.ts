@@ -84,7 +84,7 @@ import {
 } from '../../contracts/constants';
 import { ActionKind, AiJob, KickKind } from '../../contracts/enums';
 import { MoveMode, type PlayerState, type SimState } from '../../contracts/state';
-import { T_BALL, T_PASS, T_PLAYER, T_RULES, T_TACKLE, T_TOUCH } from '../../contracts/tuning';
+import { T_BALL, T_CPU, T_PASS, T_PLAYER, T_RULES, T_TACKLE, T_TOUCH } from '../../contracts/tuning';
 import { crossTarget } from '../../sim/kicks/lob';
 import { throughLeadPoint } from '../../sim/kicks/through';
 import { staminaFactor } from '../../sim/players/locomotion';
@@ -126,8 +126,8 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-09): move into T_AI as pass* (ti
   /** Ground pass arrival speed = lerp(groundArriveMin, groundArriveMax, clamp(distance / groundArriveDist,
    *  groundArriveFloor, 1)) — what the CPU's tap plays (SIM-15 gesture power = distance / 45 m, at least 0.2; SIM-08
    *  assisted arrival lerp(3.5, 8, power)), m/s / m / 0..1. */
-  groundArriveMin: 7,
-  groundArriveMax: 12,
+  groundArriveMin: T_CPU.passGroundArriveMin,
+  groundArriveMax: T_CPU.passGroundArriveMax,
   groundArriveDist: 45,
   groundArriveFloor: 0.2,
   /** Minimum arrival speed of a through ball, m/s. */
@@ -135,11 +135,11 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-09): move into T_AI as pass* (ti
   /** A through ball arrives at least this much faster than the runner runs away from it (SIM-08 leadArriveMargin), m/s. */
   leadArriveMargin: 2,
   /** Lead: receiver velocity extrapolated over the ball's travel time, capped, s. */
-  leadMaxS: 1.5, // [QF-2] was 2.5: through balls led 20 m+ landed with the keeper
+  leadMaxS: T_CPU.passLeadMaxS, // [QF-2] was 2.5: through balls led 20 m+ landed with the keeper
   /** Lead / target points stay this far inside the lines, m. */
   pitchMargin: 1,
   /** [QF-2] A receiver's run is led only until it comes within this of a line (mirrors SIM-08 leadLineMargin), m. */
-  leadLineMargin: 4,
+  leadLineMargin: T_PASS.leadLineMargin,
   /** A ground pass is met min(meetBackMax, meetBackFrac x distance) in front of the receiver, m / fraction. */
   meetBackMax: 1.8,
   meetBackFrac: 0.2,
@@ -150,8 +150,8 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-09): move into T_AI as pass* (ti
   pressMax: 0.25,
   /** Aerial reception: completion x lerp(aerialMin, aerialMax, ballControl 1..99) [INT-A: was 0.72 .. 0.95 while
    *  measured lob / lobbed-through completion was 4% / 0% over soak matches: landing duels, charge-downs, keepers]. */
-  aerialMin: 0.4,
-  aerialMax: 0.6,
+  aerialMin: T_CPU.passAerialMin,
+  aerialMax: T_CPU.passAerialMax,
   /** Arrival faster than T_TOUCH.hardBallSpeed: completion x (1 - hardLoss x min(1, excess / hardBallSpeed)). */
   hardLoss: 0.25,
   /** Teammates' reaction before running to a reception point (SIM-04-style run time for runners / cross attackers), s. */
@@ -196,8 +196,8 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-09): move into T_AI as pass* (ti
   /** Fixed-point iterations of the own lead model. */
   throughIters: 3,
   /** Completion multipliers for ground / lofted through balls (calibration, see throughBall) [INT-A]. */
-  throughGroundCompletionMul: 1, // [QF-2] was 0.6 (with the shorter lead the estimate holds)
-  throughLobCompletionMul: 0.25,
+  throughGroundCompletionMul: T_CPU.passThroughGroundCompletionMul, // [QF-2] was 0.6 (with the shorter lead the estimate holds)
+  throughLobCompletionMul: T_CPU.passThroughLobCompletionMul,
   // ---- crosses
   /** Own cross targets: near / far post depth from the goal line and |z|; penalty spot |z| toward the ball side, m. */
   nearPostDepth: 4.5,
@@ -215,8 +215,8 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-09): move into T_AI as pass* (ti
   /** Header xG multiplier on the spot's xG (x lerp(0.6, 1, heading)). */
   headerXgMul: 0.55,
   /** Cross completion = min(1, lane safety x crossCompletionMul + crossCompletionAdd) (x lateness) [INT-A]. */
-  crossCompletionMul: 1.6,
-  crossCompletionAdd: 0.12,
+  crossCompletionMul: T_CPU.passCrossCompletionMul,
+  crossCompletionAdd: T_CPU.passCrossCompletionAdd,
   // ---- danger (xG-ish of the receiving spot)
   /** xG = xgK x angle^2 (angle subtended by the goal mouth, rad), capped at xgCap. */
   xgK: 0.48,

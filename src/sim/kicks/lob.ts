@@ -69,7 +69,7 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** Lead of a moving receiver: fixed-point iterations on the flight time, the tolerance (s) and the max look-ahead (s). */
   lobLeadIters: 4,
   lobLeadTol: 0.02,
-  lobLeadMaxSec: 2.5, // [INT-A] was 3.5 s: a long ball led a sprinting forward by 30 m, landed 60+ m out and skipped on untouched (watchdog)
+  lobLeadMaxSec: T_PASS.lobLeadMaxSec, // [INT-A] was 3.5 s: a long ball led a sprinting forward by 30 m (contracts/tuning.ts since QF-2)
   /** Receivers slower than this are not led (one solve), m/s. */
   lobLeadMinSpeed: 0.3,
   /** Backspin (rad/s; + floats, - dips) of LOB_PASS / GOAL_KICK, HIGH_LOB and DRIVEN_LOB. */

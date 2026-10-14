@@ -58,6 +58,8 @@ export interface LiveRigOptions {
   config?: Partial<MatchConfig>;
   /** Humans stay as configured (default: both CPU). */
   keepHumans?: boolean;
+  /** Called after every drawn frame with the camera it was drawn with. */
+  onDraw?: (camera: PerspectiveCamera) => void;
 }
 
 function fakeCore(onDraw: (camera: PerspectiveCamera) => void): RendererCore {
@@ -127,7 +129,7 @@ export function createLiveRig(o: LiveRigOptions = {}): LiveRig {
     },
   };
   const r = createGameRenderer({
-    createCore: () => fakeCore((cam) => { rig.camera = cam; rig.draws++; }),
+    createCore: () => fakeCore((cam) => { rig.camera = cam; rig.draws++; o.onDraw?.(cam); }),
     createModules: (ctx) => {
       rig.ctx = ctx;
       model = createPlayerModel(ctx);

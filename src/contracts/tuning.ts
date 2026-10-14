@@ -81,6 +81,10 @@ export const T_PLAYER = {
   arriveRadius: 3.0,
   /** Within this distance of an arrival target the player stops, m. */
   arriveStop: 0.25,
+  /** [INT-A, moved by QF-2] Stamina rates are per this half length (rates x staminaRefHalfMinutes / halfMinutes), so a
+   *  match tires players the same whatever its length (4-minute halves emptied every player by half-time), min.
+   *  Read by SIM-04 locomotion (its LOCAL_TUNING.staminaRefHalfMinutes until QF-1 switches it over). */
+  staminaRefHalfMinutes: 4,
 } as const;
 
 export const T_DRIBBLE = {
@@ -113,6 +117,15 @@ export const T_TOUCH = {
   trapHeight: 1.6,
   /** First touch window ticks. */
   firstTouchTicks: 10,
+  /** [INT-A, moved by QF-2] SIM-15 receiver of a pass rolling away from him (faster than meetOvershootMinSpeed m/s):
+   *  the meeting target is pushed meetOvershootSec x ball speed (at least meetOvershootMin, at most meetOvershootMax m)
+   *  on along its path, and while more than meetCatchDist m behind it he runs at top speed. m/s, s, m, m, m. Read by
+   *  sim/control/resolveShared (its LOCAL_TUNING until QF-1 / QF-3 switch it over). */
+  meetOvershootMinSpeed: 1,
+  meetOvershootSec: 0.6,
+  meetOvershootMin: 3.5,
+  meetOvershootMax: 5,
+  meetCatchDist: 1.2,
 } as const;
 
 export const T_PASS = {
@@ -142,6 +155,15 @@ export const T_PASS = {
   highLobAngle: 0.95,
   drivenLobAngle: 0.35,
   dinkedAngle: 0.45,
+  /** [INT-A, moved by QF-2] SIM-08 assisted arrival speed of a ground pass at power 0 / 1 (was 3.5 / 8: soft passes took
+   *  2+ s over 20 m, closing every forward lane), m/s. */
+  assistArriveMin: 7,
+  assistArriveMax: 12,
+  /** [INT-A, moved by QF-2] SIM-09 lob lead cap (was 3.5 s: a long ball led a sprinting forward by 30 m), s. */
+  lobLeadMaxSec: 2.5,
+  /** [QF-2] SIM-08 / TAI-09: a receiver's run is led only until it comes within this of a touchline / goal line (wide
+   *  men's runs extrapolated out of the pitch sent ~3 passes a match out for throw-ins), m. */
+  leadLineMargin: 4,
 } as const;
 
 export const T_SHOT = {
@@ -241,6 +263,14 @@ export const T_RULES = {
   ballIdleTicks: 480,
   /** [QF-1] The loose ball "lies" (ball.idleT counts toward ballIdleTicks) below this horizontal speed, m/s. */
   ballLieSpeed: 1.0,
+  /** [QF-1] A pass whose ball has lain (ball.idleT) this long while its intended receiver is not closing in on it
+   *  (within T_DRIBBLE.controlRadius + passDeadReach of it, or running at it at ballLieSpeed or more) is over:
+   *  ball.passTarget clears, so the "our pass in flight" claims (switching lock, chaser claim) end, ticks / m. */
+  passDeadTicks: 30,
+  passDeadReach: 0.6,
+  /** [QF-1, from QF-6] FULL_TIME ignores SKIP before this many ticks (1.5 s): online, the next state-hash exchange
+   *  (<= 30 ticks), the host's snapshot and the guest's hard-sync still fit before POST_MATCH stops both sims. */
+  fullTimeMinTicks: 90,
   /** Half-end extension cap, ticks of real time (20 s). */
   halfEndExtensionTicks: 1200,
   /** Final-25-m attack zone that delays the half end, m from goal line. */
@@ -281,13 +311,113 @@ export const T_AI = {
   /** Min ticks a chaser keeps the job. */
   chaserMinTicks: 15,
   /** Pass scan period for the CPU carrier, ticks. */
-  carrierEvalInterval: 8,
+  carrierEvalInterval: 5, // [QF-2] was 8: a shooting window against a closing man lasts ~0.3 s
   /** Compactness: max distance between lines, m. */
   lineSpacingMax: 14,
   /** Press trigger distance, m. */
   pressDistance: 9,
   /** Transition window ticks after a possession change. */
   transitionTicks: 180,
+  /** [INT-A, moved by QF-2] HOLD_SHAPE speed cap: a jog (fraction of top speed) within holdNearDist m of home, rising to
+   *  holdFarFraction at holdFarDist m (always a jog left players 10-25 m behind their shape after a turnover). */
+  holdJogFraction: 0.6,
+  holdFarFraction: 0.92,
+  holdNearDist: 4,
+  holdFarDist: 12,
+  /** [INT-A, moved by QF-2] TAI-07 ball jobs chasing a ball rolling away (faster than chaseOvershootMinSpeed m/s) aim
+   *  chaseOvershootSec x ball speed (chaseOvershootMin..Max m) beyond the interception point, so arrival braking does
+   *  not leave them trailing it. m/s, s, m, m. */
+  chaseOvershootMinSpeed: 1,
+  chaseOvershootSec: 0.6,
+  chaseOvershootMin: 3.5,
+  chaseOvershootMax: 5,
+  /** [INT-A, moved by QF-2] TAI-13 long goal kick / deep free kick target at most this far (was 75: 70 m kicks bounced on
+   *  untouched into the far box), m. */
+  setPieceGkLongMax: 40,
+} as const;
+
+/**
+ * [INT-A, moved by QF-2] SIM-12 header geometry and AI aerial choices (head tennis fixes): header pass launch angle for
+ * short / long passes (rad), header passes landing headerShortFrac of the distance (at most headerShortMax m) short of
+ * the receiver, header shot speeds (m/s), receiver openness weight, and the depth within which an opponent's high ball
+ * is always headed clear (m).
+ */
+export const T_AERIAL = {
+  headerPassAngleNear: 0.3,
+  headerPassAngleFar: 0.18,
+  headerShortFrac: 0.25,
+  headerShortMax: 4,
+  headerShotMin: 13.5,
+  headerShotMax: 19,
+  headerShotCap: 19.8,
+  opennessW: 0.8,
+  aiClearAlwaysDepth: 22,
+} as const;
+
+/**
+ * [QF-2] CPU decision model (TAI-08 carrier, TAI-09 passing, TAI-10 shooting, TAI-11 defending): the INT-A value model
+ * and completion calibrations plus the QF-2 chance-creation tuning, moved out of the modules' LOCAL_TUNING blocks. Each
+ * module's LOCAL_TUNING keeps the key (same name without the prefix: carrier* -> ai/cpu/carrier, pass* ->
+ * ai/cpu/passing, xg* -> ai/cpu/shooting, defend* -> ai/cpu/defending) with its documentation and reads the value
+ * from here. Utilities are goal-probability units; distances m; times s; speeds m/s. History and evidence:
+ * docs/TUNING.md.
+ */
+export const T_CPU = {
+  // ---- carrier.ts
+  carrierPvBase: 0.004,
+  carrierPvSpan: 0.08,
+  carrierPvExp: 3,
+  carrierPvLatFree: 9,
+  carrierPvLatFull: 30,
+  carrierPvLatMin: 0.35,
+  carrierSettlePenalty: 0.005,
+  carrierCounterPerM: 0.0003,
+  carrierShotXgMul: 18,
+  carrierBoxShotBonus: 0.03,
+  carrierLongShotThreshMax: 0.7,
+  carrierLongShotThreshPerM: 0.02,
+  carrierShotMaxDist: 40,
+  carrierShotMaxLongShotExtra: 4,
+  carrierShotPowerNear: 0.65,
+  carrierShotPowerFar: 0.84,
+  carrierShotInset: 0.5,
+  carrierKeeperSideMul: 0.85,
+  carrierBlockedRecover: 0.9,
+  carrierQuickShotMinAlong: 0.3,
+  carrierQuickShotDist: 10,
+  carrierQuickShotReach: 1.1,
+  carrierQuickShotMinClose: 3,
+  carrierQuickShotMargin: 0.05,
+  carrierDribbleLossMax: 0.15,
+  carrierDribbleTightLossMul: 1.4,
+  carrierDriveShotShare: 0.7,
+  carrierKeeperDribblePenalty: 0.01,
+  carrierShieldRestMinTicks: 60,
+  carrierShieldHoldMul: 0.93,
+  carrierClearValue: -0.0015,
+  carrierClearBoxBonus: 0.006,
+  carrierClearPower: 0.5,
+  carrierSwitchMargin: 0.003,
+  // ---- passing.ts
+  passGroundArriveMin: 7,
+  passGroundArriveMax: 12,
+  passAerialMin: 0.4,
+  passAerialMax: 0.6,
+  passLeadMaxS: 1.5,
+  passThroughGroundCompletionMul: 1,
+  passThroughLobCompletionMul: 0.25,
+  passCrossCompletionMul: 1.6,
+  passCrossCompletionAdd: 0.12,
+  // ---- shooting.ts
+  xgBlockRadiusNear: 1.0,
+  xgBlockEffNear: 0.95,
+  xgBlockLook: 0.25,
+  xgLaneBallSlack: 0,
+  xgKnockRun: 14,
+  xgKnockEdge: 2,
+  // ---- defending.ts
+  defendRashLungeChance: 0.5,
+  defendKeeperLaneClear: 2.0,
 } as const;
 
 /** Per-difficulty AI parameters, indexed by Difficulty (0 Beginner .. 5 Legend). Never physics. */
@@ -299,6 +429,10 @@ export const T_LEVEL = {
   pressIntensity: [0.35, 0.5, 0.62, 0.75, 0.86, 0.95] as readonly number[],
   tackleTimingTicks: [14, 11, 8, 6, 4, 3] as readonly number[],
   shotThresholdXg: [0.0018, 0.002, 0.0025, 0.003, 0.0035, 0.004] as readonly number[],
+  /** [QF-2] Extra save-reaction ticks of a CPU team's keeper by level (GKP-02; 0 at Professional and for a human
+   *  side): reaction time is one of the level differences (BRIEF §7), the keeper's included. Not in LevelParams
+   *  (contracts/systems.ts): GKP-02 reads it here. */
+  keeperReactTicks: [10, 6, 3, 0, -2, -3] as readonly number[],
 } as const;
 
 export const T_INPUT = {

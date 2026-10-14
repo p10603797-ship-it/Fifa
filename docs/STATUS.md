@@ -172,11 +172,11 @@ Total assignments: 201.
 | QA-28 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
 | QA-29 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
 | QA-30 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
-| QA-31 | 3 | running | QF-4 (hunt + second pass, D-020) | |
-| QA-32 | 3 | running | QF-4 (hunt + second pass, D-020) | |
-| QA-33 | 3 | running | QF-4 (hunt + second pass, D-020) | |
-| QA-34 | 3 | running | QF-4 (hunt + second pass, D-020) | |
-| QA-35 | 3 | running | QF-4 (hunt + second pass, D-020) | |
+| QA-31 | 3 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
+| QA-32 | 3 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
+| QA-33 | 3 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
+| QA-34 | 3 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
+| QA-35 | 3 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
 | QA-36 | 3 | queued |  |  |
 | QA-37 | 3 | queued |  |  |
 | QA-38 | 3 | queued |  |  |
@@ -193,9 +193,9 @@ Total assignments: 201.
 | FIX-05 | 4 | running | QF-2 (hunt + second pass, D-020) | |
 | FIX-06 | 4 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
 | FIX-07 | 4 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
-| FIX-08 | 4 | running | QF-4 (hunt + second pass, D-020) | |
-| FIX-09 | 4 | running | QF-4 (hunt + second pass, D-020) | |
-| FIX-10 | 4 | running | QF-4 (hunt + second pass, D-020) | |
+| FIX-08 | 4 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
+| FIX-09 | 4 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
+| FIX-10 | 4 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
 | FIX-11 | 4 | done | QF-5: 18 defects fixed (14 + 4); sw.js shell/quota/redirect, build-id update flow, no toast in play, licence notices in dist, audio warm-up + background resume, pause lockout; 797 KB gzip; splash 2.0 s | 3 cosmetic KNOWN_ISSUES |
 | FIX-12 | 4 | done | QF-6: 33 defects fixed (18 + 15); netsim matrix 24/24, DoD seeds 3-9/2026 0 desyncs; real WebRTC e2e; protocol net2 | 4 cosmetic KNOWN_ISSUES |
 | FIX-13 | 4 | queued |  |  |

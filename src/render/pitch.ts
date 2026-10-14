@@ -458,6 +458,8 @@ export function createPitchMaterial(uniforms: PitchUniforms): MeshLambertMateria
   mat.name = 'pitch';
   mat.onBeforeCompile = (shader: WebGLProgramParametersWithUniforms) => patchPitchShader(shader, uniforms);
   mat.customProgramCacheKey = () => 'dk-pitch-1';
+  // [QF-4] The onBeforeCompile uniforms, visible to scene walks (texture memory, context-restore rebuild).
+  mat.userData.uniforms = uniforms;
   return mat;
 }
 

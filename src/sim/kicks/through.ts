@@ -37,7 +37,8 @@
  * lengthwise speed scale (two calls, always eight rng draws). launch.target = runner (or a teammate within
  * spaceReceiverRadius of a ball played into space), tx/tz = the lead point.
  * Determinism / cost: dmath + Math.sqrt + plain-arithmetic series, slot-order scans, strict tie breaks, module scratch
- * only. leadSearch is O(leadSamples x 11) with one SIM-04 ticksToReach per sample and no double arguments / returns
+ * only. leadSearch is O(leadSamples x 11) with one SIM-04 ticksToReach per sample (memoised per runner while his
+ * inputs are unchanged: runnerMemo, QF-2) and no double arguments / returns
  * between its helpers (scratch Float64Array), so it allocates nothing of its own (CPU passing calls it a few times per
  * evaluation; ~4 us); the solver adds O(11 x 11) runner selection and, lofted, a few solveLaunchSpin calls.
  */
@@ -179,6 +180,38 @@ const SX = new Float64Array(N);
 const SZ = new Float64Array(N);
 const STR = new Float64Array(N);
 const SV = new Float64Array(N);
+/**
+ * [QF-2] Runner arrival times memo: SIM-04 ticksToReach of runner r at sample i (RT_T, s) for the sample point
+ * (RT_X, RT_Z), valid while every input ticksToReach reads of him (position, velocity, facing, stamina, action and
+ * movement lock, speed / acceleration / agility attributes; RK_*) is unchanged. The times do not depend on the passer,
+ * the power or the mode, and TAI-09 rates the ground and the lofted through ball to every runner each scan; a memo hit
+ * gives exactly the value the call would (pure function of those inputs), so play is unchanged. Under unbundled V8
+ * each ticksToReach call boxed ~50 B (TAI-09 budget "runners": 3.4 KB a scan).
+ */
+const RT_X = new Float64Array(NS * N);
+const RT_Z = new Float64Array(NS * N);
+const RT_T = new Float64Array(NS * N);
+/** ... and his SIM-04 maxSpeed (sprint), m/s (same inputs). */
+const RT_TOP = new Float64Array(NS);
+const RK_N = 14;
+const RK = new Float64Array(NS * RK_N).fill(Number.NaN);
+
+/** 1 when runner r's ticksToReach inputs equal the memo key (RK), else 0 (and the key is rewritten). */
+function runnerMemo(s: SimState, r: number): number {
+  const q = s.players[r]!;
+  const a = s.attrs[r]!;
+  const k = r * RK_N;
+  const hit = RK[k] === q.x && RK[k + 1] === q.z && RK[k + 2] === q.vx && RK[k + 3] === q.vz && RK[k + 4] === q.fx &&
+    RK[k + 5] === q.fz && RK[k + 6] === q.stamina && RK[k + 7] === q.moveMode && RK[k + 8] === q.act &&
+    RK[k + 9] === q.actT && RK[k + 10] === q.actDur && RK[k + 11] === a.topSpeed && RK[k + 12] === a.accel &&
+    RK[k + 13] === a.agility;
+  if (hit) return 1;
+  RK[k] = q.x; RK[k + 1] = q.z; RK[k + 2] = q.vx; RK[k + 3] = q.vz; RK[k + 4] = q.fx; RK[k + 5] = q.fz;
+  RK[k + 6] = q.stamina; RK[k + 7] = q.moveMode; RK[k + 8] = q.act; RK[k + 9] = q.actT; RK[k + 10] = q.actDur;
+  RK[k + 11] = a.topSpeed; RK[k + 12] = a.accel; RK[k + 13] = a.agility;
+  return 0;
+}
+
 /** Per-sample lateness of the fastest ball (s; Infinity when not playable at all). */
 const SLATE = new Float64Array(N);
 /** Per-sample status: 0 late / infeasible, 1 ideal, 2 early, 3 firm; danger flag. */
@@ -352,7 +385,9 @@ function leadSearch(s: SimState, slot: number, r: number, power: number, mode: n
   const amul = driven ? T_PASS.drivenMul : 1;
   const amin = LT.arriveMin * amul, relMax = LT.arriveRelMax * amul;
   const vmaxG = LT.groundSpeedMax * amul;
-  const top = maxSpeed(s, r, true);
+  const memo = runnerMemo(s, r);
+  if (memo === 0) RT_TOP[r] = maxSpeed(s, r, true);
+  const top = RT_TOP[r]!;
   const acc = s.attrs[r]!.accel > 0 ? s.attrs[r]!.accel : T_PLAYER.accelMin;
   const step = (LT.leadMax - LT.leadMin) / (N - 1);
   const ground = mode === 0;
@@ -366,7 +401,10 @@ function leadSearch(s: SimState, slot: number, r: number, power: number, mode: n
     if (i > 0 && px === SX[i - 1] && pz === SZ[i - 1]) break;
     SX[i] = px; SZ[i] = pz;
     n = i + 1;
-    const tr = ticksToReach(s, r, px, pz) / HZ;
+    const o = r * N + i;
+    let tr: number;
+    if (memo === 1 && RT_X[o] === px && RT_Z[o] === pz) tr = RT_T[o]!;
+    else { tr = ticksToReach(s, r, px, pz) / HZ; RT_X[o] = px; RT_Z[o] = pz; RT_T[o] = tr; }
     STR[i] = tr;
     const dx = px - b.x, dz = pz - b.z;
     const D = Math.sqrt(dx * dx + dz * dz);

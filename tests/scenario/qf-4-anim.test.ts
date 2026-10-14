@@ -27,6 +27,7 @@ import { createPlayerModel } from '../../src/render/players/model';
 import { createInterpState, type RenderContext, type RenderFrame } from '../../src/render/types';
 import { cloneState, copyState } from '../../src/sim/core/clone';
 import { createEventBuffer } from '../../src/sim/core/events';
+import { createLiveRig } from './qf-4-rig';
 import { initMatch } from '../../src/sim/init';
 import { step } from '../../src/sim/step';
 
@@ -162,6 +163,36 @@ describe('QF-4 QA-32 animation in live play', () => {
     expect(share(m.slipAll, 0.1)).toBeGreaterThan(0.6);
   });
 
+  it('kick-off: the formation placement (an 11 m teleport) does not snap the pose either (GFX-12 e2e: 0.49 m in the pelvis frame)', () => {
+    const g = createLiveRig({ seed: 20261014, keepHumans: true });
+    const prevJ = new Float64Array(NUM_SLOTS * 13 * 3).fill(NaN);
+    let worst = 0, at = '', teleports = 0;
+    const lastX = new Float64Array(NUM_SLOTS).fill(NaN);
+    for (let t = 0; t < 360; t++) {
+      g.tick(1);
+      for (let i = 0; i < NUM_SLOTS; i++) {
+        const p = g.s.players[i]!;
+        if (p.active !== 1) continue;
+        if (Math.abs(p.x - lastX[i]!) > 3) teleports++;
+        lastX[i] = p.x;
+        const sk = g.model.skeletons[i]!;
+        const k2 = sk[0]! * sk[0]! + sk[1]! * sk[1]! + sk[2]! * sk[2]!;
+        for (let j = 1; j < 13; j++) {
+          const wx = sk[j * 12 + 9]! - sk[9]!, wy = sk[j * 12 + 10]! - sk[10]!, wz = sk[j * 12 + 11]! - sk[11]!;
+          const r = [(wx * sk[0]! + wy * sk[1]! + wz * sk[2]!) / k2, (wx * sk[3]! + wy * sk[4]! + wz * sk[5]!) / k2, (wx * sk[6]! + wy * sk[7]! + wz * sk[8]!) / k2];
+          const o = (i * 13 + j) * 3;
+          if (prevJ[o] === prevJ[o]) {
+            const d = Math.hypot(r[0]! - prevJ[o]!, r[1]! - prevJ[o + 1]!, r[2]! - prevJ[o + 2]!);
+            if (d > worst) { worst = d; at = `tick ${g.s.tick} slot ${i} joint ${j} ${MatchPhase[g.s.match.phase]}`; }
+          }
+          prevJ[o] = r[0]!; prevJ[o + 1] = r[1]!; prevJ[o + 2] = r[2]!;
+        }
+      }
+    }
+    expect(teleports, 'the kick-off formation placement happened').toBeGreaterThan(5);
+    expect(worst, at).toBeLessThan(0.45);
+  });
+
   it('120 Hz display: no joint pops either', () => {
     const m = live(777, 1200, 2);
     console.log('QF-4 anim 120 Hz', JSON.stringify({ pops: m.pops, popMax: m.popMax, popAt: m.popAt }));
@@ -240,6 +271,50 @@ describe('QF-4 QA-32 animator: strikes and reach', () => {
     }
     expect(worst).toBeLessThan(0.45);
     expect(hold).toBeLessThan(cf);
+  });
+
+  it('a first-time kick started before the pass is struck meets the moving ball on the contact frame', () => {
+    // INT-C live: the receiver's kick began while the ball was still at the passer's feet; the reach target was taken
+    // there and could not catch up (boot 0.82 m from the ball). The prediction now follows the ball (the boot offset
+    // is what is rate limited) and aims at the ball of the contact tick.
+    const curr = state();
+    const p = curr.players[SLOT]!;
+    p.fx = -1; p.fz = 0;
+    curr.attrs[SLOT]!.height = 180;
+    const prev = cloneState(curr);
+    const a = createAnimator();
+    const pose = createPose();
+    const sink = { setPose(slot: number, ps: ArrayLike<number>): void { if (slot === SLOT) for (let c = 0; c < POSE_SIZE; c++) pose[c] = ps[c]!; } };
+    const v = 16, C = 8;
+    // Ball at the contact tick: 0.72 m ahead, 0.5 m to his left (model +x forward, +z right; facing -x: right = -z).
+    const bx = (t: number): number => p.x - 0.72 - ((C - t) * v) / 60;
+    const it = createInterpState();
+    let dist = NaN;
+    for (let t = 0; t <= C; t++) {
+      copyState(prev, curr);
+      p.act = ActionKind.KICK; p.actKick = KickKind.GROUND_PASS; p.actT = t; p.actContact = C; p.actDur = 20;
+      p.actCharging = 0; p.actDone = t >= C ? 1 : 0;
+      const b = curr.ball;
+      b.owner = -1; b.heldBy = -1; b.y = 0.11; b.vy = 0; b.z = p.z + 0.5; b.vz = 0;
+      if (t === 0) { b.x = bx(1) - 2; b.vx = 0; } else { b.x = bx(t); b.vx = v; }
+      fillInterp(it, prev, curr, 0);
+      a.update({ prev, curr, alpha: 0, frame: { nowMs: t * 16.7, dtMs: 1000 / 60, frame: t, ticks: 1, paused: false }, interp: it }, sink);
+      if (t === C) {
+        const sk = createSkeleton();
+        solvePoseFK(pose, sk);
+        // The ball the sim kicks, in model space.
+        const mx = p.x - curr.ball.x, mz = -(curr.ball.z - p.z);
+        dist = Infinity;
+        for (const j of [Joint.ANKLE_L, Joint.ANKLE_R]) for (const fpx of [BODY.toeX, BODY.heelX]) {
+          const o = j * 12;
+          const tx = sk[o]! * fpx + sk[o + 3]! * -BODY.ankleY + sk[o + 9]!;
+          const ty = sk[o + 1]! * fpx + sk[o + 4]! * -BODY.ankleY + sk[o + 10]!;
+          const tz = sk[o + 2]! * fpx + sk[o + 5]! * -BODY.ankleY + sk[o + 11]!;
+          dist = Math.min(dist, Math.hypot(tx - mx, ty - 0.11, tz - mz));
+        }
+      }
+    }
+    expect(dist).toBeLessThan(0.25);
   });
 
   it('kick reach: the boot meets balls off the clip\'s spot (to the side, further ahead, closer), both feet', () => {

@@ -68,13 +68,13 @@ import type { EventSink } from '../../contracts/events';
 import { AXIS_SCALE, Btn, GESTURE_POS_SCALE, type InputFrame } from '../../contracts/input';
 import type { ControllerState, CpuBrainState, PlayerState, SimState } from '../../contracts/state';
 import type { LevelParams } from '../../contracts/systems';
-import { T_PLAYER, T_SKILL, T_TACKLE, T_TOUCH } from '../../contracts/tuning';
+import { T_CPU, T_PLAYER, T_SKILL, T_TACKLE, T_TOUCH } from '../../contracts/tuning';
 import { isFree } from '../../sim/actions/dispatch';
 import { tackleKind } from '../../sim/control/resolveActions';
 import { ballEta, controlContext, Ctx } from '../../sim/control/resolveShared';
 import { aerialChance } from '../../sim/kicks/aerial';
 import { inSkillVulnerableWindow } from '../../sim/kicks/skills';
-import { comeOutWanted } from '../../sim/keeper/sweeper';
+import { comeOutWanted } from '../../sim/keeper/sweeperHooks';
 import { ticksToReach } from '../../sim/players/locomotion';
 import { createInterceptEstimate, estimateIntercept } from '../steer';
 import { levelParams } from './levels';
@@ -153,7 +153,7 @@ export const LOCAL_TUNING = {
   /** Standing tackle: ball within standReach + this of the defender now, m. */
   tackleApproach: 0.4,
   /** Rash lunge at a carrier with the ball at his feet: chance per rashBucketTicks = decisionNoise x this. */
-  rashLungeChance: 0.5,
+  rashLungeChance: T_CPU.defendRashLungeChance,
   rashBucketTicks: 30,
   /** Slide: ball between standReach and slideReach x slideReachFrac of the defender, m (fraction). */
   slideReachFrac: 0.85,
@@ -194,7 +194,7 @@ export const LOCAL_TUNING = {
   /** Loose ball another teammate chases (team.chaser): the controlled player covers this far goal-side of it, m. */
   looseCoverDist: 7.0,
   /** [QF-2] Our keeper's ball (TAI-07 chaser: his rush or save): ahead of it within this of its path, step off it, m. */
-  keeperLaneClear: 2.0,
+  keeperLaneClear: T_CPU.defendKeeperLaneClear,
   /** Reaction delay: keep running along the current velocity when faster than this, m/s. */
   momentumMinSpeed: 0.3,
 } as const; // TUNING-CR

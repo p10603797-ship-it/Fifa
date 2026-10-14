@@ -5,12 +5,14 @@
  */
 import { describe, expect, it } from 'vitest';
 import { MatchPhase, Period } from '../../src/contracts/enums';
+import { Btn } from '../../src/contracts/input';
 import { EventType } from '../../src/contracts/events';
 import { CLOCK_PHASES } from '../../src/contracts/transitions';
 import { T_RULES } from '../../src/contracts/tuning';
 import { LOCAL_TUNING as RUL01 } from '../../src/sim/rules/machine';
 import { runMatch } from '../../tools/headless';
 import { soakConfig } from '../../tools/lib/configs';
+import { makeScenario, runTicks } from '../harness/scenario';
 
 describe('QF-1 QA-09 clock and half end in real matches', { timeout: 600_000 }, () => {
   it('glitch half ends during a shot in flight / timer drift — 6 bot matches (cup rules on half of them), every tick checked', () => {
@@ -57,5 +59,23 @@ describe('QF-1 QA-09 clock and half end in real matches', { timeout: 600_000 }, 
       // Two halves, plus two extra-time periods for a cup tie level after 90 minutes.
       expect([2, 4]).toContain(periodEnds);
     }
+  });
+
+  it('the final whistle cannot be skipped before fullTimeMinTicks (online repair window), then a SKIP ends it', () => {
+    const s = makeScenario({ phase: MatchPhase.FULL_TIME, humans: 1, match: { period: Period.SECOND_HALF } });
+    let pressAt = s.tick + 2;
+    const phases: string[] = [];
+    runTicks(s, T_RULES.fullTimeMinTicks + 20, (tick, st, out) => {
+      if (tick === pressAt) out[0]!.buttons = Btn.SKIP;
+      // A press on every 10th tick while it still shows FULL_TIME: only those from fullTimeMinTicks on count.
+      if (tick === pressAt + 1 && st.match.phase === MatchPhase.FULL_TIME) pressAt += 10;
+    }, { check: 'core', until: (st) => { phases.push(`${st.match.phaseT}:${MatchPhase[st.match.phase]}`); return st.match.phase === MatchPhase.POST_MATCH; } });
+    expect(s.match.phase).toBe(MatchPhase.POST_MATCH);
+    // It ended on the first press at or after fullTimeMinTicks, well before fullTimeTicks.
+    const lastFt = phases.filter((p) => p.endsWith(':FULL_TIME')).pop()!;
+    const t = Number(lastFt.split(':')[0]);
+    expect(t).toBeGreaterThanOrEqual(T_RULES.fullTimeMinTicks - 1);
+    expect(t).toBeLessThan(T_RULES.fullTimeMinTicks + 10);
+    expect(T_RULES.fullTimeTicks).toBeGreaterThan(T_RULES.fullTimeMinTicks + 10);
   });
 });

@@ -7,15 +7,17 @@
 import { AiJob } from '../contracts/enums';
 import type { SimState } from '../contracts/state';
 import { NUM_SLOTS } from '../contracts/constants';
+import { T_AI } from '../contracts/tuning';
 import { teamEnd, teamStart } from '../sim/core/query';
 
-const LOCAL_TUNING = { // TUNING-CR (INT-A): HOLD_SHAPE speed by distance from home
+/** HOLD_SHAPE speed by distance from home [INT-A; values in contracts/tuning.ts T_AI.hold* since QF-2]. */
+const LOCAL_TUNING = {
   /** Speed cap as a fraction of top speed near home (a jog, T_PLAYER.jogFraction) and far from it. */
-  holdJogFraction: 0.6,
-  holdFarFraction: 0.92,
+  holdJogFraction: T_AI.holdJogFraction,
+  holdFarFraction: T_AI.holdFarFraction,
   /** Distance from home below which he jogs / beyond which he runs at holdFarFraction, m. */
-  holdNearDist: 4,
-  holdFarDist: 12,
+  holdNearDist: T_AI.holdNearDist,
+  holdFarDist: T_AI.holdFarDist,
 } as const;
 
 /** Previous tick's job per slot (derived scratch, rebuilt every tick; not state). */

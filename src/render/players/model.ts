@@ -76,6 +76,8 @@ const LOCAL_TUNING = { // TUNING-CR (render-only; the ground snap distance lives
   /** The offset eases back to the sim position with this time constant while a boot is locked / otherwise (s). */
   lockReturnLocked: 1.2,
   lockReturnFree: 0.08,
+  /** [QF-4] ... and over this while the player is in an action that takes no lock (s). */
+  lockReturnAction: 0.45,
   /** Interpolated travel above this in one frame drops the lock (restart placement, replay cut) (m). */
   lockTeleport: 1.5,
   /** [QF-4] Yaw lock: largest body yaw held back from the sim facing while a boot is planted (rad) and the time it
@@ -510,6 +512,8 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     shader.uniforms.uNumOn = numOn;
   };
   torsoMat.customProgramCacheKey = () => 'dk-player-torso-1';
+  // [QF-4] The onBeforeCompile uniforms, visible to scene walks (texture memory, context-restore rebuild).
+  torsoMat.userData.uniforms = { uNumAtlas: numUniform, uNumOn: numOn };
 
   // ---- meshes and instanced attributes
   const geos: BufferGeometry[] = [];
@@ -568,6 +572,9 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
   /** [QF-4] Pop guard: per slot the last drawn pose and its joints relative to the root (model space). */
   const guardPose: Pose[] = [];
   const guardRel: Float64Array[] = [];
+  /** Pop guard scratch: the unguarded pose, the worst joint move. */
+  const guardTarget = createPose();
+  const GW = new Float64Array(1);
   for (let i = 0; i < NUM_SLOTS; i++) { guardPose.push(createPose()); guardRel.push(new Float64Array(JOINT_COUNT * 3)); }
   const guardSeen = new Uint8Array(NUM_SLOTS);
   // Set-piece stance [QF-4]: per slot the weight 0..1, the side (+1 his right, -1 his left; chosen once when he steps
@@ -748,29 +755,46 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
   }
 
   /**
-   * [QF-4] Pop guard (QA-32 "visible teleports" of limbs): no joint may move more than popLimit (m) relative to the
-   * pelvis between two drawn frames (~27 m/s at 60 Hz, faster than any real kick). A pose that would (a sim strike
+   * [QF-4] Pop guard (QA-32 "visible teleports" of limbs): no joint may move more than popLimit (m) in the pelvis frame
+   * (root position and rotation removed, as the GFX-12 e2e measures) between two drawn frames (~27 m/s at 60 Hz, faster than any real kick). A pose that would (a sim strike
    * squeezed into one tick, a clip switch the cross-fade cannot cover, a reach correcting a late prediction) is moved
    * only that far toward the new pose this frame and catches up on the next ones. modelSk holds the new pose's FK on
-   * entry and the drawn one on exit. Skipped for a slot that was hidden or teleported (fresh). No allocation.
+   * entry and the drawn one on exit. Also across a teleport (a restart placement must not snap the pose either);
+   * skipped for a slot that was hidden or holds a debug pose. No allocation.
    */
+  /** Largest pelvis-frame joint move of modelSk against rel (m, model), into GW[0]. */
+  function guardWorst(rel: Float64Array): void {
+    let worst = 0;
+    const rx = modelSk[9]!, ry = modelSk[10]!, rz = modelSk[11]!;
+    for (let j = 1; j < JOINT_COUNT; j++) {
+      const o = j * FRAME_SIZE;
+      // In the pelvis frame (root rotation removed: turning on the spot is not a pop).
+      const wx = modelSk[o + 9]! - rx, wy = modelSk[o + 10]! - ry, wz = modelSk[o + 11]! - rz;
+      const dx = wx * modelSk[0]! + wy * modelSk[1]! + wz * modelSk[2]! - rel[j * 3]!;
+      const dy = wx * modelSk[3]! + wy * modelSk[4]! + wz * modelSk[5]! - rel[j * 3 + 1]!;
+      const dz = wx * modelSk[6]! + wy * modelSk[7]! + wz * modelSk[8]! - rel[j * 3 + 2]!;
+      const d = dx * dx + dy * dy + dz * dz;
+      if (d > worst) worst = d;
+    }
+    GW[0] = Math.sqrt(worst);
+  }
+
   function popGuard(i: number, pose: Pose): void {
     const rel = guardRel[i]!, last = guardPose[i]!;
     const T = LOCAL_TUNING;
-    let worst = 0;
     if (guardSeen[i] === 1 && held[i] !== 1) {
-      const rx = modelSk[9]!, ry = modelSk[10]!, rz = modelSk[11]!;
-      for (let j = 1; j < JOINT_COUNT; j++) {
-        const o = j * FRAME_SIZE;
-        const dx = modelSk[o + 9]! - rx - rel[j * 3]!, dy = modelSk[o + 10]! - ry - rel[j * 3 + 1]!, dz = modelSk[o + 11]! - rz - rel[j * 3 + 2]!;
-        const d = dx * dx + dy * dy + dz * dz;
-        if (d > worst) worst = d;
-      }
-      worst = Math.sqrt(worst);
-      if (worst > T.popLimit) {
-        const k = T.popLimit / worst;
-        for (let c = 0; c < POSE_SIZE; c++) pose[c] = last[c]! + (pose[c]! - last[c]!) * k;
-        solvePoseFK(pose, modelSk);
+      guardWorst(rel);
+      if (GW[0]! > T.popLimit) {
+        // Blend the pose toward the last drawn one; joint motion is not linear in the pose, so refine the share.
+        for (let c = 0; c < POSE_SIZE; c++) guardTarget[c] = pose[c]!;
+        let k = T.popLimit / GW[0]!;
+        for (let it = 0; it < 4; it++) {
+          for (let c = 0; c < POSE_SIZE; c++) pose[c] = last[c]! + (guardTarget[c]! - last[c]!) * k;
+          solvePoseFK(pose, modelSk);
+          guardWorst(rel);
+          if (!(GW[0]! > T.popLimit * 1.001)) break;
+          k *= T.popLimit / GW[0]!;
+        }
       }
     }
     guardSeen[i] = 1;
@@ -778,7 +802,10 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     const rx = modelSk[9]!, ry = modelSk[10]!, rz = modelSk[11]!;
     for (let j = 0; j < JOINT_COUNT; j++) {
       const o = j * FRAME_SIZE;
-      rel[j * 3] = modelSk[o + 9]! - rx; rel[j * 3 + 1] = modelSk[o + 10]! - ry; rel[j * 3 + 2] = modelSk[o + 11]! - rz;
+      const wx = modelSk[o + 9]! - rx, wy = modelSk[o + 10]! - ry, wz = modelSk[o + 11]! - rz;
+      rel[j * 3] = wx * modelSk[0]! + wy * modelSk[1]! + wz * modelSk[2]!;
+      rel[j * 3 + 1] = wx * modelSk[3]! + wy * modelSk[4]! + wz * modelSk[5]!;
+      rel[j * 3 + 2] = wx * modelSk[6]! + wy * modelSk[7]! + wz * modelSk[8]!;
     }
   }
 
@@ -813,7 +840,8 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     if (!fresh) {
       ox = lockOff[i * 2]!; oz = lockOff[i * 2 + 1]!;
       const vx = it.vx[i]!, vz = it.vz[i]!;
-      const lockable = dt > 0 && p.act === ActionKind.NONE && vx * vx + vz * vz > T.lockMinSpeed * T.lockMinSpeed;
+      const lockAct = p.act === ActionKind.NONE;
+      const lockable = dt > 0 && lockAct && vx * vx + vz * vz > T.lockMinSpeed * T.lockMinSpeed;
       if (lockable) {
         let dx = 0, dz = 0;
         for (let k = 0; k < 4; k++) {
@@ -826,7 +854,11 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
       }
       lockHeld[i] = locked > 0 ? 1 : 0;
       if (dt > 0) {
-        let f = 1 - dt / (locked > 0 ? T.lockReturnLocked : T.lockReturnFree);
+        // [QF-4] An action that takes no lock (a kick, a first touch...) eases the offset back over lockReturnAction:
+        // the free-flight return (0.08 s) lurched the whole body forward by up to lockMaxOffset in a few frames as every
+        // action on the run began (its planted boot slid ~4 m/s).
+        const ret = locked > 0 ? T.lockReturnLocked : !lockAct ? T.lockReturnAction : T.lockReturnFree;
+        let f = 1 - dt / ret;
         if (f < 0) f = 0;
         ox *= f; oz *= f;
       }
@@ -854,7 +886,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
 
   /**
    * [QF-4] Set-piece stance weights. The waiting taker of a set-up free kick, corner, goal kick or penalty (SET_PIECE,
-   * restart ready and not taken) steps out to his side away from the camera drawn this frame (the set-piece camera cut
+   * restart ready and not taken; the shoot-out kicker during AIM) steps out to his side away from the camera drawn this frame (the set-piece camera cut
    * in on the set-up frame), over stanceIn; when his kick starts he steps back in, done by the contact tick (at most
    * stanceOut), so the boot meets the ball where the sim kicks it. Anything else drops the stance quickly. dt in LK[0].
    */
@@ -868,12 +900,17 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     stanceCam[0] = cam.x; stanceCam[1] = cam.y; stanceCam[2] = cam.z;
     const m = s.match, r = m.restart;
     const ph = m.phase;
+    // [QF-4] The shoot-out kicker too, from his SETUP on (RUL-07: restart filled like a penalty, the kicker placed 0.6 m
+    // behind the ball and held there with no action; the behind view cuts in on that SETUP tick): the behind view
+    // showed the ball between his legs on most kicks.
+    const shootout = ph === MatchPhase.SHOOT_OUT;
     const setPiece = (ph === MatchPhase.FREE_KICK || ph === MatchPhase.CORNER || ph === MatchPhase.GOAL_KICK
-      || ph === MatchPhase.PENALTY) && r.ready === 1 && r.taken === 0;
+      || ph === MatchPhase.PENALTY || shootout) && (r.ready === 1 || shootout) && r.taken === 0;
     for (let i = 0; i < NUM_SLOTS; i++) {
       let w = stanceW[i]!;
       const p = s.players[i]!;
-      if (setPiece && r.taker === i && p.act === ActionKind.SET_PIECE && p.active === 1 && held[i] !== 1) {
+      const waiting = p.act === ActionKind.SET_PIECE || (shootout && p.act === ActionKind.NONE);
+      if (setPiece && r.taker === i && waiting && p.active === 1 && held[i] !== 1) {
         const fx = it.fx[i]!, fz = it.fz[i]!;
         // Side step away from the camera, perpendicular to his facing (right = (-fz, fx)); the side is kept.
         if (w === 0) {

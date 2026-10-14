@@ -73,7 +73,7 @@ import type { EventSink } from '../../contracts/events';
 import { Btn, GESTURE_POS_SCALE, type InputFrame } from '../../contracts/input';
 import { CpuPlan, type CpuBrainState, type PlayerState, type SimState } from '../../contracts/state';
 import type { LevelParams, StyleWeights } from '../../contracts/systems';
-import { T_AI, T_DRIBBLE, T_PASS, T_PLAYER, T_SKILL } from '../../contracts/tuning';
+import { T_AI, T_CPU, T_DRIBBLE, T_PASS, T_PLAYER, T_SKILL } from '../../contracts/tuning';
 import { rngGauss } from '../../sim/core/rng';
 import { inPenaltyArea } from '../../sim/pitch/geometry';
 import { levelParams, styleWeights } from './levels';
@@ -83,17 +83,17 @@ import { bestDribble, chooseSkill, estimateXg, lastXgBlock, shotLaneClear, SKILL
 export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* (utilities are goal-probability units)
   // ---- possession value model
   /** Value of having the ball at the own goal line, goal probability ... */
-  pvBase: 0.004,
+  pvBase: T_CPU.carrierPvBase,
   /** ... plus this times ((progress + 1) / 2)^3 toward the opposition goal line, goal probability [INT-A: was
    *  0.01 + 0.07 t^2 — too flat, so a forward pass never paid for its risk and attacks went sideways forever]. */
-  pvSpan: 0.08,
+  pvSpan: T_CPU.carrierPvSpan,
   /** ... with this exponent (integer >= 3) [QF-2]. */
-  pvExp: 3,
+  pvExp: T_CPU.carrierPvExp,
   /** Width discount: none within pvLatFree m of the centre line, down to x pvLatMin at pvLatFull m, weighted by the
    *  progress share t (so it bites in the final third), m / m / 0..1. */
-  pvLatFree: 9,
-  pvLatFull: 30,
-  pvLatMin: 0.35,
+  pvLatFree: T_CPU.carrierPvLatFree,
+  pvLatFull: T_CPU.carrierPvLatFull,
+  pvLatMin: T_CPU.carrierPvLatMin,
   /** Losing the ball at progress p costs the opponents' possession value there, posValue(-p) (x style safety)
    *  [INT-A: replaces the linear lossOwn 0.07 .. lossOpp 0.01, which overcharged a loss in midfield]. */
   /** A receiving spot is worth at least its TAI-09 danger (xG-ish 0..1) times this. */
@@ -113,40 +113,40 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   /** A pass within settleTicks of gaining the ball (ball.ownerT) loses up to settlePenalty unless pressed (pressure
    *  >= settlePressure), ticks / goal probability / 0..1. */
   settleTicks: 45,
-  settlePenalty: 0.005,
+  settlePenalty: T_CPU.carrierSettlePenalty,
   settlePressure: 0.5,
   /** Counter-attack (team phase TRANSITION_ATTACK): bonus per metre of progress at style counter 0.5, x the pass's
    *  completion, goal probability [INT-A: was 0.0008 regardless of completion — a 40 m lofted through ball with a 3%
    *  chance got +0.03 and won every counter, so lofted through balls were tried 7 times a match and never arrived]. */
-  counterPerM: 0.0003,
+  counterPerM: T_CPU.carrierCounterPerM,
   // ---- shooting
   /** Value of a shot that does not score (corner, rebound), goal probability. */
   shotMissValue: 0.006,
   /** A shot's xG is weighted by this against the possession value of keeping the ball (that value is only an
    *  average; against a set block it is rarely realised) [INT-A]. */
-  shotXgMul: 10, // [QF-2] was 3.5: §7 wants 14-26 shots a match (the shot price is now the clean xG x its lane, see keeperSideMul)
+  shotXgMul: T_CPU.carrierShotXgMul, // [QF-2] was 3.5: §7 wants 14-26 shots a match (the shot price is now the clean xG x its lane, see keeperSideMul)
   /** Extra urge to shoot inside the penalty area, goal probability. */
-  boxShotBonus: 0.03, // [QF-2] was 0.012
+  boxShotBonus: T_CPU.carrierBoxShotBonus, // [QF-2] was 0.012
   /** Beyond this distance from the goal centre a shot is a long shot, m ... */
   longShotDist: 20,
   /** ... whose xG threshold is T_LEVEL.shotThresholdXg x this at style longShot 0 / 1. */
-  longShotThreshMax: 0.7, // [QF-2] was 1.0
+  longShotThreshMax: T_CPU.carrierLongShotThreshMax, // [QF-2] was 1.0
   longShotThreshMin: 0.7,
   /** ... x (1 + this x metres beyond longShotDist) [INT-A], 1/m ... */
-  longShotThreshPerM: 0.02, // [QF-2] was 0.06
+  longShotThreshPerM: T_CPU.carrierLongShotThreshPerM, // [QF-2] was 0.06
   /** ... and no shot from beyond shotMaxDist (+ shotMaxLongShotExtra x style longShot) of the goal centre [INT-A], m. */
-  shotMaxDist: 40, // [QF-2] was 35 (long shots: blocked ones are priced by their lane now)
-  shotMaxLongShotExtra: 4,
+  shotMaxDist: T_CPU.carrierShotMaxDist, // [QF-2] was 35 (long shots: blocked ones are priced by their lane now)
+  shotMaxLongShotExtra: T_CPU.carrierShotMaxLongShotExtra,
   /** Shot power 0..1 at <= shotNearDist m / >= shotFarDist m from the goal centre (linear between). */
-  shotPowerNear: 0.65,
-  shotPowerFar: 0.84,
+  shotPowerNear: T_CPU.carrierShotPowerNear,
+  shotPowerFar: T_CPU.carrierShotPowerFar,
   shotNearDist: 8,
   shotFarDist: 28,
   /** Shot power clamp after noise (0..1). */
   shotPowerMin: 0.35,
   shotPowerMax: 0.92,
   /** Aim point inside the post, m. */
-  shotInset: 0.5,
+  shotInset: T_CPU.carrierShotInset,
   /** Keeper this far (|z|) off the goal centre: aim at the other side, m. */
   keeperSideDead: 0.3,
   /** [QF-2] Aim side: each post's lane is scored by TAI-10 shotLaneClear (the men in the way, now and as they close),
@@ -154,19 +154,19 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
    *  aimed at and its lane prices the shot: xG = clean xG (TAI-10 without its uniform blocker factor) x lane clear. The
    *  CPU used to aim by the keeper alone and shot into the presser in front of it (40 of 76 shots had a man within
    *  0.6 m of the line, 75% of those were blocked). 0..1. */
-  keeperSideMul: 0.85,
+  keeperSideMul: T_CPU.carrierKeeperSideMul,
   /** [QF-2] A blocked shot runs loose near the shooter: this share of it is won back (its value counts as keeping
    *  the ball, the rest as a loss there). */
-  blockedRecover: 0.4,
+  blockedRecover: T_CPU.carrierBlockedRecover,
   /** [QF-2] Shooting under pressure: the power hold is cut so the ball is struck before an outfield opponent ahead
    *  on the shot line (along it between quickShotMinAlong and quickShotDist m) can step to within quickShotReach m of
    *  it, moving across at max(his speed toward the line, quickShotMinClose) m/s, with quickShotMargin s to spare (a
    *  shooter standing 0.7 s over a full power-up was blocked by the man who stepped across). m / m / m / m/s / s. */
-  quickShotMinAlong: 0.3,
-  quickShotDist: 10,
-  quickShotReach: 1.1,
-  quickShotMinClose: 3,
-  quickShotMargin: 0.05,
+  quickShotMinAlong: T_CPU.carrierQuickShotMinAlong,
+  quickShotDist: T_CPU.carrierQuickShotDist,
+  quickShotReach: T_CPU.carrierQuickShotReach,
+  quickShotMinClose: T_CPU.carrierQuickShotMinClose,
+  quickShotMargin: T_CPU.carrierQuickShotMargin,
   /** Finesse shot (MOD_R): distance window m, |z| of the shooter at least m, curve attribute at least. */
   finesseMinDist: 10,
   finesseMaxDist: 24,
@@ -179,16 +179,19 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   // ---- dribbling
   /** Carry valued per dribble decision at full space, m (x (0.3 + 0.7 score)). */
   dribbleStep: 6,
-  /** Chance of losing the ball dribbling at full pressure (x 1.2 - 0.4 x dribbling / 99). */
-  dribbleLossMax: 0.2, // [QF-2] was 0.35: carriers in the opponents' half passed sideways instead of driving at the box
+  /** Chance of losing the ball dribbling at full pressure (x 1.2 - 0.4 x dribbling / 99) into open space ... */
+  dribbleLossMax: T_CPU.carrierDribbleLossMax, // [QF-2] was 0.35: carriers in the opponents' half passed sideways instead of driving at the box (0.15: +0.45 goals a match)
+  /** ... x (1 + this x (1 - TAI-10 dribble score)) in our own half: a carry into no space there keeps the INT-A
+   *  risk, so a carrier pressed with no option shields instead of dribbling into the presser [QF-2]. */
+  dribbleTightLossMul: T_CPU.carrierDribbleTightLossMul,
   /** Share of the shot value (shotXgMul x xG at the carry's end) a dribble is credited with in the attacking half [INT-A]. */
-  driveShotShare: 0.8,
+  driveShotShare: T_CPU.carrierDriveShotShare, // [QF-2] was 0.8: lower shoots before carrying into the crowd
   /** Score assumed when bestDribble gives no direction. */
   fallbackDribbleScore: 0.4,
   /** Fallback dribble: an opponent within this distance ahead turns the run aside by fallbackTurn (cos/sin of 45 deg), m. */
   fallbackAvoidDist: 6,
   /** Keeper with the ball at his feet: dribble utility penalty, goal probability. */
-  keeperDribblePenalty: 0.01,
+  keeperDribblePenalty: T_CPU.carrierKeeperDribblePenalty,
   /** Sprint only with no opponent within this distance in the cone ahead (cos >= sprintConeCos), m ... */
   sprintSpaceDist: 7,
   sprintConeCos: 0.5,
@@ -234,10 +237,10 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   shieldMaxTicks: 150,
   shieldRestEvals: 6,
   /** A shield of at least this many ticks that gives way to another plan rests the same way [INT-A], ticks. */
-  shieldRestMinTicks: 60,
+  shieldRestMinTicks: T_CPU.carrierShieldRestMinTicks,
   /** Shielding only holds the ball: the kept possession value is discounted by this (it is realised only by a later
    *  pass or turn) [INT-A: undiscounted, shield / skill / dribble cycles in the final third beat every shot]. */
-  shieldHoldMul: 0.93,
+  shieldHoldMul: T_CPU.carrierShieldHoldMul,
   // ---- clearance
   /** Clear only in the own third (progress below this) with an opponent within clearPressDist m. */
   clearProgress: -1 / 3,
@@ -245,10 +248,10 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   /** Utility of a clearance (+ clearBoxBonus in the own penalty area), goal probability [INT-A: was 0.012 / 0.008,
    *  tuned to the old flat value model; against the cubic one a clearance beat every pass below ~95% completion, so
    *  CPUs hoofed 15+ long balls a match: a clearance gives the ball away upfield, worth about 0]. */
-  clearValue: -0.0015,
-  clearBoxBonus: 0.006,
+  clearValue: T_CPU.carrierClearValue,
+  clearBoxBonus: T_CPU.carrierClearBoxBonus,
   /** Clearance LOB power 0..1 and target: this far upfield / toward the ball's touchline, m. */
-  clearPower: 0.5,
+  clearPower: T_CPU.carrierClearPower,
   clearDist: 40,
   clearSide: 18,
   // ---- pressure
@@ -262,7 +265,7 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
    *  low levels err relatively more]. */
   noiseScale: 0.02,
   /** Bonus the current dribble / shield plan keeps when deciding again (no dithering), goal probability. */
-  switchMargin: 0.003,
+  switchMargin: T_CPU.carrierSwitchMargin,
   /** Evaluations after a failed start during which that plan is not chosen again. */
   failEvals: 2,
   // ---- execution
@@ -331,6 +334,15 @@ const C = {
   team: 0, dir: 1, prog: 0, vHere: 0, pressure: 0, nearD: 1e9, nearOpp: -1, safetyMul: 1, noiseSd: 0, lookFrac: 0,
   counter: 0,
 };
+
+/**
+ * [QF-2] Last decision, for tests and tuning tools (plain numbers, rewritten by every decide()): the chosen plan and
+ * its utility, the shot option's utility (-1e18 when not offered) and why it was not offered (SHOT_* codes), its clean
+ * xG and lane clear.
+ */
+export const CARRIER_DEBUG = { plan: 0, u: 0, shotU: -1e18, shotWhy: 0, shotClean: 0, shotClear: 1, prog: 0 };
+/** CARRIER_DEBUG.shotWhy codes. */
+export const SHOT_OFFERED = 0, SHOT_NOT_ATTACKING = 1, SHOT_NO_XG = 2, SHOT_OUT_OF_RANGE = 3, SHOT_BELOW_THRESHOLD = 4, SHOT_FAILED = 5;
 
 /** [QF-2] Aim side picked by shotOptionInto (-1 / +1 = the post at z < 0 / z > 0), read by commitShot. */
 const SHOT = { side: 1, valid: 0 };
@@ -580,14 +592,14 @@ function shotOptionInto(s: SimState, p: Readonly<PlayerState>, lv: Readonly<Leve
   if (p.isKeeper === 1 || C.prog <= 0) return;
   SHOT.valid = 0;
   const xgU = clamp01(fin(estimateXg(s, p.slot, p.x, p.z)));
-  if (!(xgU > 0)) return;
+  if (!(xgU > 0)) { CARRIER_DEBUG.shotWhy = SHOT_NO_XG; return; }
   const gx = C.dir * HALF_LENGTH - p.x;
   const dist = Math.sqrt(gx * gx + p.z * p.z);
   const long = dist > LT.longShotDist;
   const ls = clamp01(sw.longShot);
   // [INT-A] Range: beyond longShotDist the threshold also grows per metre, and nobody shoots from beyond
   // shotMaxDist (+ shotMaxLongShotExtra for a long-shot style), so shots come from shooting range, not 40 m out.
-  if (dist > LT.shotMaxDist + LT.shotMaxLongShotExtra * ls) return;
+  if (dist > LT.shotMaxDist + LT.shotMaxLongShotExtra * ls) { CARRIER_DEBUG.shotWhy = SHOT_OUT_OF_RANGE; return; }
   // [QF-2] Aim side and the price of the men in its lane (see keeperSideMul).
   const bU = fin(lastXgBlock());
   const clean = bU > 1e-6 ? xgU / bU : xgU;
@@ -597,7 +609,8 @@ function shotOptionInto(s: SimState, p: Readonly<PlayerState>, lv: Readonly<Leve
   const thr = fin(lv.shotThresholdXg) * (long
     ? (LT.longShotThreshMax + (LT.longShotThreshMin - LT.longShotThreshMax) * ls) * (1 + LT.longShotThreshPerM * (dist - LT.longShotDist))
     : 1);
-  if (xg < thr) return;
+  CARRIER_DEBUG.shotClean = clean; CARRIER_DEBUG.shotClear = clear;
+  if (xg < thr) { CARRIER_DEBUG.shotWhy = SHOT_BELOW_THRESHOLD; return; }
   const blocked = 1 - clear;
   const miss = 1 - xg - blocked;
   let u = xg * LT.shotXgMul + (miss > 0 ? miss : 0) * LT.shotMissValue +
@@ -606,6 +619,7 @@ function shotOptionInto(s: SimState, p: Readonly<PlayerState>, lv: Readonly<Leve
   if (long && u > C.vHere) u = C.vHere + (u - C.vHere) * styleMul(ls);
   noise(s);
   u += NZ[0]!;
+  CARRIER_DEBUG.shotU = u; CARRIER_DEBUG.shotWhy = SHOT_OFFERED;
   CU[0] = u; CU[1] = 0; CU[2] = 0;
   consider(CpuPlan.SHOOT, -1, MODE_BUTTON, KickKind.SHOT_NORMAL);
 }
@@ -668,13 +682,27 @@ function dribbleOptionInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<S
   sc = clamp01(sc);
   const step = LT.dribbleStep * (0.3 + 0.7 * sc);
   const nprog = (C.dir * (p.x + dx * step)) / HALF_LENGTH;
-  const keep = clamp01(1 - LT.dribbleLossMax * C.pressure * (1.2 - (0.4 * s.attrs[p.slot]!.dribbling) / 99));
+  // [QF-2] In our own half a carry into little space (TAI-10 score sc near 0) risks more: up to x (1 +
+  // dribbleTightLossMul). In the attacking half a tight dribble is how chances are made (and the drive credit prices it).
+  const lossMax = C.prog > 0 ? LT.dribbleLossMax : LT.dribbleLossMax * (1 + LT.dribbleTightLossMul * (1 - sc));
+  const keep = clamp01(1 - lossMax * C.pressure * (1.2 - (0.4 * s.attrs[p.slot]!.dribbling) / 99));
   const nz = p.z + dz * step;
   let vN = posValue(nprog, nz);
   if (C.prog > 0 && p.isKeeper === 0) {
     // [INT-A] Drive at goal: in the attacking half the spot a carry reaches is worth at least the shot it opens
     // there (same weighting as the shot option), so a carrier 30 m out runs at the box instead of passing sideways.
-    const xgN = clamp01(fin(estimateXg(s, p.slot, p.x + dx * step, nz))) * LT.shotXgMul * LT.driveShotShare;
+    // [QF-2] Priced like the shot itself (clean xG x the better post's lane, see shotOptionInto): crediting the
+    // carry with the uniform-blocker xG made "dribble 6 m closer" worth up to 1.6 more than any shot near goal, so
+    // carriers dribbled in the box until they lost the ball.
+    const ex = p.x + dx * step;
+    const xU = clamp01(fin(estimateXg(s, p.slot, ex, nz)));
+    let xgN = 0;
+    if (xU > 0) {
+      const bU = fin(lastXgBlock());
+      const az = GOAL_HALF_WIDTH - LT.shotInset;
+      const c1 = fin(shotLaneClear(s, p.slot, ex, nz, az)), c2 = fin(shotLaneClear(s, p.slot, ex, nz, -az));
+      xgN = clamp01((bU > 1e-6 ? xU / bU : xU) * (c1 > c2 ? c1 : c2)) * LT.shotXgMul * LT.driveShotShare;
+    }
     if (xgN > vN) vN = xgN;
   }
   const raw = keep * vN - (1 - keep) * posValue(-C.prog, p.z) * C.safetyMul;
@@ -744,6 +772,8 @@ function decide(s: SimState, team: number, brain: CpuBrainState, p: Readonly<Pla
   const evals = failEvalsOf(brain);
   const failMask = evals > 0 ? failMaskOf(brain) : 0;
   passOptionsInto(s, p, sw, failMask);
+  CARRIER_DEBUG.shotU = -1e18; CARRIER_DEBUG.shotWhy = p.isKeeper === 1 || C.prog <= 0 ? SHOT_NOT_ATTACKING : SHOT_FAILED;
+  CARRIER_DEBUG.prog = C.prog;
   if ((failMask & (1 << CpuPlan.SHOOT)) === 0) shotOptionInto(s, p, lv, sw);
   dribbleOptionInto(s, p, sw, cur);
   if ((failMask & (1 << CpuPlan.SKILL)) === 0) skillOptionInto(s, p, sw);
@@ -753,6 +783,7 @@ function decide(s: SimState, team: number, brain: CpuBrainState, p: Readonly<Pla
   const left = evals > 0 ? evals - 1 : 0;
   setP1(brain, stepOf(brain), modeOf(brain), startedOf(brain), left > 0 ? failMaskOf(brain) : 0, left);
   const chosen = BEST.plan as CpuPlan; // (cast: the option scorers above wrote it; TS narrowed it to the reset value)
+  CARRIER_DEBUG.plan = chosen; CARRIER_DEBUG.u = BEST.u;
   if (cur === CpuPlan.SHIELD && chosen !== CpuPlan.SHIELD && shieldAge >= LT.shieldRestMinTicks && failEvalsOf(brain) < LT.shieldRestEvals) {
     // [INT-A] A long shield that ends on its own rests too, so the carrier does not cycle shield / dribble / shield.
     setP1(brain, stepOf(brain), modeOf(brain), startedOf(brain), failMaskOf(brain) | (1 << CpuPlan.SHIELD), LT.shieldRestEvals);

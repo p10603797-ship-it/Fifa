@@ -9,6 +9,7 @@ import { ActionKind, AiJob, Difficulty, KickKind, MatchPhase } from '../../src/c
 import { EventType } from '../../src/contracts/events';
 import type { SimState } from '../../src/contracts/state';
 import { LOCAL_TUNING as KIN } from '../../src/sim/keeper/saveKinematics';
+import { LOCAL_TUNING as L_SWEEP } from '../../src/sim/keeper/sweeper';
 import { runMatch } from '../../tools/headless';
 import { soakConfig } from '../../tools/lib/configs';
 import { makeScenario, runTicks } from '../harness/scenario';
@@ -32,6 +33,9 @@ function scanMatches(n: number, seed: number): Scan {
     const diveStart = [-1, -1];
     const diveDur = [0, 0];
     const rushEnd = [-1e9, -1e9];
+    const rushEndTouch = [-1, -1];
+    // The keeper decides in the team AI stage, before this tick's contacts: on the ball as the last tick left it.
+    let seenTouch = -1;
     runMatch({
       config, checker: 'core', fastCutscenes: true,
       onTick: (s) => {
@@ -69,14 +73,19 @@ function scanMatches(n: number, seed: number): Scan {
               }
             }
           }
-          // An AI rush that ends is not started again within rushFlipTicks (no start / abort / start flip-flop).
+          // An AI rush that ends is not started again within rushFlipTicks for the same ball (no start / abort /
+          // start flip-flop; a new touch in between is a new situation: a block, a clearance and an interception in
+          // three ticks rightly end and restart it).
           if (k.act === ActionKind.GK_RUSH && prevAct[t] !== ActionKind.GK_RUSH) {
             out.rushes++;
-            if (s.tick - rushEnd[t]! <= RUSH_FLIP_TICKS) out.flips.push(`m${m} t${s.tick} team ${t}: rush restarted ${s.tick - rushEnd[t]!} ticks after the last one ended`);
+            if (s.tick - rushEnd[t]! <= RUSH_FLIP_TICKS && seenTouch === rushEndTouch[t]) {
+              out.flips.push(`m${m} t${s.tick} team ${t}: rush restarted ${s.tick - rushEnd[t]!} ticks after the last one ended`);
+            }
           }
-          if (k.act !== ActionKind.GK_RUSH && prevAct[t] === ActionKind.GK_RUSH) rushEnd[t] = s.tick;
+          if (k.act !== ActionKind.GK_RUSH && prevAct[t] === ActionKind.GK_RUSH) { rushEnd[t] = s.tick; rushEndTouch[t] = seenTouch; }
           prevAct[t] = k.act;
         }
+        seenTouch = s.ball.lastTouchTick;
       },
     });
   }
@@ -141,5 +150,37 @@ describe('QF-2 keeper and defender on the same shot (real pipeline)', () => {
     expect(defenderStruck).toBe(false);
     expect(s.ball.lastTouch).toBe(0);
     expect(ev.some((e) => e.type === EventType.GOAL)).toBe(false);
+  });
+});
+
+describe('QF-2 GKP-03 and a long shot on target (real pipeline)', () => {
+  it('GKP-03 no come-out for a firm shot on target: the keeper stays set (GKP-02 saves it), no rush start / abort / restart', () => {
+    // Team 0 defends x = -52.5. A 17 m/s low shot from 37 m, on target, nobody near its path (Professional match
+    // seed 0x2f2 #5, t 9134: the keeper started a rush at it, aborted it and restarted it the next tick).
+    const s = makeScenario({ phase: MatchPhase.IN_PLAY, seed: 11, humans: 0 });
+    for (let i = 1; i < 22; i++) {
+      if (i === 11) continue;
+      const p = s.players[i]!;
+      p.x = 5 + (i % 6) * 5; p.z = -25 + i * 2.3; p.vx = 0; p.vz = 0;
+    }
+    s.players[11]!.x = 50; s.players[11]!.z = 0;
+    const k = s.players[0]!;
+    k.x = -47.8; k.z = 1.2; k.vx = 0; k.vz = 0; k.fx = 1; k.fz = 0;
+    const b = s.ball;
+    b.owner = -1; b.heldBy = -1; b.x = -15.8; b.z = 10.3; b.y = 0.11; b.px = b.x; b.pz = b.z; b.py = b.y;
+    b.vx = -17; b.vz = -3.9; b.vy = 0; b.grounded = 1;
+    b.lastTouch = 20; b.lastTouchTeam = 1; b.lastTouchTick = s.tick; b.lastKickBy = 20; b.lastKickTeam = 1;
+    b.lastKickKind = KickKind.SHOT_NORMAL; b.lastKickTick = s.tick; b.shotBy = 20; b.shotOnTarget = 1; b.passTarget = -1;
+    expect(L_SWEEP.shotRushMaxSpeed).toBeLessThan(17);
+    let rushed = false;
+    runTicks(s, 300, undefined, {
+      check: 'core',
+      until: (st) => {
+        if (st.players[0]!.act === ActionKind.GK_RUSH) rushed = true;
+        return st.ball.heldBy === 0 || st.ball.lastTouch === 0 || st.ball.inNet !== 0;
+      },
+    });
+    expect(rushed).toBe(false);
+    expect(s.ball.lastTouch === 0 || s.ball.inNet !== 0, `ball ${s.ball.x.toFixed(1)} ${s.ball.z.toFixed(1)} last ${s.ball.lastTouch} phase ${s.match.phase}`).toBe(true);
   });
 });

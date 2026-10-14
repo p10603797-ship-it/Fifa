@@ -53,3 +53,10 @@ Collected from Wave 1 reports. Each line: area — symptom — proposed owner/fi
 - net-07-online e2e share-link step follows the splash change — applied.
 - Pause: refusal while the GPU context restores says 'Graphics are restarting' — applied.
 - OPEN for QF-1 (or the lead after QF-1): FULL_TIME SKIP ends the match on its 2nd tick, so a last-second divergence online cannot be repaired. Add T_RULES.fullTimeMinTicks 90 and gate the skip in rules/machine.ts phaseTimers; flip tests/net/qf-6-cr-fulltime-skip.test.ts to it().
+
+## From QF-4 (sim-side CRs, open until QF-1/QF-2 finish; failing it.fails tests attached)
+- Charged foot kicks make contact on the release tick (render shows the strike after the ball left): delay contact 2-3 ticks after release and hold the ball at the kicking spot (tests/scenario/qf-4-cr-charged-strike.test.ts). Changes hashes.
+- Throw-in / far free-kick set-up teleports (D-008) are visible on the main camera: walk illegal players and the taker to their spots from t = 0, teleport only stragglers (tests/scenario/qf-4-cr-setup-teleport.test.ts). Changes hashes.
+- CPU corners are delivered into a nearly empty box (0-3 attackers): hold the take until >= 4 attackers are in the box or place them at the award (tests/scenario/qf-4-cr-corner-box.test.ts).
+- Fouled free-kick taker is placed at the ball while still in his fall / get-up (cosmetic).
+- Load-sensitive allocation tests: int-c-render-alloc, gfx-04-goals, gfx-05-alloc, gfx-07-alloc (+ aud-05, pad-08, tch-06) -> QF-7.

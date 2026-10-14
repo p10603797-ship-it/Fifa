@@ -68,7 +68,7 @@ import { ActionKind, AssistLevel, ControllerKind, CrossKind, KickKind, MatchPhas
 import { EventType, type EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type BallState, type SimState } from '../../contracts/state';
 import { createKickLaunch, type ActionRequest, type KickLaunch } from '../../contracts/systems';
-import { T_BALL, T_PASS, T_PLAYER, T_SHOT, T_TACKLE } from '../../contracts/tuning';
+import { T_AERIAL, T_BALL, T_PASS, T_PLAYER, T_SHOT, T_TACKLE } from '../../contracts/tuning';
 import { ballStepTick } from '../ball/contact';
 import { ballAirStep, copyBallState, createLaunchSolution, solveLaunchSpin } from '../ball/flight';
 import { clamp01, datan2, dcos, dsin, lerp, PI } from '../core/dmath';
@@ -200,7 +200,7 @@ export const LOCAL_TUNING = {
   aiClearDepth: 35,
   aiVolleyClearDepth: 18,
   /** ... and head clear even an uncontested opponent ball within this of their own goal line, m [INT-A]. */
-  aiClearAlwaysDepth: 22,
+  aiClearAlwaysDepth: T_AERIAL.aiClearAlwaysDepth, // (contracts/tuning.ts T_AERIAL since QF-2)
   /** [QF-2] "Keeper's ball": an AI outfielder leaves an opponent's ball whose contact point is within this of his own
    *  keeper while the keeper is already set to save / claim it (GK_CATCH, GK_DIVE, GK_RUSH, GK_PUNCH), or inside his
    *  own goal area with the keeper free and nearer to it (glitch "keeper fights a defender for the same ball": a
@@ -213,14 +213,14 @@ export const LOCAL_TUNING = {
   aiClearPower: 0.85,
   aiShotPower: 0.75,
   // ---- launch: header shot
-  headerShotMin: 13.5,
-  headerShotMax: 19,
+  headerShotMin: T_AERIAL.headerShotMin,
+  headerShotMax: T_AERIAL.headerShotMax,
   /** Share of power (rest: heading) in the header shot speed. */
   shotPowerW: 0.6,
   /** Incoming ball speed redirected into a header shot, fraction. */
   headerRedirect: 0.08,
   headerShotFloor: 10,
-  headerShotCap: 19.8,
+  headerShotCap: T_AERIAL.headerShotCap,
   // ---- launch: volley shot
   volleyShotMin: 21,
   volleyShotMax: 29,
@@ -236,13 +236,13 @@ export const LOCAL_TUNING = {
   headerPassMaxSpeed: 16,
   volleyPassMaxSpeed: 22,
   /** Launch angle (rad) for short (5 m) .. long (25 m) header passes; volley passes. */
-  headerPassAngleNear: 0.3,
-  headerPassAngleFar: 0.18,
+  headerPassAngleNear: T_AERIAL.headerPassAngleNear,
+  headerPassAngleFar: T_AERIAL.headerPassAngleFar,
   /** A header pass to a receiver is aimed to land this fraction of the distance short of him (at most
    *  headerShortMax m), so it bounces up to him below head height instead of dropping onto a marker's head
    *  [INT-A head tennis: 83% of header passes were headers of an opponent's ball, half of them of a header]. */
-  headerShortFrac: 0.25,
-  headerShortMax: 4,
+  headerShortFrac: T_AERIAL.headerShortFrac,
+  headerShortMax: T_AERIAL.headerShortMax,
   volleyPassAngle: 0.28,
   /** Receiver lead: expected ball speed to the receiver, m/s; max lead time, s. */
   passLeadSpeed: 12,
@@ -252,7 +252,7 @@ export const LOCAL_TUNING = {
   aiCone: 1.1,
   /** Receiver choice: weight of openness (nearest opponent, capped at opennessCap m) and distance mismatch. */
   opennessCap: 6,
-  opennessW: 0.8,
+  opennessW: T_AERIAL.opennessW,
   distMismatchScale: 20,
   /** Receiver choice: bonus for a receiver further up the pitch (x unit progress toward the attacked goal). */
   progressW: 0.1,

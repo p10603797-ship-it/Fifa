@@ -9,14 +9,18 @@
  *    phase (a goal kick, throw-in, the kick-off after a goal, a free kick for the defenders) the pending restart is
  *    cancelled through IN_PLAY and the practice restart is awarded instead. In IN_PLAY the attempt ends when the
  *    defending side owns the ball (keeper catch included) or after attemptTicks (penalties: penaltyAttemptTicks) of
- *    live play; IN_PLAY entered from anything but the practice restart (the start) awards at once.
+ *    live play; IN_PLAY entered from anything but the practice restart (the start) awards at once. FREE_PLAY: a restart
+ *    for the lone opposing keeper that he cannot take (throw-in, corner, penalty, free kick outside his area) becomes
+ *    his goal kick.
  * Both hooks are no-ops outside practice and idempotent, so the app's older calls (modes/practice) may stay until
  * they are removed. Behaviour and numbers are MOD-04's (modes/practice.ts); the spot geometry is mirrored here
  * because sim/ may not import modes/ (eslint layering). The chosen spot travels as config.practiceSpot (proposed
  * MatchConfig field), read through practiceSpotIndex.
  * Deterministic, allocation-free per tick, slot-index loops.
  */
-import { HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PENALTY_SPOT_DIST, PLAYERS_PER_TEAM } from '../../contracts/constants';
+import {
+  HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PENALTY_AREA_DEPTH, PENALTY_AREA_HALF_WIDTH, PENALTY_SPOT_DIST, PLAYERS_PER_TEAM,
+} from '../../contracts/constants';
 import { ControllerKind, MatchPhase, ModeId, PracticeKind, RestartKind } from '../../contracts/enums';
 import type { EventSink } from '../../contracts/events';
 import type { MatchConfig, SimState } from '../../contracts/state';
@@ -146,11 +150,34 @@ function atPracticeSpot(kind: RestartKind, x: number, z: number): boolean {
 }
 
 /**
- * Per tick after rulesTick (set-piece practice only): award the practice restart again when an attempt is over or
- * another restart is pending (see header). Returns 1 when it awarded the restart this tick.
+ * [QF-1] FREE_PLAY: the opponents are their keeper alone, and a keeper may not take a throw-in (RUL-02) nor reach a
+ * corner, free kick or penalty out of his own area in time: such a restart had no taker, ran into its timeout and the
+ * safety-net kick (two RESTART_BLOCKED watchdogs per ball out, 11 in fuzz seed 303 #91). It becomes the keeper's goal
+ * kick instead, on the side of the ball. Returns 1 when it replaced the restart this tick.
+ */
+function freePlayRestart(s: SimState, ev: EventSink): number {
+  const m = s.match;
+  const r = m.restart;
+  if (m.finished === 1 || m.phase === MatchPhase.KICK_OFF || !isRestartPhase(m.phase) || r.taken === 1) return 0;
+  const opp = 1 - practiceTeam(s.config);
+  if (r.team !== opp || r.kind === RestartKind.GOAL_KICK) return 0;
+  const e = -s.teams[opp]!.dir; // the end he defends
+  const inOwnBox = e * r.x >= HALF_LENGTH - PENALTY_AREA_DEPTH && r.z >= -PENALTY_AREA_HALF_WIDTH && r.z <= PENALTY_AREA_HALF_WIDTH;
+  if (r.kind === RestartKind.FREE_KICK && inOwnBox) return 0; // his own free kick in his area: he takes it
+  const z = r.z;
+  setPhase(s, MatchPhase.IN_PLAY, ev);
+  awardRestart(s, RestartKind.GOAL_KICK, opp, e * (HALF_LENGTH + 1), z, ev);
+  return m.phase === MatchPhase.GOAL_KICK ? 1 : 0;
+}
+
+/**
+ * Per tick after rulesTick: set-piece practice awards the practice restart again when an attempt is over or another
+ * restart is pending (see header); free play gives the lone keeper his restarts as goal kicks (freePlayRestart).
+ * Returns 1 when it awarded a restart this tick.
  */
 export function practiceRulesTick(s: SimState, ev: EventSink): number {
   if (!isPracticeState(s)) return 0;
+  if (s.config.practice === PracticeKind.FREE_PLAY) return freePlayRestart(s, ev);
   const kind = practiceRestartKind(s.config.practice);
   if (kind === RestartKind.NONE) return 0;
   const m = s.match;

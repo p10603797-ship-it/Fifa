@@ -64,7 +64,7 @@ import { EventType, type EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type BallState, type SimState } from '../../contracts/state';
 import { createKickLaunch, MAX_PREDICT_TICKS } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_GK } from '../../contracts/tuning';
+import { T_BALL, T_GK, T_LEVEL } from '../../contracts/tuning';
 import { ballStepTick } from '../ball/contact';
 import { attr, clamp, clamp01, dcos, dsin, lerp } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
@@ -340,11 +340,29 @@ function screenTicks(s: SimState, k: number): number {
   return n * L.screenTicks;
 }
 
+/**
+ * [QF-2] Level part of keeper k's reaction delay (T_LEVEL.keeperReactTicks of his team's CPU level; 0 for a side
+ * without an active CPU brain and for a bad level), ticks.
+ */
+function levelReactTicks(s: SimState, k: number): number {
+  const t = s.teams[s.players[k]!.team];
+  if (!t || t.cpu.active !== 1) return 0;
+  const lv = t.cpu.level;
+  const v = lv >= 0 && lv < T_LEVEL.keeperReactTicks.length && (lv | 0) === lv ? T_LEVEL.keeperReactTicks[lv]! : 0;
+  return v === v ? v : 0;
+}
+
+/** [QF-2] Keeper k's save reaction delay: gkReflexes (keeperReactTicks) + his team's CPU level part, >= 0, ticks. */
+export function keeperReactionTicks(s: SimState, k: number): number {
+  const t = keeperReactTicks(s.attrs[k]!) + levelReactTicks(s, k);
+  return t > 0 ? t : 0;
+}
+
 /** Has keeper k had time to react to the ball's current flight (since its last touch)? */
 function reacted(s: SimState, k: number): boolean {
   const lt = s.ball.lastTouchTick;
   const elapsed = lt >= 0 ? s.tick - lt : NEVER;
-  const base = keeperReactTicks(s.attrs[k]!);
+  const base = keeperReactionTicks(s, k);
   if (elapsed < base) return false;
   if (elapsed >= base + L.screenMax * L.screenTicks) return true;
   return elapsed >= base + screenTicks(s, k);

@@ -64,11 +64,15 @@ describe('GKP-04 uses TAI-09 laneSafety when available', () => {
     }
   });
 
-  it('available TAI-09 rating every short lane unsafe: a direct team goes long to the striker it rates safe', () => {
+  it('available TAI-09 rating every short lane unsafe: a direct team goes long to a striker (long balls: own model)', () => {
+    // [QF-2] TAI-09's ground-lane model does not judge a 50 m+ lofted kick (it is over every head until it drops),
+    // so LONG releases keep GKP-04's own model even when TAI-09 is available: the short lanes it rates unsafe stay
+    // unsafe, and the long ball goes to whichever striker GKP-04's own model prefers.
     MOCK.mode = 'favour';
     MOCK.favour = 10;
     const p = first(TeamStyle.DIRECT);
-    expect(p.slot).toBe(10);
+    expect([9, 10]).toContain(p.slot);
     expect(p.kind === KickKind.GK_DROP_KICK || p.kind === KickKind.GK_DRIVEN_KICK).toBe(true);
+    expect(p.safety).not.toBe(OTHER_SAFETY);
   });
 });

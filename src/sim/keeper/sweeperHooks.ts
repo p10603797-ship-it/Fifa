@@ -19,6 +19,8 @@ export interface SweeperImpl {
   rushEnd(s: SimState, slot: number, interrupted: number): void;
   punchUpdate(s: SimState, slot: number, ev: EventSink): void;
   punchEnd(s: SimState, slot: number, interrupted: number): void;
+  /** [QF-2] keeper/sweeper.ts comeOutWanted (see comeOutWanted below). */
+  comeOutWanted(s: SimState, team: number): boolean;
 }
 
 const IMPL: SweeperImpl = {
@@ -26,6 +28,7 @@ const IMPL: SweeperImpl = {
   rushEnd() { /* bound by keeper/sweeper.ts */ },
   punchUpdate() { /* bound by keeper/sweeper.ts */ },
   punchEnd() { /* bound by keeper/sweeper.ts */ },
+  comeOutWanted() { return true; /* unbound: no gate (the pre-QF-2 behaviour) */ },
 };
 
 /** Install the implementation (called once by keeper/sweeper.ts when it is evaluated). */
@@ -34,6 +37,16 @@ export function bindSweeperImpl(impl: SweeperImpl): void {
   IMPL.rushEnd = impl.rushEnd;
   IMPL.punchUpdate = impl.punchUpdate;
   IMPL.punchEnd = impl.punchEnd;
+  IMPL.comeOutWanted = impl.comeOutWanted;
+}
+
+/**
+ * [QF-2] True when GKP-03 itself would start a come-out for team's free AI keeper now (keeper/sweeper.ts
+ * comeOutWanted). TAI-11 (ai/cpu/defending.ts) reads it through this shell so the AI layer does not import
+ * keeper/sweeper.ts (and its sim import graph) directly.
+ */
+export function comeOutWanted(s: SimState, team: number): boolean {
+  return IMPL.comeOutWanted(s, team);
 }
 
 /** GK_RUSH: rushing out for a loose / through ball, narrowing a one-on-one, smothering at the feet, user rush. */

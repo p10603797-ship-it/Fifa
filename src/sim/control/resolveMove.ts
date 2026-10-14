@@ -6,6 +6,8 @@
  *    MOD_L held -> strafe dribble (face the attacked goal; touch "double-tap and hold the stick" maps to MOD_L),
  *    MOD_R held -> controlled sprint (sprint at LT.controlledSprintScale of the stick);
  *  - attack, intended receiver of our pass with the stick released -> moves to meet the ball (ctrl.receiver);
+ *  - [QF-1] the team's loose-ball chaser with the stick released for IDLE_CHASE.stickIdleTicks while the ball has lain
+ *    IDLE_CHASE.ballLieTicks -> walks (jog) to the ball;
  *  - defence: PASS held -> contain (shadow the carrier LT.containDist goal-side), SHIELD held -> jockey (face the
  *    carrier; + SPRINT = sprint jockey), SPRINT held with the stick released near the carrier (or a gesture press)
  *    -> press him, stick moving near the carrier without sprint while goal-side -> automatic jockey.
@@ -24,6 +26,20 @@ import { Ctx, LT, MEET, SeqFlag, meetPoint, oppCarrier, validSlot } from './reso
 
 const TGT_MAX_X = BOARD_X - 1;
 const TGT_MAX_Z = BOARD_Z - 1;
+
+/**
+ * [QF-1 skeptic] TUNING-CR. A controlled player is his team's loose-ball chaser (TAI-07 counts him; SIM-16
+ * AIR_AND_LOOSE switches the user onto the chaser) and his controller moves him, so with the stick released nobody
+ * went for a lying ball: an idle human vs a button-masher left it 8 s for BALL_UNTOUCHED (fuzz seed 2027 #78). Once
+ * the ball has lain ballLieTicks (ball.idleT, i.e. below T_RULES.ballLieSpeed) and the stick has been released for
+ * stickIdleTicks, the controlled chaser walks (jog) to it, like the idle-stick receiver's meet run; any stick input
+ * takes over at once. ticks, ticks, m.
+ */
+const IDLE_CHASE = {
+  stickIdleTicks: 60,
+  ballLieTicks: 60,
+  maxBallHeight: 0.6,
+} as const;
 
 /** Nearest active opponent of p within LT.shieldLookDist, or -1. */
 function nearestOpponent(s: SimState, p: Readonly<PlayerState>): number {
@@ -60,6 +76,13 @@ export function moveTick(s: SimState, c: number, ctl: ControllerState, p: Player
   const jog = top * T_PLAYER.jogFraction;
   if (cls === Ctx.KEEPER) {
     want = 0;
+  } else if (idle && ctl.stickIdleT >= IDLE_CHASE.stickIdleTicks && b.owner < 0 && b.heldBy < 0 &&
+    b.idleT >= IDLE_CHASE.ballLieTicks && b.y <= IDLE_CHASE.maxBallHeight && s.teams[p.team]!.chaser === slot &&
+    !(b.passTarget === slot && b.lastTouchTeam === p.team)) {
+    // [QF-1 skeptic] His team's loose-ball chaser, the ball lying still, the stick left alone: walk to the ball (the
+    // receiver of our pass keeps his meet run below).
+    arrive = true;
+    tx = b.x; tz = b.z; tsp = jog;
   } else if (cls === Ctx.ATTACK) {
     if (b.owner === slot && b.heldBy < 0) {
       if ((btn & Btn.SHIELD) !== 0) {

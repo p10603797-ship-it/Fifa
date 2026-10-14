@@ -173,6 +173,13 @@ test.describe('GFX-01 renderer', () => {
     test.setTimeout(240_000);
     const messages = collectConsole(page);
     await kickOff(page);
+    // [QF-4] Measure the broadcast camera: past PRE_MATCH, whose establishing orbit (GFX-15) circles the bowl at
+    // changing distances (the spans compared below were taken from it and read 4:3 wider than 16:10).
+    await page.waitForFunction(() => {
+      const st = window.__dotkick!.ctx.session.getState();
+      const c = (window as unknown as { __dotkickCinematic?: { shot?: number } }).__dotkickCinematic;
+      return !!st && st.match.phase !== 0 && (c?.shot ?? 0) === 0;
+    }, null, { timeout: 60_000 });
     const spans: Record<string, { xSpan: number; ySpan: number }> = {};
     for (const [label, w, h] of [['4x3', 1024, 768], ['16x10', 1280, 800], ['21x9', 1680, 720], ['ipad', 1180, 820]] as const) {
       await page.setViewportSize({ width: w, height: h });
@@ -203,14 +210,18 @@ test.describe('GFX-01 renderer', () => {
       // The canvas fills the window, its buffer is CSS size x DPR x scale (no stretching, aspect kept).
       expect(m.paused).toBe(false);
       expect([m.cw, m.ch]).toEqual([w, h]);
-      expect(m.bw).toBe(Math.floor(w * m.dpr * SCALE));
-      expect(m.bh).toBe(Math.floor(h * m.dpr * SCALE));
+      // [QF-4] At the scale in use: GFX-02's dynamic resolution may lower it from 0.75 when frames run slow (SwiftShader
+      // under load read 0.7 at 21:9, on a HEAD build too); the buffer follows it exactly.
+      const sc = m.stats.resolutionScale;
+      expect(sc).toBeLessThanOrEqual(SCALE + 1e-9);
+      expect(sc).toBeGreaterThanOrEqual(0.6);
+      expect(m.bw).toBe(Math.floor(w * m.dpr * sc));
+      expect(m.bh).toBe(Math.floor(h * m.dpr * sc));
       expect(m.bw / m.bh).toBeCloseTo(w / h, 2);
       // Still rendering: draw calls and triangles of the last frame, live GPU resources.
       expect(m.stats.drawCalls).toBeGreaterThan(3);
       expect(m.stats.triangles).toBeGreaterThan(100);
       expect(m.stats.geometries).toBeGreaterThan(0);
-      expect(m.stats.resolutionScale).toBeCloseTo(SCALE, 5);
       for (const v of Object.values(m.stats)) expect(Number.isFinite(v)).toBe(true);
       expect(m.okL && m.okR).toBe(true);
       spans[label] = { xSpan: m.xSpan, ySpan: m.ySpan };

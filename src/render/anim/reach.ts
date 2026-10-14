@@ -4,8 +4,10 @@
  *
  *  - kickReach (foot-kick clips: pass, shot, power shot, finesse, volley, keeper drop kick, skill touch): the clip's
  *    contact point (REACH_BALL: where its boot meets the ball at the contact phase, measured once from the clip) is
- *    moved onto the predicted ball: the root shifts toward the ball by up to rootMax (a lunge), the kicking leg is
- *    re-solved with IK toward the ball and the support foot is re-planted where the clip put it; foot pitches kept.
+ *    moved onto the predicted ball: the root shifts toward the ball by up to rootMax (a lunge) and drops by up to
+ *    rootDropMax when the boot target is beyond the leg (a stretch), the kicking leg is re-solved with IK toward the
+ *    ball and the support foot is re-planted where the clip put it; foot pitches kept. kickOffset + kickApply split
+ *    it so the animator can rate-limit the boot offset between frames.
  *  - touchReach (locomotion: dribble touches, first touches): the leg's toe reaches toward the back of the ball by up
  *    to touchMax, foot pitch kept.
  * Inputs in the RCH scratch (model space of the posed player, reference-body metres: +x forward, +y up, +z right):
@@ -21,6 +23,10 @@ const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
   /** Largest root shift toward the ball (m, model) and the share of the contact offset the root takes. */
   rootMax: 0.3,
   rootShare: 0.5,
+  /** Largest pelvis drop for a boot target beyond the leg (m, model), and the share of the leg (thigh + shin) the
+   *  stretch aims for. */
+  rootDropMax: 0.14,
+  legReach: 0.97,
   /** Largest contact offset applied (m, model): a ball further from the clip's spot is reached as far as this goes;
    *  beyond kickGiveUp it is out of any reach (the sim whiffs, or a stale prediction) and the clip plays as authored
    *  (the reach fades out between the two). */
@@ -28,10 +34,12 @@ const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
   kickGiveUp: 1.3,
   /** Ball centre ahead of the toe along the boot at contact (m): the toe touches the back of the ball. */
   toeToBall: 0.08,
-  /** Locomotion touches: largest toe correction (m, model), and the root lunge toward the ball (share, cap m). */
-  touchMax: 0.38,
+  /** Locomotion touches: largest toe correction (m, model), and the root lunge toward the ball (share, cap m).
+   *  [QF-4 skeptic] 0.38 / 0.22 -> 0.55 / 0.3: with the faster passes of QF-2 (assistArriveMin 7 m/s) most first touches
+   *  happen at the sim's receive radius (1.0-1.1 m from the player) and the boot stopped 0.5-1 m short of the ball. */
+  touchMax: 0.55,
   touchRootShare: 0.4,
-  touchRootMax: 0.22,
+  touchRootMax: 0.3,
   /** A ball further than this from the toe (m) is not reached for (a touch the body could never make). */
   touchGiveUp: 1.4,
 } as const;
@@ -110,26 +118,50 @@ function ankleOf(side: number): void {
   OUT3[0] = SK[o + 9]!; OUT3[1] = SK[o + 10]!; OUT3[2] = SK[o + 11]!;
 }
 
+/** Kick reach offset (model metres) of the kicking boot: written by kickOffset, read by kickApply. */
+export const KOF = new Float64Array(3);
+
+/**
+ * The boot offset kick reach applies for the ball in RCH with weight RCH[3] (clamped to kickMax, faded out toward
+ * kickGiveUp, times the weight) into KOF. Returns 0 (KOF zeroed) for unsupported clips, a zero weight, a ball out of
+ * reach or non-finite input.
+ */
+export function kickOffset(anim: AnimId, foot: number): number {
+  KOF[0] = 0; KOF[1] = 0; KOF[2] = 0;
+  const w = RCH[3]!;
+  if (!(w > 0) || !reachClip(anim)) return 0;
+  const a = anim * 3;
+  const mz = foot === 1 ? -1 : 1;
+  let dx = RCH[0]! - REACH_BALL[a]!, dy = RCH[1]! - REACH_BALL[a + 1]!, dz = RCH[2]! - REACH_BALL[a + 2]! * mz;
+  if (!(dx === dx) || !(dy === dy) || !(dz === dz)) return 0;
+  const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  let wk = w;
+  if (d > LOCAL_TUNING.kickMax) {
+    const u = (d - LOCAL_TUNING.kickMax) / (LOCAL_TUNING.kickGiveUp - LOCAL_TUNING.kickMax);
+    if (u >= 1) return 0;
+    wk *= 1 - u * u * (3 - 2 * u);
+    const k = LOCAL_TUNING.kickMax / d; dx *= k; dy *= k; dz *= k;
+  }
+  KOF[0] = dx * wk; KOF[1] = dy * wk; KOF[2] = dz * wk;
+  return 1;
+}
+
 /**
  * Kick reach on clip pose `out` (anim, kicking foot 0 right / 1 left), toward the ball in RCH with weight RCH[3]. No-op
  * for unsupported clips, a zero weight or non-finite input.
  */
 export function kickReach(out: Pose, anim: AnimId, foot: number): void {
-  const w = RCH[3]!;
-  if (!(w > 0) || !reachClip(anim)) return;
-  const a = anim * 3;
-  const mz = foot === 1 ? -1 : 1;
-  let dx = RCH[0]! - REACH_BALL[a]!, dy = RCH[1]! - REACH_BALL[a + 1]!, dz = RCH[2]! - REACH_BALL[a + 2]! * mz;
-  if (!(dx === dx) || !(dy === dy) || !(dz === dz)) return;
-  const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-  let wk = w;
-  if (d > LOCAL_TUNING.kickMax) {
-    const u = (d - LOCAL_TUNING.kickMax) / (LOCAL_TUNING.kickGiveUp - LOCAL_TUNING.kickMax);
-    if (u >= 1) return;
-    wk *= 1 - u * u * (3 - 2 * u);
-    const k = LOCAL_TUNING.kickMax / d; dx *= k; dy *= k; dz *= k;
-  }
-  dx *= wk; dy *= wk; dz *= wk;
+  if (kickOffset(anim, foot) === 1) kickApply(out, anim, foot);
+}
+
+/**
+ * Apply the boot offset in KOF (model metres, from kickOffset, possibly rate limited by the caller) to clip pose `out`:
+ * root lunge, kicking leg re-solved to the offset boot, support foot re-planted, foot pitches kept.
+ */
+export function kickApply(out: Pose, anim: AnimId, foot: number): void {
+  if (!reachClip(anim)) return;
+  const dx = KOF[0]!, dy = KOF[1]!, dz = KOF[2]!;
+  if (!(dx === dx) || !(dy === dy) || !(dz === dz) || (dx === 0 && dy === 0 && dz === 0)) return;
   const kick = foot === 1 ? -1 : 1, support = -kick;
   solvePoseFK(out, SK);
   ankleOf(kick);
@@ -147,6 +179,18 @@ export function kickReach(out: Pose, anim: AnimId, foot: number): void {
   if (rl > LOCAL_TUNING.rootMax) { const k = LOCAL_TUNING.rootMax / rl; rx *= k; rz *= k; }
   out[PoseIdx.ROOT_FWD] = out[PoseIdx.ROOT_FWD]! + rx;
   out[PoseIdx.ROOT_SIDE] = out[PoseIdx.ROOT_SIDE]! + rz;
+  // Stretch: a boot target beyond the kicking leg's length from its hip lowers the pelvis (the support knee bends)
+  // until the leg reaches, by at most rootDropMax (a ball wide of the body is met with a low stretch, not short).
+  solvePoseFK(out, SK);
+  const ho = (kick < 0 ? Joint.HIP_L : Joint.HIP_R) * FRAME_SIZE;
+  const hx = kx - SK[ho + 9]!, hy = SK[ho + 10]! - ky, hz = kz - SK[ho + 11]!;
+  const reach = (BODY.thigh + BODY.shin) * LOCAL_TUNING.legReach;
+  const h2 = hx * hx + hz * hz;
+  if (hy > 0 && h2 + hy * hy > reach * reach) {
+    let drop = h2 < reach * reach ? hy - Math.sqrt(reach * reach - h2) : LOCAL_TUNING.rootDropMax;
+    if (drop > LOCAL_TUNING.rootDropMax) drop = LOCAL_TUNING.rootDropMax;
+    if (drop > 0) out[PoseIdx.ROOT_Y] = out[PoseIdx.ROOT_Y]! - drop;
+  }
   IKT[0] = kx; IKT[1] = ky; IKT[2] = kz;
   FPA[0] = pk;
   legIKS(out, kick);

@@ -99,7 +99,7 @@
  * re-exported FIRST below; the implementation is bound at the end of this file.
  */
 // Re-export the handler shells FIRST (import-cycle safety with actions/registry; see sweeperHooks.ts).
-export { punchHandler, rushHandler } from './sweeperHooks';
+export { comeOutWanted, punchHandler, rushHandler } from './sweeperHooks';
 import { bindSweeperImpl } from './sweeperHooks';
 import { beginAction, endAction, isFree } from '../actions/dispatch';
 import {
@@ -138,6 +138,11 @@ export const LOCAL_TUNING = { // TUNING-CR (GKP-03): move into T_GK
   zoneKeepSlack: 4,
   /** [QF-2] A rush starts only for an interception point at least this far in front of his goal line, m. */
   startMinDepth: 2,
+  /** [QF-2] No AI come-out starts for an opponent's shot (on target: GKP-02 saves it from his set position; off
+   *  target: it is going out) faster than this: rushing at a 17 m/s long shot started, aborted and restarted the rush
+   *  on consecutive ticks as the defenders' interception estimates on the fast ball jumped, m/s. A weak shot rolling
+   *  in is still walked out to. */
+  shotRushMaxSpeed: 10,
   /** Start a rush only when he reaches the ball at least this many ticks before the fastest opponent ... */
   oppStartMargin: 3,
   /** ... and abort it when an opponent will be there this many ticks before him. */
@@ -394,6 +399,12 @@ export function keeperRushHeld(s: SimState, team: number): boolean {
     if ((ctl.buttons & Btn.THROUGH) !== 0) return true;
   }
   return false;
+}
+
+/** [QF-2] An opponent's shot (on target or not) is the ball's last kick. */
+function opponentShot(s: SimState, team: number): boolean {
+  const b = s.ball;
+  return validSlot(b.shotBy) && s.players[b.shotBy]!.team !== team;
 }
 
 /** An opponent's shot on target is in flight (SAVE events). */
@@ -693,6 +704,7 @@ function assess(s: SimState, team: number, k: number, keep: number): number {
   const vg = -dir * b.vx;
   if (u > L.prefilterDepth && !(vg > 0 && u - vg * L.prefilterSeconds <= T_GK.rushDistance)) return DEC_NONE;
   if (keep === 0 && claimPlan(s, team, k)) return DEC_CLAIM;
+  if (keep === 0 && opponentShot(s, team) && b.vx * b.vx + b.vz * b.vz > L.shotRushMaxSpeed * L.shotRushMaxSpeed) return DEC_NONE;
   if (!race(s, team, k, keep)) return DEC_NONE;
   const kT = RACE.kT;
   // [QF-2] A start also needs the point startMinDepth in front of his line (a ball he can only meet on the line as it
@@ -794,7 +806,7 @@ export function keeperComeOut(s: SimState, team: number, ev: EventSink): void {
  * keeper now. TAI-11's CPU brain asks before it holds keeper-rush, so it never restarts (as a held user rush) a
  * come-out GKP-03 has just aborted: the two used to alternate on consecutive ticks. Pure (module scratch only).
  */
-export function comeOutWanted(s: SimState, team: number): boolean {
+function comeOutWantedImpl(s: SimState, team: number): boolean {
   const t = s.teams[team];
   if (!t || s.match.phase !== MatchPhase.IN_PLAY) return false;
   const k = t.keeperSlot;
@@ -1336,4 +1348,4 @@ function punchEnd(s: SimState, slot: number, interrupted: number): void {
   settle(s, slot);
 }
 
-bindSweeperImpl({ rushUpdate, rushEnd, punchUpdate, punchEnd });
+bindSweeperImpl({ rushUpdate, rushEnd, punchUpdate, punchEnd, comeOutWanted: comeOutWantedImpl });

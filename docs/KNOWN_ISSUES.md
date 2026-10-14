@@ -20,6 +20,17 @@ open; those are fixed with a regression test. Each line names the area and where
 - When the same guest re-dials while in the lobby, the host may briefly see "Your friend left the room" just before the
   friend reappears.
 
+## Rendering and animation (QF-4)
+- Swipe-hint labels of a held big button can sit over a neighbouring button's label (first matches only, while held).
+- In 145 of 3200 kit pairings both teams' shorts are close in colour; shirts and keepers are always distinct.
+- A human set-piece aim far (> ~25 deg) toward the side away from the camera can let the taker briefly cover the ball
+  while lining up.
+- Foot kicks on the run slide the support boot through the strike (the kick clip needs its own legs); at running speed
+  the drawn runner can trail his sim position by up to 0.3 m (foot lock), markers follow the drawn position.
+- A very fast head-on first touch (about 17 m/s closing) can leave the boot about 0.65 m from the ball; headers have no
+  head reach (head 0.4-0.5 m from the ball at contact).
+- The night look is subtle (lighting only).
+
 ## Not verified in this environment
 - WebKit (iPad Safari) and Firefox are not installed in the build container; every end-to-end run used Chromium. The
   iPad-specific behaviours (audio suspend timing, Low Power Mode, controller pairing, real WebRTC between devices) are in

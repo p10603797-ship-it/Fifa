@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { PLAYERS_PER_TEAM } from '../../src/contracts/constants';
-import { AssistLevel, AutoSwitch, ControllerKind, MatchPhase, ModeId, PracticeKind, RestartKind } from '../../src/contracts/enums';
+import { AssistLevel, AutoSwitch, CardKind, ControllerKind, MatchPhase, ModeId, PracticeKind, RestartKind } from '../../src/contracts/enums';
 import { EventType } from '../../src/contracts/events';
 import { createInputFrame } from '../../src/contracts/input';
 import { createMatchConfig, type MatchConfig, type SimState } from '../../src/contracts/state';
@@ -13,9 +13,12 @@ import { hashState } from '../../src/sim/core/hash';
 import { createInvariantChecker } from '../../src/sim/debug/invariants';
 import { initMatch } from '../../src/sim/init';
 import { practiceRulesTick as modesPracticeRulesTick, preparePracticeState as modesPrepare } from '../../src/modes/practice';
+import { showCard } from '../../src/sim/rules/fouls';
 import { practiceSpotPoint, preparePracticeState } from '../../src/sim/rules/practice';
 import { awardRestart } from '../../src/sim/rules/restart';
 import { step } from '../../src/sim/step';
+import { fuzzJobs } from '../../tools/fuzz';
+import { runJob } from '../../tools/lib/jobs';
 
 function practiceConfig(kind: PracticeKind, spot = 0, seed = 4242): MatchConfig {
   const c = createMatchConfig();
@@ -142,5 +145,85 @@ describe('QF-1 practice restarts stay at the practice spot', { timeout: 600_000 
     expect(s.match.phase).toBe(MatchPhase.FREE_KICK);
     expect(s.match.restart.team).toBe(0);
     expect(Math.hypot(s.match.restart.x - want.x, s.match.restart.z - want.z)).toBeLessThan(1);
+  });
+});
+
+describe('QF-1 free play: the lone keeper\'s restarts', { timeout: 600_000 }, () => {
+  /** Free play in IN_PLAY with `kind` just awarded to the keeper-only side (team 1) at (x, z), then one step. */
+  function awardToKeeperSide(kind: RestartKind, x: number, z: number): SimState {
+    const s = initMatch(practiceConfig(PracticeKind.FREE_PLAY, 0, 515));
+    const ev = createEventBuffer();
+    const frames = [createInputFrame(), createInputFrame()];
+    for (let i = 0; i < 900 && s.match.phase !== MatchPhase.IN_PLAY; i++) step(s, frames, ev);
+    expect(s.match.phase).toBe(MatchPhase.IN_PLAY);
+    ev.begin(s.tick);
+    awardRestart(s, kind, 1, x, z, ev);
+    expect(s.match.restart.kind).toBe(kind);
+    step(s, frames, ev);
+    return s;
+  }
+
+  it('glitch taker missing — a throw-in, corner or penalty for the keeper-only side becomes his goal kick, taken without the watchdog', () => {
+    for (const [kind, x, z] of [
+      [RestartKind.THROW_IN, 10, -34], [RestartKind.THROW_IN, -30, 34], [RestartKind.CORNER, -52.5, -34],
+      [RestartKind.PENALTY, -41, 0], [RestartKind.FREE_KICK, -20, 5],
+    ] as [RestartKind, number, number][]) {
+      const s = awardToKeeperSide(kind, x, z);
+      expect(s.teams[1]!.dir).toBe(-1);
+      const r = s.match.restart;
+      expect(s.match.phase, RestartKind[kind]).toBe(MatchPhase.GOAL_KICK);
+      expect(r.team).toBe(1);
+      expect(r.x).toBeGreaterThan(40); // team 1 attacks -x in the first half: his goal area is at +x
+      expect(Math.sign(r.z) || 1).toBe(Math.sign(z) || 1);
+      const { entries } = run(s, 900);
+      expect(entries.some((e) => e.phase === MatchPhase.IN_PLAY), RestartKind[kind]).toBe(true);
+      expect(s.match.watchdogCount, RestartKind[kind]).toBe(0);
+    }
+  });
+
+  it('his own free kick inside his area stays his free kick', () => {
+    const s = awardToKeeperSide(RestartKind.FREE_KICK, 44, 6);
+    expect(s.match.phase).toBe(MatchPhase.FREE_KICK);
+    expect(s.match.restart.team).toBe(1);
+    run(s, 900);
+    expect(s.match.watchdogCount).toBe(0);
+  });
+
+  it('a red card for the lone keeper is shown but he stays in goal (practice sends nobody off)', () => {
+    const s = initMatch(practiceConfig(PracticeKind.FREE_PLAY, 0, 515));
+    const k = s.teams[1]!.keeperSlot;
+    const ev = createEventBuffer();
+    ev.begin(s.tick);
+    showCard(s, k, CardKind.RED, ev);
+    showCard(s, 3, CardKind.YELLOW, ev);
+    showCard(s, 3, CardKind.YELLOW, ev);
+    const cards = ev.toArray().filter((e) => e.type === EventType.CARD).map((e) => [e.a, e.b]);
+    expect(cards).toEqual([[k, CardKind.RED], [3, CardKind.YELLOW], [3, CardKind.SECOND_YELLOW]]);
+    expect(s.players[k]!.active).toBe(1);
+    expect(s.players[k]!.isKeeper).toBe(1);
+    expect(s.teams[1]!.onPitch).toBe(1);
+    expect(s.players[3]!.active).toBe(1);
+    expect(s.teams[0]!.onPitch).toBe(PLAYERS_PER_TEAM);
+    run(s, 600);
+  });
+
+  it('fuzz seed 404 #20 (free play, p1 v p2, hostile input: the keeper fouls) keeps every invariant, no watchdog', () => {
+    const [job] = fuzzJobs({
+      matches: 1, workers: 1, seed: 404, enforce: 'all', halfMinutes: 2, json: null, maxReplays: 0, only: 20, quiet: true,
+      jobTimeoutSeconds: null,
+    });
+    const r = runJob(job!, { replayDir: '', replayPrefix: 'qf-1', replayBudget: () => false });
+    expect(r.watchdogReasons).toEqual({});
+    expect(r.reasons).toEqual([]);
+  });
+
+  it('fuzz seed 303 #91 (free play, p1 v p2, hostile input) finishes without a RESTART_BLOCKED watchdog', () => {
+    const [job] = fuzzJobs({
+      matches: 1, workers: 1, seed: 303, enforce: 'all', halfMinutes: 2, json: null, maxReplays: 0, only: 91, quiet: true,
+      jobTimeoutSeconds: null,
+    });
+    const r = runJob(job!, { replayDir: '', replayPrefix: 'qf-1', replayBudget: () => false });
+    expect(r.watchdogReasons).toEqual({});
+    expect(r.reasons).toEqual([]);
   });
 });

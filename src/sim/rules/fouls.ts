@@ -51,12 +51,13 @@
  *    back: ADVANTAGE a=2, card shown at once, then awardRestart at the foul spot (advantage already cleared, so
  *    RUL-11 does not resolve it again). The offender recorded in the challenge is the only player ever carded.
  *  - showCard: YELLOW -> p.yellow = 1 + CARD; a second YELLOW (or SECOND_YELLOW) -> CARD SECOND_YELLOW + RUL-10
- *    sendOff; RED -> CARD RED + sendOff. Invalid or inactive slots get nothing.
+ *    sendOff; RED -> CARD RED + sendOff (practice: the card only). Invalid or inactive slots get nothing.
  *  - Allocation-free; per tick O(MAX_CHALLENGES) plus O(22) on a foul tick.
  */
 import { GOAL_HALF_WIDTH, HALF_LENGTH, NUM_SLOTS, PLAYERS_PER_TEAM, teamFirstSlot } from '../../contracts/constants';
 import {
-  ActionKind, CardKind, ChallengeKind, ChallengeOutcome, ControllerKind, CrossKind, MatchPhase, RestartKind, isShotKind,
+  ActionKind, CardKind, ChallengeKind, ChallengeOutcome, ControllerKind, CrossKind, MatchPhase, ModeId, PracticeKind,
+  RestartKind, isShotKind,
 } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
 import { Btn } from '../../contracts/input';
@@ -309,7 +310,16 @@ export function classifyChallenge(s: SimState, rec: Readonly<ChallengeRecord>): 
 
 // ================================================================ cards
 
-/** Show a card to slot (handles second yellow -> red via RUL-10 sendOff). */
+/**
+ * [QF-1] Practice is not a match (no clock, no forfeit): a card is shown but nobody is sent off. Free play's
+ * opponents are one keeper; his red card emptied the team (no one to replace him in goal) and broke every player
+ * invariant for the rest of the session (fuzz seed 404 #20).
+ */
+function isPractice(s: SimState): boolean {
+  return s.config.mode === ModeId.PRACTICE || s.config.practice !== PracticeKind.NONE;
+}
+
+/** Show a card to slot (handles second yellow -> red via RUL-10 sendOff; never a send-off in practice). */
 export function showCard(s: SimState, slot: number, kind: CardKind, ev: EventSink): void {
   if (!validSlot(slot)) return;
   const p = s.players[slot]!;
@@ -322,12 +332,12 @@ export function showCard(s: SimState, slot: number, kind: CardKind, ev: EventSin
   if (kind === CardKind.YELLOW || kind === CardKind.SECOND_YELLOW) {
     p.yellow = 1;
     ev.emit(EventType.CARD, slot, CardKind.SECOND_YELLOW);
-    sendOff(s, slot, ev);
+    if (!isPractice(s)) sendOff(s, slot, ev);
     return;
   }
   if (kind === CardKind.RED) {
     ev.emit(EventType.CARD, slot, CardKind.RED);
-    sendOff(s, slot, ev);
+    if (!isPractice(s)) sendOff(s, slot, ev);
   }
 }
 

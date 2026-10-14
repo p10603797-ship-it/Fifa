@@ -382,6 +382,7 @@ describe('GKP-03 never leaves the goal empty for nothing', () => {
       const sc = throughBall(e.team, e.swap);
       let given = -1;
       let stopped = -1;
+      let back = Infinity;
       runTicks(sc.s, 240, (t, s, out) => {
         if (given < 0 && s.players[sc.keeper]!.act === ActionKind.GK_RUSH && s.tick > 30) {
           // A defender wins it at the edge of the box.
@@ -395,13 +396,16 @@ describe('GKP-03 never leaves the goal empty for nothing', () => {
         check: 'core',
         until: (s) => {
           if (given > 0 && stopped < 0 && s.players[sc.keeper]!.act !== ActionKind.GK_RUSH) stopped = s.tick;
+          if (stopped > 0 && s.tick - stopped <= 90) back = Math.min(back, offSpot(s, sc.team));
           return false;
         },
       });
       expect(given, e.name).toBeGreaterThan(0);
       expect(stopped - given, e.name).toBeLessThanOrEqual(1);
       expect(isRushing(sc.s, sc.keeper)).toBe(false);
-      expect(offSpot(sc.s, sc.team), e.name).toBeLessThan(1.0);
+      // [QF-2] Back on his spot within 1.5 s of the rush ending (was: at tick 240, but the CPU defender now often plays
+      // the ball back to him in that time, and he is out receiving the back-pass when the run stops).
+      expect(back, e.name).toBeLessThan(1.0);
     });
   }
 

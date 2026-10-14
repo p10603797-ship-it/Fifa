@@ -93,7 +93,7 @@ import {
 import type { EventSink } from '../contracts/events';
 import { AXIS_SCALE, Btn, GESTURE_POS_SCALE, type InputFrame } from '../contracts/input';
 import { CpuPlan, type ControllerState, type CpuBrainState, type PlayerState, type SimState } from '../contracts/state';
-import { T_LEVEL, T_PASS, T_PLAYER, T_RULES } from '../contracts/tuning';
+import { T_AI, T_LEVEL, T_PASS, T_PLAYER, T_RULES } from '../contracts/tuning';
 import { slotWorld } from '../data/formations';
 import { datan2, dcos, dsin } from '../sim/core/dmath';
 import { rngFloat, rngGauss, rngRange } from '../sim/core/rng';
@@ -204,7 +204,7 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** Long kicks (goal kicks, deep free kicks): target man gkLongMin-gkLongMax m away; power = clamp(d /
    *  longPowerRange, longPowerMin, 1). */
   gkLongMin: 25,
-  gkLongMax: 40, // [INT-A] was 75: a 70 m goal kick (led further) bounced on into the far box untouched for 8 s (watchdog)
+  gkLongMax: T_AI.setPieceGkLongMax, // [INT-A] was 75: a 70 m goal kick bounced on untouched (contracts/tuning.ts since QF-2)
   longPowerRange: 70,
   longPowerMin: 0.45,
   /** Ground pass power: the speed that arrives at shortArrive m/s (SIM-01 groundPassSpeed) on the T_PASS ground range,

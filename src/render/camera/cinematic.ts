@@ -20,8 +20,9 @@
  *   bigger is a cut, so the camera never flies across the pitch. Replay boundaries always cut. Reduced camera motion:
  *   cuts only, and the establishing shot holds still.
  * SHOTS (pure pose functions, all inside |x| <= maxX, |z| <= maxZ: in front of the stand walls, never in the goal):
- *   behind the taker: takerBack from the ball, takerPhi around it from the line from the attacked goal through the ball
- *   (on the side of that line facing the pitch's long axis, the near side for central spots) and takerHeight up, turned
+ *   behind the taker: takerBack from the ball, takerPhi (penalties: penaltyPhi) around it from the line from the attacked
+ *   goal through the ball (on the taker's kicking-foot side; unknown taker: the side of that line facing the pitch's
+ *   long axis, the near side for central spots) and takerHeight up, turned
  *   to centre the ball and both posts (ball within takerBallNdc of the centre, FOV widened up to takerFovMax so the goal
  *   fits a 4:3 screen), the pitch solved so the ball sits at takerBallY of the screen with the top of the goal in view.
  *   [QF-4] The waiting taker stands 0.6 m behind the ball on the aim line: straight behind him the ball showed between
@@ -45,7 +46,8 @@ import { MatchPhase, RestartKind } from '../../contracts/enums';
 import { EventType, type EventBuffer } from '../../contracts/events';
 import type { CameraSettings } from '../../contracts/settings';
 import type { ReadonlySimState } from '../../contracts/state';
-import { T_CAMERA } from '../../contracts/tuning';
+import { T_BALL, T_CAMERA } from '../../contracts/tuning';
+import { ShootoutSub } from '../../sim/rules/shootout';
 import { ReplayAngle, replayPlaybackOf } from '../replay';
 import { createInterpState, type CameraModule, type RenderContext, type RenderFrame } from '../types';
 import { projectPitchToScreen, projectScreenToPitch } from './project';
@@ -56,6 +58,12 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
   fkNearGoal: 35,
   /** A free kick / penalty struck as a shot keeps the behind view while in flight, at most this long, s. */
   shotHold: 1.2,
+  /** [QF-4] ... and only while the ball and the predicted apex of a rising ball stay inside the held view: this much of
+   *  the screen height clear of the top edge (scoreboard) and of the width clear of either side. A chipped or skied
+   *  shot (SIM-11 chips leave at 0.5-0.8 rad) rose out of the top of the low behind view for ~0.6 s; now the director
+   *  cuts back to the main camera (which tilts for high balls) on the frame the flight would leave the view. */
+  holdTopMargin: 0.06,
+  holdSideMargin: 0.04,
   /** An establishing('kickoff' | 'fulltime') request lasts at most this long, s. */
   establishingMax: 4,
   /** Blend (instead of cut) only when the camera moves at most blendMaxDist m, turns at most blendMaxAngle deg and
@@ -73,8 +81,13 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
   /** [QF-4] The camera sits this far (deg) around the ball from straight behind it. The waiting taker stands 0.6 m
    *  behind the ball on the aim line (RUL-11 takerBehind), so straight behind him the ball showed between his legs;
    *  with this angle and the model's set-piece stance (players/model.ts stanceSide: he is drawn a step to his side away
-   *  from the camera) the ball stays clear for every aim across the goal frame. */
-  takerPhi: 28,
+   *  from the camera) the ball stays clear for every aim across the goal frame. [QF-4 skeptic] 28 -> 38, on the taker's
+   *  kicking-foot side: at 28 deg the charged backswing (the CPU holds it ~0.35 s) hid the ball behind the support shin
+   *  or the drawn-back kicking thigh whenever the aim swung a few degrees away from the camera. */
+  takerPhi: 38,
+  /** [QF-4] Penalties and shoot-out kicks: the aim can swing +-15 deg off the spot-to-goal line (a corner from 11 m), so
+   *  the view sits further round (deg) to keep the charged backswing off the ball for either corner. */
+  penaltyPhi: 46,
   /** [QF-4] Free kicks / penalties: the view centres the angular span of the ball and both goal posts, which must fit a
    *  4:3 screen (the narrowest supported) with this margin each side (deg); a wider span widens the FOV up to
    *  takerFovMax (deg). */
@@ -223,6 +236,13 @@ export interface DirectorInput {
    * teleports; until then the main camera shows the set-up. Omitted = ready.
    */
   ready?: boolean;
+  /**
+   * [QF-4] Shoot-out between kicks (RUL-07 RESULT, or a kick in FLIGHT that left the behind view): the main camera shows
+   * the outcome. RUL-07 teleports the next kicker onto the spot, the last one back into the centre circle and swaps the
+   * keepers at the next kick's SETUP; the cut back into the behind view on that very frame hides it (before, the static
+   * behind view showed every swap). Omitted = no.
+   */
+  shootoutResult?: boolean;
 }
 
 class Input implements DirectorInput {
@@ -234,6 +254,7 @@ class Input implements DirectorInput {
   skipped = false;
   holdShot = false;
   ready = true;
+  shootoutResult = false;
 }
 
 export function createDirectorInput(): DirectorInput {
@@ -253,7 +274,7 @@ export function chooseShot(i: Readonly<DirectorInput>): CineShot {
     case MatchPhase.KICK_OFF:
       return i.establishing && !i.skipped ? CineShot.ESTABLISHING : CineShot.NONE;
     case MatchPhase.SHOOT_OUT:
-      return CineShot.BEHIND_TAKER;
+      return i.shootoutResult === true ? CineShot.NONE : CineShot.BEHIND_TAKER;
     case MatchPhase.GOAL_KICK:
     case MatchPhase.PENALTY:
       return i.ready === false ? CineShot.NONE : CineShot.BEHIND_TAKER;
@@ -307,9 +328,15 @@ function takerPoseIn(goalKick: boolean, out: CinePose): void {
   // Goal kicks take the touchline side instead: toward the axis the camera hung over the own goal and its crossbar
   // came into view. Side +1 uses the normal n = (-uz, ux), whose z is ux.
   let side = spotZ < LT.centralZ && spotZ > -LT.centralZ ? (ux >= 0 ? 1 : -1) : (ux * -spotZ > 0 ? 1 : -1);
+  // [QF-4] Free kicks / penalties: the taker's kicking-foot side (PIN[5], +1 = right of the aim line) when known. On the
+  // support-foot side his planted shin hid the ball through the whole charged backswing (~0.35 s for the CPU, as long as
+  // the power bar is held for a human): 24 of 102 penalty frames for a right-footer attacking -x.
+  if (!goalKick && (PIN[5] === 1 || PIN[5] === -1)) side = PIN[5]! > 0 ? 1 : -1;
   if (goalKick) side = -side;
   if (PIN[4] === -1) side = -side; // the other side (a player stood where the camera would be)
-  const phi = (goalKick ? LT.goalKickPhi : LT.takerPhi) * DEG;
+  // Angle round from straight behind (deg in PIN[6], set by the caller: goalKickPhi / takerPhi / penaltyPhi; a branch on
+  // it here made V8 box the doubles of the whole solver).
+  const phi = PIN[6]! * DEG;
   const cp = Math.cos(phi), sp = Math.sin(phi);
   const dx = -cp * ux - sp * uz * side, dz = -cp * uz + sp * ux * side;
   const back = goalKick ? LT.goalKickBack : LT.takerBack;
@@ -365,10 +392,14 @@ function takerPoseIn(goalKick: boolean, out: CinePose): void {
 
 /**
  * Behind-the-taker pose for a ball at the spot aiming at (aimX, aimZ) (the attacked goal's centre for free kicks and
- * penalties). goalKick: the low, wide rig in front of the own goal looking up-field along the aim. Pure; writes out.
+ * penalties). goalKick: the low, wide rig in front of the own goal looking up-field along the aim. footSide (free kicks,
+ * penalties): +1 right-footed taker, -1 left-footed (the camera takes that side of the aim line), 0 unknown. phiDeg:
+ * the angle round from straight behind (0 = LOCAL_TUNING.takerPhi / goalKickPhi; penalties use penaltyPhi). Pure;
+ * writes out.
  */
-export function takerPose(spotX: number, spotZ: number, aimX: number, aimZ: number, goalKick: boolean, out: CinePose, otherSide = false): CinePose {
-  PIN[0] = spotX; PIN[1] = spotZ; PIN[2] = aimX; PIN[3] = aimZ; PIN[4] = otherSide ? -1 : 1;
+export function takerPose(spotX: number, spotZ: number, aimX: number, aimZ: number, goalKick: boolean, out: CinePose, otherSide = false, footSide = 0, phiDeg = 0): CinePose {
+  PIN[0] = spotX; PIN[1] = spotZ; PIN[2] = aimX; PIN[3] = aimZ; PIN[4] = otherSide ? -1 : 1; PIN[5] = footSide;
+  PIN[6] = goalKick ? LT.goalKickPhi : phiDeg > 0 ? phiDeg : LT.takerPhi;
   takerPoseIn(goalKick, out);
   return out;
 }
@@ -522,6 +553,56 @@ function copyPose(src: Readonly<CinePose>, dst: CinePose): void {
   dst.x = src.x; dst.y = src.y; dst.z = src.z; dst.yaw = src.yaw; dst.pitch = src.pitch; dst.fov = src.fov;
 }
 
+/**
+ * poseNdc inputs: world point x, y, z, the screen aspect (w / h), then the pose x, y, z, yaw, pitch, fov (deg); the hold
+ * check's ball x, y, z, vx, vy, vz at 10..15. Output NDC = [ndcX, ndcY (+ up), view depth m]. Typed arrays only: a
+ * double crossing a call boundary can box.
+ */
+const HIN = new Float64Array(16);
+const NDC = new Float64Array(3);
+
+/** The pose into HIN[4..9]. */
+function poseToHin(p: Readonly<CinePose>): void {
+  HIN[4] = p.x; HIN[5] = p.y; HIN[6] = p.z; HIN[7] = p.yaw; HIN[8] = p.pitch; HIN[9] = p.fov;
+}
+
+/**
+ * [QF-4] NDC of the world point HIN[0..2] seen from the pose in HIN[4..9] at aspect HIN[3] (the camera this module writes:
+ * YXZ Euler (-pitch, yaw, 0), symmetric frustum), into NDC; a point closer than 1 cm along the view gets NDC 9.5.
+ */
+function poseNdcIn(): void {
+  const dx = HIN[0]! - HIN[4]!, dy = HIN[1]! - HIN[5]!, dz = HIN[2]! - HIN[6]!;
+  const sy = Math.sin(HIN[7]!), cy = Math.cos(HIN[7]!), sp = Math.sin(HIN[8]!), cp = Math.cos(HIN[8]!);
+  // forward (-cp sy, -sp, -cp cy), right (cy, 0, -sy), up (-sp sy, cp, -sp cy)
+  const depth = -cp * sy * dx - sp * dy - cp * cy * dz;
+  const rx = cy * dx - sy * dz;
+  const uy = -sp * sy * dx + cp * dy - sp * cy * dz;
+  const t = Math.tan(HIN[9]! * DEG * 0.5);
+  NDC[2] = depth;
+  NDC[0] = 9.5;
+  NDC[1] = 9.5;
+  if (depth > 0.01) {
+    NDC[0] = rx / (depth * t * HIN[3]!);
+    NDC[1] = uy / (depth * t);
+  }
+}
+
+/** NDC of a world point through a pose (tests, tools). Pure; writes out = [ndcX, ndcY (+ up), depth]. */
+export function poseNdc(p: Readonly<CinePose>, x: number, y: number, z: number, aspect: number, out: number[]): number[] {
+  HIN[0] = x; HIN[1] = y; HIN[2] = z; HIN[3] = aspect;
+  poseToHin(p);
+  poseNdcIn();
+  out[0] = NDC[0]!; out[1] = NDC[1]!; out[2] = NDC[2]!;
+  return out;
+}
+
+/** True when the NDC point lies inside the held view's safe region (LOCAL_TUNING.holdTopMargin / holdSideMargin). */
+function ndcInHoldView(): boolean {
+  const nx = NDC[0]!, ny = NDC[1]!;
+  return NDC[2]! > 0.5 && ny <= 1 - 2 * LT.holdTopMargin && ny >= -1 && nx <= 1 - 2 * LT.holdSideMargin
+    && nx >= -1 + 2 * LT.holdSideMargin;
+}
+
 export interface CinematicCameraModule extends CameraModule {
   /** Request the establishing shot for kick-off / full time (skippable). Returns false if not available. */
   establishing(kind: 'kickoff' | 'fulltime'): boolean;
@@ -576,11 +657,15 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
   let reduced = ctx.reducedMotion;
   let matchOn = false;
   let goalKick = false;
+  /** [QF-4] The current set piece is a penalty or a shoot-out kick (LOCAL_TUNING.penaltyPhi). */
+  let penaltyShot = false;
   let orbitDir = 1;
   /** 0 none, 1 kick-off, 2 full time. */
   let estKind = 0;
   let skippedPhase = -1;
   let holdArmed = false;
+  /** [QF-4] A shoot-out kick in flight left the behind view: the main camera until the next kick's SETUP. */
+  let soLost = false;
   let restartSerial = 0;
   let keySerial = -1;
   let keyCuts = -1;
@@ -597,6 +682,15 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
   let curFrame: RenderFrame | null = null;
   const alt = createCinePose();
 
+  /** [QF-4] Kicking-foot side of the restart taker of the frame being drawn: +1 right-footed, -1 left, 0 unknown. */
+  function takerFootSide(): number {
+    const f = curFrame;
+    if (!f) return 0;
+    const t = f.curr.match.restart.taker;
+    if (!(t >= 0 && t < NUM_SLOTS) || f.curr.players[t]!.active !== 1) return 0;
+    return f.curr.attrs[t]!.foot === 1 ? -1 : 1;
+  }
+
   /** Horizontal distance (m) from (x, z) to the nearest active player of the frame being drawn (Infinity: none). */
   function nearestPlayer(x: number, z: number): number {
     const f = curFrame;
@@ -610,6 +704,37 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
       if (d < best) best = d;
     }
     return Math.sqrt(best);
+  }
+
+  /**
+   * [QF-4] The struck free kick / penalty would leave the held behind view: the ball (interpolated) or, while it rises,
+   * its predicted apex (drag-corrected height as GFX-14 predicts it, reached after vy / g; the horizontal travel to it
+   * shortened by drag the same way) outside the safe region of the pose drawn last.
+   */
+  function holdLosesBall(f: RenderFrame): boolean {
+    const it = f.interp, b = f.curr.ball;
+    HIN[10] = it.ballX; HIN[11] = it.ballY; HIN[12] = it.ballZ;
+    HIN[13] = b.vx; HIN[14] = b.vy; HIN[15] = b.vz;
+    poseToHin(last);
+    return holdLosesBallIn();
+  }
+
+  /** holdLosesBall on HIN: ball at 10..12, velocity at 13..15, pose at 4..9 (warm-up runs it on scratch data). */
+  function holdLosesBallIn(): boolean {
+    HIN[3] = Math.max(1, ctx.size.cssW) / Math.max(1, ctx.size.cssH);
+    HIN[0] = HIN[10]!; HIN[1] = HIN[11]!; HIN[2] = HIN[12]!;
+    poseNdcIn();
+    if (!ndcInHoldView()) return true;
+    const vy = HIN[14]!;
+    if (!(vy > 0.5)) return false;
+    const k = T_BALL.dragK;
+    const rise = Math.log(1 + (k * vy * vy) / T_BALL.gravity) / (2 * k);
+    const tApex = vy / T_BALL.gravity;
+    HIN[0] = HIN[10]! + HIN[13]! * tApex * 0.8;
+    HIN[1] = HIN[11]! + rise;
+    HIN[2] = HIN[12]! + HIN[15]! * tApex * 0.8;
+    poseNdcIn();
+    return !ndcInHoldView();
   }
 
   /** Aspect + the pose's FOV into the projection (only elements 0 and 5 depend on them for this symmetric frustum). */
@@ -660,6 +785,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
       S[S_AIM_X] = end * HALF_LENGTH;
       S[S_AIM_Z] = 0;
       goalKick = false;
+      penaltyShot = true;
       S[S_GOAL_DIST] = PENALTY_SPOT_DIST;
       return;
     }
@@ -676,6 +802,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     S[S_AIM_X] = dir * HALF_LENGTH;
     S[S_AIM_Z] = 0;
     goalKick = phase === MatchPhase.GOAL_KICK;
+    penaltyShot = phase === MatchPhase.PENALTY;
     const gx = S[S_AIM_X]! - S[S_SPOT_X]!, gz = S[S_SPOT_Z]!;
     S[S_GOAL_DIST] = Math.sqrt(gx * gx + gz * gz);
   }
@@ -710,12 +837,16 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     switch (shot) {
       case CineShot.BEHIND_TAKER: {
         if (targetFresh) return; // static shot: solved once per shot (transition / new spot)
-        PIN[0] = S[S_SPOT_X]!; PIN[1] = S[S_SPOT_Z]!; PIN[2] = S[S_AIM_X]!; PIN[3] = S[S_AIM_Z]!; PIN[4] = 1;
+        const foot = takerFootSide();
+        const phiDeg = goalKick ? LT.goalKickPhi : penaltyShot ? LT.penaltyPhi : LT.takerPhi;
+        PIN[0] = S[S_SPOT_X]!; PIN[1] = S[S_SPOT_Z]!; PIN[2] = S[S_AIM_X]!; PIN[3] = S[S_AIM_Z]!; PIN[4] = 1; PIN[5] = foot;
+        PIN[6] = phiDeg;
         takerPoseIn(goalKick, target);
         // [QF-4] A player standing where the camera would be fills the frame: take the other side when it is clearer.
         const near = nearestPlayer(target.x, target.z);
         if (near < LT.nearClear) {
-          PIN[0] = S[S_SPOT_X]!; PIN[1] = S[S_SPOT_Z]!; PIN[2] = S[S_AIM_X]!; PIN[3] = S[S_AIM_Z]!; PIN[4] = -1;
+          PIN[0] = S[S_SPOT_X]!; PIN[1] = S[S_SPOT_Z]!; PIN[2] = S[S_AIM_X]!; PIN[3] = S[S_AIM_Z]!; PIN[4] = -1; PIN[5] = foot;
+          PIN[6] = phiDeg;
           takerPoseIn(goalKick, alt);
           if (nearestPlayer(alt.x, alt.z) > near) copyPose(alt, target);
         }
@@ -769,7 +900,10 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     };
     for (let i = 0; i < LT.warmUpIterations; i++) {
       const u = (i % 100) * 0.01;
-      PIN[0] = 20 + u * 15; PIN[1] = u * 20 - 10; PIN[2] = HALF_LENGTH; PIN[3] = 0;
+      // Spots out to the penalty spot and beyond, so every FOV-widening path of the solver is warm.
+      PIN[0] = 20 + u * 28; PIN[1] = u * 20 - 10; PIN[2] = HALF_LENGTH; PIN[3] = 0; PIN[4] = (i & 8) === 0 ? 1 : -1;
+      PIN[5] = (i % 3) - 1;
+      PIN[6] = (i & 1) === 0 ? LT.goalKickPhi : (i & 4) === 0 ? LT.takerPhi : LT.penaltyPhi;
       takerPoseIn((i & 1) === 0, a);
       PIN[0] = (i & 2) === 0 ? 51.9 : -51.9; PIN[1] = (i & 4) === 0 ? 33.4 : -33.4;
       cornerPoseIn(b);
@@ -784,6 +918,13 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
       if (canBlend(a, c)) S[0] = poseAngle(a, b);
       f.interp.ballX = u * 30; f.interp.ballY = 0.5 + u; f.interp.ballZ = u * 5;
       stepLook(f, (i % 50) === 0);
+      // The shot-hold check: a behind-the-taker pose, balls in view, above it, behind the camera, rising or not.
+      PIN[0] = 27 + u * 14; PIN[1] = u * 8 - 4; PIN[2] = HALF_LENGTH; PIN[3] = 0; PIN[4] = 1; PIN[5] = 1; PIN[6] = LT.takerPhi;
+      takerPoseIn(false, c);
+      poseToHin(c);
+      HIN[10] = PIN[0]! + ((i % 7) - 1) * 4; HIN[11] = 0.11 + (i % 5) * 1.5; HIN[12] = PIN[1]!;
+      HIN[13] = 10 + u * 12; HIN[14] = (i % 4) * 4 - 1; HIN[15] = u - 0.5;
+      if (holdLosesBallIn()) S[0] = NDC[0]!;
     }
     S.fill(0);
   }
@@ -842,7 +983,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
       S[S_HOLD_T] = 0;
     } else if (phase === MatchPhase.IN_PLAY && holdArmed) {
       S[S_HOLD_T] = S[S_HOLD_T]! + dt;
-      if (s.ball.shotBy < 0 || S[S_HOLD_T]! > LT.shotHold) holdArmed = false;
+      if (s.ball.shotBy < 0 || S[S_HOLD_T]! > LT.shotHold || (active && holdLosesBall(f))) holdArmed = false;
     } else holdArmed = false;
     // Decision.
     input.phase = phase;
@@ -853,6 +994,12 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     input.skipped = skippedPhase === phase;
     input.holdShot = holdArmed && phase === MatchPhase.IN_PLAY;
     input.ready = !isSetPiecePhase(phase) || phase === MatchPhase.SHOOT_OUT || s.match.restart.ready === 1;
+    // Shoot-out: the main camera for the RESULT, and from the frame a kick in FLIGHT would leave the behind view (a
+    // skied or deflected kick; latched until the next kick's SETUP), as for the free-kick / penalty shot hold.
+    const soSub = phase === MatchPhase.SHOOT_OUT ? s.match.shootout.sub : -1;
+    if (soSub !== ShootoutSub.FLIGHT && soSub !== ShootoutSub.RESULT) soLost = false;
+    else if (soSub === ShootoutSub.FLIGHT && !soLost && active && shot === CineShot.BEHIND_TAKER && holdLosesBall(f)) soLost = true;
+    input.shootoutResult = soSub === ShootoutSub.RESULT || soLost;
     const next = chooseShot(input);
     const readyNow = input.ready === true;
     orbitDir = phase === MatchPhase.FULL_TIME || phase === MatchPhase.POST_MATCH ? -1 : 1;
@@ -868,8 +1015,10 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
       S[S_KEY_Z] = S[S_SPOT_Z]!;
       keySerial = restartSerial;
       keyCuts = link.cuts;
-      // The set-up tick teleports players (D-008): entering a set-piece shot then is always a cut.
-      transition(next, f, input.ready === true && !wasReady);
+      // The set-up tick teleports players (D-008): entering a set-piece shot then is always a cut. So is entering the
+      // shoot-out's behind view (the first kick, or the next kick's SETUP after the RESULT on the main camera: RUL-07
+      // places the kicker, the last kicker and both keepers in that tick).
+      transition(next, f, (input.ready === true && !wasReady) || (phase === MatchPhase.SHOOT_OUT && next === CineShot.BEHIND_TAKER));
     } else {
       S[S_SHOT_T] = S[S_SHOT_T]! + dt;
       if (isReplay(shot)) stepLook(f, false);
@@ -917,6 +1066,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
       estKind = 0;
       skippedPhase = -1;
       holdArmed = false;
+      soLost = false;
       lastPhase = state.match.phase;
       keyCuts = link.cuts;
       wasReady = true;

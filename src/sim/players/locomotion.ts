@@ -84,10 +84,8 @@ export const LOCAL_TUNING = { // TUNING-CR (SIM-04): move into T_PLAYER
   staminaAttrScale: 0.4,
   /** Moving faster than this fraction of jog speed counts as jogging (staminaDrainJog). */
   jogDrainMinFrac: 0.75,
-  /** Stamina rates are per real second at this half length; other half lengths scale them by this / halfMinutes so
-   *  a match tires players the same whatever its length [INT-A: 4-minute halves emptied every player's stamina by
-   *  half-time, so the second half was played at the stamina floor], min. */
-  staminaRefHalfMinutes: 4,
+  /** Stamina rates are per real second at this half length (T_PLAYER.staminaRefHalfMinutes, moved by QF-2), min. */
+  staminaRefHalfMinutes: T_PLAYER.staminaRefHalfMinutes,
   /** ticksToReach: distance at which a point counts as reached (= the ARRIVE stop distance), m. */
   reachRadius: T_PLAYER.arriveStop,
   /** ticksToReach: cos of the angle below which a moving player's turn is modelled. */

@@ -15,7 +15,7 @@ import { initMatch } from '../../src/sim/init';
 import { step } from '../../src/sim/step';
 
 describe('QF-6 CR: the final whistle needs a moment before it can be skipped', () => {
-  it.fails('a SKIP on the 2nd tick of FULL_TIME does not end the match before 90 ticks', () => {
+  it('a SKIP on the 2nd tick of FULL_TIME does not end the match before 90 ticks', () => {
     const cfg = createMatchConfig();
     cfg.halfMinutes = 0.05;
     cfg.seed = 3;

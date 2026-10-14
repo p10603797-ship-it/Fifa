@@ -84,7 +84,7 @@
 import { GOAL_HALF_WIDTH, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PLAYERS_PER_TEAM, TICK_HZ } from '../../contracts/constants';
 import { ActionKind, Foot, SkillMove } from '../../contracts/enums';
 import type { SimState } from '../../contracts/state';
-import { T_DRIBBLE, T_GK, T_PLAYER, T_SKILL } from '../../contracts/tuning';
+import { T_CPU, T_DRIBBLE, T_GK, T_PLAYER, T_SKILL } from '../../contracts/tuning';
 import { dcos, dsin, PI } from '../../sim/core/dmath';
 
 export const LOCAL_TUNING = { // TUNING-CR (TAI-10): move into T_AI as xg* / dribble* / skill* (m, s, m/s, 0..1)
@@ -139,13 +139,14 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-10): move into T_AI as xg* / dri
    *  grows from blockRadius at blockNear m to blockRadiusNear at the shooter, and his efficiency to blockEffNear (a
    *  shot straight through the man in front was rated 85% blocked; the sim blocked 80% of them, the CPU shot into
    *  them anyway), m / 0..1. */
-  blockRadiusNear: 1.1,
-  blockEffNear: 0.95,
+  blockRadiusNear: T_CPU.xgBlockRadiusNear,
+  blockEffNear: T_CPU.xgBlockEffNear,
   /** [QF-2] Blockers are also judged where they will be after this long (their velocity on): the press closes in
    *  during the CPU's aim and power-up (about 0.5 s from decision to contact), s. */
-  blockLook: 0.3,
-  /** [QF-2] shotLaneClear: the ball's radius and a little aim error added to a blocker's reach, m. */
-  laneBallSlack: 0.15,
+  blockLook: T_CPU.xgBlockLook,
+  /** [QF-2] shotLaneClear: extra width (ball radius, aim error) added to a blocker's reach; 0 (0.15 priced too many
+   *  half-open lanes as shut: the blocker reach already covers the ball), m. */
+  laneBallSlack: T_CPU.xgLaneBallSlack,
   // ---- xG: pressure
   /** Pressure 1 at <= pressNear m, 0 at >= pressFar m, the opponent moved on pressLook s first. */
   pressNear: 1.0,
@@ -225,8 +226,8 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-10): move into T_AI as xg* / dri
   knockClear: 4.5,
   /** [QF-2] Knock-on only when the ball's run (knockRun m along the facing: SIM-13 knocks it 7.5-15 m) stays knockEdge m
    *  inside the touchlines and goal lines, m. */
-  knockRun: 14,
-  knockEdge: 2,
+  knockRun: T_CPU.xgKnockRun,
+  knockEdge: T_CPU.xgKnockEdge,
   /** Behind the carrier (drag-back): backProbe m, clearance backClear m. */
   backProbe: 4,
   backClear: 3,

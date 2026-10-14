@@ -276,13 +276,25 @@ function endSetPieceActions(s: SimState): void {
 
 // ================================================================ goals and out of play
 
-/** A goal that may not stand: straight from a throw-in, or an own goal straight from a goal kick or kick-off. */
+/**
+ * A goal that may not stand: straight from a throw-in, or an own goal straight from a restart kick (goal kick,
+ * kick-off, corner, free kick: Laws 13, 16, 17 give the opponents a corner). [QF-1] Free kicks and corners are struck
+ * with pass / shot kinds, so the restart kick is recognised by its tick: play resumed (IN_PLAY from that restart
+ * phase) on the tick its taker struck it, and nobody has touched the ball since (a free kick knocked back into the
+ * kicker's own empty net used to count as an own goal).
+ */
 function noGoalDirect(s: SimState, scoringTeam: number): boolean {
   const b = s.ball;
   if (b.lastKickBy < 0 || b.lastKickBy !== b.lastTouch || b.lastKickTick !== b.lastTouchTick) return false;
   const k = b.lastKickKind;
   if (k === KickKind.THROW_IN) return true;
-  return (k === KickKind.GOAL_KICK || k === KickKind.KICK_OFF) && b.lastKickTeam >= 0 && b.lastKickTeam !== scoringTeam;
+  if (b.lastKickTeam < 0 || b.lastKickTeam === scoringTeam) return false;
+  if (k === KickKind.GOAL_KICK || k === KickKind.KICK_OFF) return true;
+  const m = s.match;
+  const from = m.prevPhase;
+  return m.phase === MatchPhase.IN_PLAY && b.lastKickTick === s.tick - m.phaseT && b.lastKickBy === m.restart.taker &&
+    (from === MatchPhase.FREE_KICK || from === MatchPhase.CORNER || from === MatchPhase.GOAL_KICK ||
+      from === MatchPhase.KICK_OFF);
 }
 
 /** Assist for a goal by `scorer`: the latest teammate touch before the scorer's, within the window, since the
@@ -643,8 +655,11 @@ function phaseTimers(s: SimState, ev: EventSink): void {
   const m = s.match;
   const ph = m.phase;
   if (IS_CUTSCENE[ph] !== 1 || ph === MatchPhase.POST_MATCH) return;
-  // A skip only counts in a phase that was already showing (never cascades through phases in one tick).
-  let due = m.phaseT >= cutsceneLength(s) || (m.phaseT > 0 && skipPressed(s));
+  // A skip only counts in a phase that was already showing (never cascades through phases in one tick). [QF-1, from
+  // QF-6] The final whistle cannot be skipped before T_RULES.fullTimeMinTicks: a SKIP on its 2nd tick ended the match
+  // before an online divergence in the last half second could be repaired (both sims stop at POST_MATCH).
+  const skippable = m.phaseT > 0 && (ph !== MatchPhase.FULL_TIME || m.phaseT >= T_RULES.fullTimeMinTicks);
+  let due = m.phaseT >= cutsceneLength(s) || (skippable && skipPressed(s));
   if (ph === MatchPhase.GOAL || ph === MatchPhase.CELEBRATION || ph === MatchPhase.REPLAY) {
     if (s.tick - m.goalTick >= T_RULES.goalSequenceMaxTicks) due = true;
   }

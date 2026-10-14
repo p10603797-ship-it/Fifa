@@ -138,6 +138,9 @@ export const LOCAL_TUNING = {
   /** Speed caps as a fraction of the player's top speed: holding the line jogs, runs sprint. */
   speedHold: 0.6,
   speedRun: 1.0,
+  /** [QF-2] The box is attacked (box spots filled) with our carrier within this of the goal line anywhere across the
+   *  pitch, not only in the crossing zone (0 = crossing zone only), m. */
+  boxAttackDepth: 30,
   /** Targets stay this far inside the touchlines and goal lines, m. */
   edgeMargin: 1.5,
 } as const; // TUNING-CR
@@ -627,6 +630,16 @@ function anchorInCrossZone(): boolean {
   return G[G_AU]! >= CROSS_ZONE_U && (v < 0 ? -v : v) >= CROSS_ZONE_MIN_Z;
 }
 
+/**
+ * [QF-2] True if our carrier is within boxAttackDepth of the goal line between the crossing zones: the box is attacked
+ * then too (forwards onside on the box spots, midfielders staged at its edge). Before, the box was only filled for a
+ * cross: with the carrier 20-30 m out centrally one teammate on average was in the box and one ahead of the ball, so
+ * the carrier had nobody to play in and dribbled into the block.
+ */
+function anchorInFinalThird(): boolean {
+  return T.boxAttackDepth > 0 && G[G_AU]! >= HALF_LENGTH - T.boxAttackDepth;
+}
+
 /** Cross imminent: our cross in flight, carrier in a cross / lob wind-up, or the ball near the byline. */
 function crossImminent(s: SimState, mode: number): boolean {
   if (mode === M_FLIGHT) return true;
@@ -793,7 +806,7 @@ function plan(s: SimState, team: number, t: TeamState, mode: number): void {
 
   countRest(s, team);
   // 3. Box attack on crosses, else open play.
-  if ((mode === M_OWNED && anchorInCrossZone()) || (mode === M_FLIGHT && ctxCrossFlight === 1)) {
+  if ((mode === M_OWNED && (anchorInCrossZone() || anchorInFinalThird())) || (mode === M_FLIGHT && ctxCrossFlight === 1)) {
     let boxCap = TP.boxRunners > 0 ? TP.boxRunners : T.boxRunnersDefault;
     if (boxCap < cap) boxCap = cap;
     boxRuns(s, team, mode, boxCap - runners);

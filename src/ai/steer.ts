@@ -113,10 +113,10 @@ export const LOCAL_TUNING = {
    *  aims overshootSec x ball speed (at least overshootMin: more than his braking distance at top speed; at most
    *  overshootMax m) beyond his target along the ball's path, so SIM-04's arrival braking does not leave him trailing
    *  1-2 m behind it. m/s, s, m, m. */
-  overshootMinSpeed: 1,
-  overshootSec: 0.6,
-  overshootMin: 3.5,
-  overshootMax: 5,
+  overshootMinSpeed: T_AI.chaseOvershootMinSpeed, // (contracts/tuning.ts T_AI.chaseOvershoot* since QF-2)
+  overshootSec: T_AI.chaseOvershootSec,
+  overshootMin: T_AI.chaseOvershootMin,
+  overshootMax: T_AI.chaseOvershootMax,
 } as const; // TUNING-CR
 
 const LT = LOCAL_TUNING;

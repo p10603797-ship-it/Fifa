@@ -11,7 +11,10 @@ import { initMatch } from '../../src/sim/init';
 const calls: { slot: number; x: number; z: number; speed: number; modeSeen: number; prevTgtX: number }[] = [];
 let implemented = true;
 
-vi.mock('../../src/ai/steer', () => ({
+// [QF-2] The rest of ai/steer stays real: GKP-03 (keeper/sweeper.ts, loaded through the action registry) builds its
+// intercept estimate with createInterceptEstimate at module load, and a mock without it failed to import.
+vi.mock('../../src/ai/steer', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/ai/steer')>()),
   assignChaser: () => undefined,
   executeJobs: () => undefined,
   arrive: (s: SimState, slot: number, x: number, z: number, speed: number) => {

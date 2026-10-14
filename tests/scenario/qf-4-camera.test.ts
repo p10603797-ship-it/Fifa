@@ -16,7 +16,7 @@ import { createMatchConfig, type SimState } from '../../src/contracts/state';
 import { T_CAMERA } from '../../src/contracts/tuning';
 import { radarZoneMargin, touchZoneMargin, touchZones } from '../../src/render/camera/broadcast';
 import { createCinePose, takerPose } from '../../src/render/camera/cinematic';
-import { fillInterp, INTERP_TELEPORT } from '../../src/render/index';
+import { fillInterp, INTERP_TELEPORT, snapTeleports } from '../../src/render/index';
 import { drawnOffsetsOf } from '../../src/render/players/drawn';
 import { createInterpState } from '../../src/render/types';
 import { cloneState } from '../../src/sim/core/clone';
@@ -187,6 +187,37 @@ describe('QF-4 QA-31 set-piece cameras: ball clear of the taker, taker not filli
   });
 });
 
+describe('QF-4 QA-31 mirrored touch controls', () => {
+  it('glitch: ball hidden under touch controls - set-piece shots with mirrored controls (cluster bottom left) at 1180x820 and 19.5:9', () => {
+    const st = createDefaultSettings();
+    st.controls.touch.mirror = true;
+    const Z = touchZones(st, { clusterW: 0, clusterH: 0, stickW: 0, stickH: 0, mirror: false, hudScale: 1 });
+    expect(Z.mirror).toBe(true);
+    const cases: [RestartKind, number, number, boolean][] = [];
+    for (const ex of [1, -1]) for (const ez of [1, -1]) cases.push([RestartKind.CORNER, ex * HALF_LENGTH, ez * HALF_WIDTH, ex > 0]);
+    for (const ex of [1, -1]) cases.push([RestartKind.PENALTY, ex * (HALF_LENGTH - PENALTY_SPOT_DIST), 0, ex > 0]);
+    for (const ex of [1, -1]) for (const z of [-9, 9]) cases.push([RestartKind.GOAL_KICK, ex * (HALF_LENGTH - 5), z, ex < 0]);
+    for (const z of [-20, 0, 20]) cases.push([RestartKind.FREE_KICK, 30, z, true]);
+    for (const [w, h] of [[1180, 820], [1688, 780]] as const) {
+      for (const [kind, x, z, plus] of cases) {
+        const g = createLiveRig({ seed: 7, w, h, settings: st });
+        for (let i = 0; i < 400 && g.s.match.phase !== MatchPhase.IN_PLAY; i++) g.tick();
+        for (let i = 0; i < 20; i++) g.tick();
+        const plusTeam = g.s.teams[0]!.dir > 0 ? 0 : 1;
+        g.award(kind, plus ? plusTeam : 1 - plusTeam, x, z);
+        const r = g.s.match.restart;
+        for (let i = 0; i < 100 && !(r.ready === 1 && r.t >= 80); i++) g.tick();
+        const tag = `${RestartKind[kind]} ${x},${z} ${w}x${h}`;
+        expect(setPieceCamera(g), tag).toBe(true);
+        const b = g.s.ball;
+        const q = toScreen(g.camera, w, h, b.x, b.y, b.z)!;
+        const m = Math.max(T_CAMERA.ballBottomMargin, touchZoneMargin(q.x, w, h, Z), radarZoneMargin(q.x, w, h, Z));
+        expect(q.y <= (1 - m) * h && q.y >= 0.1 * h && q.x >= 0.05 * w && q.x <= 0.95 * w, `${tag} ball ${q.x.toFixed(0)},${q.y.toFixed(0)}`).toBe(true);
+      }
+    }
+  }, 300000);
+});
+
 describe('QF-4 QA-31 nobody fills the set-piece frame', () => {
   it('a player standing at the free-kick camera spot: the shot takes the other side of the ball (no body across the lens)', () => {
     const want = takerPose(30, 8, HALF_LENGTH, 0, false, createCinePose());
@@ -254,13 +285,16 @@ describe('QF-4 QA-31 restart teleports are hidden by the set-piece cut', () => {
     curr.ball.x = prev.ball.x + 30; // ball placed for a restart
     for (const a of [0, 0.25, 0.5, 0.99]) {
       fillInterp(it, prev, curr, a);
+      expect(snapTeleports(it, prev, curr)).toBe(2);
       expect(it.x[3]).toBeCloseTo(curr.players[3]!.x, 4);
       expect(it.x[4]).toBeCloseTo(prev.players[4]!.x + 0.15 * a, 4);
       expect(it.ballX).toBeCloseTo(curr.ball.x, 9);
     }
     // A shot covers ~0.6 m per tick: still interpolated.
     curr.ball.x = prev.ball.x + 0.6;
+    curr.players[3]!.x = prev.players[3]!.x;
     fillInterp(it, prev, curr, 0.5);
+    expect(snapTeleports(it, prev, curr)).toBe(0);
     expect(it.ballX).toBeCloseTo(prev.ball.x + 0.3, 6);
     expect(INTERP_TELEPORT.player).toBeGreaterThan(0.6);
     expect(INTERP_TELEPORT.ball).toBeGreaterThan(1.2);
