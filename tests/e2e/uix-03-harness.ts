@@ -79,7 +79,7 @@ export async function recordNavigation(page: Page): Promise<void> {
     const log: [string, unknown][] = [];
     const go = r.go.bind(r);
     r.go = (id, p) => {
-      let copy: unknown = null;
+      let copy: unknown;
       try {
         copy = p ? JSON.parse(JSON.stringify(p)) : null;
       } catch {
@@ -160,8 +160,7 @@ export async function checkLayout(page: Page): Promise<LayoutReport> {
     for (let i = 0; i < rects.length; i++) {
       for (let j = i + 1; j < rects.length; j++) {
         const a = rects[i]!.r, b = rects[j]!.r;
-        const nested = false;
-        if (!nested && a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5) {
+        if (a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5) {
           overlaps.push(`${rects[i]!.id} x ${rects[j]!.id}`);
         }
       }

@@ -33,28 +33,35 @@ export interface ModeEntry {
   readonly route?: ScreenId;
   /** Action label. */
   readonly action: string;
+  /** What can be set up (panel lines). */
+  readonly features: readonly string[];
 }
 
 export const MODE_ENTRIES: readonly ModeEntry[] = [
   {
     mode: ModeId.KICK_OFF, label: 'Kick-Off', testId: 'mode-kickoff', action: 'Choose teams',
     detail: 'You against the CPU. Pick teams and kits, choose your side, then set difficulty, half length and rules.',
+    features: ['20 clubs, home and away kits', 'Six difficulty levels', 'Halves of 2 to 10 minutes', 'Friendly or cup rules, day or night', 'Offside and fouls on or off'],
   },
   {
     mode: ModeId.FRIEND_LOCAL, label: 'Play a Friend', testId: 'mode-friend', action: 'Same iPad',
     detail: '1v1 with a friend: on this iPad (controller v controller, or touch v controller), or online with a room code.',
+    features: ['One shared camera and pause menu', 'Only the player who paused can resume', 'Online: a 6-character room code'],
   },
   {
     mode: ModeId.SHOOT_OUT, label: 'Shoot-out', testId: 'mode-shootout', action: 'Choose teams',
     detail: 'Straight to penalties. Pick the teams and who takes which side.',
+    features: ['Five kicks each, then sudden death', 'Against the CPU or a friend'],
   },
   {
     mode: ModeId.CUP, label: 'Cup', testId: 'mode-cup', route: 'cup', action: 'Open the Cup',
     detail: 'An 8- or 16-team knockout against bots, for one or two players. Progress saves.',
+    features: ['Other ties play out by ratings', 'Extra time and penalties in every tie'],
   },
   {
     mode: ModeId.PRACTICE, label: 'Practice', testId: 'mode-practice', route: 'practice', action: 'Open Practice',
     detail: 'Free play against a keeper with no clock, set-piece practice and a guided tutorial.',
+    features: ['Free kicks, corners and penalties', 'A tutorial for the device you use'],
   },
 ];
 
@@ -92,12 +99,16 @@ const CSS = `
 .ms-flow li { display: flex; align-items: center; gap: var(--space-2); padding: 6px var(--space-3); border-radius: var(--radius-pill);
   border: 1px solid var(--hairline); color: var(--text-2); font-size: var(--fs-sm); }
 .ms-flow .num { color: var(--text-3); font-size: var(--fs-xs); }
-.ms-actions { margin-top: auto; display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.ms-feats { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.ms-feats li { display: flex; align-items: center; gap: var(--space-3); font-size: var(--fs-sm); color: var(--text-2); }
+.ms-feats li::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--text-3); flex: 0 0 auto; }
+.ms-actions { margin-top: auto; padding-top: var(--space-4); display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .ms-actions .btn { min-width: calc(var(--target) * 3.2); }
 @media (max-height: 560px) {
   .ms-panel { padding: var(--space-4); gap: var(--space-3); }
   .ms-panel h2 { font-size: var(--fs-lg); }
   .ms-detail { font-size: var(--fs-sm); }
+  .ms-feats { display: none; }
 }
 `;
 
@@ -124,7 +135,9 @@ export function createModeSetupScreen(): Screen {
 
       const renderPanel = (): void => {
         const e = current;
-        const parts: Node[] = [h('h2', { text: e.label, testId: 'mode-panel-title' }), h('p', { class: 'ms-detail', text: e.detail })];
+        const feats = h('ul', { class: 'ms-feats' });
+        for (const f of e.features) feats.append(h('li', { text: f }));
+        const parts: Node[] = [h('h2', { text: e.label, testId: 'mode-panel-title' }), h('p', { class: 'ms-detail', text: e.detail }), feats];
         if (isFlowMode(e.mode)) {
           const steps = h('ol', { class: 'ms-flow', attrs: { 'aria-label': 'What follows' } });
           FLOW_STEPS[e.mode as FlowMode].forEach((s, i) => {

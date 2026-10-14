@@ -241,7 +241,7 @@ export function createDeviceRegistry(opts: DeviceRegistryOptions): DotkickDevice
   }
 
   function createBoundPadSource(deviceId: string, human: number, onPause: () => void): InputSource {
-    const src = createPadSource({ key: deviceId, onPause, manager: pads });
+    const src = createPadSource({ key: deviceId, onPause, manager: pads, settings: opts.settings });
     const slot = pads.find(deviceId);
     const connected = slot !== null && slot.connected;
     const b: MutableBinding = { deviceId, human, connected, reportPending: !connected };

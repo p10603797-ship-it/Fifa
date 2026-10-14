@@ -22,3 +22,7 @@ Collected from Wave 1 reports. Each line: area — symptom — proposed owner/fi
 - ai/index.ts: pressSlot/coverSlot stale during restarts (TAI-05 CR).
 - TAI-01 does not read DAT-04 tactics presets (TAI-01 gap 2): decide which shape source wins.
 - Allocation in V8: estimateXg, evalIntercept, ticksToReachAtSpeed, SIM-10 throughLeadPoint allocate 150-1000 B per call (boxing); JSC on iPad likely fine but TAI-09 budget test fails on the runners case.
+- Lead applied: model.ts default driver = GFX-12 createAnimDriver; gfx-07 tests updated; boot focus onMove -> UiSound.MOVE; fnd-04 tests updated for crowd ducking and AudioBuffer fakes.
+- Router back sound (AUD-05 CR 2, optional) and sfx.setCameraX from the renderer (AUD-03) still to wire.
+- tests/unit/fnd-04-review-fixes.test.ts recovery-screen cases fail while PLT-05 rewrites src/ui/screens/recovery.ts — PLT-05 must keep or update those FND-04 expectations.
+- Online crowd perspective: crowd backs home side in online 1v1 (AUD-02 risk).

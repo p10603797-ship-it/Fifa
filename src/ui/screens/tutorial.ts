@@ -12,7 +12,7 @@
  * Every control is a [data-focus] button of at least 60 pt: the screen works by touch alone and by controller alone
  * (focus ring, list order top to bottom then the actions), and Back always works.
  */
-import type { AppContext, FrameInfo, Screen, ScreenParams } from '../../contracts/app';
+import { MenuAction, type AppContext, type FrameInfo, type Screen, type ScreenParams } from '../../contracts/app';
 import { PadFamily, PracticeKind } from '../../contracts/enums';
 import { buildPracticeSetup } from '../../modes/practice';
 import { effectiveFamily } from '../../input/pad/glyphs';
@@ -27,18 +27,23 @@ import {
 
 const CSS = `
 .screen--tutorial { justify-content: flex-start; align-items: stretch; gap: var(--space-4);
-  padding-top: calc(var(--safe-top, 0px) + var(--space-5) + var(--target) + var(--space-3)); }
-.tut-head { display:flex; align-items: flex-end; justify-content: space-between; gap: var(--space-5); flex-wrap: wrap; }
+  padding-top: calc(var(--safe-top, 0px) + var(--space-5)); }
+.tut-head { display:flex; align-items: center; justify-content: space-between; gap: var(--space-5); min-height: var(--target);
+  padding-left: calc(var(--target) * 1.8 + var(--space-4)); }
 .tut-head .ui-title { font-size: var(--fs-xl); }
-.tut-sub { margin: var(--space-1) 0 0; color: var(--text-2); font-size: var(--fs-sm); }
-.tut-progress { font-family: var(--font-num); font-variant-numeric: tabular-nums; color: var(--text-2); font-size: var(--fs-sm); }
+.tut-titles { display:flex; flex-direction:column; min-width: 0; }
+.tut-sub { margin: 2px 0 0; color: var(--text-2); font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tut-tools { display:flex; align-items:center; gap: var(--space-4); flex: none; }
+.tut-tools .seg__label { display:none; }
+.tut-progress { font-family: var(--font-num); font-variant-numeric: tabular-nums; color: var(--text-2); font-size: var(--fs-sm); white-space: nowrap; }
 .tut-progress[data-complete] { color: var(--success); }
 .tut-body { display:grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: var(--space-5); min-height: 0; flex: 1; }
-.tut-list { display:flex; flex-direction:column; gap: var(--space-2); min-height: 0; padding: 2px 4px 2px 2px; }
-.tut-step { appearance:none; -webkit-appearance:none; display:grid; grid-template-columns: 2.4em minmax(0,1fr) auto auto;
+.tut-list { display:flex; flex-direction:column; gap: var(--space-2); min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  touch-action: pan-y; padding: 4px; margin: -4px; }
+.tut-step { appearance:none; -webkit-appearance:none; display:grid; grid-template-columns: 2.4em minmax(0,1fr) auto auto; flex: none;
   align-items:center; gap: var(--space-3); min-height: var(--target); padding: var(--space-2) var(--space-4);
   border-radius: var(--radius); border: var(--line) solid var(--hairline); background: var(--surface-1); color: var(--text-1);
-  font: inherit; text-align: left; cursor: pointer; }
+  font: inherit; text-align: left; cursor: pointer; box-sizing: border-box; }
 .tut-step[data-selected] { border-color: var(--ember); background: var(--ember-tint); }
 .tut-step .ts-idx { font-family: var(--font-num); font-variant-numeric: tabular-nums; color: var(--text-3); font-size: var(--fs-sm); }
 .tut-step .ts-title { font-weight: var(--fw-bold); font-size: var(--fs-md); white-space: nowrap; overflow:hidden; text-overflow: ellipsis; }
@@ -47,17 +52,19 @@ const CSS = `
 .tut-step[data-done] .ts-state { color: var(--success); }
 .tut-step[data-next] .ts-state { color: var(--ember); }
 .tut-detail { display:flex; flex-direction:column; gap: var(--space-4); padding: var(--space-5); border-radius: var(--radius-lg);
-  background: var(--surface-1); border: var(--line) solid var(--hairline); min-height: 0; }
+  background: var(--surface-1); border: var(--line) solid var(--hairline); min-height: 0; overflow-y: auto; }
+.tut-detail-body { display:flex; flex-direction:column; gap: var(--space-3); }
 .tut-detail .td-eyebrow { color: var(--ember); }
 .tut-detail .td-title { margin: 0; font-size: var(--fs-lg); }
 .tut-detail .td-goal { margin: 0; color: var(--text-2); }
-.tut-detail .td-lines { display:flex; flex-direction:column; gap: var(--space-3); font-size: var(--fs-md); }
+.tut-detail .td-lines { display:flex; flex-direction:column; gap: var(--space-3); font-size: var(--fs-md); margin-top: var(--space-2); }
 .tut-actions { display:flex; flex-direction:column; gap: var(--space-3); margin-top: auto; }
 .tut-actions .tut-row { display:flex; gap: var(--space-3); }
-.tut-actions .tut-row > .btn { flex: 1; }
-@media (max-width: 900px), (max-height: 640px) {
-  .tut-body { display:flex; flex-direction:column; overflow-y: auto; touch-action: pan-y; overscroll-behavior: contain; }
-  .tut-list { overflow: visible; }
+.tut-actions .tut-row > .btn { flex: 1; white-space: nowrap; }
+@media (max-width: 900px) {
+  .tut-head { flex-wrap: wrap; }
+  .tut-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-4); }
+  .tut-step .ts-keys { display:none; }
 }
 `;
 
@@ -92,6 +99,7 @@ export function createTutorialScreen(): Screen {
   let ctxRef: AppContext | null = null;
   let detachDots: (() => void) | null = null;
   let unsub: (() => void) | null = null;
+  let offAction: (() => void) | null = null;
   let device: DeviceSpec = { kind: 'touch', family: PadFamily.GENERIC };
   let picked = false;
   let selected = 0;
@@ -228,8 +236,8 @@ export function createTutorialScreen(): Screen {
       progressEl = h('span', { class: 'tut-progress', testId: 'tut-progress' });
       subEl = h('p', { class: 'tut-sub' });
       const head = h('header', { class: 'tut-head' },
-        h('div', {}, h('h1', { class: 'ui-title', text: 'Tutorial', testId: 'tutorial-title' }), subEl),
-        h('div', { class: 'ui-row' }, progressEl, deviceSel.el));
+        h('div', { class: 'tut-titles' }, h('h1', { class: 'ui-title', text: 'Tutorial', testId: 'tutorial-title' }), subEl),
+        h('div', { class: 'tut-tools' }, progressEl, deviceSel.el));
 
       list = h('div', { class: 'tut-list', testId: 'tut-list', attrs: { 'data-focus-group': 'y', role: 'list' } });
       detail = h('div', { class: 'tut-detail-body' });
@@ -243,12 +251,12 @@ export function createTutorialScreen(): Screen {
         if (open2 >= 0) selected = open2;
         renderAll();
       }, { testId: 'tut-skip-step', ctx });
-      const skipAll = createButton('Skip tutorial', () => {
+      const skipAll = createButton('Skip all', () => {
         const c = ctxRef;
         if (!c) return;
         markTutorialDone(c.settings, device.kind);
         c.router.back();
-      }, { testId: 'tut-skip-all', ctx, variant: 'ghost' });
+      }, { testId: 'tut-skip-all', ctx, variant: 'ghost', ariaLabel: 'Skip the tutorial' });
       const reset = createButton('Reset', () => {
         const c = ctxRef;
         if (!c) return;
@@ -260,12 +268,30 @@ export function createTutorialScreen(): Screen {
       const side = h('section', { class: 'tut-detail', testId: 'tut-detail' }, detail, actions);
       root.append(head, h('div', { class: 'tut-body' }, list, side), createBackButton(ctx));
       renderAll();
+      // Controller order: RIGHT from a step goes to Start (not the device tabs above), LEFT from the actions comes
+      // back to the selected step.
+      const nav = ctx.focus as unknown as { current?: HTMLElement | null; ringVisible?: boolean };
+      offAction = ctx.focus.onAction((a) => {
+        const cur = nav.current;
+        if (nav.ringVisible !== true || !cur || !root.contains(cur)) return false;
+        if (a === MenuAction.RIGHT && cur.classList.contains('tut-step') && startBtn) {
+          ctx.focus.focus(startBtn);
+          return true;
+        }
+        if (a === MenuAction.LEFT && (cur === startBtn || cur === skipStep) && rows[selected]) {
+          ctx.focus.focus(rows[selected]!);
+          return true;
+        }
+        return false;
+      });
       // Progress written elsewhere (the coach card) or by another control shows at once.
       unsub = ctx.settings.subscribe(() => renderAll());
     },
     unmount() {
       unsub?.();
       unsub = null;
+      offAction?.();
+      offAction = null;
       detachDots?.();
       detachDots = null;
       ctxRef = null;

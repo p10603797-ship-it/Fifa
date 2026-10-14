@@ -111,6 +111,8 @@ describe('GFX-07 player model: instancing', () => {
     r.model.setMatch!(r.state, CLUBS);
     r.state.players[4]!.fx = 0; r.state.players[4]!.fz = 1; // facing +z
     r.state.attrs[4]!.height = 198;
+    const zero = createPose();
+    r.model.setPoseDriver((_f, sink) => { for (let i = 0; i < NUM_SLOTS; i++) sink.setPose(i, zero); });
     step(r);
     const v = new Vector3();
     for (let i = 0; i < NUM_SLOTS; i++) {
@@ -238,7 +240,9 @@ describe('GFX-07 player model: poses', () => {
       hips.push(r.model.poses[8]![PoseIdx.HIP_L_PITCH]!);
     }
     expect(Math.max(...hips) - Math.min(...hips)).toBeGreaterThan(0.2); // legs swing
-    for (const v of r.model.poses[9]!) expect(v).toBe(0); // still player (stub idle = neutral)
+    const still = r.model.poses[9]!; // still player: real IDLE clip (finite, legs roughly together)
+    for (const v of still) expect(Number.isFinite(v)).toBe(true);
+    expect(Math.abs(still[PoseIdx.HIP_L_PITCH]! - still[PoseIdx.HIP_R_PITCH]!)).toBeLessThan(0.15);
   });
 
   it('the default driver ignores teleports (no stride jump on a restart placement)', () => {

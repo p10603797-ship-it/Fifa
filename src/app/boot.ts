@@ -11,7 +11,7 @@
  * shows the pause menu and never fast-forwards; blur releases every held input; portrait or a too-small window
  * pauses and shows the rotate card; any uncaught error pauses and shows the recovery screen.
  */
-import { MenuAction, type AppContext, type GameRenderer } from '../contracts/app';
+import { MenuAction, UiSound, type AppContext, type GameRenderer } from '../contracts/app';
 import { GAME_NAME, GAME_VERSION } from '../contracts/constants';
 import { CLUBS } from '../data/clubs';
 import { createAudioEngine, type AudioEngineImpl } from '../audio/engine';
@@ -92,7 +92,7 @@ export function boot(): AppHandle {
   const audio = createAudioEngine(settings, {
     onModuleError: (err, where) => diagnostics.log('error', `${where}: ${String(err)}`, err instanceof Error ? err : undefined),
   });
-  const focus = createFocusNavigator();
+  const focus = createFocusNavigator({ onMove: () => audio.playUi(UiSound.MOVE) });
 
   // ctx is assigned before the first navigation; the router reads it lazily.
   let ctx: AppContext | null = null;

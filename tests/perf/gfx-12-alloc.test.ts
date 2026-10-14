@@ -4,7 +4,8 @@
  * allocation whose allocating frame is in src/render/anim/ (mapper, locomotion, actions, contact, poseMath) counts.
  * 22 players run, turn, kick, shoot, tackle, slide, fall, dive, hold the ball, celebrate and teleport, through the full
  * animator (createAnimator().update) and through the stub API the model's default driver uses (mapAnim / advanceCycle
- * / samplePose). Also reports the cost per frame for 22 players.
+ * / samplePose). Also reports the cost per frame for 22 players. Doubles never cross a call boundary on these paths
+ * (module scratch arrays), so V8 does not box them; a long warm-up lets every cold path (action starts) optimise.
  */
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -75,7 +76,7 @@ describe('[GFX-12] animation driver: zero allocation per frame, cost', () => {
       const runFull = (n) => { for (let j = 0; j < n; j++) step(false, bank, smp, pose); };
       const runStub = (n) => { for (let j = 0; j < n; j++) step(true, bank, smp, pose); };
       const measure = async (fn) => {
-        fn(4000);
+        fn(30000); // every path (cold action starts included) optimised before measuring
         globalThis.gc();
         await session.post('HeapProfiler.startSampling', {
           samplingInterval: 64, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,

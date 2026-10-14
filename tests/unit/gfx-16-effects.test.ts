@@ -214,24 +214,21 @@ describe('GFX-16 effects: module', () => {
   it('replays: effect time follows the slow-motion rate; a replay cut resets the trail and detectors', () => {
     const r = makeRig();
     const link = replayPlaybackOf(r.ctx);
-    const p = r.s.players[2]!;
-    p.act = ActionKind.SLIDE_TACKLE; p.vx = 6;
     link.playing = true; link.rate = 0.5;
-    for (let i = 0; i < 60; i++) frame(r);
-    const slow = r.fx.snapshot().particles;
-    const r2 = makeRig();
-    r2.s.players[2]!.act = ActionKind.SLIDE_TACKLE; r2.s.players[2]!.vx = 6;
-    for (let i = 0; i < 60; i++) frame(r2);
-    expect(slow).toBeLessThan(r2.fx.snapshot().particles);
-    // A replayed goal flashes and puffs; a cut while the ball is in the net does not re-trigger.
-    p.act = ActionKind.NONE;
-    r.s.ball.inNet = 0; frame(r);
-    r.s.ball.inNet = 1; r.s.ball.x = 53;
+    // A replayed goal: puff + flash. At half speed the puff outlives its normal lifetime (in real time).
+    r.s.ball.x = 52; r.s.ball.vx = 20; r.s.ball.inNet = 0; frame(r);
+    r.s.ball.x = 53; r.s.ball.inNet = 1;
     frame(r);
     expect(objects(r).flash).toBe(true);
-    for (let i = 0; i < 40; i++) frame(r);
+    const frames = Math.ceil(LOCAL_TUNING.puffLife * 60) + 2;
+    for (let i = 0; i < frames; i++) frame(r);
+    expect(r.fx.snapshot().particles).toBeGreaterThan(0);
+    for (let i = 0; i < frames; i++) frame(r);
+    expect(r.fx.snapshot().particles).toBe(0);
+    // A cut while the ball is in the net does not re-trigger.
     link.cuts++;
     frame(r);
+    expect(r.fx.snapshot().particles).toBe(0);
     expect(objects(r).flash).toBe(false);
     // Trail reset on a cut.
     r.s.ball.inNet = 0; r.s.ball.x = 0;

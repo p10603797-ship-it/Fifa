@@ -82,9 +82,11 @@ const CSS = `
   @keyframes hud-toast-in { from { opacity: 0; transform: translate(-50%, 0); } to { opacity: 1; transform: translate(-50%, 0); } }
 }
 /* Narrow screens: the toast lane moves below the scoreboard row so the two never overlap (hints.ts follows). */
+.hud-toasts.hud-lg .hud-toast { --toast-side: 420px; }
 @media (max-width: ${TOAST_NARROW_PX}px) {
   .hud-toasts { top: calc(var(--safe-top, 0px) + 16px + 40px * var(--hs) + 12px); }
-  .hud-toast { --toast-side: 24px; }
+  /* Clear of the top-right pause button (touch overlay / match screen). */
+  .hud-toast, .hud-toasts.hud-lg .hud-toast { --toast-side: 110px; }
 }
 `;
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AppContext, ScreenId, SettingsStore } from '../../src/contracts/app';
 import { UiSound } from '../../src/contracts/app';
+import { AUDIO_ENGINE_TUNING } from '../../src/audio/engine';
 import { ControllerKind, ModeId, RestartKind } from '../../src/contracts/enums';
 import { createDefaultSettings } from '../../src/contracts/settings';
 import { EventType } from '../../src/contracts/events';
@@ -237,7 +238,8 @@ describe('FND-04 audio engine', () => {
     expect(master!.gain.value).toBe(d.master);
     expect(crowd!.gain.value).toBe(d.crowd);
     engine.setPaused(true);
-    expect(crowd!.gain.value).toBe(0);
+    // AUD-01 brief: the crowd is ducked (not muted) for the pause menu.
+    expect(crowd!.gain.value).toBeCloseTo(d.crowd * AUDIO_ENGINE_TUNING.pauseCrowdDuck, 6);
     expect(effects!.gain.value).toBe(0);
     expect(menus!.gain.value).toBe(d.menus);
     settings.update((s) => { s.audio.menus = 0.2; });

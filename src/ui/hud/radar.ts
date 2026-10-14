@@ -37,7 +37,22 @@ export const RADAR_TUNING = {
   bottom: 16,
   /** Device pixel ratio cap for the canvas backing store. */
   maxDpr: 2,
+  /** The canvas is never taller than this fraction of the viewport height (21:9 screens keep the ball region clear). */
+  maxVh: 0.19,
 } as const;
+
+/**
+ * Radar canvas size (CSS px, whole pixels) for a HUD scale and viewport height: the tuned size times the scale,
+ * shrunk (aspect kept) so its height stays within RADAR_TUNING.maxVh of the viewport. Pure.
+ */
+export function radarCanvasSize(hs: number, viewportH: number, out: { w: number; h: number }): { w: number; h: number } {
+  const T = RADAR_TUNING;
+  let k = hs > 0 ? hs : 1;
+  if (viewportH > 0 && T.height * k > T.maxVh * viewportH) k = (T.maxVh * viewportH) / T.height;
+  out.w = Math.round(T.width * k);
+  out.h = Math.round(T.height * k);
+  return out;
+}
 
 /** Pitch half-length and half-width, m (105 x 68). */
 const HALF_L = 52.5;
@@ -138,6 +153,12 @@ export function createRadar(): HudPart {
   const pt = { x: 0, y: 0 };
   let dpr = 1;
   let hs = 1;
+  const size = { w: 0, h: 0 };
+  let shownW = -1;
+  let shownH = -1;
+  /** Size of the dots and rings relative to the tuned canvas (HUD scale, viewport cap). */
+  let markScale = 1;
+  const onWindowResize = (): void => resize();
   let enabled = true;
   let visible = false;
   let shownHidden: boolean | null = null;
@@ -162,15 +183,22 @@ export function createRadar(): HudPart {
 
   function resize(): void {
     if (!canvas) return;
-    const w = Math.round(RADAR_TUNING.width * hs);
-    const hgt = Math.round(RADAR_TUNING.height * hs);
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 0;
+    radarCanvasSize(hs, vh, size);
+    const w = size.w;
+    const hgt = size.h;
     const r = typeof window !== 'undefined' && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
-    dpr = r > RADAR_TUNING.maxDpr ? RADAR_TUNING.maxDpr : r;
+    const d = r > RADAR_TUNING.maxDpr ? RADAR_TUNING.maxDpr : r;
+    if (w === shownW && hgt === shownH && d === dpr) return;
+    shownW = w;
+    shownH = hgt;
+    dpr = d;
+    markScale = w / RADAR_TUNING.width;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(hgt * dpr);
     canvas.style.width = `${w}px`;
     canvas.style.height = `${hgt}px`;
-    radarLayout(w, hgt, RADAR_TUNING.pad * hs, L);
+    radarLayout(w, hgt, (RADAR_TUNING.pad * w) / RADAR_TUNING.width, L);
     buildPitchLayer();
     dirty = true;
   }
@@ -232,7 +260,7 @@ export function createRadar(): HudPart {
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, L.w, L.h);
     if (pitchLayer) g.drawImage(pitchLayer, 0, 0, L.w, L.h);
-    const dotR = RADAR_TUNING.dotR * hs;
+    const dotR = RADAR_TUNING.dotR * markScale;
     const players = state.players;
     g.lineWidth = 1;
     for (let i = 0; i < players.length; i++) {
@@ -253,7 +281,7 @@ export function createRadar(): HudPart {
       }
     }
     // Controlled players (humans only): a ring in the player colour.
-    g.lineWidth = 2 * hs;
+    g.lineWidth = 2 * markScale;
     for (let c = 0; c < 2; c++) {
       const ctrl = state.ctrl[c];
       if (!ctrl || ctrl.kind !== ControllerKind.HUMAN || ctrl.slot < 0 || ctrl.slot >= players.length) continue;
@@ -261,7 +289,7 @@ export function createRadar(): HudPart {
       pitchToRadar(L, p.x, p.z, pt);
       g.strokeStyle = c === 0 ? p1 : p2;
       g.beginPath();
-      g.arc(pt.x, pt.y, RADAR_TUNING.ringR * hs, 0, Math.PI * 2);
+      g.arc(pt.x, pt.y, RADAR_TUNING.ringR * markScale, 0, Math.PI * 2);
       g.stroke();
     }
     const b = state.ball;
@@ -270,7 +298,7 @@ export function createRadar(): HudPart {
     g.fillStyle = '#ffffff';
     g.strokeStyle = 'rgba(7,7,13,.95)';
     g.beginPath();
-    g.arc(pt.x, pt.y, RADAR_TUNING.ballR * hs, 0, Math.PI * 2);
+    g.arc(pt.x, pt.y, RADAR_TUNING.ballR * markScale, 0, Math.PI * 2);
     g.fill();
     g.stroke();
     canvas.__radarDraws = (canvas.__radarDraws ?? 0) + 1;
@@ -299,6 +327,7 @@ export function createRadar(): HudPart {
         resize();
       });
       if (!pitchLayer) resize();
+      if (typeof window !== 'undefined') window.addEventListener('resize', onWindowResize);
       unPref = onRadarPref((on) => {
         enabled = on;
         syncHidden();
@@ -348,6 +377,8 @@ export function createRadar(): HudPart {
       unPref?.();
       unSettings?.();
       unbindLarge = unPref = unSettings = null;
+      if (typeof window !== 'undefined') window.removeEventListener('resize', onWindowResize);
+      shownW = shownH = -1;
       root?.remove();
       root = canvas = null;
       g = null;

@@ -40,7 +40,7 @@ import { KitPattern, type QualityTier } from '../../contracts/enums';
 import { AnimId, createPose, POSE_SIZE, type Pose } from '../../contracts/render';
 import type { Settings } from '../../contracts/settings';
 import type { ReadonlySimState } from '../../contracts/state';
-import { advanceCycle, createAnimBank, createAnimSample, mapAnim, poseFnFor, samplePose } from '../anim/mapper';
+import { advanceCycle, createAnimBank, createAnimDriver, createAnimSample, mapAnim, poseFnFor, samplePose } from '../anim/mapper';
 import { createKitNumberAtlas, resolveMatchKits, type KitNumberAtlas, type MatchKits } from '../kits';
 import { getTierParams } from '../quality';
 import type { RenderContext, RenderFrame, RenderModule } from '../types';
@@ -534,7 +534,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
   let highContrast = ctx.settings.accessibility.highContrastKits;
   let matchOn = false;
 
-  const defaultDriver = createDefaultPoseDriver();
+  const defaultDriver = createAnimDriver();
   let driver: PoseDriver = defaultDriver;
   let ownAtlas: NumberAtlas | null = null;
   let externalAtlas: NumberAtlas | null = null;

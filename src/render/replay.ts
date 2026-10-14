@@ -56,6 +56,11 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-16 replay)
   maxBudget: 12,
   /** Longest real frame time a playback step advances, s (tab switches, hitches). */
   maxStep: 0.1,
+  /** setMatch warm-up: short goal sequences (frames of play, then frames of playback) run off screen while loading. */
+  warmUpCycles: 8,
+  warmUpFrames: 90,
+  /** setMatch warm-up iterations of the event-time paths (live sync, planning, start / stop). */
+  warmUpIterations: 600,
 } as const;
 
 const LT = LOCAL_TUNING;
@@ -121,6 +126,14 @@ export interface ReplayRing {
   readInto(k: number, out: SimState): void;
   /** Interpolate snapshots k0 -> k1 by a (0..1) into out: positions, velocities, facing (re-normalised), ball. */
   interpInto(k0: number, k1: number, a: number, out: InterpState): void;
+  /**
+   * Allocation-free call forms for per-frame code (a double crossing a call boundary can box): write the argument into
+   * arg[0] and call floorIndexArg() (time) or interpIntoArg(k0, k1, out) (blend). tickInto(k) writes tickAt(k) to arg[1].
+   */
+  readonly arg: Float64Array;
+  floorIndexArg(): number;
+  interpIntoArg(k0: number, k1: number, out: InterpState): void;
+  tickInto(k: number): void;
   /** One recorded player value: field = index into PLAYER_FIELDS. */
   playerField(k: number, slot: number, field: number): number;
   /** One recorded ball value: field = index into BALL_FIELDS. */
@@ -131,13 +144,16 @@ export function createReplayRing(capacity: number = REPLAY_CAPACITY): ReplayRing
   const cap = Math.max(2, capacity | 0);
   const data = new Float32Array(cap * SNAPSHOT_FLOATS);
   const ticks = new Float64Array(cap);
+  const arg = new Float64Array(2);
   // Small integers only (Smis never allocate).
   let start = 0;
   let count = 0;
 
   const slot = (k: number): number => (start + k) % cap;
 
-  function floorIndex(t: number): number {
+  /** Largest k whose tick <= arg[0]; -1 when older than every snapshot. */
+  function floorIndexArg(): number {
+    const t = arg[0]!;
     if (count === 0 || !(t >= ticks[start]!)) return -1;
     let lo = 0, hi = count - 1;
     while (lo < hi) {
@@ -148,10 +164,35 @@ export function createReplayRing(capacity: number = REPLAY_CAPACITY): ReplayRing
     return lo;
   }
 
+  /** Interpolate k0 -> k1 by arg[0] into out. Explicit field code: no keyed access, no boxing. */
+  function interpIntoArg(k0: number, k1: number, out: InterpState): void {
+    const a = arg[0]!;
+    const t = a < 0 ? 0 : a > 1 ? 1 : a;
+    const o0 = slot(k0) * SNAPSHOT_FLOATS, o1 = slot(k1) * SNAPSHOT_FLOATS;
+    for (let i = 0; i < NUM_SLOTS; i++) {
+      const p0 = o0 + i * PF, p1 = o1 + i * PF;
+      out.x[i] = data[p0 + P_X]! + (data[p1 + P_X]! - data[p0 + P_X]!) * t;
+      out.z[i] = data[p0 + P_Z]! + (data[p1 + P_Z]! - data[p0 + P_Z]!) * t;
+      out.vx[i] = data[p0 + P_VX]! + (data[p1 + P_VX]! - data[p0 + P_VX]!) * t;
+      out.vz[i] = data[p0 + P_VZ]! + (data[p1 + P_VZ]! - data[p0 + P_VZ]!) * t;
+      let fx = data[p0 + P_FX]! + (data[p1 + P_FX]! - data[p0 + P_FX]!) * t;
+      let fz = data[p0 + P_FZ]! + (data[p1 + P_FZ]! - data[p0 + P_FZ]!) * t;
+      const l = Math.sqrt(fx * fx + fz * fz);
+      if (l > 1e-4) { fx /= l; fz /= l; } else { fx = data[p1 + P_FX]!; fz = data[p1 + P_FZ]!; }
+      out.fx[i] = fx;
+      out.fz[i] = fz;
+    }
+    const b0 = o0 + NUM_SLOTS * PF, b1 = o1 + NUM_SLOTS * PF;
+    out.ballX = data[b0 + B_X]! + (data[b1 + B_X]! - data[b0 + B_X]!) * t;
+    out.ballY = data[b0 + B_Y]! + (data[b1 + B_Y]! - data[b0 + B_Y]!) * t;
+    out.ballZ = data[b0 + B_Z]! + (data[b1 + B_Z]! - data[b0 + B_Z]!) * t;
+  }
+
   return {
     capacity: cap,
     get count() { return count; },
     bytes: data.byteLength + ticks.byteLength,
+    arg,
     clear() { start = 0; count = 0; },
     record(s: ReadonlySimState): boolean {
       const t = s.tick;
@@ -166,17 +207,34 @@ export function createReplayRing(capacity: number = REPLAY_CAPACITY): ReplayRing
       else { w = start; start = (start + 1) % cap; }
       ticks[w] = t;
       let o = w * SNAPSHOT_FLOATS;
+      // Explicit fields in PLAYER_FIELDS / BALL_FIELDS order (keyed access would box doubles).
       for (let i = 0; i < NUM_SLOTS; i++) {
-        const p = s.players[i] as unknown as Readonly<Record<string, number>>;
-        for (let f = 0; f < PF; f++) data[o + f] = p[PLAYER_FIELDS[f]!]!;
+        const p = s.players[i]!;
+        data[o + 0] = p.x; data[o + 1] = p.z; data[o + 2] = p.vx; data[o + 3] = p.vz; data[o + 4] = p.fx;
+        data[o + 5] = p.fz; data[o + 6] = p.act; data[o + 7] = p.actT; data[o + 8] = p.actDur;
+        data[o + 9] = p.actContact; data[o + 10] = p.actDone; data[o + 11] = p.actKick; data[o + 12] = p.actSkill;
+        data[o + 13] = p.actPower; data[o + 14] = p.actCharging; data[o + 15] = p.actX; data[o + 16] = p.actZ;
+        data[o + 17] = p.actDirX; data[o + 18] = p.actDirZ; data[o + 19] = p.actSlot; data[o + 20] = p.actCurve;
+        data[o + 21] = p.actA; data[o + 22] = p.actB; data[o + 23] = p.sprinting; data[o + 24] = p.jockeying;
+        data[o + 25] = p.shielding; data[o + 26] = p.stunT; data[o + 27] = p.active; data[o + 28] = p.ctrl;
+        data[o + 29] = p.lookAt; data[o + 30] = p.lookX; data[o + 31] = p.lookZ; data[o + 32] = p.moveMode;
         o += PF;
       }
-      const b = s.ball as unknown as Readonly<Record<string, number>>;
-      for (let f = 0; f < BF; f++) data[o + f] = b[BALL_FIELDS[f]!]!;
+      const b = s.ball;
+      data[o + 0] = b.x; data[o + 1] = b.y; data[o + 2] = b.z; data[o + 3] = b.vx; data[o + 4] = b.vy;
+      data[o + 5] = b.vz; data[o + 6] = b.sx; data[o + 7] = b.sy; data[o + 8] = b.sz; data[o + 9] = b.grounded;
+      data[o + 10] = b.bounces; data[o + 11] = b.owner; data[o + 12] = b.heldBy; data[o + 13] = b.lastTouch;
+      data[o + 14] = b.lastTouchTeam; data[o + 15] = b.lastKickBy; data[o + 16] = b.lastKickKind;
+      data[o + 17] = b.passTarget; data[o + 18] = b.shotBy; data[o + 19] = b.inNet;
       return true;
     },
     tickAt(k: number): number { return ticks[slot(k)]!; },
-    floorIndex,
+    tickInto(k: number): void { arg[1] = ticks[slot(k)]!; },
+    floorIndex(t: number): number {
+      arg[0] = t;
+      return floorIndexArg();
+    },
+    floorIndexArg,
     contiguousFrom(gapTicks: number): number {
       let k = count - 1;
       while (k > 0 && ticks[slot(k)]! - ticks[slot(k - 1)]! <= gapTicks) k--;
@@ -187,34 +245,31 @@ export function createReplayRing(capacity: number = REPLAY_CAPACITY): ReplayRing
       out.tick = ticks[w]!;
       let o = w * SNAPSHOT_FLOATS;
       for (let i = 0; i < NUM_SLOTS; i++) {
-        const p = out.players[i] as unknown as Record<string, number>;
-        for (let f = 0; f < PF; f++) p[PLAYER_FIELDS[f]!] = data[o + f]!;
+        const p = out.players[i]!;
+        p.x = data[o + 0]!; p.z = data[o + 1]!; p.vx = data[o + 2]!; p.vz = data[o + 3]!; p.fx = data[o + 4]!;
+        p.fz = data[o + 5]!; p.act = data[o + 6]!; p.actT = data[o + 7]!; p.actDur = data[o + 8]!;
+        p.actContact = data[o + 9]!; p.actDone = data[o + 10]!; p.actKick = data[o + 11]!;
+        p.actSkill = data[o + 12]!; p.actPower = data[o + 13]!; p.actCharging = data[o + 14]!;
+        p.actX = data[o + 15]!; p.actZ = data[o + 16]!; p.actDirX = data[o + 17]!; p.actDirZ = data[o + 18]!;
+        p.actSlot = data[o + 19]!; p.actCurve = data[o + 20]!; p.actA = data[o + 21]!; p.actB = data[o + 22]!;
+        p.sprinting = data[o + 23]!; p.jockeying = data[o + 24]!; p.shielding = data[o + 25]!;
+        p.stunT = data[o + 26]!; p.active = data[o + 27]!; p.ctrl = data[o + 28]!; p.lookAt = data[o + 29]!;
+        p.lookX = data[o + 30]!; p.lookZ = data[o + 31]!; p.moveMode = data[o + 32]!;
         o += PF;
       }
-      const b = out.ball as unknown as Record<string, number>;
-      for (let f = 0; f < BF; f++) b[BALL_FIELDS[f]!] = data[o + f]!;
+      const b = out.ball;
+      b.x = data[o + 0]!; b.y = data[o + 1]!; b.z = data[o + 2]!; b.vx = data[o + 3]!; b.vy = data[o + 4]!;
+      b.vz = data[o + 5]!; b.sx = data[o + 6]!; b.sy = data[o + 7]!; b.sz = data[o + 8]!;
+      b.grounded = data[o + 9]!; b.bounces = data[o + 10]!; b.owner = data[o + 11]!; b.heldBy = data[o + 12]!;
+      b.lastTouch = data[o + 13]!; b.lastTouchTeam = data[o + 14]!; b.lastKickBy = data[o + 15]!;
+      b.lastKickKind = data[o + 16]!; b.passTarget = data[o + 17]!; b.shotBy = data[o + 18]!;
+      b.inNet = data[o + 19]!;
     },
     interpInto(k0: number, k1: number, a: number, out: InterpState): void {
-      const t = a < 0 ? 0 : a > 1 ? 1 : a;
-      const o0 = slot(k0) * SNAPSHOT_FLOATS, o1 = slot(k1) * SNAPSHOT_FLOATS;
-      for (let i = 0; i < NUM_SLOTS; i++) {
-        const p0 = o0 + i * PF, p1 = o1 + i * PF;
-        out.x[i] = data[p0 + P_X]! + (data[p1 + P_X]! - data[p0 + P_X]!) * t;
-        out.z[i] = data[p0 + P_Z]! + (data[p1 + P_Z]! - data[p0 + P_Z]!) * t;
-        out.vx[i] = data[p0 + P_VX]! + (data[p1 + P_VX]! - data[p0 + P_VX]!) * t;
-        out.vz[i] = data[p0 + P_VZ]! + (data[p1 + P_VZ]! - data[p0 + P_VZ]!) * t;
-        let fx = data[p0 + P_FX]! + (data[p1 + P_FX]! - data[p0 + P_FX]!) * t;
-        let fz = data[p0 + P_FZ]! + (data[p1 + P_FZ]! - data[p0 + P_FZ]!) * t;
-        const l = Math.sqrt(fx * fx + fz * fz);
-        if (l > 1e-4) { fx /= l; fz /= l; } else { fx = data[p1 + P_FX]!; fz = data[p1 + P_FZ]!; }
-        out.fx[i] = fx;
-        out.fz[i] = fz;
-      }
-      const b0 = o0 + NUM_SLOTS * PF, b1 = o1 + NUM_SLOTS * PF;
-      out.ballX = data[b0 + B_X]! + (data[b1 + B_X]! - data[b0 + B_X]!) * t;
-      out.ballY = data[b0 + B_Y]! + (data[b1 + B_Y]! - data[b0 + B_Y]!) * t;
-      out.ballZ = data[b0 + B_Z]! + (data[b1 + B_Z]! - data[b0 + B_Z]!) * t;
+      arg[0] = a;
+      interpIntoArg(k0, k1, out);
     },
+    interpIntoArg,
     playerField(k: number, s: number, field: number): number {
       return data[slot(k) * SNAPSHOT_FLOATS + s * PF + field]!;
     },
@@ -256,9 +311,27 @@ export interface ReplayPlan {
   wall: number;
 }
 
+// Classes (own hidden classes): literals with common keys share maps whose fields may hold objects elsewhere, and a
+// double stored into such a field is boxed.
+class Segment implements ReplaySegment {
+  from = 0.5;
+  to = 0.5;
+  angle: ReplayAngle = ReplayAngle.SIDE;
+  wall = 0.5;
+}
+
+class Plan implements ReplayPlan {
+  count = 0;
+  readonly seg: readonly [ReplaySegment, ReplaySegment] = [new Segment(), new Segment()];
+  goal = 0.5;
+  slowFrom = 0.5;
+  slowTo = 0.5;
+  slowRate = 0.5;
+  wall = 0.5;
+}
+
 export function createReplayPlan(): ReplayPlan {
-  const seg = (): ReplaySegment => ({ from: 0, to: 0, angle: ReplayAngle.SIDE, wall: 0 });
-  return { count: 0, seg: [seg(), seg()], goal: 0, slowFrom: 0, slowTo: 0, slowRate: 1, wall: 0 };
+  return new Plan();
 }
 
 /** Playback rate (content per real time) at content tick c. */
@@ -355,13 +428,26 @@ export interface ReplayPlayback {
   duration: number;
 }
 
+class Playback implements ReplayPlayback {
+  playing = false;
+  angle: ReplayAngle = ReplayAngle.SIDE;
+  segment = 0;
+  cuts = 0;
+  goalEnd = 1;
+  goalZ = 0.5;
+  rate = 1.5;
+  elapsed = 0.5;
+  duration = 0.5;
+  constructor() { this.goalZ = 0; this.rate = 1; this.elapsed = 0; this.duration = 0; }
+}
+
 const LINKS = new WeakMap<RenderContext, ReplayPlayback>();
 
 /** The replay playback facts of a renderer context (created on first use; never allocates afterwards). */
 export function replayPlaybackOf(ctx: RenderContext): ReplayPlayback {
   let l = LINKS.get(ctx);
   if (!l) {
-    l = { playing: false, angle: ReplayAngle.SIDE, segment: 0, cuts: 0, goalEnd: 1, goalZ: 0, rate: 1, elapsed: 0, duration: 0 };
+    l = new Playback();
     LINKS.set(ctx, l);
   }
   return l;
@@ -412,6 +498,39 @@ function copyArray(d: unknown[], s: readonly unknown[]): void {
   }
 }
 
+/**
+ * Copy the live facts a replayed frame keeps from the live state (explicit fields: no keyed access, no allocation):
+ * match phase and goal (the live REPLAY phase hides the on-pitch aids), teams (direction, kit, keeper, score),
+ * player identity, the attributes the model reads, controller slots. The recorded fields overwrite the rest per frame.
+ */
+function syncLive(d: SimState, s: ReadonlySimState): void {
+  const dm = d.match, sm = s.match;
+  dm.phase = sm.phase; dm.prevPhase = sm.prevPhase; dm.phaseT = sm.phaseT; dm.period = sm.period;
+  dm.clockRunning = sm.clockRunning; dm.kickoffTeam = sm.kickoffTeam; dm.goalTeam = sm.goalTeam;
+  dm.goalScorer = sm.goalScorer; dm.goalAssist = sm.goalAssist; dm.goalOwn = sm.goalOwn; dm.goalTick = sm.goalTick;
+  const dr = dm.restart, sr = sm.restart;
+  dr.kind = sr.kind; dr.team = sr.team; dr.x = sr.x; dr.z = sr.z; dr.taker = sr.taker; dr.ready = sr.ready; dr.taken = sr.taken;
+  for (let t = 0; t < 2; t++) {
+    const dt = d.teams[t]!, st = s.teams[t]!;
+    dt.dir = st.dir; dt.clubIdx = st.clubIdx; dt.kit = st.kit; dt.goals = st.goals; dt.onPitch = st.onPitch;
+    dt.keeperSlot = st.keeperSlot; dt.formation = st.formation;
+  }
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    const dp = d.players[i]!, sp = s.players[i]!;
+    dp.team = sp.team; dp.slot = sp.slot; dp.rosterIdx = sp.rosterIdx; dp.formIdx = sp.formIdx; dp.role = sp.role;
+    dp.isKeeper = sp.isKeeper; dp.yellow = sp.yellow;
+    const da = d.attrs[i]!, sa = s.attrs[i]!;
+    da.shirt = sa.shirt; da.height = sa.height; da.foot = sa.foot; da.skillMoves = sa.skillMoves;
+    da.topSpeed = sa.topSpeed;
+  }
+  for (let c = 0; c < d.ctrl.length && c < s.ctrl.length; c++) {
+    const dc = d.ctrl[c]!, sc = s.ctrl[c]!;
+    dc.kind = sc.kind; dc.side = sc.side; dc.slot = sc.slot; dc.receiver = -1; dc.nextSwitch = -1; dc.powerBtn = 0; dc.power = 0;
+  }
+  d.config = s.config as unknown as MatchConfig;
+  d.squads = s.squads as unknown as PlayerData[][];
+}
+
 // Playback numbers (doubles live in a Float64Array: no boxing per frame).
 const N_C = 0, N_ELAPSED = 1;
 
@@ -431,6 +550,7 @@ export function createReplay(ctx: RenderContext): ReplayModule {
   let lastGoalTick = -1;
   let livePhase: number = MatchPhase.PRE_MATCH;
 
+  /** Shadow states for a match (allocated here, never per frame) holding a full copy of the state. */
   function buildShadows(state: ReadonlySimState): void {
     const cfg = state.config as unknown as MatchConfig;
     const squads = state.squads as unknown as PlayerData[][];
@@ -438,6 +558,8 @@ export function createReplay(ctx: RenderContext): ReplayModule {
       shadowA = createSimState(cfg, squads);
       shadowB = createSimState(cfg, squads);
     }
+    copyPlain(shadowA as unknown as Record<string, unknown>, state as unknown as Record<string, unknown>);
+    copyPlain(shadowB as unknown as Record<string, unknown>, state as unknown as Record<string, unknown>);
   }
 
   function stop(): void {
@@ -508,8 +630,7 @@ export function createReplay(ctx: RenderContext): ReplayModule {
     const ms = f.frame.dtMs;
     const dt = f.frame.paused || !(ms > 0) ? 0 : Math.min(LT.maxStep, ms / 1000);
     let c = N[N_C]!;
-    const rate = replayRateAt(plan, c);
-    c += dt * TICK_HZ * rate;
+    c += dt * TICK_HZ * (c >= plan.slowFrom && c < plan.slowTo ? plan.slowRate : 1);
     N[N_ELAPSED] = N[N_ELAPSED]! + dt;
     const seg = plan.seg[segIdx]!;
     if (c >= seg.to) {
@@ -523,41 +644,93 @@ export function createReplay(ctx: RenderContext): ReplayModule {
       } else c = seg.to;
     }
     N[N_C] = c;
-    link.rate = replayRateAt(plan, c);
+    link.rate = c >= plan.slowFrom && c < plan.slowTo ? plan.slowRate : 1;
     link.elapsed = N[N_ELAPSED]!;
   }
 
   /** Point the frame at the recorded state around the playback time. */
   function substitute(f: RenderFrame): void {
+    const arg = ring.arg;
     const c = N[N_C]!;
-    let k0 = ring.floorIndex(c);
+    arg[0] = c;
+    let k0 = ring.floorIndexArg();
     if (k0 < 0) k0 = 0;
     const k1 = k0 + 1 < ring.count ? k0 + 1 : k0;
-    const t0 = ring.tickAt(k0), t1 = ring.tickAt(k1);
+    ring.tickInto(k0);
+    const t0 = arg[1]!;
+    ring.tickInto(k1);
+    const t1 = arg[1]!;
     const a = t1 > t0 ? Math.max(0, Math.min(1, (c - t0) / (t1 - t0))) : 1;
     const sa = shadowA!, sb = shadowB!;
     ring.readInto(k0, sa);
     ring.readInto(k1, sb);
-    ring.interpInto(k0, k1, a, f.interp);
+    arg[0] = a;
+    ring.interpIntoArg(k0, k1, f.interp);
     f.prev = sa;
     f.curr = sb;
     f.alpha = a;
   }
 
-  /** Exercise recording and playback once (setMatch) so the first real replay never hitches. */
+  /**
+   * Warm-up (setMatch, off screen, a few ms while loading): drive the real entry points (update in recording and in
+   * playback, start, stop) on a private copy of the state for LOCAL_TUNING.warmUpCycles short goal sequences, so the
+   * JIT has optimised the whole path before the first real replay (no hitch, no allocation); then clear everything.
+   */
   function warmPaths(state: ReadonlySimState): void {
-    const sa = shadowA!;
-    copyPlain(sa as unknown as Record<string, unknown>, state as unknown as Record<string, unknown>);
-    copyPlain(shadowB as unknown as Record<string, unknown>, state as unknown as Record<string, unknown>);
+    const ws = createSimState(state.config as unknown as MatchConfig, state.squads as unknown as PlayerData[][]);
+    copyPlain(ws as unknown as Record<string, unknown>, state as unknown as Record<string, unknown>);
     const frame: RenderFrame = {
-      prev: sa, curr: sa, alpha: 1, frame: { nowMs: 0, dtMs: 16, frame: 0, ticks: 1, paused: false }, interp: createInterpState(),
+      prev: ws, curr: ws, alpha: 1, frame: { nowMs: 0, dtMs: 1000 / 60, frame: 0, ticks: 1, paused: false }, interp: createInterpState(),
     };
-    for (let i = 0; i < 3; i++) { sa.tick = i; ring.record(sa); }
-    planReplay(1, 0, 2, 1, plan);
-    N[N_C] = 0.5;
-    substitute(frame);
+    const it = frame.interp;
+    ws.tick = 0;
+    for (let c = 0; c < LT.warmUpCycles; c++) {
+      for (let i = 0; i < LT.warmUpFrames; i++) {
+        ws.tick++;
+        ws.match.phase = MatchPhase.IN_PLAY;
+        const x = -30 + i * 0.25 + c * 0.5;
+        ws.ball.x = x; ws.ball.y = 0.11 + (i % 30) * 0.03; ws.ball.z = 2.5;
+        for (let p = 0; p < NUM_SLOTS; p++) {
+          const pl = ws.players[p]!;
+          pl.x = x - 10 + p * 0.75; pl.z = (p % 7) * 2.5 - 7.5; pl.vx = 3.5; pl.actT = i;
+          it.x[p] = pl.x; it.z[p] = pl.z; it.vx[p] = 3.5; it.vz[p] = 0.5; it.fx[p] = 1; it.fz[p] = 0;
+        }
+        it.ballX = x; it.ballY = ws.ball.y; it.ballZ = 2.5;
+        frame.prev = ws; frame.curr = ws; frame.alpha = 1;
+        module.update(frame);
+      }
+      ws.match.goalTick = ws.tick - 10;
+      ws.match.phase = MatchPhase.REPLAY;
+      livePhase = MatchPhase.REPLAY;
+      lastGoalTick = ws.match.goalTick;
+      start(1 + (c % 3) * 0.5);
+      for (let i = 0; i < LT.warmUpFrames; i++) {
+        ws.tick++;
+        frame.prev = ws; frame.curr = ws; frame.alpha = 1;
+        module.update(frame);
+      }
+      stop();
+    }
+    // The event-time paths (live sync, planning, start / stop) run once per replay: exercise them directly as well.
+    ring.clear();
+    livePhase = MatchPhase.IN_PLAY;
+    for (let i = 0; i < LT.warmUpIterations; i++) {
+      syncLive(shadowA!, ws);
+      syncLive(shadowB!, ws);
+      ws.tick = i;
+      ring.record(ws);
+      if (i >= 8 && (i & 3) === 0) {
+        lastGoalTick = i - 3;
+        if (start(1 + (i % 5) * 0.5)) {
+          for (let k = 0; k < 4; k++) { advance(frame); substitute(frame); }
+          stop();
+        }
+      }
+    }
     ring.clear();
     plan.count = 0;
+    segIdx = 0;
+    synced = false;
   }
 
   const module: ReplayModule = {
@@ -569,10 +742,11 @@ export function createReplay(ctx: RenderContext): ReplayModule {
     setMatch(state: ReadonlySimState) {
       stop();
       ring.clear();
-      lastGoalTick = -1;
-      livePhase = state.match.phase;
       buildShadows(state);
       warmPaths(state);
+      buildShadows(state);
+      lastGoalTick = -1;
+      livePhase = state.match.phase;
     },
     update(f: RenderFrame) {
       const live = f.curr;
@@ -590,8 +764,8 @@ export function createReplay(ctx: RenderContext): ReplayModule {
       }
       if (!shadowA) buildShadows(live);
       if (!synced) {
-        copyPlain(shadowA as unknown as Record<string, unknown>, live as unknown as Record<string, unknown>);
-        copyPlain(shadowB as unknown as Record<string, unknown>, live as unknown as Record<string, unknown>);
+        syncLive(shadowA!, live);
+        syncLive(shadowB!, live);
         synced = true;
       }
       advance(f);

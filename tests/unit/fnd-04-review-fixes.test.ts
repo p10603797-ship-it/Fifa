@@ -404,7 +404,7 @@ function fakeAudio() {
     /** 'run' resolves and runs, 'refuse' resolves still suspended, 'hang' never settles, 'reject' rejects. */
     mode: 'run' as 'run' | 'refuse' | 'hang' | 'reject',
     createGain: () => ({ gain: { value: 1, setTargetAtTime() {} }, connect() {}, disconnect() {} }),
-    createBuffer: () => ({}),
+    createBuffer: (ch: number, len: number, sr: number) => ({ numberOfChannels: ch, length: len, sampleRate: sr, duration: len / sr, getChannelData: () => new Float32Array(len) }),
     createBufferSource: () => ({ buffer: null, connect() {}, start() {} }),
     resume: vi.fn(() => {
       if (ac.mode === 'hang') return new Promise<void>(() => undefined);

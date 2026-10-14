@@ -1,7 +1,10 @@
 {
+  "id": "./",
   "name": "DotKick",
   "short_name": "DotKick",
-  "description": "An original 11-a-side football game for iPad.",
+  "description": "An original 11-a-side football game for iPad. Plays offline after the first load.",
+  "lang": "en",
+  "dir": "ltr",
   "start_url": "./",
   "scope": "./",
   "display": "fullscreen",
@@ -9,9 +12,11 @@
   "orientation": "landscape",
   "background_color": "#07070D",
   "theme_color": "#07070D",
+  "categories": ["games", "sports"],
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/apple-touch-icon-180.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
   ]
 }

@@ -14,7 +14,7 @@
  * value (selector, slider, toggle) or move along a segmented row, Confirm on Start starts; Back goes back.
  */
 import type { AppContext, MatchSetup, Screen, ScreenParams } from '../../contracts/app';
-import { UiSound } from '../../contracts/app';
+import { MenuAction, UiSound } from '../../contracts/app';
 import { CameraType, ControllerKind, Difficulty, ModeId } from '../../contracts/enums';
 import type { Settings } from '../../contracts/settings';
 import type { MatchConfig } from '../../contracts/state';
@@ -160,6 +160,8 @@ const CSS = `
 @media (max-height: 640px) {
   .mset-fixture { padding: var(--space-2) var(--space-4); }
   .mset-team img { width: 32px; height: 32px; }
+  .mset-name { display: none; }
+  .mset-team-text { flex-direction: row; align-items: baseline; gap: var(--space-3); }
   .mset-grid { gap: var(--space-2) var(--space-5); }
   .mset-col { gap: var(--space-2); }
   .mset-note { display: none; }
@@ -179,6 +181,7 @@ function whoPlays(c: MatchConfig, side: number): HTMLElement {
 
 export function createMatchSettingsScreen(): Screen {
   let detachDots: (() => void) | null = null;
+  let cleanup: (() => void) | null = null;
   return {
     id: 'match-settings',
     mount(root: HTMLElement, ctx: AppContext, params: ScreenParams) {
@@ -220,19 +223,24 @@ export function createMatchSettingsScreen(): Screen {
       };
       const fixture = h('section', { class: 'mset-fixture', testId: 'mset-fixture', attrs: { 'aria-label': 'Fixture' } }, team(0), h('span', { class: 'mset-vs', text: 'v' }), team(1));
 
-      // ---- controls
+      // ---- controls (rows in reading order: left column, then right column)
       const left = h('div', { class: 'mset-col' });
       const right = h('div', { class: 'mset-col' });
+      const rows: HTMLElement[] = [];
+      const addRow = (col: HTMLElement, el: HTMLElement): void => {
+        rows.push(el);
+        col.append(el);
+      };
       if (hasCpuSide(config)) {
-        left.append(createSelector('Difficulty', DIFFICULTY_OPTIONS.map((o) => ({ value: o.value, label: o.label })), opts.difficulty, (v) => {
+        addRow(left, createSelector('Difficulty', DIFFICULTY_OPTIONS.map((o) => ({ value: o.value, label: o.label })), opts.difficulty, (v) => {
           opts.difficulty = v;
         }, { testId: 'mset-difficulty', ctx, hint: 'How good the CPU is' }).el);
       }
       if (!shootout) {
-        left.append(createSlider('Half length', opts.halfMinutes, (v) => {
+        addRow(left, createSlider('Half length', opts.halfMinutes, (v) => {
           opts.halfMinutes = v;
         }, { min: HALF_MIN, max: HALF_MAX, step: 1, testId: 'mset-half', ctx, format: (v) => `${v} min` }).el);
-        left.append(createSegmented('Rules', [
+        addRow(left, createSegmented('Rules', [
           { value: 'friendly', label: 'Friendly', testId: 'mset-rules-friendly' },
           { value: 'cup', label: 'Cup', testId: 'mset-rules-cup' },
         ], opts.cupRules ? 'cup' : 'friendly', (v) => {
@@ -240,24 +248,24 @@ export function createMatchSettingsScreen(): Screen {
         }, { testId: 'mset-rules', ctx }).el);
         left.append(h('p', { class: 'mset-note', text: 'Cup: extra time, then penalties if still level.' }));
       }
-      left.append(createSegmented('Time of day', [
+      addRow(left, createSegmented('Time of day', [
         { value: 'day', label: 'Day', testId: 'mset-day' },
         { value: 'night', label: 'Night', testId: 'mset-night' },
       ], opts.night ? 'night' : 'day', (v) => {
         opts.night = v === 'night';
       }, { testId: 'mset-time', ctx }).el);
       if (!shootout) {
-        right.append(createToggle('Offside', opts.offside, (v) => {
+        addRow(right, createToggle('Offside', opts.offside, (v) => {
           opts.offside = v;
         }, { testId: 'mset-offside', ctx }).el);
-        right.append(createToggle('Fouls and cards', opts.fouls, (v) => {
+        addRow(right, createToggle('Fouls and cards', opts.fouls, (v) => {
           opts.fouls = v;
         }, { testId: 'mset-fouls', ctx }).el);
-        right.append(createToggle('Goal replays', opts.replays, (v) => {
+        addRow(right, createToggle('Goal replays', opts.replays, (v) => {
           opts.replays = v;
         }, { testId: 'mset-replays', ctx }).el);
       }
-      right.append(createSegmented('Camera', CAMERA_OPTIONS.map((o) => ({ value: o.value, label: o.label, testId: `mset-camera-${o.value}` })), opts.camera, (v) => {
+      addRow(right, createSegmented('Camera', CAMERA_OPTIONS.map((o) => ({ value: o.value, label: o.label, testId: `mset-camera-${o.value}` })), opts.camera, (v) => {
         opts.camera = v;
       }, { testId: 'mset-camera', ctx }).el);
 
@@ -282,6 +290,30 @@ export function createMatchSettingsScreen(): Screen {
         testId: 'settings-start', variant: 'primary', ctx, sound: UiSound.START, autofocus: true,
       });
 
+      // Controller / keyboard: Up / Down walk the rows in reading order (left column, then right column), since
+      // Left / Right belong to the controls (adjust a value, move along a segmented row). Start sits above row 1.
+      const nav = ctx.focus as unknown as { current?: HTMLElement | null; ringVisible?: boolean };
+      const target = (row: HTMLElement): HTMLElement =>
+        row.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]') ?? row.querySelector<HTMLElement>('[data-focus]') ?? row;
+      const offAction = ctx.focus.onAction((a) => {
+        if ((a !== MenuAction.UP && a !== MenuAction.DOWN) || nav.ringVisible !== true) return false;
+        const cur = nav.current;
+        if (!cur || !root.contains(cur)) return false;
+        const i = rows.findIndex((r) => r === cur || r.contains(cur));
+        let next: HTMLElement | null;
+        if (i < 0) {
+          if (cur !== startBtn || a !== MenuAction.DOWN || rows.length === 0) return false;
+          next = target(rows[0]!);
+        } else if (a === MenuAction.DOWN) {
+          next = i + 1 < rows.length ? target(rows[i + 1]!) : null;
+        } else {
+          next = i > 0 ? target(rows[i - 1]!) : startBtn;
+        }
+        if (next) ctx.focus.focus(next);
+        return true;
+      });
+      cleanup = offAction;
+
       root.append(
         createFlowTop({
           ctx, title: 'Match settings', eyebrow: MODE_LABELS[mode], testId: 'match-settings-title',
@@ -292,6 +324,8 @@ export function createMatchSettingsScreen(): Screen {
       );
     },
     unmount() {
+      cleanup?.();
+      cleanup = null;
       detachDots?.();
       detachDots = null;
     },

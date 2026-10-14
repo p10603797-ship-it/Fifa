@@ -54,8 +54,9 @@ test.describe('UIX-05 mode setup, match settings and loading', () => {
     await expect(page.getByTestId('mset-who-away')).toHaveText('CPU');
 
     // Difficulty: Professional -> World Class -> Legend (tap the row).
-    await page.getByTestId('mset-difficulty').tap();
-    await page.getByTestId('mset-difficulty').tap();
+    const inc = page.getByTestId('mset-difficulty').locator('[data-adjust="inc"]');
+    await inc.tap();
+    await inc.tap();
     await expect(page.getByTestId('mset-difficulty')).toHaveAttribute('aria-label', /Legend/);
     // Half length 7 min: tap the track at 5/8.
     const track = await page.getByTestId('mset-half').locator('.sld__track').boundingBox();
@@ -125,28 +126,25 @@ test.describe('UIX-05 mode setup, match settings and loading', () => {
     await padTap(page, PAD.A); // Continue has the focus
     await expect.poll(() => route(page)).toBe('match-settings');
     await expect.poll(() => focused(page)).toBe('settings-start');
-    const rightCol = ['mset-offside', 'mset-fouls', 'mset-replays', 'settings-start'];
-    await walkTo(page, 'mset-half', async () => {
-      const f = (await focused(page)) ?? '';
-      await padTap(page, rightCol.includes(f) || f.startsWith('mset-camera') ? PAD.LEFT : PAD.DOWN);
-    });
+    // Down walks the rows in reading order: difficulty, half length, rules, time of day, then the right column.
+    await padTap(page, PAD.DOWN);
+    await expect.poll(() => focused(page)).toBe('mset-difficulty');
+    await padTap(page, PAD.DOWN);
+    await expect.poll(() => focused(page)).toBe('mset-half');
     await padTap(page, PAD.RIGHT);
     await padTap(page, PAD.RIGHT);
     await expect(page.getByTestId('mset-half')).toHaveAttribute('aria-valuenow', '6');
-    await walkTo(page, 'mset-rules-cup', async () => {
-      const f = (await focused(page)) ?? '';
-      await padTap(page, f === 'mset-rules-friendly' ? PAD.RIGHT : PAD.DOWN);
-    });
+    await padTap(page, PAD.DOWN);
+    await expect.poll(() => focused(page)).toBe('mset-rules-friendly');
+    await padTap(page, PAD.RIGHT);
+    await expect.poll(() => focused(page)).toBe('mset-rules-cup');
     await padTap(page, PAD.A);
-    await walkTo(page, 'mset-night', async () => {
-      const f = (await focused(page)) ?? '';
-      await padTap(page, f === 'mset-day' ? PAD.RIGHT : PAD.DOWN);
-    });
+    await padTap(page, PAD.DOWN);
+    await expect.poll(() => focused(page)).toBe('mset-day');
+    await padTap(page, PAD.RIGHT);
     await padTap(page, PAD.A);
-    await walkTo(page, 'mset-offside', async () => {
-      const f = (await focused(page)) ?? '';
-      await padTap(page, f.startsWith('mset-fouls') || f.startsWith('mset-replays') || f.startsWith('mset-camera') ? PAD.UP : PAD.RIGHT);
-    });
+    await padTap(page, PAD.DOWN);
+    await expect.poll(() => focused(page)).toBe('mset-offside');
     await padTap(page, PAD.LEFT); // a toggle: Left = off
     await expect(page.getByTestId('mset-offside')).toHaveAttribute('aria-checked', 'false');
     await shot(page, 'uix-05-match-settings-pad');

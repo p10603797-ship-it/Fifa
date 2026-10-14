@@ -65,6 +65,12 @@ const CSS = `
 .hud-hint .hh-progress > i { display:block; height: 100%; background: var(--ember); transform-origin: 0 50%; transform: scaleX(0); }
 .hud-hint[data-kind="done"] .hh-eyebrow { color: var(--success); }
 .hud-hint[data-kind="tutorial"] { border-color: rgba(255,107,53,.35); }
+/* Short screens (21:9): the lines flow in rows so the card stays shallow, clear of the ball's usual region. */
+@media (max-height: 600px) {
+  .hud-hint .hh-lines { flex-direction: row; flex-wrap: wrap; column-gap: calc(18px * var(--hs)); row-gap: calc(6px * var(--hs)); }
+  .hud-hint { max-width: min(calc(760px * var(--hs)), calc(100vw - 48px)); padding-top: calc(9px * var(--hs)); padding-bottom: calc(9px * var(--hs)); }
+  .hud-hint .hh-head { margin-bottom: calc(6px * var(--hs)); }
+}
 @media (max-width: ${TOAST_NARROW_PX}px) {
   .hud-hints { top: calc(var(--safe-top, 0px) + 16px + 40px * var(--hs) + 12px + ${TOAST_LANE_PX}px * var(--hs) + 10px); }
 }

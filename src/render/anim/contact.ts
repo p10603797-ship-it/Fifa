@@ -19,10 +19,10 @@
  * Allocation-free per call; clips are built once at module load.
  */
 
-import { AnimId, type Pose, type PoseFn } from '../../contracts/render';
+import { AnimId, type Pose } from '../../contracts/render';
 import type { PoseTable } from '../types';
-import { keeperReadyPose } from './locomotion';
-import { ANKLE_Y, createClip, evalClip, groundFoot, mirrorPose, type Clip, type KeySpec } from './poseMath';
+import { keeperReadyPose, LOCOMOTION_IMPLS, poseFnOf, PP, type PoseImpl } from './locomotion';
+import { ANKLE_Y, createClip, EVA, evalClipS, groundFoot, mirrorPose, type Clip, type KeySpec } from './poseMath';
 
 const AY = ANKLE_Y;
 type Ik = readonly [number, number, number, number];
@@ -315,15 +315,19 @@ const DEJECTION = createClip([
 
 // ============================================================ table
 
-function plain(clip: Clip): PoseFn {
-  return (out: Pose, t: number): void => {
-    evalClip(clip, t, out);
+/** Clip as an allocation-free entry point (phase in PP[0]). */
+function plain(clip: Clip): PoseImpl {
+  return (out: Pose): void => {
+    EVA[0] = PP[0]!;
+    evalClipS(clip, out);
   };
 }
 
-function mirrored(clip: Clip): PoseFn {
-  return (out: Pose, t: number): void => {
-    evalClip(clip, t, out);
+/** Right-side clip mirrored (left dives). */
+function mirrored(clip: Clip): PoseImpl {
+  return (out: Pose): void => {
+    EVA[0] = PP[0]!;
+    evalClipS(clip, out);
     mirrorPose(out);
   };
 }
@@ -373,13 +377,14 @@ export function celebrationAnim(variant: number): AnimId {
   return v === 1 ? AnimId.CELEBRATE_2 : v === 2 ? AnimId.CELEBRATE_3 : AnimId.CELEBRATE_1;
 }
 
-export const CONTACT_POSES: PoseTable = {
+/** Allocation-free entry points (parameters in locomotion PP) by AnimId. */
+export const CONTACT_IMPLS: Partial<Record<AnimId, PoseImpl>> = {
   [AnimId.STAND_TACKLE]: plain(STAND_TACKLE),
   [AnimId.SLIDE]: plain(SLIDE),
   [AnimId.GET_UP]: plain(GET_UP),
   [AnimId.STUMBLE]: plain(STUMBLE),
   [AnimId.FALL]: plain(FALL),
-  [AnimId.KEEPER_READY]: keeperReadyPose,
+  [AnimId.KEEPER_READY]: LOCOMOTION_IMPLS[AnimId.KEEPER_READY]!,
   [AnimId.DIVE_LOW_L]: mirrored(DIVE_LOW),
   [AnimId.DIVE_LOW_R]: plain(DIVE_LOW),
   [AnimId.DIVE_MID_L]: mirrored(DIVE_MID),
@@ -395,3 +400,9 @@ export const CONTACT_POSES: PoseTable = {
   [AnimId.CELEBRATE_3]: plain(CELEBRATE_3),
   [AnimId.DEJECTION]: plain(DEJECTION),
 };
+
+export const CONTACT_POSES: PoseTable = {};
+for (const k of Object.keys(CONTACT_IMPLS)) {
+  const id = Number(k) as AnimId;
+  CONTACT_POSES[id] = id === AnimId.KEEPER_READY ? keeperReadyPose : poseFnOf(CONTACT_IMPLS[id]!);
+}

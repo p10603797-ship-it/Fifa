@@ -20,12 +20,17 @@ import { HUD_LARGE_SCALE, HUD_SHARED_CSS, bindLargerHud } from './hudShared';
 
 /** Presentation constants (UI, not gameplay; no TUNING-CR needed). */
 export const POWER_BAR_TUNING = {
-  /** Height above the ground the bar anchors to (just over a player's head), m. */
+  /** Height above the ground the bar anchors to: the tip of the renderer's overhead marker (render/markers.ts MARKER_Y), m. */
   anchorY: 2.25,
-  /** Bar size, CSS px at HUD scale 1, and the gap between the anchor point and the bar's bottom edge. */
+  /** The overhead marker's world size and its on-screen clamp (render/markers.ts markerWorld / markerMinPx / markerMaxPx):
+   *  the bar sits above the marker so the two never overlap. */
+  markerWorld: 0.8,
+  markerMinPx: 20,
+  markerMaxPx: 40,
+  /** Bar size, CSS px at HUD scale 1, and the gap above the marker. */
   width: 64,
   height: 8,
-  lift: 10,
+  lift: 6,
   /** Keep the bar this far inside the viewport edges, CSS px. */
   edge: 8,
   /** Fill resolution (one write per step). */
@@ -137,9 +142,17 @@ export function createPowerBar(): HudPart {
           setOn(b, false);
           continue;
         }
+        // Clear the renderer's overhead marker: its projected size, clamped like the renderer clamps it.
+        const ax = scr.x;
+        const ay = scr.y;
+        let markerPx: number = T.markerMinPx;
+        if (projector.pitchToScreen(p.x, T.anchorY + T.markerWorld, p.z, scr) && Number.isFinite(scr.y)) {
+          const m = ay - scr.y;
+          markerPx = m < T.markerMinPx ? T.markerMinPx : m > T.markerMaxPx ? T.markerMaxPx : m;
+        }
         const vw = typeof window !== 'undefined' ? window.innerWidth : 1180;
         const vh = typeof window !== 'undefined' ? window.innerHeight : 820;
-        powerBarPosition(scr.x, scr.y, vw, vh, T.width * hs, T.height * hs, T.lift * hs, T.edge, pos);
+        powerBarPosition(ax, ay, vw, vh, T.width * hs, T.height * hs, markerPx + T.lift * hs, T.edge, pos);
         if (pos.x !== b.x || pos.y !== b.y) {
           b.x = pos.x;
           b.y = pos.y;

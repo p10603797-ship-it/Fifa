@@ -11,7 +11,9 @@
  *    layering over locomotion, short cross-fades on clip changes (per-joint pose lerp, smoothstep weight), then
  *    sink.setPose. Allocation-free per frame.
  *  - The Wave 0 stub API kept for the model's default driver: mapAnim / advanceCycle / samplePose / poseFnFor with
- *    AnimSample / AnimBank. Same mapping, no blending, action phase without the alpha term.
+ *    AnimSample / AnimBank. Same mapping; when called per slot in that order with a bank from createAnimBank it also
+ *    keeps hysteresis / foot memory and cross-fades clip changes (timed in sim ticks); no alpha term in the action
+ *    phase and no turn lean (no frame time / yaw rate in that API). Prefer createAnimDriver.
  *
  * ACTION PHASE (actionPhase): u = p.actT + alpha (interpolated action time; the frame that shows the ball still at the
  * foot is the one where u = actContact, because the sim launches and moves the ball on the contact tick). The clip
@@ -37,12 +39,13 @@ import { ActionKind, KickKind, MatchPhase } from '../../contracts/enums';
 import { AnimId, createPose, POSE_SIZE, type Pose, type PoseFn } from '../../contracts/render';
 import type { ReadonlySimState } from '../../contracts/state';
 import type { RenderFrame } from '../types';
-import { ACTION_CONTACT, ACTION_HOLD, ACTION_POSES } from './actions';
-import { celebrationAnim, CONTACT_CONTACT, CONTACT_POSES, diveAnim } from './contact';
+import { ACTION_CONTACT, ACTION_HOLD, ACTION_IMPLS, ACTION_POSES } from './actions';
+import { celebrationAnim, CONTACT_CONTACT, CONTACT_IMPLS, CONTACT_POSES, diveAnim } from './contact';
 import {
-  applyBreath, applyTurnLean, isLocomotion, LOCOMOTION_POSES, LOWER_BODY, neutralPose, strideLengthFor, turnLeanAngle,
+  applyBreathS, applyTurnLeanS, BRA, isLocomotion, LOCOMOTION_IMPLS, LOCOMOTION_POSES, LOCOMOTION_TUNING, LOWER_BODY,
+  neutralPose, PP, SLEN, strideLengthForS, TLA, type PoseImpl,
 } from './locomotion';
-import { smooth01, smoothRange, TAU, wrap01 } from './poseMath';
+import { TAU } from './poseMath';
 
 const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
   /** Idle below / locomotion above these speeds (m/s, hysteresis). */
@@ -107,11 +110,49 @@ export interface AnimBank {
   anim: Uint8Array;
   /** Blend weight toward the current clip, 0..1. */
   blend: Float32Array;
+  /**
+   * Internal: cross-fade / hysteresis state used when the bank drives the stub path (advanceCycle -> mapAnim ->
+   * samplePose per slot, the model's default driver). Created by createAnimBank; treat as opaque.
+   */
+  readonly stub?: unknown;
 }
 
 export function createAnimBank(): AnimBank {
-  return { cycle: new Float32Array(NUM_SLOTS), anim: new Uint8Array(NUM_SLOTS), blend: new Float32Array(NUM_SLOTS).fill(1) };
+  return {
+    cycle: new Float32Array(NUM_SLOTS), anim: new Uint8Array(NUM_SLOTS), blend: new Float32Array(NUM_SLOTS).fill(1),
+    stub: createStubState(),
+  };
 }
+
+/** Stub-path blending state (one per bank). */
+interface StubState {
+  mem: SlotMemory;
+  last: Pose[];
+  from: Pose[];
+  layer: Pose;
+  startTick: Float64Array;
+  dur: Float32Array;
+  seen: Uint8Array;
+}
+
+function createStubState(): StubState {
+  const last: Pose[] = [], from: Pose[] = [];
+  for (let i = 0; i < NUM_SLOTS; i++) { last.push(createPose()); from.push(createPose()); }
+  return {
+    mem: createSlotMemory(), last, from, layer: createPose(), startTick: new Float64Array(NUM_SLOTS),
+    dur: new Float32Array(NUM_SLOTS), seen: new Uint8Array(NUM_SLOTS),
+  };
+}
+
+/**
+ * Stub-path pairing: the bank / slot of the last advanceCycle, then what mapAnim saw for that slot (consumed by the
+ * next samplePose). The model's default driver calls advanceCycle, mapAnim and samplePose per slot in that order;
+ * any other order simply skips the blending (plain clip poses).
+ */
+const STUB_CUR = {
+  bank: null as AnimBank | null, slot: -1, mapped: -1, tick: 0, prevAct: 0, prevActT: 0, act: 0, actT: 0, contact: -1,
+  done: 0, kick: 0,
+};
 
 /** Stride length per full cycle (m) at a jog (stub fallback; the cycle uses locomotion.strideLengthFor). */
 export const STRIDE_LENGTH = 2.6;
@@ -125,16 +166,27 @@ const STUB_ANIM = new Uint8Array(NUM_SLOTS);
  * the slot's locomotion clip at its speed (as last seen by mapAnim). Teleport filtering is the caller's job.
  */
 export function advanceCycle(bank: AnimBank, slot: number, distance: number): void {
-  if (!(slot >= 0 && slot < NUM_SLOTS)) return;
-  const d = distance > 0 && distance < 1e3 ? distance : 0;
-  const stride = strideLengthFor(STUB_ANIM[slot] as AnimId, STUB_SPEED[slot]!);
-  bank.cycle[slot] = wrapCycle(bank.cycle[slot]! + (d / stride) * TAU);
+  // Tiny wrapper (inlined into the caller, so the double never crosses a call boundary); the work is in the S form.
+  STUB_ARGS[0] = distance;
+  advanceCycleS(bank, slot);
 }
 
-function wrapCycle(c: number): number {
-  if (!(c === c)) return 0;
+/** Stub API arguments: [0] advanceCycle distance, [1] mapAnim speed. */
+const STUB_ARGS = new Float64Array(2);
+
+function advanceCycleS(bank: AnimBank, slot: number): void {
+  const distance = STUB_ARGS[0]!;
+  if (!(slot >= 0 && slot < NUM_SLOTS)) return;
+  STUB_CUR.bank = bank;
+  STUB_CUR.slot = slot;
+  STUB_CUR.mapped = -1;
+  const d = distance > 0 && distance < 1e3 ? distance : 0;
+  SLEN[0] = STUB_SPEED[slot]!;
+  strideLengthForS(STUB_ANIM[slot] as AnimId);
+  let c = bank.cycle[slot]! + (d / SLEN[1]!) * TAU;
+  if (!(c === c)) c = 0;
   if (c >= TAU || c < 0) c -= TAU * Math.floor(c / TAU);
-  return c >= TAU ? 0 : c;
+  bank.cycle[slot] = c >= TAU ? 0 : c;
 }
 
 // ============================================================ clip choice
@@ -219,18 +271,31 @@ for (let i = 0; i <= AnimId.STRAFE; i++) {
  * kick = 1 for foot kicks / headers / volleys (charging and pending-contact rules apply).
  */
 export function actionPhase(u: number, contact: number, dur: number, cf: number, kick: number, done: number, charging: number, hold: number): number {
-  if (!(dur > 0)) return 0;
-  if (!(u > 0)) u = 0;
-  if (contact < 0 || cf < 0) return u >= dur ? 1 : u / dur;
-  if (kick === 1 && done === 0) {
-    if (charging === 1 && hold >= 0) return contact > 0 ? hold * (u < contact ? u / contact : 1) : hold;
-    if (u >= contact) return cf;
+  APA[0] = u; APA[1] = contact; APA[2] = dur; APA[3] = cf; APA[4] = kick; APA[5] = done; APA[6] = charging; APA[7] = hold;
+  actionPhaseS();
+  return APA[8]!;
+}
+
+/** actionPhase with its arguments in APA[0..7] and the result in APA[8] (allocation-free internal form). */
+const APA = new Float64Array(9);
+function actionPhaseS(): void {
+  let u = APA[0]!;
+  const contact = APA[1]!, dur = APA[2]!, cf = APA[3]!, kick = APA[4]!, done = APA[5]!, charging = APA[6]!, hold = APA[7]!;
+  let t: number;
+  if (!(dur > 0)) t = 0;
+  else {
+    if (!(u > 0)) u = 0;
+    if (contact < 0 || cf < 0) t = u >= dur ? 1 : u / dur;
+    else if (kick === 1 && done === 0 && charging === 1 && hold >= 0) t = contact > 0 ? hold * (u < contact ? u / contact : 1) : hold;
+    else if (kick === 1 && done === 0 && u >= contact) t = cf;
+    else if (u <= contact) t = contact > 0 ? cf * (u / contact) : cf;
+    else {
+      const rest = dur - contact;
+      if (!(rest > 0)) t = 1;
+      else { const k = (u - contact) / rest; t = cf + (1 - cf) * (k < 1 ? k : 1); }
+    }
   }
-  if (u <= contact) return contact > 0 ? cf * (u / contact) : cf;
-  const rest = dur - contact;
-  if (!(rest > 0)) return 1;
-  const k = (u - contact) / rest;
-  return cf + (1 - cf) * (k < 1 ? k : 1);
+  APA[8] = t;
 }
 
 /** Clips that are upper-body actions layered over the locomotion legs while the player moves. */
@@ -251,31 +316,47 @@ interface SlotMemory {
   actT: Float32Array;
 }
 
-/**
- * Per-slot inputs beyond the sim state for chooseClip (module scratch, filled by the caller): interpolated velocity
- * and facing, alpha, yaw rate, breathing phase.
- */
-const IN = {
-  vx: 0, vz: 0, fx: 1, fz: 0, alpha: 0, yawRate: 0, breath: 0,
-};
+function createSlotMemory(): SlotMemory {
+  return {
+    idle: new Uint8Array(NUM_SLOTS), strafe: new Uint8Array(NUM_SLOTS), lean: new Uint8Array(NUM_SLOTS),
+    foot: new Uint8Array(NUM_SLOTS).fill(255), act: new Uint8Array(NUM_SLOTS), actT: new Float32Array(NUM_SLOTS),
+  };
+}
 
-/** Extra outputs of chooseClip: locomotion clip under the action (for layering / stride), layer weight, flags. */
+/**
+ * Per-slot inputs beyond the sim state for chooseClip (typed scratch filled by the caller: doubles never cross a call
+ * boundary): interpolated velocity and facing, alpha, yaw rate, breathing phase, speed.
+ */
+const IN = new Float64Array(8);
+const IN_VX = 0, IN_VZ = 1, IN_FX = 2, IN_FZ = 3, IN_ALPHA = 4, IN_YAW = 5, IN_BREATH = 6, IN_SPEED = 7;
+
+/** Extra outputs of chooseClip (integers). */
 const OUTX = {
   /** Locomotion clip whose stride drives the cycle (and that is layered under upper-body clips). */
   loco: AnimId.JOG as AnimId,
-  /** Movement direction relative to the facing (fraction of a turn). */
-  dir: 0,
   /** 1 when the clip is a full-body action (no turn lean / locomotion legs). */
   action: 0,
   /** 1 for foot kicks, headers and volleys (contact timing rules). */
   kick: 0,
-  /** Lower-body locomotion weight under an upper-body clip (0..1). */
-  layer: 0,
-  /** Breathing weight (0..1). */
-  breathW: 0,
-  /** Turn lean (rad) to add (0 for TURN_LEAN, whose pose function applies it itself). */
-  lean: 0,
 };
+/** Extra outputs of chooseClip (doubles): movement direction, lower-body layer weight, breathing weight, turn lean. */
+const OUTF = new Float64Array(4);
+const OF_DIR = 0, OF_LAYER = 1, OF_BREATH = 2, OF_LEAN = 3;
+
+/** Turn lean (rad) for the slot's speed and yaw rate in IN, written to OUTF[OF_LEAN] (half = 1: half of it). */
+function leanFromIn(half: number): void {
+  let a = Math.atan((IN[IN_SPEED]! * IN[IN_YAW]!) / LOCOMOTION_TUNING.gravity);
+  const m = LOCOMOTION_TUNING.maxTurnLean;
+  a = a < -m ? -m : a > m ? m : a;
+  OUTF[OF_LEAN] = half === 1 ? a * 0.5 : a;
+}
+
+/** Breathing weight for a standing clip: 1 standing, fading out between 0.3 and 1.5 m/s (OUTF[OF_BREATH]). */
+function breathFromIn(): void {
+  let x = (IN[IN_SPEED]! - 0.3) / 1.2;
+  x = x < 0 ? 0 : x > 1 ? 1 : x;
+  OUTF[OF_BREATH] = 1 - x * x * (3 - 2 * x);
+}
 
 function preferredFoot(s: ReadonlySimState, slot: number): number {
   return s.attrs[slot]!.foot === 1 ? 1 : 0;
@@ -294,16 +375,18 @@ function chooseFoot(s: ReadonlySimState, slot: number): number {
   return pref;
 }
 
-/** Locomotion clip from speed, flags and movement direction (writes OUTX.loco / dir). */
-function chooseLocomotion(s: ReadonlySimState, slot: number, speed: number, mem: SlotMemory | null): AnimId {
+/** Locomotion clip from speed, flags and movement direction (writes OUTF[OF_DIR]). */
+function chooseLocomotion(s: ReadonlySimState, slot: number, mem: SlotMemory | null): AnimId {
   const p = s.players[slot]!;
-  const fx = IN.fx, fz = IN.fz;
-  const fwd = IN.vx * fx + IN.vz * fz;
-  const lat = IN.vx * -fz + IN.vz * fx;
+  const speed = IN[IN_SPEED]!;
+  const fx = IN[IN_FX]!, fz = IN[IN_FZ]!;
+  const fwd = IN[IN_VX]! * fx + IN[IN_VZ]! * fz;
+  const lat = IN[IN_VX]! * -fz + IN[IN_VZ]! * fx;
+  const ang = Math.atan2(lat, fwd);
   let dir = 0;
-  if (speed > 1e-3) dir = wrap01(Math.atan2(lat, fwd) / TAU);
-  OUTX.dir = dir;
-  const off = Math.abs(Math.atan2(lat, fwd));
+  if (speed > 1e-3) { dir = ang / TAU; dir -= Math.floor(dir); if (dir >= 1) dir = 0; }
+  OUTF[OF_DIR] = dir;
+  const off = ang < 0 ? -ang : ang;
   // Idle (hysteresis).
   const wasIdle = mem ? mem.idle[slot] === 1 : speed < LOCAL_TUNING.idleEnter;
   const idle = wasIdle ? speed < LOCAL_TUNING.idleLeave : speed < LOCAL_TUNING.idleEnter;
@@ -326,29 +409,29 @@ function chooseLocomotion(s: ReadonlySimState, slot: number, speed: number, mem:
 }
 
 /**
- * Choose the clip and its parameters for `slot` (writes `out` and OUTX). IN must hold the slot's interpolated
- * velocity / facing, alpha, yaw rate and breathing phase. mem = null for the stateless stub API.
+ * Choose the clip and its parameters for `slot` (writes `out`, OUTX and OUTF). IN must hold the slot's interpolated
+ * velocity / facing, alpha, yaw rate, breathing phase and speed. mem = null for the stateless stub API.
  */
-function chooseClip(s: ReadonlySimState, slot: number, speed: number, out: AnimSample, mem: SlotMemory | null): void {
+function chooseClip(s: ReadonlySimState, slot: number, out: AnimSample, mem: SlotMemory | null): void {
   const p = s.players[slot]!;
   const act = p.act;
+  const speed = IN[IN_SPEED]!;
   out.t = 0;
   out.side = 1;
   out.foot = 0;
   OUTX.action = 1;
   OUTX.kick = 0;
-  OUTX.layer = 0;
-  OUTX.breathW = 0;
-  OUTX.lean = 0;
-  // Restart detection / per-action memory (foot choice at the start of the action).
+  OUTF[OF_LAYER] = 0;
+  OUTF[OF_BREATH] = 0;
+  OUTF[OF_LEAN] = 0;
+  // Per-action memory (foot choice at the start of the action, restart detection).
   if (mem) {
     if (mem.act[slot] !== act || p.actT < mem.actT[slot]!) mem.foot[slot] = 255;
     mem.act[slot] = act;
     mem.actT[slot] = p.actT;
   }
-  const loco = chooseLocomotion(s, slot, speed, mem);
+  const loco = chooseLocomotion(s, slot, mem);
   OUTX.loco = loco;
-  const u = p.actT + IN.alpha;
   let anim: AnimId;
   let kick = 0;
   switch (act) {
@@ -377,19 +460,23 @@ function chooseClip(s: ReadonlySimState, slot: number, speed: number, out: AnimS
   OUTX.kick = kick;
   if (isLocomotion(anim)) {
     OUTX.action = 0;
-    locomotionParams(s, slot, speed, out);
+    locomotionParams(s, slot, out);
     return;
   }
   // Action clips.
-  const cf = CF_TABLE[anim]!;
   if (anim === AnimId.KEEPER_HOLD && act !== ActionKind.GK_HOLD) {
-    out.t = wrap01(IN.breath / 3); // held outside the hold action: slow loop
+    let t = IN[IN_BREATH]! / 3; // held outside the hold action: slow loop
+    t -= Math.floor(t);
+    out.t = t;
   } else if (anim === AnimId.THROW_IN && p.actContact < 0) {
     out.t = 0; // holding the ball overhead until the throw
   } else if (anim === AnimId.WALL_JUMP && p.actA !== 1) {
     out.t = 0; // brace
   } else {
-    out.t = actionPhase(u, p.actContact, p.actDur, cf, kick, p.actDone, p.actCharging, HOLD_TABLE[anim]!);
+    APA[0] = p.actT + IN[IN_ALPHA]!; APA[1] = p.actContact; APA[2] = p.actDur; APA[3] = CF_TABLE[anim]!;
+    APA[4] = kick; APA[5] = p.actDone; APA[6] = p.actCharging; APA[7] = HOLD_TABLE[anim]!;
+    actionPhaseS();
+    out.t = APA[8]!;
   }
   if (kick === 1 || anim === AnimId.FIRST_TOUCH || anim === AnimId.SKILL || anim === AnimId.GK_KICK) {
     let foot: number;
@@ -405,34 +492,37 @@ function chooseClip(s: ReadonlySimState, slot: number, speed: number, out: AnimS
   }
   if (isUpperLayer(anim)) {
     OUTX.action = 0;
-    OUTX.layer = smoothRange(LOCAL_TUNING.layerFrom, LOCAL_TUNING.layerTo, speed);
-    OUTX.lean = OUTX.layer * turnLeanAngle(speed, IN.yawRate);
+    let x = (speed - LOCAL_TUNING.layerFrom) / (LOCAL_TUNING.layerTo - LOCAL_TUNING.layerFrom);
+    x = x < 0 ? 0 : x > 1 ? 1 : x;
+    const w = x * x * (3 - 2 * x);
+    OUTF[OF_LAYER] = w;
+    leanFromIn(0);
+    OUTF[OF_LEAN] = OUTF[OF_LEAN]! * w;
   }
 }
 
 /** Parameters of a locomotion clip (t, side, foot) plus the lean and breathing layers. */
-function locomotionParams(s: ReadonlySimState, slot: number, speed: number, out: AnimSample): void {
+function locomotionParams(s: ReadonlySimState, slot: number, out: AnimSample): void {
   const anim = out.anim;
   OUTX.loco = anim;
-  const lean = turnLeanAngle(speed, IN.yawRate);
   switch (anim) {
     case AnimId.IDLE:
-      out.t = IN.breath;
+      out.t = IN[IN_BREATH]!;
       break;
     case AnimId.STRAFE: case AnimId.JOCKEY: case AnimId.KEEPER_READY:
-      out.t = OUTX.dir;
-      OUTX.breathW = 1 - smoothRange(0.3, 1.5, speed);
+      out.t = OUTF[OF_DIR]!;
+      breathFromIn();
       break;
     case AnimId.SHIELD:
-      out.t = OUTX.dir;
+      out.t = OUTF[OF_DIR]!;
       out.side = shieldSide(s, slot);
-      OUTX.breathW = 1 - smoothRange(0.3, 1.5, speed);
+      breathFromIn();
       break;
     default:
       break;
   }
-  if (anim === AnimId.JOG || anim === AnimId.SPRINT || anim === AnimId.STRAFE) OUTX.lean = lean;
-  else if (anim === AnimId.JOCKEY || anim === AnimId.SHIELD || anim === AnimId.KEEPER_READY) OUTX.lean = lean * 0.5;
+  if (anim === AnimId.JOG || anim === AnimId.SPRINT || anim === AnimId.STRAFE) leanFromIn(0);
+  else if (anim === AnimId.JOCKEY || anim === AnimId.SHIELD || anim === AnimId.KEEPER_READY) leanFromIn(1);
 }
 
 /** Side (-1 left / +1 right of the facing) of the nearest opponent: the shielding arm goes out toward him. */
@@ -447,7 +537,7 @@ function shieldSide(s: ReadonlySimState, slot: number): number {
     const d = dx * dx + dz * dz;
     if (d < best) {
       best = d;
-      side = dx * -IN.fz + dz * IN.fx >= 0 ? 1 : -1;
+      side = dx * -IN[IN_FZ]! + dz * IN[IN_FX]! >= 0 ? 1 : -1;
     }
   }
   return side;
@@ -458,29 +548,46 @@ function shieldSide(s: ReadonlySimState, slot: number): number {
  * per-slot speed cache used by advanceCycle. No alpha (phase from p.actT), no hysteresis, preferred foot.
  */
 export function mapAnim(state: ReadonlySimState, slot: number, speed: number, out: AnimSample): void {
+  STUB_ARGS[1] = speed;
+  mapAnimS(state, slot, out);
+}
+
+function mapAnimS(state: ReadonlySimState, slot: number, out: AnimSample): void {
+  const speed = STUB_ARGS[1]!;
   const p = state.players[slot]!;
-  IN.vx = p.vx; IN.vz = p.vz;
-  IN.fx = p.fx; IN.fz = p.fz;
-  IN.alpha = 0;
-  IN.yawRate = 0;
-  IN.breath = breathPhase(state.tick, 0, slot);
+  IN[IN_VX] = p.vx; IN[IN_VZ] = p.vz;
+  IN[IN_FX] = p.fx; IN[IN_FZ] = p.fz;
+  IN[IN_ALPHA] = 0;
+  IN[IN_YAW] = 0;
+  let b = state.tick / (60 * LOCAL_TUNING.breathPeriod) + slot * 0.137;
+  b -= Math.floor(b);
+  IN[IN_BREATH] = b;
   const v = speed === speed && speed > 0 ? speed : 0;
-  chooseClip(state, slot, v, out, null);
+  IN[IN_SPEED] = v;
+  const bank = STUB_CUR.bank;
+  const st = bank !== null && STUB_CUR.slot === slot ? (bank.stub as StubState | undefined) : undefined;
+  const mem = st ? st.mem : null;
+  if (mem) { STUB_CUR.prevAct = mem.act[slot]!; STUB_CUR.prevActT = mem.actT[slot]!; }
+  chooseClip(state, slot, out, mem);
+  STUB_CUR.mapped = st ? slot : -1;
+  STUB_CUR.tick = state.tick;
+  STUB_CUR.act = p.act; STUB_CUR.actT = p.actT; STUB_CUR.contact = p.actContact; STUB_CUR.done = p.actDone;
+  STUB_CUR.kick = OUTX.kick;
   if (slot >= 0 && slot < NUM_SLOTS) {
     STUB_SPEED[slot] = v;
     STUB_ANIM[slot] = OUTX.loco;
   }
 }
 
-function breathPhase(tick: number, alpha: number, slot: number): number {
-  return wrap01((tick + alpha) / (60 * LOCAL_TUNING.breathPeriod) + slot * 0.137);
-}
-
 /** PoseFn lookup indexed by AnimId (built once at module load). */
 const POSE_FNS: PoseFn[] = [];
+/** Allocation-free entry points (parameters in PP) indexed by AnimId. */
+const POSE_IMPLS: PoseImpl[] = [];
+const neutralImpl: PoseImpl = (out) => { out.fill(0); };
 for (let i = 0; i <= AnimId.STRAFE; i++) {
   const id = i as AnimId;
   POSE_FNS[i] = LOCOMOTION_POSES[id] ?? ACTION_POSES[id] ?? CONTACT_POSES[id] ?? neutralPose;
+  POSE_IMPLS[i] = LOCOMOTION_IMPLS[id] ?? ACTION_IMPLS[id] ?? CONTACT_IMPLS[id] ?? neutralImpl;
 }
 
 export function poseFnFor(anim: AnimId): PoseFn {
@@ -489,7 +596,63 @@ export function poseFnFor(anim: AnimId): PoseFn {
 
 /** Write the pose for a sample into `out`. */
 export function samplePose(sample: AnimSample, cycle: number, speed: number, out: Pose): void {
-  poseFnFor(sample.anim)(out, sample.t, cycle, speed, sample.side, sample.foot);
+  STUB_POSE[0] = cycle; STUB_POSE[1] = speed;
+  samplePoseS(sample, out);
+}
+
+/** samplePose arguments: cycle, speed. */
+const STUB_POSE = new Float64Array(2);
+
+function samplePoseS(sample: AnimSample, out: Pose): void {
+  const cycle = STUB_POSE[0]!, speed = STUB_POSE[1]!;
+  const bank = STUB_CUR.bank, slot = STUB_CUR.mapped;
+  const st = bank !== null && slot >= 0 ? (bank.stub as StubState | undefined) : undefined;
+  PP[0] = sample.t; PP[1] = cycle; PP[2] = speed; PP[3] = sample.side; PP[4] = sample.foot;
+  const anim = sample.anim >= 0 && sample.anim <= AnimId.STRAFE ? sample.anim : AnimId.IDLE;
+  POSE_IMPLS[anim]!(out);
+  if (!st || !bank) return;
+  STUB_CUR.mapped = -1;
+  // Same layers as the animator (no turn lean: the stub path has no yaw rate).
+  const lw = OUTF[OF_LAYER]!;
+  if (lw > 0) {
+    PP[0] = OUTX.loco === AnimId.IDLE ? IN[IN_BREATH]! : OUTF[OF_DIR]!; PP[1] = cycle; PP[2] = speed; PP[3] = 1; PP[4] = 0;
+    POSE_IMPLS[OUTX.loco]!(st.layer);
+    for (let k = 0; k < LOWER_BODY.length; k++) {
+      const c = LOWER_BODY[k]!;
+      out[c] = out[c]! + (st.layer[c]! - out[c]!) * lw;
+    }
+  }
+  if (OUTF[OF_BREATH]! > 0) { BRA[0] = IN[IN_BREATH]!; BRA[1] = OUTF[OF_BREATH]!; applyBreathS(out); }
+  // Cross-fade on clip changes / action restarts, timed in sim ticks (the stub API has no frame time).
+  const prevAnim = bank.anim[slot]!;
+  const tick = STUB_CUR.tick;
+  const restarted = STUB_CUR.prevAct === STUB_CUR.act && STUB_CUR.act !== ActionKind.NONE && STUB_CUR.actT < STUB_CUR.prevActT;
+  if (st.seen[slot] === 0) {
+    st.dur[slot] = 0;
+  } else if (anim !== prevAnim || restarted) {
+    const a = st.last[slot]!, f = st.from[slot]!;
+    for (let k = 0; k < POSE_SIZE; k++) f[k] = a[k]!;
+    st.startTick[slot] = tick;
+    BTA[0] = STUB_CUR.contact; BTA[1] = STUB_CUR.actT; BTA[2] = STUB_CUR.done; BTA[3] = STUB_CUR.kick;
+    blendTimeS(prevAnim, anim);
+    st.dur[slot] = BTA[4]!;
+  }
+  const dur = st.dur[slot]!;
+  let w = 1;
+  if (dur > 0) {
+    let x = (tick - st.startTick[slot]!) / (60 * dur);
+    x = x < 0 ? 0 : x > 1 ? 1 : x;
+    w = x * x * (3 - 2 * x);
+  }
+  if (w < 1) {
+    const f = st.from[slot]!;
+    for (let k = 0; k < POSE_SIZE; k++) out[k] = f[k]! + (out[k]! - f[k]!) * w;
+  }
+  const last = st.last[slot]!;
+  for (let k = 0; k < POSE_SIZE; k++) last[k] = out[k]!;
+  bank.anim[slot] = anim;
+  bank.blend[slot] = w;
+  st.seen[slot] = 1;
 }
 
 // ============================================================ the animator (full driver)
@@ -539,10 +702,7 @@ export function createAnimator(): Animator {
   const blendT = new Float32Array(NUM_SLOTS);
   const blendDur = new Float32Array(NUM_SLOTS);
   const lastT = new Float32Array(NUM_SLOTS);
-  const mem: SlotMemory = {
-    idle: new Uint8Array(NUM_SLOTS), strafe: new Uint8Array(NUM_SLOTS), lean: new Uint8Array(NUM_SLOTS),
-    foot: new Uint8Array(NUM_SLOTS).fill(255), act: new Uint8Array(NUM_SLOTS), actT: new Float32Array(NUM_SLOTS),
-  };
+  const mem = createSlotMemory();
 
   function reset(): void {
     seen.fill(0);
@@ -592,43 +752,55 @@ export function createAnimator(): Animator {
       }
       lastX[i] = x; lastZ[i] = z; lastFx[i] = fx; lastFz[i] = fz;
       // Clip choice.
-      IN.vx = vx; IN.vz = vz; IN.fx = fx; IN.fz = fz; IN.alpha = alpha; IN.yawRate = yawRate[i]!;
-      IN.breath = breathPhase(s.tick, alpha, i);
+      IN[IN_VX] = vx; IN[IN_VZ] = vz; IN[IN_FX] = fx; IN[IN_FZ] = fz; IN[IN_ALPHA] = alpha; IN[IN_YAW] = yawRate[i]!;
+      let br = (s.tick + alpha) / (60 * LOCAL_TUNING.breathPeriod) + i * 0.137;
+      br -= Math.floor(br);
+      IN[IN_BREATH] = br;
+      IN[IN_SPEED] = speed;
       const sample = samples[i]!;
       const prevAnim = bank.anim[i]!;
       const prevAct = mem.act[i]!, prevActT = mem.actT[i]!;
-      chooseClip(s, i, speed, sample, mem);
+      chooseClip(s, i, sample, mem);
       let anim = sample.anim;
       // TURN_LEAN: running clips with a marked lean (hysteresis); its pose function applies the lean itself.
       if (anim === AnimId.JOG || anim === AnimId.SPRINT) {
-        const lean = Math.abs(OUTX.lean);
+        const lean = OUTF[OF_LEAN]! < 0 ? -OUTF[OF_LEAN]! : OUTF[OF_LEAN]!;
         const was = mem.lean[i] === 1;
         const on = was ? lean > LOCAL_TUNING.leanLeave : lean > LOCAL_TUNING.leanEnter;
         mem.lean[i] = on ? 1 : 0;
         if (on) {
           sample.foot = anim === AnimId.SPRINT ? 1 : 0;
-          sample.side = IN.yawRate;
+          sample.side = yawRate[i]!;
           sample.anim = anim = AnimId.TURN_LEAN;
-          OUTX.lean = 0;
+          OUTF[OF_LEAN] = 0;
         }
       } else {
         mem.lean[i] = 0;
       }
       // Stride cycle: distance / stride of the locomotion clip in use.
-      if (d > 0) bank.cycle[i] = wrapCycle(bank.cycle[i]! + (d / strideLengthFor(OUTX.loco, speed)) * TAU);
+      if (d > 0) {
+        SLEN[0] = speed;
+        strideLengthForS(OUTX.loco);
+        let c = bank.cycle[i]! + (d / SLEN[1]!) * TAU;
+        if (!(c === c)) c = 0;
+        if (c >= TAU || c < 0) c -= TAU * Math.floor(c / TAU);
+        bank.cycle[i] = c >= TAU ? 0 : c;
+      }
       const cycle = bank.cycle[i]!;
       // Target pose: clip, locomotion legs under upper-body clips, lean and breathing layers.
-      poseFnFor(anim)(target, sample.t, cycle, speed, sample.side, sample.foot);
-      const lw = OUTX.layer;
+      PP[0] = sample.t; PP[1] = cycle; PP[2] = speed; PP[3] = sample.side; PP[4] = sample.foot;
+      POSE_IMPLS[anim]!(target);
+      const lw = OUTF[OF_LAYER]!;
       if (lw > 0) {
-        poseFnFor(OUTX.loco)(layer, OUTX.loco === AnimId.IDLE ? IN.breath : OUTX.dir, cycle, speed, 1, 0);
+        PP[0] = OUTX.loco === AnimId.IDLE ? br : OUTF[OF_DIR]!; PP[1] = cycle; PP[2] = speed; PP[3] = 1; PP[4] = 0;
+        POSE_IMPLS[OUTX.loco]!(layer);
         for (let k = 0; k < LOWER_BODY.length; k++) {
           const c = LOWER_BODY[k]!;
           target[c] = target[c]! + (layer[c]! - target[c]!) * lw;
         }
       }
-      if (OUTX.lean !== 0) applyTurnLean(target, OUTX.lean);
-      if (OUTX.breathW > 0) applyBreath(target, IN.breath, OUTX.breathW);
+      if (OUTF[OF_LEAN] !== 0) { TLA[0] = OUTF[OF_LEAN]!; applyTurnLeanS(target); }
+      if (OUTF[OF_BREATH]! > 0) { BRA[0] = br; BRA[1] = OUTF[OF_BREATH]!; applyBreathS(target); }
       // Cross-fade on clip changes, action restarts and phase jumps.
       const restarted = prevAct === p.act && p.act !== ActionKind.NONE && p.actT < prevActT;
       const jump = OUTX.action === 1 && anim === prevAnim && (sample.t < lastT[i]! - 0.02 || sample.t > lastT[i]! + LOCAL_TUNING.phaseJump);
@@ -639,13 +811,18 @@ export function createAnimator(): Animator {
       } else if (anim !== prevAnim || restarted || jump) {
         for (let k = 0; k < POSE_SIZE; k++) from[i]![k] = out[k]!;
         blendT[i] = 0;
-        blendDur[i] = jump && anim === prevAnim && !restarted ? LOCAL_TUNING.blendJump : blendTime(prevAnim, anim, p.actContact, p.actT + alpha, p.actDone, OUTX.kick);
+        if (jump && anim === prevAnim && !restarted) blendDur[i] = LOCAL_TUNING.blendJump;
+        else {
+          BTA[0] = p.actContact; BTA[1] = p.actT + alpha; BTA[2] = p.actDone; BTA[3] = OUTX.kick;
+          blendTimeS(prevAnim, anim);
+          blendDur[i] = BTA[4]!;
+        }
       }
       bank.anim[i] = anim;
       lastT[i] = sample.t;
       const dur = blendDur[i]!;
       let w = 1;
-      if (dur > 0 && blendT[i]! < dur) w = smooth01(blendT[i]! / dur);
+      if (dur > 0 && blendT[i]! < dur) { const x = blendT[i]! / dur; w = x * x * (3 - 2 * x); }
       blendT[i] = blendT[i]! + dt;
       bank.blend[i] = w;
       if (w >= 1) {
@@ -668,6 +845,15 @@ export function createAnimator(): Animator {
  * come the blend ends before the contact tick, so the foot meets the ball on it.
  */
 export function blendTime(a: AnimId, b: AnimId, contact: number, u: number, done: number, kick: number): number {
+  BTA[0] = contact; BTA[1] = u; BTA[2] = done; BTA[3] = kick;
+  blendTimeS(a, b);
+  return BTA[4]!;
+}
+
+/** blendTime with contact, u, done, kick in BTA[0..3] and the result in BTA[4] (allocation-free internal form). */
+const BTA = new Float64Array(5);
+function blendTimeS(a: AnimId, b: AnimId): void {
+  const contact = BTA[0]!, u = BTA[1]!, done = BTA[2]!, kick = BTA[3]!;
   let t: number;
   if (isLocomotion(a) && isLocomotion(b)) t = LOCAL_TUNING.blendLoco;
   else if (b >= AnimId.DIVE_LOW_L && b <= AnimId.DIVE_HIGH_R) t = LOCAL_TUNING.blendDive;
@@ -676,7 +862,7 @@ export function blendTime(a: AnimId, b: AnimId, contact: number, u: number, done
     const left = ((contact - u) / 60) * LOCAL_TUNING.blendBeforeContact;
     if (left < t) t = left > 0.03 ? left : 0.03;
   }
-  return t;
+  BTA[4] = t;
 }
 
 /** The full driver as a PoseDriver for the player model (GFX-07 setPoseDriver). */

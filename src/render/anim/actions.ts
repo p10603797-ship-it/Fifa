@@ -19,10 +19,10 @@
  * Allocation-free per call; clips are built once at module load.
  */
 
-import { AnimId, type Pose, type PoseFn } from '../../contracts/render';
+import { AnimId, type Pose } from '../../contracts/render';
 import type { PoseTable } from '../types';
-import { shieldPose } from './locomotion';
-import { ANKLE_Y, createClip, evalClip, groundFoot, mirrorPose, type Clip } from './poseMath';
+import { LOCOMOTION_IMPLS, poseFnOf, PP, shieldPose, type PoseImpl } from './locomotion';
+import { ANKLE_Y, createClip, EVA, evalClipS, groundFoot, mirrorPose, type Clip } from './poseMath';
 
 const AY = ANKLE_Y;
 type Ik = readonly [number, number, number, number];
@@ -275,15 +275,19 @@ const GK_KICK = createClip([
 
 // ============================================================ table
 
-function sided(clip: Clip): PoseFn {
-  return (out: Pose, t: number, _cycle: number, _speed: number, _side: number, foot: number): void => {
-    evalClip(clip, t, out);
-    if (foot === 1) mirrorPose(out);
+/** Right-foot clip mirrored for foot 1 (parameters in PP: allocation-free). */
+function sided(clip: Clip): PoseImpl {
+  return (out: Pose): void => {
+    EVA[0] = PP[0]!;
+    evalClipS(clip, out);
+    if (PP[4] === 1) mirrorPose(out);
   };
 }
 
-const gkThrow: PoseFn = (out, t, _cycle, _speed, _side, foot) => {
-  evalClip(foot === 1 ? GK_ROLL : GK_THROW_OVER, t, out);
+/** Keeper throw: overarm for foot 0, underarm roll for foot 1. */
+const gkThrow: PoseImpl = (out) => {
+  EVA[0] = PP[0]!;
+  evalClipS(PP[4] === 1 ? GK_ROLL : GK_THROW_OVER, out);
 };
 
 /** Clips by AnimId (exposed for tests and the debug pose viewer). */
@@ -325,7 +329,8 @@ export const ACTION_HOLD: Partial<Record<AnimId, number>> = {
   [AnimId.THROW_IN]: 0.3,
 };
 
-export const ACTION_POSES: PoseTable = {
+/** Allocation-free entry points (parameters in locomotion PP) by AnimId. */
+export const ACTION_IMPLS: Partial<Record<AnimId, PoseImpl>> = {
   [AnimId.PASS]: sided(PASS),
   [AnimId.SHOT]: sided(SHOT),
   [AnimId.POWER_SHOT]: sided(POWER_SHOT),
@@ -333,9 +338,15 @@ export const ACTION_POSES: PoseTable = {
   [AnimId.HEADER]: sided(HEADER),
   [AnimId.VOLLEY]: sided(VOLLEY),
   [AnimId.FIRST_TOUCH]: sided(FIRST_TOUCH),
-  [AnimId.SHIELD]: shieldPose,
+  [AnimId.SHIELD]: LOCOMOTION_IMPLS[AnimId.SHIELD]!,
   [AnimId.THROW_IN]: sided(THROW_IN),
   [AnimId.GK_THROW]: gkThrow,
   [AnimId.GK_KICK]: sided(GK_KICK),
   [AnimId.SKILL]: sided(SKILL),
 };
+
+export const ACTION_POSES: PoseTable = {};
+for (const k of Object.keys(ACTION_IMPLS)) {
+  const id = Number(k) as AnimId;
+  ACTION_POSES[id] = id === AnimId.SHIELD ? shieldPose : poseFnOf(ACTION_IMPLS[id]!);
+}

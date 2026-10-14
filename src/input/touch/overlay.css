@@ -1,8 +1,9 @@
 /*
- * [TCH-09] Touch overlay styles. Original Dot design: ink surfaces, thin hairlines, ember for the pressed state.
- * Browser gestures are off on the game surface (section 3): no scrolling, selection, callout, tap highlight,
- * double-tap zoom or long-press menu. Only the layer receives pointer events; children are visuals only and are
- * positioned with transforms (no layout work per frame).
+ * [TCH-09] Touch overlay styles. Original Dot design (section 12): ink surfaces (#07070D), thin hairlines, ember
+ * (#FF6B35) for the pressed state and the power ring, plain-word labels. Browser gestures are off on the game surface
+ * (section 3): no scrolling, selection, callout, tap highlight, double-tap zoom or long-press menu. Only the layer
+ * receives pointer events; children are visuals only, positioned with transforms. Animations use transform and
+ * opacity only; the pressed look has no transition (it must show in the frame of the touch-down).
  */
 
 .dk-touch {
@@ -22,6 +23,20 @@
   pointer-events: none;
 }
 
+.dk-touch-vis {
+  position: absolute;
+  inset: 0;
+  opacity: var(--dk-touch-opacity, 0.85);
+  transition: opacity 180ms ease-out;
+}
+
+/* A controller drives this side: fade out; the next screen touch brings the controls back. */
+.dk-touch.is-pad-hidden .dk-touch-vis {
+  opacity: 0;
+}
+
+/* ---------------------------------------------------------------- cluster buttons */
+
 .dk-tbtn {
   position: absolute;
   left: 0;
@@ -29,14 +44,18 @@
   box-sizing: border-box;
   border-radius: 50%;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
   color: var(--dk-text, #f2f2f5);
-  background: rgba(7, 7, 13, 0.5);
-  border: 1.5px solid rgba(242, 242, 245, 0.4);
-  font: 600 12px/1 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  background: rgba(7, 7, 13, 0.52);
+  border: 1.5px solid rgba(242, 242, 245, 0.42);
+  font: 600 12px/1 var(--font-ui, 'Space Grotesk', system-ui, -apple-system, sans-serif);
   letter-spacing: 0.08em;
-  will-change: transform;
+  text-align: center;
+  will-change: transform, opacity;
+  transition: opacity 140ms ease-out;
 }
 
 .dk-tbtn--big {
@@ -44,10 +63,34 @@
   border-width: 2px;
 }
 
+.dk-tbtn-label {
+  display: block;
+  max-width: 88%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.dk-tbtn-cap {
+  display: block;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  opacity: 0.72;
+}
+
+.dk-tbtn-cap:empty {
+  display: none;
+}
+
 .dk-tbtn.is-pressed {
   background: var(--dk-ember, #ff6b35);
   border-color: var(--dk-ember, #ff6b35);
   color: var(--dk-ink, #07070d);
+}
+
+.dk-tbtn.is-hidden {
+  opacity: 0;
 }
 
 .dk-tbtn--pause {
@@ -62,15 +105,154 @@
   box-sizing: border-box;
 }
 
+/* ---------------------------------------------------------------- power ring (two rotating half rings) */
+
+.dk-pring {
+  position: absolute;
+  inset: -7px;
+  opacity: 0;
+}
+
+.dk-pring.is-on {
+  opacity: 1;
+}
+
+.dk-pring-half {
+  position: absolute;
+  top: 0;
+  width: 50%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.dk-pring-half--r {
+  right: 0;
+}
+
+.dk-pring-half--l {
+  left: 0;
+}
+
+.dk-pring-arc {
+  position: absolute;
+  top: 0;
+  width: 200%;
+  height: 100%;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 4px solid transparent;
+  border-top-color: var(--dk-ember, #ff6b35);
+  border-right-color: var(--dk-ember, #ff6b35);
+  will-change: transform;
+}
+
+/* Right half: the arc rests on the left semicircle (hidden by the clip) and turns clockwise into view. */
+.dk-pring-half--r .dk-pring-arc {
+  left: -100%;
+  rotate: 225deg;
+}
+
+/* Left half: the arc rests on the right semicircle (hidden) and turns in once the first half is full. */
+.dk-pring-half--l .dk-pring-arc {
+  left: 0;
+  rotate: 45deg;
+}
+
+/* ---------------------------------------------------------------- swipe direction hints */
+
+.dk-hint {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  color: var(--dk-text, #f2f2f5);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.dk-hint.is-on {
+  opacity: 1;
+}
+
+.dk-hint-arrow {
+  width: 0;
+  height: 0;
+  border: 6px solid transparent;
+}
+
+.dk-hint-text {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(7, 7, 13, 0.78);
+  border: 1px solid rgba(242, 242, 245, 0.18);
+}
+
+.dk-hint--up {
+  left: 50%;
+  bottom: 100%;
+  flex-direction: column-reverse;
+  transform: translate(-50%, -8px);
+}
+
+.dk-hint--up .dk-hint-arrow {
+  border-bottom-color: var(--dk-ember, #ff6b35);
+}
+
+.dk-hint--down {
+  left: 50%;
+  top: 100%;
+  flex-direction: column;
+  transform: translate(-50%, 8px);
+}
+
+.dk-hint--down .dk-hint-arrow {
+  border-top-color: var(--dk-ember, #ff6b35);
+}
+
+.dk-hint--left {
+  right: 100%;
+  top: 50%;
+  flex-direction: row-reverse;
+  transform: translate(-8px, -50%);
+}
+
+.dk-hint--left .dk-hint-arrow {
+  border-right-color: var(--dk-ember, #ff6b35);
+}
+
+.dk-hint--right {
+  left: 100%;
+  top: 50%;
+  transform: translate(8px, -50%);
+}
+
+.dk-hint--right .dk-hint-arrow {
+  border-left-color: var(--dk-ember, #ff6b35);
+}
+
+/* ---------------------------------------------------------------- stick */
+
 .dk-stick {
   position: absolute;
   left: 0;
   top: 0;
-  display: none;
+  opacity: 0;
+  visibility: hidden;
 }
 
-.dk-stick.is-active {
-  display: block;
+.dk-stick.is-active,
+.dk-stick.is-fixed {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* An idle fixed stick is a faint ring until the thumb lands. */
+.dk-stick.is-fixed:not(.is-active) {
+  opacity: 0.55;
 }
 
 .dk-stick-base,
@@ -93,4 +275,29 @@
   height: 56px;
   background: rgba(242, 242, 245, 0.78);
   border: 2px solid var(--dk-ember, #ff6b35);
+}
+
+/* ---------------------------------------------------------------- set-piece flight preview */
+
+.dk-preview {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.dk-dot {
+  position: absolute;
+  left: -3px;
+  top: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dk-text, #f2f2f5);
+  box-shadow: 0 0 0 1px rgba(7, 7, 13, 0.6);
+  opacity: 0;
+  will-change: transform;
+}
+
+.dk-dot.is-on {
+  opacity: 0.9;
 }

@@ -16,10 +16,10 @@ import { ControllerKind } from '../../contracts/enums';
 import type { EventBuffer } from '../../contracts/events';
 import type { CameraProjector } from '../../contracts/input';
 import type { ReadonlySimState } from '../../contracts/state';
-import { T_PLAYER } from '../../contracts/tuning';
+import { T_PLAYER, T_TOUCHUI } from '../../contracts/tuning';
 import { h, injectStyle } from '../components';
 import { HUD_LARGE_SCALE, HUD_SHARED_CSS, bindLargerHud, onRadarPref, radarEnabled } from './hudShared';
-import { RADAR_TUNING } from './radar';
+import { RADAR_TUNING, radarCanvasSize } from './radar';
 import { numStr } from './scoreboard';
 import { rosterName } from './toasts';
 
@@ -35,13 +35,18 @@ export const PLAYER_INFO_TUNING = {
   steps: 100,
 } as const;
 
-/** Radar box width incl. its padding and border, CSS px at scale 1 (radar.ts CSS: 4 px padding, 1 px border). */
-const RADAR_BOX_W = RADAR_TUNING.width + 2 * 4 + 2;
+/**
+ * Width kept free at each bottom corner for the touch button cluster (T_TOUCHUI: system edge margin + big + gap +
+ * small button + the arc's swing), CSS px. The cluster sits bottom right (bottom left when mirrored), so the panels
+ * shrink (names ellipsize) rather than reach it on narrow screens.
+ */
+const CLUSTER_RESERVE_PX = T_TOUCHUI.systemEdgeMargin + T_TOUCHUI.bigButton + T_TOUCHUI.buttonGap + T_TOUCHUI.smallButton + 40;
 
 const CSS = `
 .hud-player-info { position:absolute; left: 50%; bottom: calc(var(--safe-bottom, 0px) + ${RADAR_TUNING.bottom}px); width: 0; height: 0; }
 .hud-player-info[hidden] { display:none; }
-.hud-pi { position:absolute; bottom: 0; width: calc(${PLAYER_INFO_TUNING.width}px * var(--hs)); box-sizing: border-box;
+.hud-pi { position:absolute; bottom: 0; box-sizing: border-box; overflow: hidden;
+  width: max(0px, min(calc(${PLAYER_INFO_TUNING.width}px * var(--hs)), calc(50vw - var(--rh, 0px) - ${PLAYER_INFO_TUNING.gap}px - ${CLUSTER_RESERVE_PX}px)));
   display:flex; align-items:center; gap: calc(8px * var(--hs)); padding: calc(7px * var(--hs)) calc(10px * var(--hs));
   border-radius: calc(12px * var(--hs)); background: rgba(7,7,13,.78); border: 1px solid var(--hairline);
   font-family: var(--font-ui); color: var(--text-1); line-height: 1.1; }
@@ -113,10 +118,14 @@ export function createPlayerInfo(): HudPart {
   let radarOn = true;
   let hs = 1;
   let shownRh = -1;
+  const radarSize = { w: 0, h: 0 };
+  const onWindowResize = (): void => syncRadarGap();
 
   function syncRadarGap(): void {
     if (!root) return;
-    const rh = radarOn ? Math.round((RADAR_BOX_W * hs) / 2) : 0;
+    // Radar box = canvas (radar.ts radarCanvasSize) + 4 px padding per side at the HUD scale + 1 px border per side.
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 0;
+    const rh = radarOn ? Math.round((radarCanvasSize(hs, vh, radarSize).w + 8 * hs + 2) / 2) : 0;
     if (rh === shownRh) return;
     shownRh = rh;
     root.style.setProperty('--rh', `${rh}px`);
@@ -146,6 +155,7 @@ export function createPlayerInfo(): HudPart {
         syncRadarGap();
       });
       syncRadarGap();
+      if (typeof window !== 'undefined') window.addEventListener('resize', onWindowResize);
     },
     setMatch(state: ReadonlySimState, clubs: readonly Club[]) {
       void state;
@@ -200,9 +210,11 @@ export function createPlayerInfo(): HudPart {
       unbindLarge?.();
       unPref?.();
       unbindLarge = unPref = null;
+      if (typeof window !== 'undefined') window.removeEventListener('resize', onWindowResize);
       root?.remove();
       root = null;
       panels.length = 0;
+      shownRh = -1;
     },
   };
 }

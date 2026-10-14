@@ -143,8 +143,19 @@ export interface CinePose {
   fov: number;
 }
 
+// Classes (own hidden classes): `{ x, y, ... }` literals share maps across the codebase, and a double stored into a field
+// another literal of that map uses for objects is boxed (allocation per frame).
+class Pose implements CinePose {
+  x = 0.5;
+  y = 0.5;
+  z = 0.5;
+  yaw = 0.5;
+  pitch = 0.5;
+  fov = 22.5;
+}
+
 export function createCinePose(): CinePose {
-  return { x: 0.5, y: 0.5, z: 0.5, yaw: 0.5, pitch: 0.5, fov: 22.5 };
+  return new Pose();
 }
 
 /** Inputs of the decision table. */
@@ -162,11 +173,18 @@ export interface DirectorInput {
   holdShot: boolean;
 }
 
+class Input implements DirectorInput {
+  phase: number = MatchPhase.IN_PLAY;
+  goalDist = 100.5;
+  replayPlaying = false;
+  replayAngle: ReplayAngle = ReplayAngle.SIDE;
+  establishing = false;
+  skipped = false;
+  holdShot = false;
+}
+
 export function createDirectorInput(): DirectorInput {
-  return {
-    phase: MatchPhase.IN_PLAY, goalDist: 100, replayPlaying: false, replayAngle: ReplayAngle.SIDE, establishing: false,
-    skipped: false, holdShot: false,
-  };
+  return new Input();
 }
 
 /** The director's decision table (section 8 "Other cameras"). Pure. */
