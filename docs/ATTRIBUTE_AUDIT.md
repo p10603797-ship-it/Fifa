@@ -53,7 +53,7 @@ dynamic micro-test (table further down has the exact numbers and levels).
 | acceleration | locomotion `accelFor` (m/s^2) and 30% of `topSpeedFor`; derived `accel` in keeper step reach | every reach / intercept-time estimate via `topSpeed` / `accel` | 65 -> 50 ticks from standstill to 6 m/s | keep |
 | sprintSpeed | locomotion `topSpeedFor` (7.0-9.6 m/s) | reach / run timing via `topSpeed`; set-piece "stay back" choice | peak sprint 8.15 -> 9.28 m/s | keep |
 | agility | locomotion turn rate; 20% of dribble touch quality; skill-move exit speed; aerial jump (with heading) and turn; 1 - interceptAttrW of interception chance | (via derived speeds) | 18 -> 14 ticks to turn a sprint 75 deg | keep |
-| ballControl | first-touch quality (clean / heavy / miss); 35% of dribble touch quality; tackle resistance; skill-move steal radius; volley skill | CPU passing (receiver touch) | clean first-touch chance on a 20 m/s pass 0% -> 82% | keep |
+| ballControl | first-touch quality (clean / heavy / miss); 35% of dribble touch quality; tackle resistance; skill-move steal radius; volley skill | CPU passing (receiver touch) | clean first-touch chance on a 14 m/s pass 33% -> 100% (20 m/s: 0% -> 82%) | keep |
 | dribbling | 45% of dribble touch quality; tackle resistance (largest weight); skill-move steal radius | CPU carrier dribble / skill success; set-piece short option | standing tackles against him win 44% -> 28%; sprint-dribble ball distance 2.04 -> 2.01 m | keep (touch effect weak) |
 | shortPassing | pass accuracy up to 12 m (`passAccuracy`); volley / header passes; free-kick taker choice | CPU pass choice; set-piece short taker | 15 m ground pass direction spread 4.1 -> 1.3 deg | keep |
 | longPassing | pass accuracy from 35 m; lob error; clearance quality; free-kick taker choice | CPU pass choice | 38 m lob spread 4.5 -> 1.3 deg | keep |
@@ -94,7 +94,7 @@ the consuming modules are retuned, the assertions only require the direction and
 | acceleration | pipeline | ticks from standstill to 6 m/s | 65.0 (40) | 50.0 (90) |
 | agility | pipeline | ticks to turn a sprint 75 deg | 18.0 (40) | 14.0 (90) |
 | stamina | pipeline | condition (0..1) drained per minute of sprinting | 0.51 (40) | 0.32 (90) |
-| ballControl | model | clean first-touch chance, 20 m/s pass | 0.00 (40) | 0.82 (90) |
+| ballControl | model | clean first-touch chance, 14 m/s pass | 0.33 (40) | 1.00 (90) |
 | dribbling | pipeline | standing-tackle win rate against him | 0.44 (40) | 0.28 (90) |
 | dribbling | pipeline | mean ball-to-feet distance, sprint dribble, m | 2.04 (40) | 2.01 (90) |
 | skillMoves | model | skill moves available (of 7 stick moves) | 2.00 (1 star) | 7.00 (5 stars) |

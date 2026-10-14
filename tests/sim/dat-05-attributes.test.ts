@@ -455,16 +455,16 @@ describe('DAT-05 attributes: movement', () => {
 });
 
 describe('DAT-05 attributes: ball control', () => {
-  it('ballControl: clean first-touch chance on a 20 m/s pass (model: firstTouch touchQuality)', () => {
+  it('ballControl: clean first-touch chance on a firm 14 m/s pass (model: firstTouch touchQuality)', () => {
     const clean = (v: number): number => {
       const s = quiet(2);
       place(s, HUMAN, 0, 0, -1, 0);
       setAttrs(s, HUMAN, { ballControl: v });
-      looseBall(s, 3, 0, -20, 0);
-      const q = touchQuality(s, HUMAN, 20, BALL_RADIUS);
+      looseBall(s, 3, 0, -14, 0);
+      const q = touchQuality(s, HUMAN, 14, BALL_RADIUS);
       return Math.min(1, Math.max(0, (q - TOUCH_L.qHeavyLo) / (TOUCH_L.qCleanHi - TOUCH_L.qHeavyLo)));
     };
-    moved('ballControl', 'model', 'clean first-touch chance, 20 m/s pass', clean(LO), clean(HI), 1, 0.15);
+    moved('ballControl', 'model', 'clean first-touch chance, 14 m/s pass', clean(LO), clean(HI), 1, 0.15);
   });
 
   it('dribbling: standing tackles against the carrier win less often (pipeline); closer sprint-dribble touches', () => {
