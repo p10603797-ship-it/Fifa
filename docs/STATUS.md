@@ -142,28 +142,28 @@ Total assignments: 201.
 | INT-08 | 2 | done | two-page online e2e: share link, lockstep hashes equal, mirrored pause, 20 s rejoin, Finish against CPU; real WebRTC run through a local PeerServer | not yet run on real iPads (DEVICE_CHECKLIST step 7) |
 | INT-09 | 2 | done | INT-B: settings live + persisted after reload (int-b-settings) | |
 | INT-10 | 2 | done | INT-B: plt-01-pwa offline boot from the service worker + update toast in the built app | |
-| QA-01 | 3 | queued |  |  |
-| QA-02 | 3 | queued |  |  |
-| QA-03 | 3 | queued |  |  |
-| QA-04 | 3 | queued |  |  |
-| QA-05 | 3 | queued |  |  |
-| QA-06 | 3 | queued |  |  |
-| QA-07 | 3 | queued |  |  |
-| QA-08 | 3 | queued |  |  |
-| QA-09 | 3 | queued |  |  |
-| QA-10 | 3 | queued |  |  |
-| QA-11 | 3 | queued |  |  |
-| QA-12 | 3 | queued |  |  |
-| QA-13 | 3 | queued |  |  |
-| QA-14 | 3 | queued |  |  |
-| QA-15 | 3 | queued |  |  |
-| QA-16 | 3 | queued |  |  |
-| QA-17 | 3 | queued |  |  |
-| QA-18 | 3 | queued |  |  |
-| QA-19 | 3 | queued |  |  |
-| QA-20 | 3 | queued |  |  |
-| QA-21 | 3 | queued |  |  |
-| QA-22 | 3 | queued |  |  |
+| QA-01 | 3 | running | QF-1 (hunt + second pass, D-020) | |
+| QA-02 | 3 | running | QF-1 (hunt + second pass, D-020) | |
+| QA-03 | 3 | running | QF-1 (hunt + second pass, D-020) | |
+| QA-04 | 3 | running | QF-1 (hunt + second pass, D-020) | |
+| QA-05 | 3 | running | QF-1 (hunt + second pass, D-020) | |
+| QA-06 | 3 | running | QF-1 (hunt + second pass, D-020) | |
+| QA-07 | 3 | running | QF-1 (hunt + second pass, D-020) | |
+| QA-08 | 3 | running | QF-1 (hunt + second pass, D-020) | |
+| QA-09 | 3 | running | QF-1 (hunt + second pass, D-020) | |
+| QA-10 | 3 | running | QF-1 (hunt + second pass, D-020) | |
+| QA-11 | 3 | running | QF-1 (hunt + second pass, D-020) | |
+| QA-12 | 3 | running | QF-2 (hunt + second pass, D-020) | |
+| QA-13 | 3 | running | QF-2 (hunt + second pass, D-020) | |
+| QA-14 | 3 | running | QF-2 (hunt + second pass, D-020) | |
+| QA-15 | 3 | running | QF-2 (hunt + second pass, D-020) | |
+| QA-16 | 3 | running | QF-2 (hunt + second pass, D-020) | |
+| QA-17 | 3 | running | QF-2 (hunt + second pass, D-020) | |
+| QA-18 | 3 | running | QF-2 (hunt + second pass, D-020) | |
+| QA-19 | 3 | running | QF-2 (hunt + second pass, D-020) | |
+| QA-20 | 3 | running | QF-2 (hunt + second pass, D-020) | |
+| QA-21 | 3 | running | QF-2 (hunt + second pass, D-020) | |
+| QA-22 | 3 | running | QF-2 (hunt + second pass, D-020) | |
 | QA-23 | 3 | running | QF-3 (hunt + second pass, D-020) | |
 | QA-24 | 3 | running | QF-3 (hunt + second pass, D-020) | |
 | QA-25 | 3 | running | QF-3 (hunt + second pass, D-020) | |
@@ -172,11 +172,11 @@ Total assignments: 201.
 | QA-28 | 3 | running | QF-3 (hunt + second pass, D-020) | |
 | QA-29 | 3 | running | QF-3 (hunt + second pass, D-020) | |
 | QA-30 | 3 | running | QF-3 (hunt + second pass, D-020) | |
-| QA-31 | 3 | queued |  |  |
-| QA-32 | 3 | queued |  |  |
-| QA-33 | 3 | queued |  |  |
-| QA-34 | 3 | queued |  |  |
-| QA-35 | 3 | queued |  |  |
+| QA-31 | 3 | running | QF-4 (hunt + second pass, D-020) | |
+| QA-32 | 3 | running | QF-4 (hunt + second pass, D-020) | |
+| QA-33 | 3 | running | QF-4 (hunt + second pass, D-020) | |
+| QA-34 | 3 | running | QF-4 (hunt + second pass, D-020) | |
+| QA-35 | 3 | running | QF-4 (hunt + second pass, D-020) | |
 | QA-36 | 3 | queued |  |  |
 | QA-37 | 3 | queued |  |  |
 | QA-38 | 3 | queued |  |  |
@@ -186,20 +186,20 @@ Total assignments: 201.
 | QA-42 | 3 | running | QF-6 (hunt + second pass, D-020) | |
 | QA-43 | 3 | queued |  |  |
 | QA-44 | 3 | queued |  |  |
-| FIX-01 | 4 | queued |  |  |
-| FIX-02 | 4 | queued |  |  |
-| FIX-03 | 4 | queued |  |  |
-| FIX-04 | 4 | queued |  |  |
-| FIX-05 | 4 | queued |  |  |
+| FIX-01 | 4 | running | QF-1 (hunt + second pass, D-020) | |
+| FIX-02 | 4 | running | QF-1 (hunt + second pass, D-020) | |
+| FIX-03 | 4 | running | QF-2 (hunt + second pass, D-020) | |
+| FIX-04 | 4 | running | QF-2 (hunt + second pass, D-020) | |
+| FIX-05 | 4 | running | QF-2 (hunt + second pass, D-020) | |
 | FIX-06 | 4 | running | QF-3 (hunt + second pass, D-020) | |
 | FIX-07 | 4 | running | QF-3 (hunt + second pass, D-020) | |
-| FIX-08 | 4 | queued |  |  |
-| FIX-09 | 4 | queued |  |  |
-| FIX-10 | 4 | queued |  |  |
+| FIX-08 | 4 | running | QF-4 (hunt + second pass, D-020) | |
+| FIX-09 | 4 | running | QF-4 (hunt + second pass, D-020) | |
+| FIX-10 | 4 | running | QF-4 (hunt + second pass, D-020) | |
 | FIX-11 | 4 | running | QF-5 (hunt + second pass, D-020) | |
 | FIX-12 | 4 | running | QF-6 (hunt + second pass, D-020) | |
 | FIX-13 | 4 | queued |  |  |
-| FIX-14 | 4 | queued |  |  |
+| FIX-14 | 4 | running | QF-2 (hunt + second pass, D-020) | |
 | SGN-01 | 5 | queued |  |  |
 | SGN-02 | 5 | queued |  |  |
 | SGN-03 | 5 | queued |  |  |
