@@ -206,3 +206,14 @@ Total assignments: 201.
 | SGN-04 | 5 | queued |  |  |
 | SGN-05 | 5 | queued |  |  |
 | SGN-06 | 5 | queued |  |  |
+
+## Wave 4 round 2 (D-020 follow-up charters)
+| Charter | State | Scope |
+|---|---|---|
+| QF-9 | running | sim control, bodies, receiving, defending CRs (lofted receiver, switch fixes, body lock, shot block, sprint first touch) |
+| QF-10 | running | kicks, actions, restarts CRs (charged strike timing, kick reach, set-up walk, corner grace, bounce friction) |
+| QF-11 | queued (after QF-9/QF-10) | difficulty ladder and club balance (D-022) |
+| QF-12 | running | app/modes follow-up, full e2e suite run |
+| QF-7 | queued (after round 2) | performance |
+| QF-8 | queued (last) | determinism, soak 2000, fuzz 500 |
+
