@@ -1,4 +1,4 @@
-# INT-B — Input, app shell, UI, platform, audio and modes integration (INT-02 + INT-05..08 + app wiring CRs)
+# INT-B — Input, app shell, UI, platform, audio and modes integration (INT-02, INT-04 app side, INT-05, INT-06, INT-07, INT-09, INT-10 + app wiring CRs)
 
 Owns for this wave: `src/app/**`, `src/input/**`, `src/ui/**` (except `src/ui/screens/online.ts`, which NET owns),
 `src/platform/**`, `src/audio/**`, `src/modes/**` (except `src/modes/stats.ts` event definitions, which INT-A may
@@ -50,6 +50,8 @@ Verify (vite build; Playwright Chromium, iPad viewport 1180x820 landscape, DPR 1
 - Full-match e2e at a short half length: (a) touch only, (b) controller only (simulated Gamepad API), in kick-off mode;
   quick runs for every other mode; same-iPad 1v1 controller vs controller and touch vs controller (two humans, no
   input crosstalk; only the pauser resumes).
+- Set pieces end to end on both input types (INT-06): a throw-in, corner, free kick and penalty taken by touch and by
+  controller in the real app (practice set-piece mode is fine), the aim/power UI shows and the kick happens.
 - Settings persisted across reload; storage blocked still plays (in-memory).
 - Build -> install -> offline: service worker serves the app with the network gone; update toast path.
 - No console errors from the game in any run; no stuck inputs after pause/resume, blur, rotate, resize.

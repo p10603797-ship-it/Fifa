@@ -53,7 +53,8 @@ installer from [nodejs.org](https://nodejs.org/). Node.js includes `npm`, the to
    npm install
    ```
 
-   npm may print funding or "vulnerabilities" notices; they do not stop anything from working.
+   npm may print funding or "vulnerabilities" notices. They concern the build tools on your computer, not the game
+   (`npm audit --omit=dev` reports none for the game's own libraries), and do not stop anything from working.
 4. Start the development server:
 
    ```sh

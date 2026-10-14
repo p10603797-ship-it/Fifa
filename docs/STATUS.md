@@ -11,137 +11,137 @@ Total assignments: 201.
 | FND-04 | 0 | done | app shell; reviewer found 8 defects, fixed; 229 unit tests (FND-04/05 + reviews) |  |
 | FND-05 | 0 | done | render+input skeleton; reviewer found 5 defects, fixed; skeleton gate 47/47 e2e on HEAD |  |
 | FND-06 | 0 | done | 136 tests (fnd-06 + review); reviewer found 10 defects, all fixed; soak:short runs |  |
-| SIM-01 | 1 | queued |  |  |
-| SIM-02 | 1 | queued |  |  |
-| SIM-03 | 1 | queued |  |  |
-| SIM-04 | 1 | queued |  |  |
-| SIM-05 | 1 | queued |  |  |
-| SIM-06 | 1 | queued |  |  |
-| SIM-07 | 1 | queued |  |  |
-| SIM-08 | 1 | queued |  |  |
-| SIM-09 | 1 | queued |  |  |
-| SIM-10 | 1 | queued |  |  |
-| SIM-11 | 1 | queued |  |  |
-| SIM-12 | 1 | queued |  |  |
-| SIM-13 | 1 | queued |  |  |
-| SIM-14 | 1 | queued |  |  |
-| SIM-15 | 1 | queued |  |  |
-| SIM-16 | 1 | queued |  |  |
-| RUL-01 | 1 | queued |  |  |
-| RUL-02 | 1 | queued |  |  |
-| RUL-03 | 1 | queued |  |  |
-| RUL-04 | 1 | queued |  |  |
-| RUL-05 | 1 | queued |  |  |
-| RUL-06 | 1 | queued |  |  |
-| RUL-07 | 1 | queued |  |  |
-| RUL-08 | 1 | queued |  |  |
-| RUL-09 | 1 | queued |  |  |
-| RUL-10 | 1 | queued |  |  |
-| RUL-11 | 1 | queued |  |  |
-| GKP-01 | 1 | queued |  |  |
-| GKP-02 | 1 | queued |  |  |
-| GKP-03 | 1 | queued |  |  |
-| GKP-04 | 1 | queued |  |  |
-| GKP-05 | 1 | queued |  |  |
-| GKP-06 | 1 | queued |  |  |
-| TAI-01 | 1 | queued |  |  |
-| TAI-02 | 1 | queued |  |  |
-| TAI-03 | 1 | queued |  |  |
-| TAI-04 | 1 | queued |  |  |
-| TAI-05 | 1 | queued |  |  |
-| TAI-06 | 1 | queued |  |  |
-| TAI-07 | 1 | queued |  |  |
-| TAI-08 | 1 | queued |  |  |
-| TAI-09 | 1 | queued |  |  |
-| TAI-10 | 1 | queued |  |  |
-| TAI-11 | 1 | queued |  |  |
-| TAI-12 | 1 | queued |  |  |
-| TAI-13 | 1 | queued |  |  |
-| TAI-14 | 1 | queued |  |  |
-| TCH-01 | 1 | queued |  |  |
-| TCH-02 | 1 | queued |  |  |
-| TCH-03 | 1 | queued |  |  |
-| TCH-04 | 1 | queued |  |  |
-| TCH-05 | 1 | queued |  |  |
-| TCH-06 | 1 | queued |  |  |
-| TCH-07 | 1 | queued |  |  |
-| TCH-08 | 1 | queued |  |  |
-| TCH-09 | 1 | queued |  |  |
-| PAD-01 | 1 | queued |  |  |
-| PAD-02 | 1 | queued |  |  |
-| PAD-03 | 1 | queued |  |  |
-| PAD-04 | 1 | queued |  |  |
-| PAD-05 | 1 | queued |  |  |
-| PAD-06 | 1 | queued |  |  |
-| PAD-07 | 1 | queued |  |  |
-| PAD-08 | 1 | queued |  |  |
-| GFX-01 | 1 | queued |  |  |
-| GFX-02 | 1 | queued |  |  |
-| GFX-03 | 1 | queued |  |  |
-| GFX-04 | 1 | queued |  |  |
-| GFX-05 | 1 | queued |  |  |
-| GFX-06 | 1 | queued |  |  |
-| GFX-07 | 1 | queued |  |  |
-| GFX-08 | 1 | queued |  |  |
-| GFX-09 | 1 | queued |  |  |
-| GFX-10 | 1 | queued |  |  |
-| GFX-11 | 1 | queued |  |  |
-| GFX-12 | 1 | queued |  |  |
-| GFX-13 | 1 | queued |  |  |
-| GFX-14 | 1 | queued |  |  |
-| GFX-15 | 1 | queued |  |  |
-| GFX-16 | 1 | queued |  |  |
-| UIX-01 | 1 | queued |  |  |
-| UIX-02 | 1 | queued |  |  |
-| UIX-03 | 1 | queued |  |  |
-| UIX-04 | 1 | queued |  |  |
-| UIX-05 | 1 | queued |  |  |
-| UIX-06 | 1 | queued |  |  |
-| UIX-07 | 1 | queued |  |  |
-| UIX-08 | 1 | queued |  |  |
-| UIX-09 | 1 | queued |  |  |
-| UIX-10 | 1 | queued |  |  |
-| UIX-11 | 1 | queued |  |  |
-| UIX-12 | 1 | queued |  |  |
-| AUD-01 | 1 | queued |  |  |
-| AUD-02 | 1 | queued |  |  |
-| AUD-03 | 1 | queued |  |  |
-| AUD-04 | 1 | queued |  |  |
-| AUD-05 | 1 | queued |  |  |
-| DAT-01 | 1 | queued |  |  |
-| DAT-02 | 1 | queued |  |  |
-| DAT-03 | 1 | queued |  |  |
-| DAT-04 | 1 | queued |  |  |
-| DAT-05 | 1 | queued |  |  |
-| NET-01 | 1 | queued |  |  |
-| NET-02 | 1 | queued |  |  |
-| NET-03 | 1 | queued |  |  |
-| NET-04 | 1 | queued |  |  |
-| NET-05 | 1 | queued |  |  |
-| NET-06 | 1 | queued |  |  |
-| NET-07 | 1 | queued |  |  |
-| NET-08 | 1 | queued |  |  |
-| MOD-01 | 1 | queued |  |  |
-| MOD-02 | 1 | queued |  |  |
-| MOD-03 | 1 | queued |  |  |
-| MOD-04 | 1 | queued |  |  |
-| MOD-05 | 1 | queued |  |  |
-| PLT-01 | 1 | queued |  |  |
-| PLT-02 | 1 | queued |  |  |
-| PLT-03 | 1 | queued |  |  |
-| PLT-04 | 1 | queued |  |  |
-| PLT-05 | 1 | queued |  |  |
-| PLT-06 | 1 | queued |  |  |
-| INT-01 | 2 | queued |  |  |
-| INT-02 | 2 | queued |  |  |
-| INT-03 | 2 | queued |  |  |
-| INT-04 | 2 | queued |  |  |
-| INT-05 | 2 | queued |  |  |
-| INT-06 | 2 | queued |  |  |
-| INT-07 | 2 | queued |  |  |
-| INT-08 | 2 | queued |  |  |
-| INT-09 | 2 | queued |  |  |
-| INT-10 | 2 | queued |  |  |
+| SIM-01 | 1 | done | lane/squad agent report; 6 own test files pass |  |
+| SIM-02 | 1 | done | lane/squad agent report; 7 own test files pass |  |
+| SIM-03 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| SIM-04 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| SIM-05 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| SIM-06 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| SIM-07 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| SIM-08 | 1 | done | lane/squad agent report; 6 own test files pass |  |
+| SIM-09 | 1 | done | lane/squad agent report; 7 own test files pass |  |
+| SIM-10 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| SIM-11 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| SIM-12 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| SIM-13 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| SIM-14 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| SIM-15 | 1 | done | lane/squad agent report; 9 own test files pass |  |
+| SIM-16 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| RUL-01 | 1 | done | lane/squad agent report; 7 own test files pass |  |
+| RUL-02 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| RUL-03 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| RUL-04 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| RUL-05 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| RUL-06 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| RUL-07 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| RUL-08 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| RUL-09 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| RUL-10 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| RUL-11 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| GKP-01 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| GKP-02 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| GKP-03 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| GKP-04 | 1 | done | lane/squad agent report; 6 own test files pass |  |
+| GKP-05 | 1 | done | lane/squad agent report; 6 own test files pass |  |
+| GKP-06 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| TAI-01 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| TAI-02 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| TAI-03 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| TAI-04 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| TAI-05 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| TAI-06 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| TAI-07 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| TAI-08 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| TAI-09 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| TAI-10 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| TAI-11 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| TAI-12 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| TAI-13 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| TAI-14 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| TCH-01 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| TCH-02 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| TCH-03 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| TCH-04 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| TCH-05 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| TCH-06 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| TCH-07 | 1 | done | lane/squad agent report; 7 own test files pass |  |
+| TCH-08 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| TCH-09 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| PAD-01 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| PAD-02 | 1 | done | lane/squad agent report; 6 own test files pass |  |
+| PAD-03 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| PAD-04 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| PAD-05 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| PAD-06 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| PAD-07 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| PAD-08 | 1 | done | lane/squad agent report; 7 own test files pass |  |
+| GFX-01 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| GFX-02 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| GFX-03 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| GFX-04 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| GFX-05 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| GFX-06 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| GFX-07 | 1 | done | lane/squad agent report; 6 own test files pass |  |
+| GFX-08 | 1 | done | lane/squad agent report; 6 own test files pass |  |
+| GFX-09 | 1 | done | lane/squad agent report; 1 own test files pass |  |
+| GFX-10 | 1 | done | lane/squad agent report; 1 own test files pass |  |
+| GFX-11 | 1 | done | lane/squad agent report; 1 own test files pass |  |
+| GFX-12 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| GFX-13 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| GFX-14 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| GFX-15 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| GFX-16 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| UIX-01 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| UIX-02 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| UIX-03 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| UIX-04 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| UIX-05 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| UIX-06 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| UIX-07 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| UIX-08 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| UIX-09 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| UIX-10 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| UIX-11 | 1 | done | lane/squad agent report; 1 own test files pass |  |
+| UIX-12 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| AUD-01 | 1 | done | lane/squad agent report; 5 own test files pass |  |
+| AUD-02 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| AUD-03 | 1 | done | lane/squad agent report; 1 own test files pass |  |
+| AUD-04 | 1 | done | lane/squad agent report; 1 own test files pass |  |
+| AUD-05 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| DAT-01 | 1 | done | lane/squad agent report; 1 own test files pass |  |
+| DAT-02 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| DAT-03 | 1 | done | lane/squad agent report; 1 own test files pass |  |
+| DAT-04 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| DAT-05 | 1 | running | PLT-06 + DAT-05 squad running |  |
+| NET-01 | 1 | running | NET-A squad running |  |
+| NET-02 | 1 | running | NET-A squad running |  |
+| NET-03 | 1 | queued | queued for NET-B |  |
+| NET-04 | 1 | running | NET-A squad running |  |
+| NET-05 | 1 | running | NET-A squad running |  |
+| NET-06 | 1 | queued | queued for NET-B |  |
+| NET-07 | 1 | queued | queued for NET-B |  |
+| NET-08 | 1 | running | NET-A squad running |  |
+| MOD-01 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| MOD-02 | 1 | done | lane/squad agent report; 1 own test files pass |  |
+| MOD-03 | 1 | done | lane/squad agent report; 1 own test files pass |  |
+| MOD-04 | 1 | done | lane/squad agent report; 1 own test files pass |  |
+| MOD-05 | 1 | done | lane/squad agent report; 1 own test files pass |  |
+| PLT-01 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| PLT-02 | 1 | done | lane/squad agent report; 2 own test files pass |  |
+| PLT-03 | 1 | done | lane/squad agent report; 4 own test files pass |  |
+| PLT-04 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| PLT-05 | 1 | done | lane/squad agent report; 3 own test files pass |  |
+| PLT-06 | 1 | running | PLT-06 + DAT-05 squad running |  |
+| INT-01 | 2 | running | INT-A running |  |
+| INT-02 | 2 | running | INT-B running |  |
+| INT-03 | 2 | running | INT-C running |  |
+| INT-04 | 2 | running | INT-A (sim) + INT-B (app) running |  |
+| INT-05 | 2 | running | INT-B running |  |
+| INT-06 | 2 | running | INT-B running |  |
+| INT-07 | 2 | running | INT-B running |  |
+| INT-08 | 2 | queued | queued for NET-B |  |
+| INT-09 | 2 | running | INT-B running |  |
+| INT-10 | 2 | running | INT-B running |  |
 | QA-01 | 3 | queued |  |  |
 | QA-02 | 3 | queued |  |  |
 | QA-03 | 3 | queued |  |  |
