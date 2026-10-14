@@ -997,7 +997,7 @@ export function createAnimator(): Animator {
           RCH[1] = kickWY[i]! / hs;
           RCH[2] = (rx * -fz + rz * fx) / hs;
           RCH[3] = w;
-          if ((globalThis as never as {__kd?: (a: number[]) => void}).__kd) (globalThis as never as {__kd: (a: number[]) => void}).__kd([i, RCH[0]!, RCH[1]!, RCH[2]!, w, sample.foot, sample.t]);
+          if ((globalThis as never as {__kd?: (a: number[]) => void}).__kd) (globalThis as never as {__kd: (a: number[]) => void}).__kd([i, RCH[0]!, RCH[1]!, RCH[2]!, w, sample.foot, sample.t, ((it.ballX - x) * fx + (it.ballZ - z) * fz), ((it.ballX - x) * -fz + (it.ballZ - z) * fx), s.ball.vx, s.ball.vz, vx, vz, p.actT, p.actContact, s.ball.owner]);
           kickReach(target, anim, sample.foot);
         }
       }
