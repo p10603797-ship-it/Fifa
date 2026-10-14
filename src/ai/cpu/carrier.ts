@@ -26,7 +26,7 @@
  *         style progress (forward), directness (through / long balls), width (crosses); counter-attack bonus per metre
  *         gained; a settling penalty for a pass right after gaining the ball unless pressed;
  *       - shoot (TAI-10 estimateXg, only when xG >= the level's shotThresholdXg, raised / lowered for long shots by
- *         style longShot): xG + (1 - xG) * shotMissValue (+ boxShotBonus in the box);
+ *         style longShot): shotXgMul * xG + (1 - xG) * shotMissValue (+ boxShotBonus in the box);
  *       - dribble (TAI-10 bestDribble direction and score; toward goal, away from the nearest opponent ahead when it
  *         gives none): keep chance (pressure x dribbling) * PV(a step ahead) - risk, gain x style dribble;
  *       - skill move (TAI-10 chooseSkill): success estimate from stars and dribbling, beats the man by skillGain m;
@@ -121,7 +121,7 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   /** Beyond this distance from the goal centre a shot is a long shot, m ... */
   longShotDist: 20,
   /** ... whose xG threshold is T_LEVEL.shotThresholdXg x this at style longShot 0 / 1. */
-  longShotThreshMax: 1.5,
+  longShotThreshMax: 1.2,
   longShotThreshMin: 0.7,
   /** Shot power 0..1 at <= shotNearDist m / >= shotFarDist m from the goal centre (linear between). */
   shotPowerNear: 0.55,

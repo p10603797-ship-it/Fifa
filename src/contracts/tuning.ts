@@ -294,7 +294,7 @@ export const T_LEVEL = {
   executionError: [1.6, 1.35, 1.15, 1.0, 0.85, 0.72] as readonly number[],
   pressIntensity: [0.35, 0.5, 0.62, 0.75, 0.86, 0.95] as readonly number[],
   tackleTimingTicks: [14, 11, 8, 6, 4, 3] as readonly number[],
-  shotThresholdXg: [0.02, 0.025, 0.03, 0.035, 0.04, 0.045] as readonly number[],
+  shotThresholdXg: [0.012, 0.014, 0.016, 0.018, 0.02, 0.022] as readonly number[],
 } as const;
 
 export const T_INPUT = {
