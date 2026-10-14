@@ -59,14 +59,21 @@ const STAND_TACKLE = createClip([
   { t: 1, pose: NEUTRAL, ikL: STAND_L, ikR: [0.02, AY, 0.12, 0] },
 ], { contact: 0.25 });
 
-/** Slide: drop onto the hip, leading (right) leg along the grass, trailing knee up; quick get-up. */
+/**
+ * Slide: the leading (right) leg shoots out at the contact fraction while the body drops onto the hip (down a few
+ * ticks later), slides along the grass with the trailing knee up, quick get-up.
+ */
 const SLIDE_DOWN = {
   ROOT_Y: -0.72, ROOT_PITCH: -0.85, ROOT_ROLL: -0.12, SPINE_PITCH: 0.1, HEAD_PITCH: 0.55,
   SHOULDER_L_PITCH: -1.25, SHOULDER_L_ROLL: 0.5, ELBOW_L: 0.1, SHOULDER_R_PITCH: 1.1, SHOULDER_R_ROLL: 0.65, ELBOW_R: 0.5,
 } as const;
 const SLIDE = createClip([
   { t: 0, pose: { ...NEUTRAL, ROOT_Y: -0.06, SPINE_PITCH: 0.15 }, ikL: groundFoot(-0.2, -0.12, -0.3), ikR: [0.3, 0.12, 0.12, 0] },
-  { t: 0.08, pose: SLIDE_DOWN, ikL: [0.3, AY, -0.12, 0.1], ikR: [0.82, 0.12, 0.08, 0.9] },
+  {
+    t: 0.08, pose: { ROOT_Y: -0.38, ROOT_PITCH: -0.4, ROOT_ROLL: -0.06, SPINE_PITCH: 0.12, HEAD_PITCH: 0.35, SHOULDER_L_PITCH: -0.6, SHOULDER_L_ROLL: 0.4, SHOULDER_R_PITCH: 0.7, SHOULDER_R_ROLL: 0.5 },
+    ikL: [0.05, 0.12, -0.12, 0], ikR: [0.72, 0.2, 0.08, 0.6],
+  },
+  { t: 0.2, pose: SLIDE_DOWN, ikL: [0.3, AY, -0.12, 0.1], ikR: [0.82, 0.12, 0.08, 0.9] },
   { t: 0.4, pose: { ROOT_PITCH: -0.8, HEAD_PITCH: 0.45 }, ikR: [0.8, 0.12, 0.09, 0.8] },
   {
     t: 0.6, pose: { ROOT_Y: -0.68, ROOT_PITCH: -0.3, ROOT_ROLL: -0.05, HEAD_PITCH: 0.15, SHOULDER_L_PITCH: -0.8, SHOULDER_R_PITCH: 0.2, SHOULDER_R_ROLL: 0.4 },

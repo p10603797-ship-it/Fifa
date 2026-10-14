@@ -138,9 +138,12 @@ describe('[GFX-11] tackles, falls, get-up', () => {
     expect(best).toBeGreaterThan(0.6);
   });
 
-  it('slide keeps the body near the ground from contact through the slide, leading leg along the grass', () => {
+  it('slide: the leading leg is out at contact, the body stays near the ground through the slide', () => {
     const cf = CONTACT_CONTACT[AnimId.SLIDE]!;
-    for (let t = cf; t <= 0.45; t += 0.01) {
+    const atContact = createSkeleton();
+    solvePoseFK(pose(AnimId.SLIDE, cf), atContact);
+    expect(atContact[Joint.ANKLE_R * FRAME_SIZE + 9]!).toBeGreaterThan(0.6); // the tackling leg reaches out on contact
+    for (let t = 0.2; t <= 0.45; t += 0.01) {
       const sk = drawn(pose(AnimId.SLIDE, t));
       expect(jointY(sk, Joint.ROOT), `pelvis at t=${t.toFixed(2)}`).toBeLessThan(0.35);
       expect(jointY(sk, Joint.ANKLE_R), `leading ankle at t=${t.toFixed(2)}`).toBeLessThan(0.25);

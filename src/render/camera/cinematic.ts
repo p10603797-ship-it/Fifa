@@ -68,7 +68,7 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
   // ---- goal kicks (in front of the goal, looking up-field)
   goalKickBack: 5,
   goalKickHeight: 3.4,
-  goalKickFov: 44,
+  goalKickFov: 48,
   goalKickBallY: 0.76,
   /** Point on the kick line (m ahead of the ball) kept at least goalKickTopMargin below the top edge. */
   goalKickLook: 40,
@@ -78,7 +78,7 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
   // ---- corner (raised view from behind the flag)
   cornerBack: 8,
   cornerHeight: 7,
-  cornerFov: 48,
+  cornerFov: 50,
   /** Look target on the goal axis this far from the goal line, m (the penalty spot). */
   cornerLookIn: 11,
   cornerBallY: 0.8,
@@ -206,7 +206,7 @@ export function stickRotationForYaw(yaw: number): number {
   let r = -yaw;
   while (r > Math.PI) r -= 2 * Math.PI;
   while (r <= -Math.PI) r += 2 * Math.PI;
-  return r;
+  return r === 0 ? 0 : r; // no -0
 }
 
 function clamp(v: number, lo: number, hi: number): number {

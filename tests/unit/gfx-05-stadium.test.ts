@@ -392,6 +392,13 @@ describe('GFX-05 module (headless scene)', () => {
     expect(st.sun.castShadow).toBe(false);
     st.setQuality!(QualityTier.QUALITY);
     expect(st.sun.castShadow).toBe(true);
+    // a tier the quality module applied on its own (ctx.tier only, no setQuality broadcast) is picked up next frame
+    const r2 = rig(QualityTier.BALANCED);
+    r2.st.setMatch!(r2.s, []);
+    expect(r2.st.sun.castShadow).toBe(false);
+    r2.ctx.tier = QualityTier.QUALITY;
+    r2.st.update(r2.frame);
+    expect(r2.st.sun.castShadow).toBe(true);
     // stands, boards and ground never cast or receive (cheap)
     expect(st.stands.castShadow || st.stands.receiveShadow || st.boards.castShadow).toBe(false);
   });

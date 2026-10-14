@@ -34,7 +34,8 @@
  * (config.night) set their colours and intensities, the sky gradient, the lamp glow, the board brightness and the
  * stand light (at night the bowl is darker than the floodlit pitch: the stand material colour scales it).
  * crowdLightOf(look) gives the matching light for unlit materials (the crowd). QUALITY tier only: the key light
- * casts one shadow map (getTierParams(tier).shadowMap / shadowMapSize, GFX-02); other tiers have none.
+ * casts one shadow map (getTierParams(tier).shadowMap / shadowMapSize, GFX-02); other tiers have none. setQuality applies
+ * a tier; update() also picks up a tier GFX-02 changed on its own (ctx.tier) without a broadcast.
  *
  * DRAW CALLS: ground, stands, boards, lamps, sky = 5 by day; + halos = 6 at night (budget 10). No per-frame allocation.
  * DEBUG: window.__dotkickStadium (StadiumDebug): view(name) overrides ctx.camera after the cameras ran (e2e
@@ -1058,6 +1059,8 @@ export function createStadium(ctx: RenderContext): StadiumModule {
   let night = false;
   let viewName = '';
   let shadowSize = 0;
+  /** Tier last applied (-1 = none); update() re-applies when ctx.tier changed without a setQuality call. */
+  let tierApplied = -1;
   const viewTarget = new Vector3();
 
   function apply(l: StadiumLook): void {
@@ -1081,6 +1084,7 @@ export function createStadium(ctx: RenderContext): StadiumModule {
   }
 
   function applyTier(tier: QualityTier): void {
+    tierApplied = tier;
     const p = getTierParams(tier);
     sun.castShadow = p.shadowMap;
     const size = p.shadowMap ? p.shadowMapSize : 0;
@@ -1162,6 +1166,7 @@ export function createStadium(ctx: RenderContext): StadiumModule {
     },
 
     update(f: RenderFrame) {
+      if (ctx.tier !== tierApplied) applyTier(ctx.tier);
       let dt = f.frame.paused ? 0 : f.frame.dtMs / 1000;
       if (!(dt > 0)) dt = 0;
       if (dt > 0.1) dt = 0.1;

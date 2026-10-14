@@ -321,6 +321,15 @@ describe('GFX-06 module (headless scene)', () => {
     expect(crowd.debug.snapshot().instances).toBe(instancesFor(seats, 0.75));
   });
 
+  it('a tier the quality module applied on its own (ctx.tier only) is picked up on the next frame', () => {
+    const { ctx, crowd, s, frame } = rig(QualityTier.BALANCED);
+    crowd.setMatch!(s, CLUBS);
+    ctx.tier = QualityTier.PERFORMANCE;
+    crowd.update(frame);
+    expect(crowd.debug.snapshot().instances).toBe(instancesFor(generateSeats().count, 0.5));
+    expect(crowd.debug.snapshot().animated).toBe(false);
+  });
+
   it('a GOAL drives the uniforms: scoring side jumps, other side sits; excitement rises then settles; pause freezes', () => {
     const { crowd, s, frame, run } = rig();
     crowd.setMatch!(s, CLUBS);

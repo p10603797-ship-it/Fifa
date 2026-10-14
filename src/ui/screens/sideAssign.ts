@@ -211,16 +211,16 @@ export function primaryDevice(m: SideModel, lastActive: string | null): Token | 
 }
 
 /**
- * Default lanes for a fresh visit: the primary device at home; for Play a Friend also a second device away
- * (a controller first; touch and keyboard otherwise).
+ * Default lanes for a fresh visit: the primary device at home; for Play a Friend also a second known controller
+ * away. Touch or the keyboard is never placed as the second player by default: a friend's controller that has not
+ * been pressed yet must still be able to join (two players at most).
  */
 export function defaultLanes(m: SideModel, mode: ModeId, lastActive: string | null): void {
   const p = primaryDevice(m, lastActive);
   if (!p) return;
   setLane(m, p.id, -1);
   if (mode !== ModeId.FRIEND_LOCAL) return;
-  const rest = m.tokens.filter((t) => t.connected && t !== p);
-  const second = rest.find((t) => t.kind === 'pad') ?? rest[0];
+  const second = m.tokens.find((t) => t.connected && t !== p && t.kind === 'pad');
   if (second) setLane(m, second.id, 1);
 }
 
@@ -242,7 +242,9 @@ export function readiness(m: SideModel, mode: ModeId): Readiness {
     if (need === 2) {
       return {
         ok: false,
-        message: n === 0 ? 'Slide two inputs to the sides to play a friend.' : 'Play a Friend needs a second player: press a button on a controller, then slide it to a side.',
+        message: n === 0
+          ? 'Slide two inputs to the sides to play a friend.'
+          : 'Play a Friend needs a second player: press a button on a controller, or slide Touch to a side.',
       };
     }
     return { ok: false, message: 'Slide at least one input to a side.' };

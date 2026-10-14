@@ -60,7 +60,7 @@ const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
   blendDive: 0.07,
   blendJump: 0.06,
   /** A cross-fade into a clip with a pending contact ends by this fraction of the time left to the contact. */
-  blendBeforeContact: 0.9,
+  blendBeforeContact: 0.75,
   /** Yaw-rate smoothing time constant (s) and the lean (rad) that reports TURN_LEAN (enter / leave). */
   yawRateTau: 0.12,
   leanEnter: 0.12,
@@ -267,6 +267,8 @@ const OUTX = {
   dir: 0,
   /** 1 when the clip is a full-body action (no turn lean / locomotion legs). */
   action: 0,
+  /** 1 for foot kicks, headers and volleys (contact timing rules). */
+  kick: 0,
   /** Lower-body locomotion weight under an upper-body clip (0..1). */
   layer: 0,
   /** Breathing weight (0..1). */
@@ -334,6 +336,7 @@ function chooseClip(s: ReadonlySimState, slot: number, speed: number, out: AnimS
   out.side = 1;
   out.foot = 0;
   OUTX.action = 1;
+  OUTX.kick = 0;
   OUTX.layer = 0;
   OUTX.breathW = 0;
   OUTX.lean = 0;
@@ -371,6 +374,7 @@ function chooseClip(s: ReadonlySimState, slot: number, speed: number, out: AnimS
       anim = act >= 0 && act < ACTION_ANIM.length ? ACTION_ANIM[act]! : AnimId.IDLE;
   }
   out.anim = anim;
+  OUTX.kick = kick;
   if (isLocomotion(anim)) {
     OUTX.action = 0;
     locomotionParams(s, slot, speed, out);
@@ -635,7 +639,7 @@ export function createAnimator(): Animator {
       } else if (anim !== prevAnim || restarted || jump) {
         for (let k = 0; k < POSE_SIZE; k++) from[i]![k] = out[k]!;
         blendT[i] = 0;
-        blendDur[i] = jump && anim === prevAnim && !restarted ? LOCAL_TUNING.blendJump : blendTime(prevAnim, anim, p.actContact, p.actT + alpha, p.actDone, OUTX.action);
+        blendDur[i] = jump && anim === prevAnim && !restarted ? LOCAL_TUNING.blendJump : blendTime(prevAnim, anim, p.actContact, p.actT + alpha, p.actDone, OUTX.kick);
       }
       bank.anim[i] = anim;
       lastT[i] = sample.t;
@@ -659,13 +663,16 @@ export function createAnimator(): Animator {
   return { bank, samples, poses, yawRate, update, reset, driver };
 }
 
-/** Cross-fade time (s) from clip a to clip b. A pending contact always lands after the blend has finished. */
-export function blendTime(a: AnimId, b: AnimId, contact: number, u: number, done: number, action: number): number {
+/**
+ * Cross-fade time (s) from clip a to clip b. For a foot kick / header / volley (kick = 1) with its contact still to
+ * come the blend ends before the contact tick, so the foot meets the ball on it.
+ */
+export function blendTime(a: AnimId, b: AnimId, contact: number, u: number, done: number, kick: number): number {
   let t: number;
   if (isLocomotion(a) && isLocomotion(b)) t = LOCAL_TUNING.blendLoco;
   else if (b >= AnimId.DIVE_LOW_L && b <= AnimId.DIVE_HIGH_R) t = LOCAL_TUNING.blendDive;
   else t = LOCAL_TUNING.blendAction;
-  if (action === 1 && contact >= 0 && done === 0) {
+  if (kick === 1 && contact >= 0 && done === 0) {
     const left = ((contact - u) / 60) * LOCAL_TUNING.blendBeforeContact;
     if (left < t) t = left > 0.03 ? left : 0.03;
   }

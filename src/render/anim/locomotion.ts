@@ -28,7 +28,7 @@
 
 import { AnimId, PoseIdx, type Pose, type PoseFn } from '../../contracts/render';
 import type { PoseTable } from '../types';
-import { clamp, lerp, placeSwingFoot, plantToe, smooth01, smoothRange, TAU, toeHeightForLowest, wrap01 } from './poseMath';
+import { clamp, HEEL_X, lerp, placeSwingFootS, plantToeS, PSA, PTA, TAU, TOE_X, wrap01 } from './poseMath';
 
 const P = PoseIdx;
 
@@ -140,38 +140,74 @@ export function runDuty(speed: number): number {
   return Math.max(0.27, 0.34 - 0.012 * (v - 4));
 }
 
-function gaitParams(st: GaitStyle, speed: number, forward: number, sideways: number, sprintStyle: number): void {
+// Internal calls hand doubles over in module scratch (V8 boxes doubles passed to calls it does not inline; zero
+// allocation per frame). Each function owns its block.
+/** gaitParams: speed, forward, sideways, sprint style. */
+const GPA = new Float64Array(4);
+/** footAt: leg phase. */
+const FAU = new Float64Array(1);
+/** gaitLegs: cycle, dirX, dirZ, bob. */
+const GLA = new Float64Array(4);
+/** runPose: cycle, speed, sprint. */
+const RPA = new Float64Array(3);
+/** arms: cycle, amp, elbow, elbowAmp, roll, offset. */
+const ARA = new Float64Array(6);
+/** shuffleLegs: t, cycle, speed. */
+const SLA = new Float64Array(3);
+/** leanInto: t, speed, k. */
+const LIA = new Float64Array(3);
+/** applyTurnLeanS: lean. applyBreathS: phase, weight. */
+export const TLA = new Float64Array(1);
+export const BRA = new Float64Array(2);
+/** strideLengthForS: speed in, stride out. */
+export const SLEN = new Float64Array(2);
+
+/** Pose-function parameters of the allocation-free entry points (LOCOMOTION_IMPLS): t, cycle, speed, side, foot. */
+export const PP = new Float64Array(5);
+/** A pose function reading its parameters from PP (allocation-free form of PoseFn). */
+export type PoseImpl = (out: Pose) => void;
+
+/** x mapped through smoothstep between edges a and b (written out so it inlines; no call boundary). */
+function ss(a: number, b: number, x: number): number {
+  let t = (x - a) / (b - a);
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return t * t * (3 - 2 * t);
+}
+
+function gaitParams(st: GaitStyle): void {
+  const speed = GPA[0]!, forward = GPA[1]!, sideways = GPA[2]!, sprintStyle = GPA[3]!;
   const v = speed > 0 ? (speed < 12 ? speed : 12) : 0;
-  const move = smoothRange(0, 1.2, v);
+  const move = ss(0, 1.2, v);
   if (st.shuffle === 1) {
     G[G_DUTY] = 0.6;
-    G[G_STRIDE] = shuffleStrideLength(v);
+    const sl = (2 * v) / (LOCAL_TUNING.shuffleCadenceBase + LOCAL_TUNING.shuffleCadencePerMs * v);
+    G[G_STRIDE] = sl > LOCAL_TUNING.shuffleMinStride ? sl : LOCAL_TUNING.shuffleMinStride;
     G[G_OFFSET] = 0.5 - 0.27 * sideways; // gallop-like side shuffle: the leading foot lands first, feet never cross
-    G[G_DROP] = st.crouchRest + st.crouchRun * smoothRange(0.5, 4, v);
+    G[G_DROP] = st.crouchRest + st.crouchRun * ss(0.5, 4, v);
     G[G_SWING] = st.swingH * move * (0.6 + 0.1 * v);
   } else {
-    G[G_DUTY] = runDuty(v);
-    G[G_STRIDE] = strideLength(v);
+    G[G_DUTY] = v <= 1.6 ? 0.56 : v <= 4 ? 0.56 + (0.34 - 0.56) * ((v - 1.6) / 2.4) : Math.max(0.27, 0.34 - 0.012 * (v - 4));
+    const sl = (2 * v) / (LOCAL_TUNING.cadenceBase + LOCAL_TUNING.cadencePerMs * v);
+    G[G_STRIDE] = sl > LOCAL_TUNING.minStride ? sl : LOCAL_TUNING.minStride;
     G[G_OFFSET] = 0.5;
-    G[G_DROP] = st.crouchRest + (st.crouchRun - st.crouchRest) * smoothRange(0, 1.2, v) - 0.04 * smoothRange(4, 8, v)
-      - 0.03 * smoothRange(6.5, 10, v);
-    const h = v < 1.6 ? 0.1 * (v / 1.6) : lerp(0.1, st.swingH, smoothRange(1.6, 5, v)) + 0.012 * Math.max(0, v - 5);
+    G[G_DROP] = st.crouchRest + (st.crouchRun - st.crouchRest) * ss(0, 1.2, v) - 0.04 * ss(4, 8, v) - 0.03 * ss(6.5, 10, v);
+    const h = v < 1.6 ? 0.1 * (v / 1.6) : 0.1 + (st.swingH - 0.1) * ss(1.6, 5, v) + 0.012 * (v > 5 ? v - 5 : 0);
     G[G_SWING] = h * (1 + 0.15 * sprintStyle) * move;
   }
   // Stance travel = duty * stride exactly: the planted toe moves back at the body speed (no sliding).
   G[G_TRAVEL] = G[G_DUTY]! * G[G_STRIDE]!;
-  G[G_BASE] = lerp(st.baseRest, st.baseMove, move);
-  G[G_HEEL] = st.heelLift * smoothRange(0.2, 1.2, v);
+  G[G_BASE] = st.baseRest + (st.baseMove - st.baseRest) * move;
+  G[G_HEEL] = st.heelLift * ss(0.2, 1.2, v);
   // A crouched pelvis puts the feet further forward so the shins stay near vertical (ankles in range).
   const deep = -G[G_DROP]! - 0.06;
   // Walking steps sit under the hips; running ones land a little further ahead (centreMove).
   const centre = st.shuffle === 1
-    ? lerp(st.centreRest, st.centreMove, smoothRange(0.5, 3, v))
-    : lerp(st.centreRest, 0, smoothRange(0.3, 1.5, v)) + st.centreMove * smoothRange(2, 4.5, v);
+    ? st.centreRest + (st.centreMove - st.centreRest) * ss(0.5, 3, v)
+    : st.centreRest * (1 - ss(0.3, 1.5, v)) + st.centreMove * ss(2, 4.5, v);
   G[G_CENTRE] = centre + (deep > 0 ? deep * 1.1 : 0);
   G[G_BALL] = st.ballLift;
   // Swing end tangents (fraction of the stance velocity): a smaller pull-back at speed keeps the feet in reach.
-  G[G_TANGENT] = lerp(0.55, 0.25, smoothRange(4, 8, v));
+  G[G_TANGENT] = 0.55 - 0.3 * ss(4, 8, v);
   // The heel rolls up only when stepping forward (a backward or side step leaves the foot flat / on its ball).
   if (forward < 1) G[G_HEEL] = G[G_HEEL]! * (forward > 0 ? forward : 0);
   if (G[G_HEEL]! < st.ballLift) G[G_HEEL] = st.ballLift;
@@ -181,16 +217,17 @@ function gaitParams(st: GaitStyle, speed: number, forward: number, sideways: num
 const F = new Float64Array(5);
 
 /**
- * Foot placement for a leg at its own phase u (0..1, 0 = touchdown) along the motion axis: F[0] = position along
- * the motion (m, relative to the stance centre), F[2] = lowest sole height (m), F[3] = foot pitch, F[4] = planted.
+ * Foot placement for a leg at its own phase FAU[0] (0..1, 0 = touchdown) along the motion axis: F[0] = position
+ * along the motion (m, relative to the stance centre), F[2] = lowest sole height (m), F[3] = foot pitch, F[4] = planted.
  */
-function footAt(u: number): void {
+function footAt(): void {
+  const u = FAU[0]!;
   const duty = G[G_DUTY]!, travel = G[G_TRAVEL]!, heel = G[G_HEEL]!, H = G[G_SWING]!;
   if (u < duty) {
     const s = u / duty; // stance progress
     F[0] = travel * (0.5 - s);
     F[2] = 0;
-    const roll = smoothRange(0.55, 1, s);
+    const roll = ss(0.55, 1, s);
     const ball = G[G_BALL]!;
     F[3] = -(ball + (heel - ball) * roll * roll);
     F[4] = 1;
@@ -206,16 +243,22 @@ function footAt(u: number): void {
   const sn = Math.sin(Math.PI * s);
   F[2] = H * sn * sn * sn * sn;
   const ball = G[G_BALL]!;
-  F[3] = -heel * (1 - s) * (1 - s) - ball * s * s + 0.28 * sn * s * smooth01(H * 8);
+  let up = H * 8;
+  up = up > 1 ? 1 : up;
+  up = up * up * (3 - 2 * up);
+  F[3] = -heel * (1 - s) * (1 - s) - ball * s * s + 0.28 * sn * s * up;
   F[4] = 0;
 }
 
 /**
- * Legs of a gait: pelvis height, pelvis yaw, both feet by IK. dirX/dirZ = unit motion direction in model space.
- * Writes ROOT_Y, ROOT_YAW, hips, knees, ankles. Reads G (gaitParams first).
+ * Legs of a gait: pelvis height, pelvis yaw, both feet by IK. GLA = cycle, unit motion direction (x, z) in model
+ * space, pelvis bob. Writes ROOT_Y, ROOT_YAW, hips, knees, ankles. Reads G (gaitParams first).
  */
-function gaitLegs(out: Pose, cycle: number, dirX: number, dirZ: number, bob: number): void {
-  const u = wrap01(cycle / TAU);
+function gaitLegs(out: Pose): void {
+  const cycle = GLA[0]!, dirX = GLA[1]!, dirZ = GLA[2]!, bob = GLA[3]!;
+  let u = cycle / TAU;
+  u -= Math.floor(u);
+  if (u >= 1) u = 0;
   const duty = G[G_DUTY]!;
   const travel = G[G_TRAVEL]!;
   // Pelvis: highest over each mid-stance (two bobs per cycle), where the planted leg is under the body; lower at
@@ -224,19 +267,31 @@ function gaitLegs(out: Pose, cycle: number, dirX: number, dirZ: number, bob: num
   out[P.ROOT_Y] = G[G_DROP]! + bob * travel * Math.cos(TAU * 2 * (u - midR)) * 0.5;
   out[P.ROOT_YAW] = 0;
   const base = G[G_BASE]!;
+  const span = BODY_TOE_HEEL;
   for (let leg = 0; leg < 2; leg++) {
     const side = leg === 0 ? 1 : -1; // right first: touchdown at u = 0
-    const lu = leg === 0 ? u : wrap01(u - G[G_OFFSET]!);
-    footAt(lu);
+    let lu = u;
+    if (leg === 1) { lu = u - G[G_OFFSET]!; lu -= Math.floor(lu); if (lu >= 1) lu = 0; }
+    FAU[0] = lu;
+    footAt();
     const along = F[0]!;
     const pitch = F[3]!;
     // Feet move along the motion direction; the stance centre sits ahead of the hips along +x (toe ahead of ankle).
     const tx = G[G_CENTRE]! + along * dirX;
     const tz = side * base + along * dirZ;
-    if (F[4] === 1) plantToe(out, side, tx, toeHeightForLowest(F[2]!, pitch), tz, pitch);
-    else placeSwingFoot(out, side, tx, F[2]!, tz, pitch);
+    if (F[4] === 1) {
+      const drop = span * Math.sin(pitch);
+      PTA[0] = tx; PTA[1] = drop > 0 ? F[2]! + drop : F[2]!; PTA[2] = tz; PTA[3] = pitch;
+      plantToeS(out, side);
+    } else {
+      PSA[0] = tx; PSA[1] = F[2]!; PSA[2] = tz; PSA[3] = pitch;
+      placeSwingFootS(out, side);
+    }
   }
 }
+
+/** Boot length toe to heel (m): the heel drops below the toe by this * sin(pitch) when the toes point up. */
+const BODY_TOE_HEEL = TOE_X - HEEL_X;
 
 /** Finite number or a default (pose functions accept garbage input and still write a valid pose). */
 function fin(x: number, d: number): number {
@@ -252,23 +307,40 @@ export function footPhase(anim: AnimId, cycle: number, speed: number, dir: numbe
   const st = anim === AnimId.STRAFE ? STRAFE_STYLE : anim === AnimId.JOCKEY ? JOCKEY_STYLE : anim === AnimId.SHIELD ? SHIELD_STYLE
     : anim === AnimId.KEEPER_READY ? KEEPER_STYLE : RUN;
   const a = TAU * fin(dir, 0);
-  if (st === RUN) gaitParams(RUN, fin(speed, 0), 1, 0, 0);
-  else gaitParams(st, fin(speed, 0), Math.cos(a), Math.sin(a), 0);
+  GPA[0] = fin(speed, 0); GPA[3] = 0;
+  if (st === RUN) { GPA[1] = 1; GPA[2] = 0; } else { GPA[1] = Math.cos(a); GPA[2] = Math.sin(a); }
+  gaitParams(st);
   const u = wrap01(fin(cycle, 0) / TAU);
   const lu = side > 0 ? u : wrap01(u - G[G_OFFSET]!);
   const duty = G[G_DUTY]!;
   return lu < duty ? lu / duty : -1;
 }
 
+/** Stride length the cycle of clip `anim` must advance with: speed in SLEN[0], stride out in SLEN[1]. */
+export function strideLengthForS(anim: AnimId): void {
+  let v = SLEN[0]!;
+  v = v > 0 ? (v < 12 ? v : 12) : 0;
+  let s: number;
+  if (anim === AnimId.STRAFE || anim === AnimId.JOCKEY || anim === AnimId.SHIELD || anim === AnimId.KEEPER_READY) {
+    s = (2 * v) / (LOCAL_TUNING.shuffleCadenceBase + LOCAL_TUNING.shuffleCadencePerMs * v);
+    if (s < LOCAL_TUNING.shuffleMinStride) s = LOCAL_TUNING.shuffleMinStride;
+  } else {
+    s = (2 * v) / (LOCAL_TUNING.cadenceBase + LOCAL_TUNING.cadencePerMs * v);
+    if (s < LOCAL_TUNING.minStride) s = LOCAL_TUNING.minStride;
+  }
+  SLEN[1] = s;
+}
+
 // ============================================================ upper body helpers
 
-/** Arm swing: right arm forward when the left leg is forward (cycle PI). */
-function arms(out: Pose, cycle: number, amp: number, elbow: number, elbowAmp: number, roll: number, offset: number): void {
-  const c = Math.cos(cycle);
+/** Arm swing (ARA: cycle, amp, elbow, elbowAmp, roll, offset): right arm forward when the left leg is forward. */
+function arms(out: Pose): void {
+  const c = Math.cos(ARA[0]!);
+  const amp = ARA[1]!, elbow = ARA[2]!, elbowAmp = ARA[3]!, roll = ARA[4]!, offset = ARA[5]!;
   out[P.SHOULDER_R_PITCH] = offset - amp * c;
   out[P.SHOULDER_L_PITCH] = offset + amp * c;
-  out[P.ELBOW_R] = elbow + elbowAmp * Math.max(0, -c);
-  out[P.ELBOW_L] = elbow + elbowAmp * Math.max(0, c);
+  out[P.ELBOW_R] = elbow + elbowAmp * (c < 0 ? -c : 0);
+  out[P.ELBOW_L] = elbow + elbowAmp * (c > 0 ? c : 0);
   out[P.SHOULDER_R_ROLL] = roll;
   out[P.SHOULDER_L_ROLL] = roll;
 }
@@ -286,15 +358,17 @@ export const neutralPose: PoseFn = (out: Pose) => {
   out.fill(0);
 };
 
-/** Idle: feet planted shoulder-width, soft knees, breathing sway (t = breathing phase 0..1). */
-export const idlePose: PoseFn = (out, t) => {
+/** Idle: feet planted shoulder-width, soft knees, breathing sway (PP[0] = breathing phase 0..1). */
+function idleI(out: Pose): void {
   out.fill(0);
-  t = fin(t, 0);
+  const t = fin(PP[0]!, 0);
   const b = Math.sin(TAU * t);
   out[P.ROOT_Y] = -0.02 + 0.004 * b;
-  out[P.ROOT_SIDE] = LOCAL_TUNING.breathSway * Math.sin(TAU * t);
-  plantToe(out, 1, 0.16, 0, 0.125, 0);
-  plantToe(out, -1, 0.19, 0, -0.125, 0);
+  out[P.ROOT_SIDE] = LOCAL_TUNING.breathSway * b;
+  PTA[0] = 0.16; PTA[1] = 0; PTA[2] = 0.125; PTA[3] = 0;
+  plantToeS(out, 1);
+  PTA[0] = 0.19; PTA[1] = 0; PTA[2] = -0.125; PTA[3] = 0;
+  plantToeS(out, -1);
   out[P.SPINE_PITCH] = 0.02 + LOCAL_TUNING.breathChest * 0.5 * (1 + b);
   out[P.SPINE_ROLL] = -0.6 * out[P.ROOT_SIDE]!;
   out[P.HEAD_PITCH] = -0.02 - 0.5 * LOCAL_TUNING.breathChest * b;
@@ -305,108 +379,136 @@ export const idlePose: PoseFn = (out, t) => {
   out[P.SHOULDER_R_PITCH] = 0.04;
   out[P.ELBOW_L] = 0.18;
   out[P.ELBOW_R] = 0.18;
-};
-
-/** Run gait + upper body. sprint 0..1 blends the jog / sprint upper body and knee lift. */
-function runPose(out: Pose, cycle: number, speed: number, sprint: number): void {
-  clearUpper(out);
-  cycle = fin(cycle, 0);
-  const v = fin(speed, 0) > 0 ? fin(speed, 0) : 0;
-  gaitParams(RUN, v, 1, 0, sprint);
-  gaitLegs(out, cycle, 1, 0, 0.05 * smoothRange(2, 5, v));
-  const run = smoothRange(1.5, 4, v);
-  // Pelvis twist with the stride, shoulders counter-rotate.
-  const twist = (0.05 + 0.04 * run) * Math.sin(cycle) * smoothRange(0.2, 1.5, v);
-  out[P.SPINE_YAW] = -twist * 1.6;
-  const lean = 0.04 + 0.1 * run + 0.012 * v + 0.1 * sprint * smoothRange(4, 8, v);
-  out[P.SPINE_PITCH] = lean;
-  out[P.HEAD_PITCH] = -lean * 0.75;
-  let amp = (0.25 + 0.45 * run + 0.03 * v) * (1 + 0.3 * sprint) * smoothRange(0.1, 1.2, v);
-  if (amp > 1.1) amp = 1.1;
-  const elbow = lerp(0.25, 1.35 + 0.15 * sprint, run);
-  arms(out, cycle, amp, elbow, 0.25 * run, 0.1 + 0.04 * run, -0.05 * run);
 }
 
-export const jogPose: PoseFn = (out, _t, cycle, speed) => {
-  runPose(out, cycle, speed, 0);
-};
+/** Run gait + upper body (RPA: cycle, speed, sprint 0..1 blending the jog / sprint upper body and knee lift). */
+function runPose(out: Pose): void {
+  clearUpper(out);
+  const cycle = fin(RPA[0]!, 0);
+  const sp = fin(RPA[1]!, 0);
+  const v = sp > 0 ? sp : 0;
+  const sprint = RPA[2]!;
+  GPA[0] = v; GPA[1] = 1; GPA[2] = 0; GPA[3] = sprint;
+  gaitParams(RUN);
+  GLA[0] = cycle; GLA[1] = 1; GLA[2] = 0; GLA[3] = 0.05 * ss(2, 5, v);
+  gaitLegs(out);
+  const run = ss(1.5, 4, v);
+  // Pelvis twist with the stride, shoulders counter-rotate.
+  const twist = (0.05 + 0.04 * run) * Math.sin(cycle) * ss(0.2, 1.5, v);
+  out[P.SPINE_YAW] = -twist * 1.6;
+  const lean = 0.04 + 0.1 * run + 0.012 * v + 0.1 * sprint * ss(4, 8, v);
+  out[P.SPINE_PITCH] = lean;
+  out[P.HEAD_PITCH] = -lean * 0.75;
+  let amp = (0.25 + 0.45 * run + 0.03 * v) * (1 + 0.3 * sprint) * ss(0.1, 1.2, v);
+  if (amp > 1.1) amp = 1.1;
+  ARA[0] = cycle; ARA[1] = amp; ARA[2] = 0.25 + (1.1 + 0.15 * sprint) * run; ARA[3] = 0.25 * run;
+  ARA[4] = 0.1 + 0.04 * run; ARA[5] = -0.05 * run;
+  arms(out);
+}
 
-export const sprintPose: PoseFn = (out, _t, cycle, speed) => {
-  runPose(out, cycle, speed, 1);
-};
+function jogI(out: Pose): void {
+  RPA[0] = PP[1]!; RPA[1] = PP[2]!; RPA[2] = 0;
+  runPose(out);
+}
+
+function sprintI(out: Pose): void {
+  RPA[0] = PP[1]!; RPA[1] = PP[2]!; RPA[2] = 1;
+  runPose(out);
+}
 
 /** Roll into a turn: lean = turnLeanAngle(speed, side as yaw rate). Applied after IK so the legs lean with the body. */
 export function applyTurnLean(out: Pose, lean: number): void {
+  TLA[0] = lean;
+  applyTurnLeanS(out);
+}
+
+/** applyTurnLean with the lean in TLA[0] (allocation-free internal form). */
+export function applyTurnLeanS(out: Pose): void {
+  const lean = TLA[0]!;
   out[P.ROOT_ROLL] = out[P.ROOT_ROLL]! + lean;
   out[P.SPINE_ROLL] = out[P.SPINE_ROLL]! - lean * 0.25; // head and shoulders stay a little more upright
   out[P.HEAD_YAW] = out[P.HEAD_YAW]! - lean * 0.6; // look into the turn
 }
 
-export const turnLeanPose: PoseFn = (out, _t, cycle, speed, side, foot) => {
-  runPose(out, cycle, speed, foot === 1 ? 1 : 0);
-  applyTurnLean(out, turnLeanAngle(fin(speed, 0), fin(side, 0)));
-};
-
-/** Directional shuffle legs: t = motion direction (fraction of a turn). Returns nothing; reads/writes `out`. */
-function shuffleLegs(out: Pose, st: GaitStyle, t: number, cycle: number, speed: number): void {
-  t = fin(t, 0); cycle = fin(cycle, 0); speed = fin(speed, 0);
-  const a = TAU * t;
-  const dx = Math.cos(a), dz = Math.sin(a);
-  gaitParams(st, speed, dx, dz, 0);
-  gaitLegs(out, cycle, dx, dz, 0.03);
+function turnLeanI(out: Pose): void {
+  const speed = fin(PP[2]!, 0), yaw = fin(PP[3]!, 0);
+  RPA[0] = PP[1]!; RPA[1] = speed; RPA[2] = PP[4] === 1 ? 1 : 0;
+  runPose(out);
+  let lean = Math.atan((speed * yaw) / LOCAL_TUNING.gravity);
+  lean = lean < -LOCAL_TUNING.maxTurnLean ? -LOCAL_TUNING.maxTurnLean : lean > LOCAL_TUNING.maxTurnLean ? LOCAL_TUNING.maxTurnLean : lean;
+  TLA[0] = lean;
+  applyTurnLeanS(out);
 }
 
-/** Lean slightly toward the motion (forward pitch / side roll), scaled by speed. */
-function leanInto(out: Pose, t: number, speed: number, k: number): void {
-  const a = TAU * t;
-  const m = smoothRange(0.3, 3, speed) * k;
+/** Directional shuffle legs (SLA: t = motion direction as a fraction of a turn, cycle, speed). */
+function shuffleLegs(out: Pose, st: GaitStyle): void {
+  const a = TAU * SLA[0]!;
+  const dx = Math.cos(a), dz = Math.sin(a);
+  GPA[0] = SLA[2]!; GPA[1] = dx; GPA[2] = dz; GPA[3] = 0;
+  gaitParams(st);
+  GLA[0] = SLA[1]!; GLA[1] = dx; GLA[2] = dz; GLA[3] = 0.03;
+  gaitLegs(out);
+}
+
+/** Lean slightly toward the motion (LIA: t, speed, k): forward pitch / side roll, scaled by speed. */
+function leanInto(out: Pose): void {
+  const a = TAU * LIA[0]!;
+  const m = ss(0.3, 3, LIA[1]!) * LIA[2]!;
   out[P.SPINE_PITCH] = out[P.SPINE_PITCH]! + 0.12 * m * Math.cos(a);
   out[P.SPINE_ROLL] = out[P.SPINE_ROLL]! + 0.12 * m * Math.sin(a);
 }
 
+/** Read and sanitise PP for the directional clips: SLA = t, cycle, speed; LIA = t, speed. */
+function shuffleArgs(k: number): void {
+  const t = fin(PP[0]!, 0), cycle = fin(PP[1]!, 0), speed = fin(PP[2]!, 0);
+  SLA[0] = t; SLA[1] = cycle; SLA[2] = speed;
+  LIA[0] = t; LIA[1] = speed; LIA[2] = k;
+}
+
 /** Strafe: sideways / backward steps, upright jog posture, arms swinging lightly. */
-export const strafePose: PoseFn = (out, t, cycle, speed) => {
+function strafeI(out: Pose): void {
   clearUpper(out);
-  t = fin(t, 0); cycle = fin(cycle, 0); speed = fin(speed, 0);
-  shuffleLegs(out, STRAFE_STYLE, t, cycle, speed);
+  shuffleArgs(1);
+  shuffleLegs(out, STRAFE_STYLE);
   out[P.SPINE_PITCH] = 0.08;
   out[P.HEAD_PITCH] = -0.06;
-  leanInto(out, t, speed, 1);
-  const m = smoothRange(0.2, 2, speed);
-  arms(out, cycle, 0.25 * m, 0.4 + 0.6 * m, 0.1, 0.18, 0);
-};
+  leanInto(out);
+  const m = ss(0.2, 2, SLA[2]!);
+  ARA[0] = SLA[1]!; ARA[1] = 0.25 * m; ARA[2] = 0.4 + 0.6 * m; ARA[3] = 0.1; ARA[4] = 0.18; ARA[5] = 0;
+  arms(out);
+}
 
 /** Jockey: low, side-on crouch, arms out low for balance, quick small steps (any direction). */
-export const jockeyPose: PoseFn = (out, t, cycle, speed) => {
+function jockeyI(out: Pose): void {
   clearUpper(out);
-  t = fin(t, 0); cycle = fin(cycle, 0); speed = fin(speed, 0);
-  shuffleLegs(out, JOCKEY_STYLE, t, cycle, speed);
+  shuffleArgs(0.6);
+  shuffleLegs(out, JOCKEY_STYLE);
   out[P.SPINE_PITCH] = 0.32;
   out[P.SPINE_YAW] = -0.18;
   out[P.HEAD_PITCH] = -0.3;
   out[P.HEAD_YAW] = 0.15;
-  leanInto(out, t, speed, 0.6);
-  const s = 0.06 * Math.sin(cycle) * smoothRange(0.2, 1.5, speed);
+  leanInto(out);
+  const s = 0.06 * Math.sin(SLA[1]!) * ss(0.2, 1.5, SLA[2]!);
   out[P.SHOULDER_L_PITCH] = 0.25 + s;
   out[P.SHOULDER_R_PITCH] = 0.25 - s;
   out[P.SHOULDER_L_ROLL] = 0.5;
   out[P.SHOULDER_R_ROLL] = 0.5;
   out[P.ELBOW_L] = 0.7;
   out[P.ELBOW_R] = 0.7;
-};
+}
 
-/** Shield: wide, low stance, back leaning into the opponent, arm out on `side` (-1 left / +1 right). */
-export const shieldPose: PoseFn = (out, t, cycle, speed, side) => {
+/** Shield: wide, low stance, back leaning into the opponent, arm out on PP[3] side (-1 left / +1 right). */
+function shieldI(out: Pose): void {
   clearUpper(out);
-  t = fin(t, 0); cycle = fin(cycle, 0); speed = fin(speed, 0);
-  shuffleLegs(out, SHIELD_STYLE, t, cycle, speed);
-  const sd = side < 0 ? -1 : 1;
+  shuffleArgs(0.4);
+  shuffleLegs(out, SHIELD_STYLE);
+  const sd = PP[3]! < 0 ? -1 : 1;
   out[P.SPINE_PITCH] = 0.22;
   out[P.SPINE_ROLL] = 0.12 * sd;
   out[P.SPINE_YAW] = 0.1 * sd;
   out[P.HEAD_PITCH] = -0.18;
   out[P.HEAD_YAW] = 0.25 * sd;
-  leanInto(out, t, speed, 0.4);
+  leanInto(out);
   // The arm on the opponent's side goes out and back (fending him off); the other stays low and bent.
   const out1 = sd > 0 ? P.SHOULDER_R_ROLL : P.SHOULDER_L_ROLL;
   const out1p = sd > 0 ? P.SHOULDER_R_PITCH : P.SHOULDER_L_PITCH;
@@ -414,44 +516,83 @@ export const shieldPose: PoseFn = (out, t, cycle, speed, side) => {
   const in1 = sd > 0 ? P.SHOULDER_L_ROLL : P.SHOULDER_R_ROLL;
   const in1p = sd > 0 ? P.SHOULDER_L_PITCH : P.SHOULDER_R_PITCH;
   const in1e = sd > 0 ? P.ELBOW_L : P.ELBOW_R;
-  const wob = 0.06 * Math.sin(cycle * 2) * smoothRange(0.2, 1.5, speed);
+  const wob = 0.06 * Math.sin(SLA[1]! * 2) * ss(0.2, 1.5, SLA[2]!);
   out[out1] = 1.15 + wob;
   out[out1p] = -0.25;
   out[out1e] = 0.55;
   out[in1] = 0.35;
   out[in1p] = 0.2;
   out[in1e] = 0.9;
-};
+}
 
 /** Keeper ready: crouched on the balls of the feet, hands up in front, shuffling in any direction. */
-export const keeperReadyPose: PoseFn = (out, t, cycle, speed) => {
+function keeperI(out: Pose): void {
   clearUpper(out);
-  t = fin(t, 0); cycle = fin(cycle, 0); speed = fin(speed, 0);
-  shuffleLegs(out, KEEPER_STYLE, t, cycle, speed);
+  shuffleArgs(0.5);
+  shuffleLegs(out, KEEPER_STYLE);
   out[P.SPINE_PITCH] = 0.34;
   out[P.HEAD_PITCH] = -0.32;
-  leanInto(out, t, speed, 0.5);
-  const s = 0.05 * Math.sin(cycle) * smoothRange(0.2, 1.5, speed);
+  leanInto(out);
+  const s = 0.05 * Math.sin(SLA[1]!) * ss(0.2, 1.5, SLA[2]!);
   out[P.SHOULDER_L_PITCH] = 0.85 + s;
   out[P.SHOULDER_R_PITCH] = 0.85 - s;
   out[P.SHOULDER_L_ROLL] = 0.42;
   out[P.SHOULDER_R_ROLL] = 0.42;
   out[P.ELBOW_L] = 1.15;
   out[P.ELBOW_R] = 1.15;
-};
+}
 
 /**
  * Breathing layer for standing clips (mapper): phase 0..1, weight 0..1 (fades out with speed). Chest rise and a tiny
  * head nod; feet untouched.
  */
 export function applyBreath(out: Pose, phase: number, weight: number): void {
+  BRA[0] = phase; BRA[1] = weight;
+  applyBreathS(out);
+}
+
+/** applyBreath with phase / weight in BRA (allocation-free internal form). */
+export function applyBreathS(out: Pose): void {
+  const weight = BRA[1]!;
   if (weight <= 0) return;
-  const b = Math.sin(TAU * phase) * weight;
+  const b = Math.sin(TAU * BRA[0]!) * weight;
   out[P.SPINE_PITCH] = out[P.SPINE_PITCH]! + LOCAL_TUNING.breathChest * 0.5 * b;
   out[P.HEAD_PITCH] = out[P.HEAD_PITCH]! - LOCAL_TUNING.breathChest * 0.4 * b;
   out[P.SHOULDER_L_ROLL] = out[P.SHOULDER_L_ROLL]! + 0.02 * b;
   out[P.SHOULDER_R_ROLL] = out[P.SHOULDER_R_ROLL]! + 0.02 * b;
 }
+
+/** Wrap an allocation-free PoseImpl as a contract PoseFn. */
+export function poseFnOf(impl: PoseImpl): PoseFn {
+  return (out: Pose, t: number, cycle: number, speed: number, side: number, foot: number): void => {
+    PP[0] = t; PP[1] = cycle; PP[2] = speed; PP[3] = side; PP[4] = foot;
+    impl(out);
+  };
+}
+
+/** Allocation-free entry points (parameters in PP) by AnimId. */
+export const LOCOMOTION_IMPLS: Partial<Record<AnimId, PoseImpl>> = {
+  [AnimId.IDLE]: idleI,
+  [AnimId.JOG]: jogI,
+  [AnimId.SPRINT]: sprintI,
+  [AnimId.TURN_LEAN]: turnLeanI,
+  [AnimId.STRAFE]: strafeI,
+  [AnimId.JOCKEY]: jockeyI,
+  [AnimId.SHIELD]: shieldI,
+  [AnimId.KEEPER_READY]: keeperI,
+};
+
+/** Idle: t = breathing phase. */
+export const idlePose: PoseFn = poseFnOf(idleI);
+export const jogPose: PoseFn = poseFnOf(jogI);
+export const sprintPose: PoseFn = poseFnOf(sprintI);
+/** Turn lean: side = yaw rate (rad/s, + = right), foot 1 = sprint style. */
+export const turnLeanPose: PoseFn = poseFnOf(turnLeanI);
+export const strafePose: PoseFn = poseFnOf(strafeI);
+export const jockeyPose: PoseFn = poseFnOf(jockeyI);
+/** Shield: side = arm side. */
+export const shieldPose: PoseFn = poseFnOf(shieldI);
+export const keeperReadyPose: PoseFn = poseFnOf(keeperI);
 
 export const LOCOMOTION_POSES: PoseTable = {
   [AnimId.IDLE]: idlePose,

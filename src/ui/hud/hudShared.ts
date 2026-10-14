@@ -136,41 +136,26 @@ export function pickDevice(
 
 /** The device `human` plays with in the current match (or, outside a match, the last used device). */
 export function humanDevice(ctx: AppContext, human: number): DeviceSpec {
-  let list: DeviceInfo[] = [];
-  let last: string | null = null;
-  try {
-    list = ctx.devices.list();
-  } catch {
-    list = [];
-  }
-  try {
-    last = ctx.devices.lastActive();
-  } catch {
-    last = null;
-  }
-  let ids: readonly string[] | null = null;
-  try {
+  const list = safe(() => ctx.devices.list(), [] as DeviceInfo[]);
+  const last = safe(() => ctx.devices.lastActive(), null as string | null);
+  const ids = safe((): readonly string[] | null => {
     const setup = ctx.session.getSetup();
-    if (setup) {
-      const b = setup.bindings.find((x) => x.human === human);
-      ids = b ? b.deviceIds : [];
-    }
-  } catch {
-    ids = null;
-  }
-  let override = PadFamily.AUTO;
-  let isTouch = false;
-  try {
-    override = ctx.settings.get().controls.pad.familyOverride;
-  } catch {
-    override = PadFamily.AUTO;
-  }
-  try {
-    isTouch = !!ctx.platform.isTouch;
-  } catch {
-    isTouch = false;
-  }
+    if (!setup) return null;
+    const b = setup.bindings.find((x) => x.human === human);
+    return b ? b.deviceIds : [];
+  }, null);
+  const override = safe(() => ctx.settings.get().controls.pad.familyOverride, PadFamily.AUTO);
+  const isTouch = safe(() => !!ctx.platform.isTouch, false);
   return pickDevice(list, ids, last, isTouch, override);
+}
+
+/** fn() or the fallback when it throws (context services are optional in tests and broken states). */
+function safe<T>(fn: () => T, fallback: T): T {
+  try {
+    return fn();
+  } catch {
+    return fallback;
+  }
 }
 
 /** True when a touch device is bound to any human of the current match. */

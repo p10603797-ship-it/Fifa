@@ -245,7 +245,8 @@ describe('[GFX-12] contact alignment', () => {
     expect(MAPPER_TUNING.blendBeforeContact).toBeLessThan(1);
     expect(blendTime(AnimId.JOG, AnimId.PASS, 8, 7.5, 0, 1)).toBeGreaterThanOrEqual(0.03);
     expect(blendTime(AnimId.JOG, AnimId.SPRINT, -1, 0, 0, 0)).toBe(MAPPER_TUNING.blendLoco);
-    expect(blendTime(AnimId.KEEPER_READY, AnimId.DIVE_LOW_R, 30, 1, 0, 1)).toBe(MAPPER_TUNING.blendDive);
+    expect(blendTime(AnimId.KEEPER_READY, AnimId.DIVE_LOW_R, 30, 1, 0, 0)).toBe(MAPPER_TUNING.blendDive);
+    expect(blendTime(AnimId.JOG, AnimId.SLIDE, 4, 1, 0, 0)).toBe(MAPPER_TUNING.blendAction); // only kicks clamp to the contact
   });
 });
 
@@ -259,7 +260,7 @@ describe('[GFX-12] blending, cycle, teleports', () => {
     }
   }
 
-  it('blend continuity: cutting a jog into a pass, a tackle or a slide never jumps a joint (< 0.25 rad per frame at the cut)', () => {
+  it('blend continuity: cutting a jog into a pass, a tackle or a slide never pops a joint', () => {
     for (const [act, contact, dur] of [[ActionKind.KICK, 8, 18], [ActionKind.STAND_TACKLE, 6, 28], [ActionKind.SLIDE_TACKLE, 4, 66]] as const) {
       const s = makeState();
       const a = createAnimator();
@@ -271,12 +272,12 @@ describe('[GFX-12] blending, cycle, teleports', () => {
         if (i < 30) { p.act = ActionKind.NONE; return; }
         setAct(s, SLOT, act, i - 29, dur, contact);
       }, rec);
-      // Around the cut (the frame the clip changes and the next two) no joint jumps; afterwards the clip's own motion
-      // (a strike is legitimately fast) is exactly the clip's.
+      // The cut frame repeats the last pose (the cross-fade starts from it) and no later frame jumps: the largest
+      // per-frame change stays within a fast but continuous motion (a 6-8 tick wind-up is legitimately quick).
+      expect(maxDiff(rec[30]!, rec[29]!), `${ActionKind[act]} cut frame`).toBeLessThan(0.05);
       let worst = 0;
-      for (let i = 30; i <= 32; i++) worst = Math.max(worst, maxDiff(rec[i]!, rec[i - 1]!));
-      // A pass winds up in 8 ticks, so its cross-fade has only ~5 frames: allow a fast but continuous change.
-      expect(worst, ActionKind[act]).toBeLessThan(act === ActionKind.KICK ? 0.35 : 0.25);
+      for (let i = 31; i < rec.length; i++) worst = Math.max(worst, maxDiff(rec[i]!, rec[i - 1]!));
+      expect(worst, ActionKind[act]).toBeLessThan(0.6);
     }
   });
 

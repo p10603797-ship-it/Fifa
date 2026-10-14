@@ -20,10 +20,10 @@
 import type { AppContext, Screen, ScreenParams } from '../../contracts/app';
 import { MenuAction, UiSound } from '../../contracts/app';
 import type { Club } from '../../contracts/data';
-import { KitSlot, TeamStyle } from '../../contracts/enums';
+import { KitSlot, Role, TeamStyle } from '../../contracts/enums';
 import { getFormation } from '../../data/formations';
 import { crestDataUrl, kitDataUrl, resolveKits, type MatchKits } from '../../render/kits';
-import { createButton, h, injectStyle, setSelected, showToast } from '../components';
+import { createButton, h, injectStyle, setSelected } from '../components';
 import { attachDotField, sharedDotField } from '../dotfield';
 import { MODE_LABELS, createFlowTop, createStepDots, goNext, injectFlowStyle, readFlow, type FlowParams } from './matchFlow';
 
@@ -36,6 +36,12 @@ export const STYLE_LABELS: Readonly<Record<TeamStyle, string>> = {
   [TeamStyle.DIRECT]: 'Direct',
   [TeamStyle.HIGH_PRESS]: 'High press',
   [TeamStyle.WING_PLAY]: 'Wing play',
+};
+
+/** Short position names (key players). */
+export const ROLE_SHORT: Readonly<Record<Role, string>> = {
+  [Role.GK]: 'GK', [Role.RB]: 'RB', [Role.CB]: 'CB', [Role.LB]: 'LB', [Role.RWB]: 'RWB', [Role.LWB]: 'LWB', [Role.CDM]: 'DM',
+  [Role.CM]: 'CM', [Role.CAM]: 'AM', [Role.RM]: 'RM', [Role.LM]: 'LM', [Role.RW]: 'RW', [Role.LW]: 'LW', [Role.ST]: 'ST', [Role.CF]: 'CF',
 };
 
 /** Star rating 1..5 in half steps for an overall rating (62 -> 1, 88 -> 5). */
@@ -169,12 +175,17 @@ const CSS = `
 .ts-name { margin: 0; font: 700 var(--fs-md) / 1.15 var(--font-ui); overflow: hidden; text-overflow: ellipsis;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .ts-city { margin: 2px 0 0; font-size: var(--fs-xs); color: var(--text-3); }
-.ts-stats { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.ts-stats { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); white-space: nowrap; }
 .ts-code { font: 600 var(--fs-lg) / 1 var(--font-num); letter-spacing: 0.04em; }
 .ts-ovr { font: 500 var(--fs-sm) / 1 var(--font-num); font-variant-numeric: tabular-nums; color: var(--text-2); }
-.ts-stars { position: relative; display: inline-block; font-size: 15px; line-height: 1; letter-spacing: 2px; color: var(--hairline-strong); }
+.ts-stars { position: relative; display: inline-block; font-size: 14px; line-height: 1; letter-spacing: 1px; color: var(--hairline-strong); }
 .ts-stars-fill { position: absolute; left: 0; top: 0; overflow: hidden; white-space: nowrap; color: var(--text-1); }
 .ts-meta { margin: 0; font-size: var(--fs-sm); color: var(--text-2); }
+.ts-keys { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: var(--space-2) 0 0; list-style: none; border-top: 1px solid var(--hairline); }
+.ts-keys li { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: var(--space-2); align-items: baseline; font-size: var(--fs-xs); color: var(--text-2); }
+.ts-keys .pos { font: 600 var(--fs-xs) / 1 var(--font-num); color: var(--text-3); }
+.ts-keys .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-keys .num { color: var(--text-1); }
 .ts-kits { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
 .ts-kit { appearance: none; -webkit-appearance: none; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 4px; min-height: var(--target); padding: var(--space-2); border-radius: var(--radius); background: var(--surface-2);
@@ -185,7 +196,7 @@ const CSS = `
 .ts-clash { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); font-size: var(--fs-xs); line-height: 1.3;
   background: var(--success-soft); color: var(--success); }
 .ts-clash.is-warn { background: var(--warning-soft); color: var(--warning); }
-.ts-grid { display: grid; grid-template-columns: repeat(5, minmax(60px, 1fr)); grid-auto-rows: minmax(var(--target), 1fr); gap: var(--space-2);
+.ts-grid { display: grid; grid-template-columns: repeat(5, minmax(60px, 1fr)); grid-auto-rows: minmax(var(--target), 128px); gap: var(--space-2);
   align-content: center; min-height: 0; min-width: 0; max-width: 680px; width: 100%; justify-self: center; padding: 4px; overflow: auto; }
 .ts-card { position: relative; appearance: none; -webkit-appearance: none; display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: 4px; min-height: var(--target); min-width: 60px; padding: var(--space-2) 2px; border-radius: var(--radius);
@@ -209,6 +220,9 @@ const CSS = `
   .ts-card img { width: 30px; height: 30px; }
   .ts-city { display: none; }
 }
+@media (max-height: 720px) {
+  .ts-keys { display: none; }
+}
 @media (max-width: 1100px) {
   .ts-layout { grid-template-columns: minmax(210px, 240px) minmax(0, 1fr) minmax(210px, 240px); gap: var(--space-4); }
 }
@@ -221,6 +235,19 @@ function starsEl(rating: number): HTMLElement {
   const fill = h('span', { class: 'ts-stars-fill', text: STAR_TEXT });
   fill.style.width = `${(s / 5) * 100}%`;
   return h('span', { class: 'ts-stars', attrs: { role: 'img', 'aria-label': `${s} of 5 stars` } }, STAR_TEXT, fill);
+}
+
+/** The club's best three players (overall), for the panel. */
+export function keyPlayers(club: Club, n = 3): Club['squad'] {
+  return (club.squad ?? []).slice().sort((a, b) => b.overall - a.overall).slice(0, n);
+}
+
+function keyPlayersEl(club: Club): HTMLElement {
+  const ul = h('ul', { class: 'ts-keys', attrs: { 'aria-label': 'Key players' } });
+  for (const p of keyPlayers(club)) {
+    ul.append(h('li', {}, h('span', { class: 'pos', text: ROLE_SHORT[p.pos] ?? '' }), h('span', { class: 'nm', text: p.name }), h('span', { class: 'num', text: String(p.overall) })));
+  }
+  return ul;
 }
 
 interface SideView {
@@ -310,7 +337,7 @@ export function createTeamSelectScreen(): Screen {
         const v = sides[side];
         const club = clubs[choice.club[side]];
         v.root.classList.toggle('is-active', active === side);
-        (v.head.lastChild as HTMLElement).textContent = active === side ? 'Choosing' : 'Tap to change';
+        (v.head.lastChild as HTMLElement).textContent = active === side ? 'Choosing' : 'Change';
         v.head.setAttribute('aria-pressed', active === side ? 'true' : 'false');
         if (!club) {
           v.body.replaceChildren();
@@ -322,6 +349,7 @@ export function createTeamSelectScreen(): Screen {
             h('div', {}, h('h2', { class: 'ts-name', text: club.name, testId: `ts-name-${side === 0 ? 'home' : 'away'}` }), h('p', { class: 'ts-city', text: club.city }))),
           h('div', { class: 'ts-stats' }, h('span', { class: 'ts-code', text: club.code }), starsEl(club.rating), h('span', { class: 'ts-ovr', text: `OVR ${club.rating}` })),
           h('p', { class: 'ts-meta', text: `${STYLE_LABELS[club.style] ?? 'Balanced'} · ${getFormation(club.formation).name}` }),
+          keyPlayersEl(club),
         );
         const kitsOf: [typeof club.home, typeof club.away] = [club.home, club.away];
         v.kitBtns.forEach((b, i) => {
@@ -379,7 +407,6 @@ export function createTeamSelectScreen(): Screen {
         commit();
         const c = cards[i];
         if (c) ctx.focus.focus(c);
-        showToast(`${side === 0 ? 'Home' : 'Away'}: ${clubs[i]?.name ?? ''}`, { kind: 'info', lifeMs: 1400 });
       };
 
       const randomBtn = createButton('Random', random, { testId: 'ts-random', ctx, sound: UiSound.MOVE, glyph: '⚄' });

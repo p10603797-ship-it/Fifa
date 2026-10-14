@@ -164,13 +164,33 @@ export const SOFT_FROM = 0.97;
  */
 export const IK_INFO = new Float64Array(5);
 
+// Argument / result scratch of the internal per-frame calls. V8 boxes a double passed to (or returned from) a call
+// it does not inline, so the hot paths hand numbers over in typed arrays (zero allocation per frame,
+// tests/perf/gfx-12-alloc.test.ts). Each function owns its own block so nested calls never clobber each other.
+/** legIKS: ankle target x, y, z. */
+const IKT = new Float64Array(3);
+/** setFootPitchS: wanted pitch. footPitchS: result. */
+const FPA = new Float64Array(1);
+const FPR = new Float64Array(1);
+/** plantToeS: toe x, y, z, pitch. */
+export const PTA = new Float64Array(4);
+/** placeSwingFootS: toe x, lowest-sole height, toe z, pitch. */
+export const PSA = new Float64Array(4);
+
 /**
  * Put the ankle of leg `side` (-1 left, +1 right) at model-space point (ax, ay, az): writes HIP_*_PITCH, HIP_*_ROLL
  * and KNEE_* of `out`. The ROOT_* channels already in `out` (offsets, yaw, roll, pitch) are taken into account, so
  * call it after setting them. The knee always bends forward (KNEE >= 0). Out-of-reach targets straighten the leg
- * toward the target (IK_INFO[1] = 1).
+ * toward the target (IK_INFO[1] = 1). Joint limits win over the target.
  */
 export function legIK(out: Pose, side: number, ax: number, ay: number, az: number): void {
+  IKT[0] = ax; IKT[1] = ay; IKT[2] = az;
+  legIKS(out, side);
+}
+
+/** legIK with the target in IKT (allocation-free internal form). */
+function legIKS(out: Pose, side: number): void {
+  const ax = IKT[0]!, ay = IKT[1]!, az = IKT[2]!;
   IK_INFO[2] = ax; IK_INFO[3] = ay; IK_INFO[4] = az;
   // Into the root frame: R = Ry(yaw) Rx(roll) Rz(-pitch); local = R^T (A - O) = Rz(pitch) Rx(-roll) Ry(-yaw) (A - O).
   let x = ax - out[P.ROOT_FWD]!;
@@ -209,33 +229,46 @@ export function legIK(out: Pose, side: number, ax: number, ay: number, az: numbe
     L = want;
   }
   const ck = (L * L - THIGH * THIGH - SHIN * SHIN) / (2 * THIGH * SHIN);
-  const knee = Math.acos(ck < -1 ? -1 : ck > 1 ? 1 : ck);
+  let knee = Math.acos(ck < -1 ? -1 : ck > 1 ? 1 : ck);
   const vx = -SHIN * Math.sin(knee);
   const vy = -(THIGH + SHIN * Math.cos(knee));
   // A folded knee (ankle level with the hip in the leg plane) makes the roll ill-conditioned: cap it there.
   let sr = z / vy;
-  const srMax = clamp((-vy - 0.05) / 0.3, 0.12, 1);
+  let srMax = (-vy - 0.05) / 0.3;
+  srMax = srMax < 0.12 ? 0.12 : srMax > 1 ? 1 : srMax;
   sr = sr < -srMax ? -srMax : sr > srMax ? srMax : sr;
-  const rD = Math.asin(sr);
-  const hp = wrapPi(Math.atan2(y, x) - Math.atan2(vy * Math.cos(rD), vx));
-  // Joint limits win over the target (an extreme target leaves the foot a little short instead of a broken hip).
+  let rD = Math.asin(sr);
+  let hp = Math.atan2(y, x) - Math.atan2(vy * Math.cos(rD), vx);
+  if (hp > Math.PI) hp -= TAU; else if (hp < -Math.PI) hp += TAU;
+  if (knee > POSE_MAX[P.KNEE_L]!) knee = POSE_MAX[P.KNEE_L]!;
   if (left) {
-    out[P.HIP_L_PITCH] = clamp(hp, POSE_MIN[P.HIP_L_PITCH]!, POSE_MAX[P.HIP_L_PITCH]!);
-    out[P.HIP_L_ROLL] = clamp(rD, POSE_MIN[P.HIP_L_ROLL]!, POSE_MAX[P.HIP_L_ROLL]!);
-    out[P.KNEE_L] = clamp(knee, POSE_MIN[P.KNEE_L]!, POSE_MAX[P.KNEE_L]!);
+    hp = hp < POSE_MIN[P.HIP_L_PITCH]! ? POSE_MIN[P.HIP_L_PITCH]! : hp > POSE_MAX[P.HIP_L_PITCH]! ? POSE_MAX[P.HIP_L_PITCH]! : hp;
+    rD = rD < POSE_MIN[P.HIP_L_ROLL]! ? POSE_MIN[P.HIP_L_ROLL]! : rD > POSE_MAX[P.HIP_L_ROLL]! ? POSE_MAX[P.HIP_L_ROLL]! : rD;
+    out[P.HIP_L_PITCH] = hp;
+    out[P.HIP_L_ROLL] = rD;
+    out[P.KNEE_L] = knee;
   } else {
-    out[P.HIP_R_PITCH] = clamp(hp, POSE_MIN[P.HIP_R_PITCH]!, POSE_MAX[P.HIP_R_PITCH]!);
-    out[P.HIP_R_ROLL] = clamp(-rD, POSE_MIN[P.HIP_R_ROLL]!, POSE_MAX[P.HIP_R_ROLL]!);
-    out[P.KNEE_R] = clamp(knee, POSE_MIN[P.KNEE_R]!, POSE_MAX[P.KNEE_R]!);
+    hp = hp < POSE_MIN[P.HIP_R_PITCH]! ? POSE_MIN[P.HIP_R_PITCH]! : hp > POSE_MAX[P.HIP_R_PITCH]! ? POSE_MAX[P.HIP_R_PITCH]! : hp;
+    let r = -rD;
+    r = r < POSE_MIN[P.HIP_R_ROLL]! ? POSE_MIN[P.HIP_R_ROLL]! : r > POSE_MAX[P.HIP_R_ROLL]! ? POSE_MAX[P.HIP_R_ROLL]! : r;
+    out[P.HIP_R_PITCH] = hp;
+    out[P.HIP_R_ROLL] = r;
+    out[P.KNEE_R] = knee;
   }
 }
 
 /**
  * Set ANKLE_* of leg `side` so the foot's forward axis has world pitch `pitch` (+ toes up, - toes down / heel
  * lifted; 0 = flat), given the root and leg angles already in `out` (call after legIK). Exact for the pitch of the
- * boot's axis including root roll / pitch and hip roll.
+ * boot's axis including root roll / pitch and hip roll; the ankle limits win.
  */
 export function setFootPitch(out: Pose, side: number, pitch: number): void {
+  FPA[0] = pitch;
+  setFootPitchS(out, side);
+}
+
+function setFootPitchS(out: Pose, side: number): void {
+  const pitch = FPA[0]!;
   const left = side < 0;
   const hp = left ? out[P.HIP_L_PITCH]! : out[P.HIP_R_PITCH]!;
   const rD = left ? out[P.HIP_L_ROLL]! : -out[P.HIP_R_ROLL]!;
@@ -255,19 +288,27 @@ export function setFootPitch(out: Pose, side: number, pitch: number): void {
     const sp = Math.sin(pitch) / R;
     const d = Math.atan2(b1, a1);
     const ac = Math.acos(sp < -1 ? -1 : sp > 1 ? 1 : sp);
-    const qa = d + ac, qb = d - ac;
-    q = Math.abs(wrapPi(qa - q0)) < Math.abs(wrapPi(qb - q0)) ? qa : qb;
-    q = q0 + wrapPi(q - q0);
+    let da = d + ac - q0, db = d - ac - q0;
+    da -= TAU * Math.floor((da + Math.PI) / TAU);
+    db -= TAU * Math.floor((db + Math.PI) / TAU);
+    q = q0 + (Math.abs(da) < Math.abs(db) ? da : db);
   }
-  const ankle = q + knee;
-  if (left) out[P.ANKLE_L] = clamp(ankle, POSE_MIN[P.ANKLE_L]!, POSE_MAX[P.ANKLE_L]!);
-  else out[P.ANKLE_R] = clamp(ankle, POSE_MIN[P.ANKLE_R]!, POSE_MAX[P.ANKLE_R]!);
+  let ankle = q + knee;
+  const lo = POSE_MIN[P.ANKLE_L]!, hi = POSE_MAX[P.ANKLE_L]!;
+  ankle = ankle < lo ? lo : ankle > hi ? hi : ankle;
+  if (left) out[P.ANKLE_L] = ankle;
+  else out[P.ANKLE_R] = ankle;
 }
 
 /**
  * World pitch of the foot axis of leg `side` given the root and leg angles in `out` (inverse of setFootPitch).
  */
 export function footPitchOf(out: Pose, side: number): number {
+  footPitchS(out, side);
+  return FPR[0]!;
+}
+
+function footPitchS(out: Pose, side: number): void {
   const left = side < 0;
   const hp = left ? out[P.HIP_L_PITCH]! : out[P.HIP_R_PITCH]!;
   const rD = left ? out[P.HIP_L_ROLL]! : -out[P.HIP_R_ROLL]!;
@@ -279,7 +320,7 @@ export function footPitchOf(out: Pose, side: number): number {
   const a1 = r0 * chp + r1 * shp;
   const b1 = -r0 * shp * crd + r1 * chp * crd + r2 * srd;
   const fy = a1 * Math.cos(q) + b1 * Math.sin(q);
-  return Math.asin(fy < -1 ? -1 : fy > 1 ? 1 : fy);
+  FPR[0] = Math.asin(fy < -1 ? -1 : fy > 1 ? 1 : fy);
 }
 
 /** Ankle position for a toe point and foot pitch (sagittal plane, foot pointing +x): written to ANKLE_AT[0..1]. */
@@ -293,26 +334,41 @@ export function ankleFromToe(toeX: number, toeY: number, pitch: number): void {
 
 /**
  * Plant the toe point (front of the sole) of leg `side` at model-space (toeX, toeY, toeZ) with foot pitch `pitch`
- * (0 = flat sole, - = heel lifted while the toe stays put): leg IK + ankle. ROOT_* must already be set.
+ * (0 = flat sole, - = heel lifted while the toe stays put): leg IK + ankle. ROOT_* must already be set. Hip roll and
+ * root rotation tilt the boot, so the ankle target is refined from the solved toe offset until the toe sits on the
+ * target; an ankle at its limit keeps the toe planted and lets the heel take the pitch it can.
  */
 export function plantToe(out: Pose, side: number, toeX: number, toeY: number, toeZ: number, pitch: number): void {
-  ankleFromToe(toeX, toeY, pitch);
-  let ax = ANKLE_AT[0]!, ay = ANKLE_AT[1]!, az = toeZ;
+  PTA[0] = toeX; PTA[1] = toeY; PTA[2] = toeZ; PTA[3] = pitch;
+  plantToeS(out, side);
+}
+
+/** plantToe with its arguments in PTA (allocation-free internal form). */
+export function plantToeS(out: Pose, side: number): void {
+  const toeX = PTA[0]!, toeY = PTA[1]!, toeZ = PTA[2]!;
+  let pitch = PTA[3]!;
+  const c = Math.cos(pitch), s = Math.sin(pitch);
+  let ax = toeX - (BODY.toeX * c + BODY.ankleY * s);
+  let ay = toeY - (BODY.toeX * s - BODY.ankleY * c);
+  let az = toeZ;
   for (let it = 0; it < 5; it++) {
-    legIK(out, side, ax, ay, az);
-    setFootPitch(out, side, pitch);
-    // An ankle at its limit cannot give the wanted pitch: keep the toe planted and let the heel take the pitch it can.
-    const got = footPitchOf(out, side);
-    if (Math.abs(got - pitch) > 1e-4) pitch = got;
-    // Hip roll / root rotation tilt the boot: refine the ankle target from the solved toe offset.
+    IKT[0] = ax; IKT[1] = ay; IKT[2] = az;
+    legIKS(out, side);
+    FPA[0] = pitch;
+    setFootPitchS(out, side);
+    footPitchS(out, side);
+    const got = FPR[0]!;
+    if (got - pitch > 1e-4 || pitch - got > 1e-4) pitch = got;
     toeOffsetOf(out, side);
     const nx = toeX - TOE_D[0]!, ny = toeY - TOE_D[1]!, nz = toeZ - TOE_D[2]!;
     const dx = nx - ax, dy = ny - ay, dz = nz - az;
     ax = nx; ay = ny; az = nz;
     if (dx * dx + dy * dy + dz * dz < 1e-8) break;
   }
-  legIK(out, side, ax, ay, az);
-  setFootPitch(out, side, pitch);
+  IKT[0] = ax; IKT[1] = ay; IKT[2] = az;
+  legIKS(out, side);
+  FPA[0] = pitch;
+  setFootPitchS(out, side);
 }
 
 /** Toe point minus ankle joint (model space) of the last toeOffsetOf call. */
@@ -350,12 +406,24 @@ export function toeOffsetOf(out: Pose, side: number): void {
  * is re-solved so no part of the sole goes below height h.
  */
 export function placeSwingFoot(out: Pose, side: number, toeX: number, h: number, toeZ: number, pitch: number): void {
-  plantToe(out, side, toeX, toeHeightForLowest(h, pitch), toeZ, pitch);
-  for (let it = 0; it < 2; it++) {
-    const got = footPitchOf(out, side);
-    if (Math.abs(got - pitch) < 1e-3) return;
+  PSA[0] = toeX; PSA[1] = h; PSA[2] = toeZ; PSA[3] = pitch;
+  placeSwingFootS(out, side);
+}
+
+/** placeSwingFoot with its arguments in PSA (allocation-free internal form). */
+export function placeSwingFootS(out: Pose, side: number): void {
+  const toeX = PSA[0]!, h = PSA[1]!, toeZ = PSA[2]!;
+  let pitch = PSA[3]!;
+  const span = BODY.toeX - BODY.heelX;
+  for (let it = 0; it < 3; it++) {
+    // Toe height that keeps the lowest sole point at h (the heel is lower than the toe when pitch > 0).
+    const drop = span * Math.sin(pitch);
+    PTA[0] = toeX; PTA[1] = drop > 0 ? h + drop : h; PTA[2] = toeZ; PTA[3] = pitch;
+    plantToeS(out, side);
+    footPitchS(out, side);
+    const got = FPR[0]!;
+    if (got - pitch < 1e-3 && pitch - got < 1e-3) return;
     pitch = got;
-    plantToe(out, side, toeX, toeHeightForLowest(h, pitch), toeZ, pitch);
   }
 }
 
@@ -477,16 +545,26 @@ function pchipTangents(times: Float32Array, values: Float32Array, ch: number, ou
 
 /** Interpolated key channels of the last evalClip (KEY_SIZE values). */
 const KEY_OUT = new Float64Array(KEY_SIZE);
+/** evalClipS: clip phase. */
+export const EVA = new Float64Array(1);
 
 /**
  * Evaluate a clip at phase t (0..1; looped `repeat` times) into `out`: joint channels, then IK legs (ankle target +
  * foot pitch). Allocation-free.
  */
 export function evalClip(clip: Clip, t: number, out: Pose): void {
+  EVA[0] = t;
+  evalClipS(clip, out);
+}
+
+/** evalClip with the phase in EVA (allocation-free internal form). */
+export function evalClipS(clip: Clip, out: Pose): void {
+  const t = EVA[0]!;
   let u = t < 0 ? 0 : t > 1 ? 1 : t === t ? t : 0;
   if (clip.repeat > 1) {
     u *= clip.repeat;
-    u = u >= clip.repeat ? 1 : wrap01(u);
+    if (u >= clip.repeat) u = 1;
+    else { u -= Math.floor(u); if (u >= 1) u = 0; }
   }
   const times = clip.times, n = clip.n;
   let k = 0;
@@ -503,30 +581,34 @@ export function evalClip(clip: Clip, t: number, out: Pose): void {
     KEY_OUT[c] = h00 * V[o0 + c]! + h10 * h * M[o0 + c]! + h01 * V[o1 + c]! + h11 * h * M[o1 + c]!;
   }
   for (let c = 0; c < POSE_SIZE; c++) out[c] = KEY_OUT[c]!;
-  if (clip.ikLeft) clipLeg(out, -1, KEY_OUT[IKL]!, KEY_OUT[IKL + 1]!, KEY_OUT[IKL + 2]!, KEY_OUT[IKL + 3]!);
-  if (clip.ikRight) clipLeg(out, 1, KEY_OUT[IKR]!, KEY_OUT[IKR + 1]!, KEY_OUT[IKR + 2]!, KEY_OUT[IKR + 3]!);
-}
-
-/** Lowest sole point relative to the ankle joint for a foot pitch (m, <= 0). */
-function soleLow(pitch: number): number {
-  const c = Math.cos(pitch), s = Math.sin(pitch);
-  const toe = BODY.toeX * s - BODY.ankleY * c, heel = BODY.heelX * s - BODY.ankleY * c;
-  return toe < heel ? toe : heel;
+  if (clip.ikLeft) clipLeg(out, -1, IKL);
+  if (clip.ikRight) clipLeg(out, 1, IKR);
 }
 
 /**
- * Clip IK leg: ankle target + foot pitch. When the ankle limits cannot give the pitch (the foot ends up steeper),
- * the ankle is raised so the lowest sole point stays where the authored pitch would have put it (no toe digging in).
+ * Clip IK leg from KEY_OUT[base..base+3] (ankle target + foot pitch). When the ankle limits cannot give the pitch (the
+ * foot ends up steeper), the ankle is raised so the lowest sole point stays where the authored pitch would have put
+ * it (no toe digging in).
  */
-function clipLeg(out: Pose, side: number, ax: number, ay: number, az: number, pitch: number): void {
-  legIK(out, side, ax, ay, az);
-  setFootPitch(out, side, pitch);
-  const got = footPitchOf(out, side);
-  if (Math.abs(got - pitch) < 0.01) return;
-  const lift = soleLow(pitch) - soleLow(got);
+function clipLeg(out: Pose, side: number, base: number): void {
+  const ax = KEY_OUT[base]!, ay = KEY_OUT[base + 1]!, az = KEY_OUT[base + 2]!, pitch = KEY_OUT[base + 3]!;
+  IKT[0] = ax; IKT[1] = ay; IKT[2] = az;
+  legIKS(out, side);
+  FPA[0] = pitch;
+  setFootPitchS(out, side);
+  footPitchS(out, side);
+  const got = FPR[0]!;
+  if (got - pitch < 0.01 && pitch - got < 0.01) return;
+  // Lowest sole point relative to the ankle for the wanted and the reached pitch.
+  const cw = Math.cos(pitch), sw = Math.sin(pitch), cg = Math.cos(got), sg = Math.sin(got);
+  const tw = BODY.toeX * sw - BODY.ankleY * cw, hw = BODY.heelX * sw - BODY.ankleY * cw;
+  const tg = BODY.toeX * sg - BODY.ankleY * cg, hg = BODY.heelX * sg - BODY.ankleY * cg;
+  const lift = (tw < hw ? tw : hw) - (tg < hg ? tg : hg);
   if (lift <= 0) return;
-  legIK(out, side, ax, ay + lift, az);
-  setFootPitch(out, side, pitch);
+  IKT[0] = ax; IKT[1] = ay + lift; IKT[2] = az;
+  legIKS(out, side);
+  FPA[0] = pitch;
+  setFootPitchS(out, side);
 }
 
 /**
@@ -544,8 +626,9 @@ export function groundFoot(x: number, z: number, pitch = 0): readonly [number, n
 
 /** Standing ankle height above the ground for a flat foot (m). */
 export const ANKLE_Y = BODY.ankleY;
-/** Toe point ahead of the ankle along the foot (m). */
+/** Toe point ahead of the ankle along the foot (m), and the heel (negative, behind it). */
 export const TOE_X = BODY.toeX;
+export const HEEL_X = BODY.heelX;
 /** Standing pelvis (hip joint) height (m). */
 export const PELVIS_Y = BODY.pelvisY;
 /** Hip joint lateral offset (m). */

@@ -76,8 +76,8 @@ const ICONS: Readonly<Record<DeviceInfo['kind'], string>> = {
 };
 
 const CSS = `
-.ss-board { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--space-2); width: 100%; max-width: 1180px;
-  margin: 0 auto; }
+.ss-board { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: var(--space-2); width: 100%;
+  max-width: 1180px; margin: 0 auto; }
 .ss-cols, .ss-lanes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .ss-cols { gap: 0; align-items: end; }
 .ss-col { display: flex; align-items: center; justify-content: center; gap: var(--space-3); min-height: 56px; padding: 0 var(--space-3);
@@ -91,7 +91,7 @@ const CSS = `
 .ss-ctrl .p1 { color: var(--p1); }
 .ss-ctrl .p2 { color: var(--p2); }
 .ss-col--centre .ss-col-side { color: var(--text-3); }
-.ss-rows { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: var(--space-2);
+.ss-rows { flex: 0 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: var(--space-2);
   padding: 4px 0; }
 .ss-row { position: relative; flex: 0 0 auto; height: 76px; }
 .ss-lanes { position: absolute; inset: 0; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--hairline); }
@@ -119,13 +119,13 @@ const CSS = `
 .ss-token.is-p2 .ss-marker { background: var(--p2); color: var(--ink); }
 .ss-token:not(.is-p1):not(.is-p2) .ss-marker { display: none; }
 .btn.ss-arrow { flex: 0 0 auto; min-width: var(--target); width: var(--target); padding: 0; background: var(--surface-2); }
-.btn.ss-arrow[aria-disabled='true'] { opacity: 0.35; }
+.btn.ss-arrow.is-edge { opacity: 0.35; }
 .ss-arrow-glyph { width: 10px; height: 10px; border-left: 2px solid currentColor; border-bottom: 2px solid currentColor; }
 .ss-arrow--l .ss-arrow-glyph { transform: translateX(2px) rotate(45deg); }
 .ss-arrow--r .ss-arrow-glyph { transform: translateX(-2px) rotate(-135deg); }
 .ss-token.is-refused { animation: ss-refuse 320ms var(--ease); }
 @keyframes ss-refuse { 20% { transform: translateX(-8px); } 50% { transform: translateX(7px); } 80% { transform: translateX(-4px); } }
-.ss-foot { flex: 0 0 auto; display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2) var(--space-5); align-items: center; }
+.ss-foot { flex: 0 0 auto; margin-top: var(--space-3); display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2) var(--space-5); align-items: center; }
 .ss-status { margin: 0; font: 500 var(--fs-sm) / 1.3 var(--font-ui); color: var(--text-1); }
 .ss-status.is-warn { color: var(--warning); }
 .ss-hint { margin: 0; font-size: var(--fs-xs); color: var(--text-3); }
@@ -213,9 +213,10 @@ export function createSideSelectScreen(): Screen {
       };
       const cols = h('div', { class: 'ss-cols' }, sideCol(0), h('div', { class: 'ss-col ss-col--centre' }, h('span', { class: 'ss-col-side', text: 'Sit out' })), sideCol(1));
       const rowsEl = h('div', { class: 'ss-rows', testId: 'ss-rows', attrs: { 'data-focus-group': 'none' } });
-      const status = h('p', { class: 'ss-status', testId: 'ss-status', attrs: { 'aria-live': 'polite' } });
+      const status = h('p', { class: 'ss-status', testId: 'ss-status', attrs: { 'aria-live': 'polite', id: 'ss-status' } });
       const hint = h('p', { class: 'ss-hint', text: 'Slide left for home, right for away; the centre sits out. Controllers: press any button to join, then use the D-pad. Two players at most.' });
       const cont = createButton('Continue', () => onContinue(), { testId: 'side-continue', variant: 'primary', ctx, autofocus: true });
+      cont.setAttribute('aria-describedby', 'ss-status');
 
       const views = new Map<string, RowView>();
 
@@ -396,8 +397,9 @@ export function createSideSelectScreen(): Screen {
           v.sub.textContent = !t.connected ? 'Disconnected' : t.lane === 0 ? (product || 'Sits out') : `${t.lane < 0 ? 'Home' : 'Away'}${product ? ` · ${product}` : ''}`;
           v.el.setAttribute('aria-label', `${t.label}: ${t.lane < 0 ? 'home' : t.lane > 0 ? 'away' : 'sits out'}${hi >= 0 ? `, player ${hi + 1}` : ''}`);
           if (v.arrows.length === 2) {
-            v.arrows[0]!.setAttribute('aria-disabled', t.lane <= -1 ? 'true' : 'false');
-            v.arrows[1]!.setAttribute('aria-disabled', t.lane >= 1 ? 'true' : 'false');
+            // A class, not aria-disabled: the arrow keeps its focus stop at the end of the row.
+            v.arrows[0]!.classList.toggle('is-edge', t.lane <= -1);
+            v.arrows[1]!.classList.toggle('is-edge', t.lane >= 1);
           }
         }
         for (const [id, v] of views) {
@@ -410,8 +412,8 @@ export function createSideSelectScreen(): Screen {
         const r = readiness(model, flow.mode);
         status.textContent = r.message;
         status.classList.toggle('is-warn', !r.ok);
+        // Not aria-disabled: the button stays a focus stop and explains why when pressed (status line).
         cont.classList.toggle('is-blocked', !r.ok);
-        cont.setAttribute('aria-disabled', r.ok ? 'false' : 'true');
       };
 
       const onContinue = (): void => {

@@ -25,7 +25,8 @@
  *    stopped while paused), so replays and pauses never retrigger or skip a reaction.
  *  - Quality tiers (GFX-02 getTierParams): crowdDensity draws that fraction of the spectators (instances are stored
  *    in a hashed order, so any prefix is an even thinning); crowdAnimation false (PERFORMANCE) freezes sway and bounce
- *    (reaction poses still show).
+ *    (reaction poses still show). setQuality applies a tier; update() also picks up a tier GFX-02 changed on its own
+ *    (ctx.tier) without a broadcast.
  * Budget: 1 draw call; 2 triangles per spectator (~23k triangles at the default tier, limit 60k).
  * DEBUG: window.__dotkickCrowd (CrowdDebug).snapshot() reports instances, levels and excitement.
  */
@@ -552,6 +553,18 @@ void main() {
 
 // ============================================================ module
 
+/**
+ * A float uniform with its own hidden class. A plain { value } literal shares its map with the texture and vector
+ * uniforms, so its field is tagged and every per-frame write of a double would allocate a HeapNumber; this class's
+ * field holds a double that is updated in place.
+ */
+class FloatUniform {
+  // Initialised with a double literal: under ES2022 class-field semantics a bare declaration would start as undefined
+  // and make the field tagged.
+  value = 0.5;
+  constructor(v: number) { this.value = v; }
+}
+
 export interface CrowdSnapshot {
   visible: boolean;
   seats: number;
@@ -613,8 +626,8 @@ export function createCrowd(ctx: RenderContext): CrowdModule {
 
   const uniforms = {
     uAtlas: { value: atlas },
-    uTime: { value: 0 },
-    uAnim: { value: 1 },
+    uTime: new FloatUniform(0.5),
+    uAnim: new FloatUniform(1.5),
     uStand: { value: new Vector3() },
     uJump: { value: new Vector3() },
     uSit: { value: new Vector3() },
@@ -623,6 +636,8 @@ export function createCrowd(ctx: RenderContext): CrowdModule {
     uSkinDark: { value: new Color(SKIN_DARK) },
     uHair: { value: new Color(HAIR) },
   };
+  uniforms.uTime.value = 0;
+  uniforms.uAnim.value = 1;
   const mat = new ShaderMaterial({
     name: 'crowd', uniforms, vertexShader: crowdVertexShader(), fragmentShader: crowdFragmentShader(),
   });
@@ -643,11 +658,14 @@ export function createCrowd(ctx: RenderContext): CrowdModule {
   const st = new Float64Array(2);
   st[S_DENSITY] = 1;
   let animated = true;
+  /** Tier last applied (-1 = none); update() re-applies when ctx.tier changed without a setQuality call. */
+  let tierApplied = -1;
   let matchState: ReadonlySimState | null = null;
   let matchClubs: readonly Club[] = [];
   let highContrast = ctx.settings.accessibility.highContrastKits;
 
   function applyTier(tier: QualityTier): void {
+    tierApplied = tier;
     const p = getTierParams(tier);
     st[S_DENSITY] = p.crowdDensity;
     animated = p.crowdAnimation;
@@ -703,6 +721,7 @@ export function createCrowd(ctx: RenderContext): CrowdModule {
     },
 
     update(fr: RenderFrame) {
+      if (ctx.tier !== tierApplied) applyTier(ctx.tier);
       let dt = fr.frame.paused ? 0 : fr.frame.dtMs / 1000;
       if (!(dt > 0)) dt = 0;
       if (dt > T.maxDt) dt = T.maxDt;
