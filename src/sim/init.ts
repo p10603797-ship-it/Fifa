@@ -2,6 +2,8 @@
  * Match initialisation. Lead-owned. Builds a SimState for a MatchConfig: seeds the RNG, copies squads and
  * attributes, places both teams in formation in their own halves, sets up human controllers and CPU brains.
  * Phase starts at PRE_MATCH; RUL-01 moves to config.startPhase.
+ * [QF-1] Practice modes get their layout here (rules/practice preparePracticeState: free play takes the opponent's
+ * outfield players off), so every caller of initMatch (app, replays, headless tools) starts the same game.
  */
 import { HALF_LENGTH, HALF_WIDTH, PLAYERS_PER_TEAM, teamFirstSlot } from '../contracts/constants';
 import { ATTRIBUTE_KEYS, type Club, type PlayerData } from '../contracts/data';
@@ -11,6 +13,7 @@ import { CLUBS } from '../data/clubs';
 import { getFormation } from '../data/formations';
 import { rngInt, rngSeed } from './core/rng';
 import { accelFor, topSpeedFor } from './players/locomotion';
+import { preparePracticeState } from './rules/practice';
 
 /** Copy a squad member's attributes into a PlayerAttrs (+ derived top speed and acceleration). */
 export function copyAttrs(dst: PlayerAttrs, src: Readonly<PlayerData>): void {
@@ -112,5 +115,6 @@ export function initMatch(config: MatchConfig, clubs: readonly Club[] = CLUBS): 
   s.match.kickoffTeam = s.match.firstKickoffTeam;
   s.ball.x = 0; s.ball.y = 0.11; s.ball.z = 0;
   s.ball.px = 0; s.ball.py = 0.11; s.ball.pz = 0;
+  preparePracticeState(s);
   return s;
 }

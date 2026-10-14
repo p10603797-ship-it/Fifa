@@ -56,6 +56,8 @@ const LOCAL_TUNING = {
   resendWaitingMs: 33,
   /** Resend interval while no new frame was sent (paused, delay just dropped), ms. */
   resendIdleMs: 200,
+  /** A stall this short does not stop time sync from asking the leader to hold (two frames), ms. */
+  shortStallMs: 34,
 } as const; // TUNING-CR
 
 export const HISTORY_TICKS: number = LOCAL_TUNING.historyTicks;
@@ -380,7 +382,9 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
           log?.('net', `input source ${src.id} poll failed: ${String(err)}`);
         }
       }
-      if (useTimeSync && !waiting && nowMs >= holdUntil) {
+      // A short stall at the end of the last frame is what running ahead looks like (the frame was due a moment
+      // before it arrived): still let time sync act then, or a leader stalling on every other tick never holds (QF-6).
+      if (useTimeSync && (!waiting || nowMs - stallStart <= LOCAL_TUNING.shortStallMs) && nowMs >= holdUntil) {
         const k = timeSync.poll(nowMs);
         if (k > 0) {
           holdUntil = nowMs + (k + holdCatchUp) * TICK_MS;

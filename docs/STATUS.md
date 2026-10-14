@@ -164,14 +164,14 @@ Total assignments: 201.
 | QA-20 | 3 | running | QF-2 (hunt + second pass, D-020) | |
 | QA-21 | 3 | running | QF-2 (hunt + second pass, D-020) | |
 | QA-22 | 3 | running | QF-2 (hunt + second pass, D-020) | |
-| QA-23 | 3 | running | QF-3 (hunt + second pass, D-020) | |
-| QA-24 | 3 | running | QF-3 (hunt + second pass, D-020) | |
-| QA-25 | 3 | running | QF-3 (hunt + second pass, D-020) | |
-| QA-26 | 3 | running | QF-3 (hunt + second pass, D-020) | |
-| QA-27 | 3 | running | QF-3 (hunt + second pass, D-020) | |
-| QA-28 | 3 | running | QF-3 (hunt + second pass, D-020) | |
-| QA-29 | 3 | running | QF-3 (hunt + second pass, D-020) | |
-| QA-30 | 3 | running | QF-3 (hunt + second pass, D-020) | |
+| QA-23 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
+| QA-24 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
+| QA-25 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
+| QA-26 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
+| QA-27 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
+| QA-28 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
+| QA-29 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
+| QA-30 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
 | QA-31 | 3 | running | QF-4 (hunt + second pass, D-020) | |
 | QA-32 | 3 | running | QF-4 (hunt + second pass, D-020) | |
 | QA-33 | 3 | running | QF-4 (hunt + second pass, D-020) | |
@@ -191,8 +191,8 @@ Total assignments: 201.
 | FIX-03 | 4 | running | QF-2 (hunt + second pass, D-020) | |
 | FIX-04 | 4 | running | QF-2 (hunt + second pass, D-020) | |
 | FIX-05 | 4 | running | QF-2 (hunt + second pass, D-020) | |
-| FIX-06 | 4 | running | QF-3 (hunt + second pass, D-020) | |
-| FIX-07 | 4 | running | QF-3 (hunt + second pass, D-020) | |
+| FIX-06 | 4 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
+| FIX-07 | 4 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
 | FIX-08 | 4 | running | QF-4 (hunt + second pass, D-020) | |
 | FIX-09 | 4 | running | QF-4 (hunt + second pass, D-020) | |
 | FIX-10 | 4 | running | QF-4 (hunt + second pass, D-020) | |

@@ -15,6 +15,10 @@
  *  - team AI, CPU brains and contacts: no-ops (only the rules decide; tests drive intruders and CPU frames).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// [QF-1] Evaluate rules/goalkick before anything reaches the mocked kicks modules: when the real kicks/lob.ts is
+// loaded first (inside its mock factory) it pulls the rules modules in through the action registry, and goalkick.ts then
+// binds to the ORIGINAL startLob / startPass (the mock is still being built), so the spies saw no calls.
+import '../../src/sim/rules/goalkick';
 import {
   BALL_RADIUS, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, HALF_LENGTH, NUM_SLOTS, PENALTY_AREA_DEPTH,
   PENALTY_AREA_HALF_WIDTH, RESTART_DISTANCE,
@@ -488,7 +492,11 @@ describe('RUL-03 input', () => {
   });
 
   it('LOB -> long LOB_PASS to the target man (forwards first, best in the air)', () => {
-    const s = humanReady((st) => { st.attrs[10]!.heading = 85; st.attrs[10]!.height = 192; });
+    // [QF-1] Pin the other forward's aerial attributes too: the generated squads give slot 9 heading 98 / 192 cm.
+    const s = humanReady((st) => {
+      st.attrs[10]!.heading = 85; st.attrs[10]!.height = 192;
+      st.attrs[9]!.heading = 60; st.attrs[9]!.height = 178;
+    });
     run(s, 1, press(Btn.LOB));
     const c = calls()[0]!;
     expect([c.fn, c.kind, c.target, c.charging]).toEqual(['lob', KickKind.LOB_PASS, 10, 1]);

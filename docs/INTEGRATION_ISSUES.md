@@ -41,3 +41,8 @@ Collected from Wave 1 reports. Each line: area — symptom — proposed owner/fi
 - Swipe-hint labels around the bottom-right big button go partly off screen (first matches only) — QF-3/QF-4.
 - Keyboard bound to the same human does not hide touch controls (pads only) — QF-3.
 - aud-05-alloc, pad-08-alloc, tch-06-alloc allocation tests are load-sensitive (fail at load 16+) — QF-7.
+
+## From QF-3
+- int-b-app 'corner practice through the plain sim step never sees a corner' fails once QF-1 moves the practice hooks into src/sim; update that test and make src/app/loop.ts stepWithModes a plain step after QF-1 (lead or QF-5).
+- Suggestion: side select could offer the remap screen for a non-standard pad with no saved remap.
+- Loose-ball cluster swap waits looseSwapTicks (133 ms) — labels may briefly differ from the sim's context (deliberate anti-flicker).

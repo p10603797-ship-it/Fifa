@@ -1,5 +1,6 @@
 /**
- * QF-3 CR (src/sim/control/switching.ts, INT-A / QF-1 owned while INT-A runs): an L1 + face combo on a loose ball that
+ * QF-3 QA-27 (filed as a CR by the first pass while INT-A owned src/sim/control; FIXED by the second pass in
+ * src/sim/control/switching.ts modifierCombo once INT-A had finished): an L1 + face combo on a loose ball that
  * the sim itself treats as ours (controlContext = ATTACK: the ball is arriving at the controlled player, or he is
  * nearer than the opponents) switches control instead of making the combo. switchTickInner reads ANY MOD_L press edge
  * as "change player" whenever canManualSwitch holds, and canManualSwitch (attackContext: possession or our pass in
@@ -14,7 +15,8 @@
  *   +      !((pressed & FACE_MASK) !== 0 && validSlot(ctl.slot) && controlContext(s, ctl.slot) === Ctx.ATTACK)) {
  *   (FACE_MASK, Ctx, controlContext from ./resolveShared). L1 alone still switches on a loose ball; with an opponent
  *   on the ball (Ctx.DEFENCE) L1 + face still switches as today.
- * When fixed, drop `.fails`.
+ * Fixed as proposed (switching.ts modifierCombo). The scenario's ball now reaches #9 (it used to stop short of him,
+ * so no kick could start even once control stayed).
  */
 import { describe, expect, it } from 'vitest';
 import { ActionKind, KickKind, MatchPhase } from '../../src/contracts/enums';
@@ -26,14 +28,14 @@ function looseArriving() {
     phase: MatchPhase.IN_PLAY,
     humans: [{ side: 0, slot: 9 }],
     players: [{ slot: 9, x: 20, z: 0 }, { slot: 10, x: 24, z: 6 }],
-    ball: { owner: -1, x: 15, y: 0.11, z: 0, vx: 4, vz: 0, lastTouchTeam: 1, passTarget: -1 },
+    ball: { owner: -1, x: 17, y: 0.11, z: 0, vx: 6, vz: 0, lastTouchTeam: 1, passTarget: -1 },
   });
   for (const t of [0, 1]) s.teams[t]!.cpu.active = 0;
   return s;
 }
 
 describe('QF-3 CR switching: L1 + face combo on a loose ball arriving at the controlled player', () => {
-  it.fails('L1 + Circle in one frame chips with #9 (control stays), it does not switch to #10', () => {
+  it('L1 + Circle in one frame chips with #9 (control stays), it does not switch to #10', () => {
     const s = looseArriving();
     const first = s.tick + 1;
     let shot = KickKind.NONE;

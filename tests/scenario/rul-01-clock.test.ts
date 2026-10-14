@@ -147,13 +147,13 @@ describe('RUL-01 clock', () => {
       if (prevShown >= 0) expect(total - prevShown).toBeLessThanOrEqual(1);
       prevShown = total;
       if (m.periodT === m.periodLen && at45 === '') at45 = `${clock.min}:${String(clock.sec).padStart(2, '0')}`;
-      void tickEv;
+      // [QF-1] The clock steps at the end of the rules stage: a tick counts when it ends in a clock phase (the tick the
+      // kick-off is taken counts, D-013; a tick that ends in GOAL does not) or ends the period.
+      if (CLOCK_PHASES.includes(m.phase) || tickEv.some((e) => e.type === EventType.PERIOD_END)) clockTicks++;
       return m.phase === MatchPhase.HALF_TIME;
-    }, 9000, (_tick, st) => {
-      if (CLOCK_PHASES.includes(st.match.phase)) clockTicks++;
-    }, 'core');
+    }, 9000, undefined, 'core');
     expect(reached).toBe(true);
-    // Every tick that started in a clock phase advanced the clock by exactly one.
+    // Every tick whose rules stage ended in a clock phase advanced the clock by exactly one.
     expect(s.match.periodT).toBe(clockTicks);
     expect(at45).toBe('45:00');
     const end = findEvents(events, EventType.PERIOD_END);
@@ -218,15 +218,17 @@ describe('RUL-01 clock', () => {
     expect(s.match.addedT).toBe(100);
   });
 
-  it('the kick-off that opens a period adds no stoppage; a kick-off after a goal does', () => {
-    for (const [prev, expected] of [[MatchPhase.PRE_MATCH, 0], [MatchPhase.HALF_TIME, 0], [MatchPhase.EXTRA_TIME, 0], [MatchPhase.REPLAY, 20 * T_RULES.addedTimeScale]] as const) {
+  // [QF-1] D-013 / contracts CLOCK_PHASES: the clock does not run before a kick-off is taken, so no kick-off (the one
+  // opening a period or the one after a goal) runs the clock or adds stoppage.
+  it('no kick-off runs the clock or adds stoppage (D-013), whatever came before it', () => {
+    for (const prev of [MatchPhase.PRE_MATCH, MatchPhase.HALF_TIME, MatchPhase.EXTRA_TIME, MatchPhase.REPLAY] as const) {
       const s = makeScenario({ phase: MatchPhase.KICK_OFF });
       s.match.prevPhase = prev;
       s.match.restart.kind = RestartKind.KICK_OFF;
       s.match.periodT = 500;
       for (let i = 0; i < 20; i++) { holdRestart(s); tickRules(s); }
-      expect(s.match.periodT, MatchPhase[prev]).toBe(520);
-      expect(s.match.addedT, MatchPhase[prev]).toBe(expected);
+      expect(s.match.periodT, MatchPhase[prev]).toBe(500);
+      expect(s.match.addedT, MatchPhase[prev]).toBe(0);
     }
   });
 

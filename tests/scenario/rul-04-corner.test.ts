@@ -16,6 +16,10 @@
  *  - team AI, CPU brains and contacts: no-ops (only the rules decide; tests drive intruders and CPU frames).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// [QF-1] Evaluate rules/corner before anything reaches the mocked kicks modules: when the real kicks/lob.ts is
+// loaded first (inside its mock factory) it pulls the rules modules in through the action registry, and corner.ts then
+// binds to the ORIGINAL startLob / startPass (the mock is still being built), so the spies saw no calls.
+import '../../src/sim/rules/corner';
 import {
   BALL_RADIUS, CORNER_ARC_RADIUS, DT, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PENALTY_AREA_DEPTH, PENALTY_AREA_HALF_WIDTH,
   RESTART_DISTANCE,

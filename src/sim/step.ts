@@ -16,6 +16,7 @@ import { bodyContactTick } from './players/bodies';
 import { ballTick } from './ball/contact';
 import { contactsTick } from './contacts';
 import { rulesTick } from './rules/machine';
+import { practiceRulesTick } from './rules/practice';
 import { watchdogTick } from './rules/watchdog';
 
 /**
@@ -39,6 +40,7 @@ export function step(s: SimState, humanFrames: readonly InputFrame[], events: Ev
   ballTick(s, events); // SIM-01/02/03 (+ line crossing)
   contactsTick(s, events); // keepers, aerials, tackles, interceptions, first touch, dribble
   rulesTick(s, events); // RUL-01..10
+  practiceRulesTick(s, events); // QF-1 (from MOD-04): set-piece practice re-awards its restart; no-op outside practice
   watchdogTick(s, events); // RUL-11
   if (m.phase === MatchPhase.IN_PLAY && s.ball.touchedTick !== s.tick) s.ball.idleT++;
 }

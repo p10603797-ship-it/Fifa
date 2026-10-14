@@ -12,6 +12,10 @@
  *  - contacts: no-op (no loose-ball pick-ups); RUL-09 showCard: spy.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// [QF-1] Evaluate rules/restart before anything reaches the mocked kind modules: when the real throwin.ts is loaded
+// first (inside its mock factory) it pulls restart.ts in, and restart.ts then binds to the ORIGINAL throwin exports
+// (the mock is still being built), so the Setup / Default spies were never called for throw-ins.
+import '../../src/sim/rules/restart';
 import {
   BALL_RADIUS, CENTRE_CIRCLE_RADIUS, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, GOAL_HALF_WIDTH, HALF_LENGTH, HALF_WIDTH,
   NUM_SLOTS, PENALTY_AREA_DEPTH, PENALTY_AREA_HALF_WIDTH, PENALTY_ARC_RADIUS, PENALTY_SPOT_DIST, PLAYERS_PER_TEAM,

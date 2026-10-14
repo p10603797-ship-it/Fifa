@@ -30,7 +30,7 @@ import { T_RULES } from '../../contracts/tuning';
 import { endAction } from '../actions/dispatch';
 import { rngInt } from '../core/rng';
 import { periodLength } from '../init';
-import { setPhase } from './machine';
+import { advanceCutscene, setPhase } from './machine';
 import { awardRestart, forceRestartKick } from './restart';
 import { isRestartPhase, logWatchdog } from './restartCommon';
 import { shootoutStart } from './shootout';
@@ -133,11 +133,8 @@ function forcePhaseStep(s: SimState, ev: EventSink): void {
   }
   switch (phase) {
     case MatchPhase.PRE_MATCH:
-      if (s.config.startPhase === MatchPhase.SHOOT_OUT) {
-        enterShootOut(s, ev);
-      } else {
-        beginKickOff(s, m.firstKickoffTeam === 1 ? 1 : 0, ev);
-      }
+      // RUL-01's own start (kick-off, shoot-out, or straight into play for config.startPhase IN_PLAY).
+      advanceCutscene(s, ev);
       return;
     case MatchPhase.GOAL:
       setPhase(s, MatchPhase.CELEBRATION, ev);

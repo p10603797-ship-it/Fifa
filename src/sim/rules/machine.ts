@@ -17,8 +17,8 @@
  *  - A goal straight from a throw-in (no other touch) does not count; neither does an own goal straight from a
  *    goal kick or kick-off: the ball is treated as out over the goal line (goal kick / corner, as in Laws 13-16).
  *  - The clock (match.periodT) only ever advances by 1 per clock-phase tick; the display is derived from it, so it
- *    cannot drift. Added time accrues during restart phases of regulation time (not during the kick-off that opens a
- *    period) and is frozen once regulation ends.
+ *    cannot drift. Added time accrues during the restart phases of regulation time that run the clock (throw-ins,
+ *    goal kicks, corners, free kicks, penalties; never a kick-off, D-013) and is frozen once regulation ends.
  *  - A shot in flight always defers the period end (bounded by LOCAL_TUNING.shotFlightMaxTicks after the strike);
  *    a cross in flight or an attack in the final 25 m defers it until the 20 s extension cap.
  *  - Kick-off: both teams are teleported into formation in their own halves (opponents outside the centre
@@ -62,6 +62,7 @@ import { awardRestart, legalizePositions, restartTick } from './restart';
 import { shootoutStart, shootoutTick } from './shootout';
 import { checkForfeit, subsTick } from './subs';
 import { throwInTick } from './throwin';
+import { practiceTeam } from './practice';
 
 /** RUL-01 constants not yet in contracts/tuning.ts. */
 export const LOCAL_TUNING = {
@@ -486,10 +487,8 @@ function clockTick(s: SimState, ev: EventSink): void {
   const m = s.match;
   if (IS_CLOCK[m.phase] !== 1 || isPractice(s) || m.forfeitTeam >= 0 || m.finished === 1) return;
   m.periodT++;
-  // Stoppage: restart phases of regulation time, except the kick-off that opens a period (only a kick-off after a
-  // goal, entered from REPLAY, is time lost to a stoppage).
-  const opening = m.phase === MatchPhase.KICK_OFF && m.prevPhase !== MatchPhase.REPLAY;
-  if (IS_RESTART[m.phase] === 1 && !opening && m.periodT <= m.periodLen) {
+  // Stoppage: the clock-running restart phases of regulation time (a kick-off never runs the clock, D-013).
+  if (IS_RESTART[m.phase] === 1 && m.periodT <= m.periodLen) {
     const cap = maxAddedT(s);
     m.addedT += T_RULES.addedTimeScale;
     if (m.addedT > cap) m.addedT = cap;
@@ -580,7 +579,20 @@ function enterReplay(s: SimState, ev: EventSink): void {
 
 function startMatch(s: SimState, ev: EventSink): void {
   if (s.config.startPhase === MatchPhase.SHOOT_OUT) enterShootOut(s, ev);
+  else if (s.config.startPhase === MatchPhase.IN_PLAY) startInPlay(s, ev);
   else beginKickOff(s, s.match.firstKickoffTeam, ev);
+}
+
+/**
+ * [QF-1] config.startPhase IN_PLAY (practice, D-013: PRE_MATCH -> IN_PLAY is legal): both teams in their kick-off
+ * layout with the ball on the centre spot at the feet of the practising side's taker (practice) or the side that
+ * won the toss, and play live at once (no kick-off phase, no whistle wait). It used to start with a kick-off.
+ */
+function startInPlay(s: SimState, ev: EventSink): void {
+  setupKickOff(s, isPractice(s) ? practiceTeam(s.config) : s.match.firstKickoffTeam, ev);
+  s.match.restart.taker = -1;
+  s.match.restart.ready = 0;
+  setPhase(s, MatchPhase.IN_PLAY, ev);
 }
 
 /** Leave the current cut-scene / break phase the normal way (timer expired or skipped). */

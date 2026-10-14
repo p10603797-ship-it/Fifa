@@ -34,7 +34,7 @@ function randomPacket(r: () => number): InputPacket {
       data[o + k] = x < 0.6 ? 0 : x < 0.8 ? Math.floor(r() * 255) - 127 : Math.floor(r() * 65536) - 32768;
     }
   }
-  return { firstTick: Math.floor(r() * 100000), count, ack: Math.floor(r() * 1000) - 1, tick: Math.floor(r() * 1000) - 1, adv: Math.round((r() * 20 - 10) * 16) / 16, data };
+  return { firstTick: Math.floor(r() * 100000), count, ack: Math.floor(r() * 1000) - 1, tick: Math.floor(r() * 1000) - 1, adv: Math.round((r() * 20 - 10) * 16) / 16 || 0, data };
 }
 
 describe('QF-6 sparse input packets', () => {

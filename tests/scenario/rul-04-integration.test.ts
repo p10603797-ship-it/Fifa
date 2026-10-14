@@ -5,6 +5,10 @@
  * these tests do not depend on the kick modules being finished.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// [QF-1] Evaluate rules/corner before anything reaches the mocked kicks modules: when the real kicks/lob.ts is
+// loaded first (inside its mock factory) it pulls the rules modules in through the action registry, and corner.ts then
+// binds to the ORIGINAL startLob / startPass (the mock is still being built), so the spies saw no calls.
+import '../../src/sim/rules/corner';
 import { BALL_RADIUS, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, RESTART_DISTANCE } from '../../src/contracts/constants';
 import { KickKind, MatchPhase, RestartKind } from '../../src/contracts/enums';
 import { EventType, type EventSink, type SimEvent } from '../../src/contracts/events';
