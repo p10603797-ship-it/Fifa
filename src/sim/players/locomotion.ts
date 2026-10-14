@@ -580,11 +580,12 @@ function movePlayer(s: SimState, slot: number): void {
       if (sp < LT.moveEps) {
         HEAD.x = ux;
         HEAD.z = uz;
-      } else if (sp < LT.pivotSpeed && vx * ux + vz * uz < 0) {
-        // [QF-1] Slow and the wanted direction is behind the way he moves (a body contact pushed him back, he overran
-        // a close target): brake along the current heading, then set off the right way once standing. Turning the
-        // velocity round at the turn rate instead swung a slow player sideways: two players sent to the same spot
-        // orbited each other for ever (glitch "Players orbit or jitter around a target").
+      } else if (sp < LT.pivotSpeed && dsp < LT.pivotSpeed && vx * ux + vz * uz < 0) {
+        // [QF-1] A slow move (a shuffle, see below) whose wanted direction is behind the way he moves (a body contact
+        // pushed him back, he overran a close target): brake along the current heading, then set off the right way
+        // once standing. Turning the velocity round at the turn rate instead swung a slow player sideways: two players
+        // sent to the same spot orbited each other for ever (glitch "Players orbit or jitter around a target").
+        // Faster moves keep the braked turn below.
         HEAD.x = vx / sp;
         HEAD.z = vz / sp;
         keep = 0;
