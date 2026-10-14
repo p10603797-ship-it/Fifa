@@ -4,7 +4,7 @@
  * cross landing on its zone; determinism.
  */
 import { describe, expect, it } from 'vitest';
-import { ActionKind, ControllerKind, KickKind, MatchPhase } from '../../src/contracts/enums';
+import { ActionKind, AutoSwitch, ControllerKind, KickKind, MatchPhase } from '../../src/contracts/enums';
 import { EventType, type SimEvent } from '../../src/contracts/events';
 import { Btn, type InputFrame } from '../../src/contracts/input';
 import type { SimState } from '../../src/contracts/state';
@@ -15,7 +15,7 @@ import { giveBall, KICKER, MATE_A, OPP_A, place, skill } from './sim-09-helpers'
 
 /** IN_PLAY, offside off, no CPU brains; P1 on the kicker at (kx, kz) with the ball; everybody else far away. */
 function live(kx: number, kz: number, fx: number, fz: number, seed = 3): SimState {
-  const s = makeScenario({ phase: MatchPhase.IN_PLAY, seed, config: { offside: 0 }, humans: [{ side: 0, slot: KICKER }] });
+  const s = makeScenario({ phase: MatchPhase.IN_PLAY, seed, config: { offside: 0 }, humans: [{ side: 0, slot: KICKER, autoSwitch: AutoSwitch.OFF }] });
   for (let t = 0; t < 2; t++) { const c = s.ctrl[2 + t]!; c.kind = ControllerKind.NONE; c.slot = -1; s.teams[t]!.cpu.active = 0; }
   for (let i = 0; i < 22; i++) {
     if (i === 0 || i === 11 || i === KICKER) continue;
@@ -55,9 +55,6 @@ function kicksBy(ev: SimEvent[], slot: number): number[] {
   return findEvents(ev, EventType.KICK, (e) => e.a === slot).map((e) => e.b);
 }
 
-describe('SIM-09 in the pipeline', () => {
-  it('the LOB button family through SIM-15: zone conversions and the outside-the-zone kinds', () => {
-    const cases: [string, number, number, number, number, number, [number, number][], KickKind][] = [
 describe('x', () => { it('trace', () => {
   const s = live(0, 0, 1, 0);
   place(s, MATE_A, 26, 4);

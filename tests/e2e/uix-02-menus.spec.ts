@@ -274,6 +274,46 @@ test.describe('UIX-02 splash and main menu', () => {
     expect(messages).toEqual([]);
   });
 
+  test('keyboard alone at 4:3 and 21:9: the same focus order reaches every entry, ring on screen', async ({ page }) => {
+    const messages = collectConsole(page);
+    for (const s of [{ w: 1024, h: 768, name: '4x3' }, { w: 1260, h: 540, name: '21x9-short' }]) {
+      await page.setViewportSize({ width: s.w, height: s.h });
+      await page.goto('/');
+      await expect(page.getByTestId('splash-start')).toBeVisible();
+      await page.keyboard.press('Enter');
+      await expect.poll(() => route(page)).toBe('main');
+      await expect.poll(() => focused(page)).toBe('main-kickoff');
+      expect(await ring(page), s.name).toBe(true);
+      const seen: string[] = ['main-kickoff'];
+      const press = async (key: string, want: string): Promise<void> => {
+        await page.keyboard.press(key);
+        await expect.poll(() => focused(page), `${s.name}: ${key} -> ${want}`).toBe(want);
+        seen.push(want);
+        // The focused control (and its ring) is fully on screen.
+        const inside = await page.evaluate(() => {
+          const r = document.querySelector<HTMLElement>('[data-focused]')!.getBoundingClientRect();
+          return r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth && r.bottom <= window.innerHeight;
+        });
+        expect(inside, `${s.name}: ${want} inside the viewport`).toBe(true);
+      };
+      await press('ArrowRight', 'main-mode-kickoff');
+      for (const id of ['main-friend', 'main-cup', 'main-shootout', 'main-practice']) await press('ArrowDown', id);
+      await press('ArrowDown', 'main-mode-kickoff');
+      await press('ArrowLeft', 'main-kickoff');
+      await press('ArrowUp', 'main-settings');
+      await press('ArrowLeft', 'main-diagnostics');
+      const all = ['main-kickoff', ...MODE_ENTRIES.map((e) => e[0]), ...UTILITY_ENTRIES.map((e) => e[0])];
+      for (const id of all) expect(seen, `${s.name}: ${id} reachable`).toContain(id);
+      // Confirm opens the focused entry; Escape comes back with the focus on it.
+      await page.keyboard.press('Enter');
+      await expect.poll(() => route(page)).toBe('diagnostics');
+      await page.keyboard.press('Escape');
+      await expect.poll(() => route(page)).toBe('main');
+      await expect.poll(() => focused(page)).toBe('main-diagnostics');
+    }
+    expect(messages).toEqual([]);
+  });
+
   test('controller alone: a button outside the menu map starts; D-pad, Cross and Circle drive the menu', async ({ page }) => {
     const messages = collectConsole(page);
     await page.addInitScript(MOCK_PAD);
