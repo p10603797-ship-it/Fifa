@@ -83,7 +83,7 @@ interface Rig {
   sample(): InputFrame;
 }
 
-function rig(s: SimState = attackState(), o: { projector?: CameraProjector | null; side?: number; settings?: Partial<TouchSettings>; aim?: { button: number; dx: number; dy: number; tMs: number } } = {}): Rig {
+function rig(s: SimState = attackState(), o: { projector?: CameraProjector | null; side?: number; settings?: Partial<TouchSettings>; aim?: { button: number; dx: number; dy: number; tMs: number }; slideClear?: () => boolean } = {}): Rig {
   const st = createTouchIntentState();
   const settings: TouchSettings = { ...createDefaultSettings().controls.touch, ...o.settings };
   const r = { i: 0 } as Rig;
@@ -91,6 +91,7 @@ function rig(s: SimState = attackState(), o: { projector?: CameraProjector | nul
     now: () => r.i * TICK,
     settings: () => settings,
     swipeAim: o.aim ? () => o.aim! : undefined,
+    slideClear: o.slideClear,
   });
   const ctx: InputSampleContext = { tick: 1, human: 0, side: o.side ?? 0, state: s, projector: o.projector === undefined ? PROJ : o.projector };
   const out = createInputFrame();
@@ -276,6 +277,35 @@ describe('TCH-07 attack table (ATTACK mode): one test per row', () => {
     expect(fs.flatMap((f, i) => (f.skill !== 0 ? [[i, f.skill]] : []))).toEqual([[18, SkillMove.KNOCK_ON]]);
   });
 
+  it('PASS swipe left in the crossing zone = LOB, released, LOB (SIM-15 LOB,LOB ground cross), flicked or held; outside the zone or at a set piece L1+R1+LOB', () => {
+    /** #9 on the ball wide in the attacking third (inside geometry.inCrossingZone for +x). */
+    const zone = (x = 40, z = 20): SimState => makeScenario({
+      phase: MatchPhase.IN_PLAY, humans: [{ side: 0, slot: 9 }], players: [{ slot: 9, x, z }], ball: { owner: 9, x: x + 0.4, y: 0.11, z },
+    });
+    for (const evs of [flick(TB.PASS, SwipeDir.LEFT), swipeHold(TB.PASS, SwipeDir.LEFT)]) {
+      const fs = play(rig(zone()), evs, 40);
+      // Committed at the swipe (sample 3): one-tick LOB, one released tick, one-tick LOB; nothing else, no power.
+      expect(presses(fs)).toEqual([
+        { t: 3, bits: Btn.LOB, power: 0, skill: 0, ax: 0, az: 0 },
+        { t: 5, bits: Btn.LOB, power: 0, skill: 0, ax: 0, az: 0 },
+      ]);
+      expect(any(fs)).toEqual([3, 5]);
+      expect(5 - 3).toBeLessThanOrEqual(T_INPUT.doubleTapTicks);
+      expect(1).toBeLessThan(T_INPUT.tapTicks); // the first LOB is a tap for the sim
+    }
+    // Other directions in the zone keep their cells (right = R1+PASS: SIM-15 makes it the low cross there).
+    let fs = play(rig(zone()), flick(TB.PASS, SwipeDir.RIGHT), 20);
+    expect(presses(fs).map((p) => [p.bits, p.power])).toEqual([[Btn.MOD_R | Btn.PASS, PASS_POWER]]);
+    // Central (|z| below the zone) and at a set piece: the driven lob.
+    fs = play(rig(zone(40, 5)), flick(TB.PASS, SwipeDir.LEFT), 20);
+    expect(presses(fs).map((p) => [p.bits, p.power])).toEqual([[Btn.MOD_L | Btn.MOD_R | Btn.LOB, PASS_POWER]]);
+    fs = play(rig(zone()), flick(TB.PASS, SwipeDir.LEFT), 20, ClusterMode.SET_PIECE);
+    expect(presses(fs).map((p) => [p.bits, p.power])).toEqual([[Btn.MOD_L | Btn.MOD_R | Btn.LOB, PASS_POWER]]);
+    // The defending half's wing is no crossing zone.
+    fs = play(rig(zone(-40, 20)), flick(TB.PASS, SwipeDir.LEFT), 20);
+    expect(presses(fs).map((p) => p.bits)).toEqual([Btn.MOD_L | Btn.MOD_R | Btn.LOB]);
+  });
+
   it('set pieces (SET_PIECE mode) use the same attack table', () => {
     const fs = play(rig(), [...flick(TB.SHOOT, SwipeDir.DOWN), ...tap(TB.PASS).map(([t, b, e]) => [t + 300, b, e] as Ev)], 40, ClusterMode.SET_PIECE);
     expect(presses(fs).map((p) => [p.bits, p.power])).toEqual([[Btn.MOD_R | Btn.SHOOT, SHOT_POWER], [Btn.PASS, 0]]);
@@ -335,6 +365,14 @@ describe('TCH-07 defence table (DEFENCE mode): one test per row', () => {
     fs = play(r, tap(TB.SLIDE), 20, D);
     expect(presses(fs).map((p) => [p.t, p.bits])).toEqual([[0, Btn.SHOOT]]);
     expect(on(fs, Btn.LOB)).toEqual([]);
+    // Wired to TCH-04 DefenceCluster.slideClear (index.ts): the press's own CLEAR flag decides, not the live clearOn.
+    let r2 = rig(defenceState(), { slideClear: () => true });
+    fs = play(r2, tap(TB.SLIDE), 20, D);
+    expect(presses(fs).map((p) => [p.t, p.bits])).toEqual([[0, Btn.SHOOT]]);
+    r2 = rig(defenceState(), { slideClear: () => false });
+    r2.st.clearOn = true;
+    fs = play(r2, tap(TB.SLIDE), 20, D);
+    expect(presses(fs).map((p) => [p.t, p.bits])).toEqual([[0, Btn.LOB]]);
   });
 
   it('SWITCH: tap = L1 (change player); a swipe in any direction = RS_FLICK toward it in pitch space', () => {

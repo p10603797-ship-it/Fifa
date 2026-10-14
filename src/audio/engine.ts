@@ -29,7 +29,7 @@
  * - A module that throws (factory, onEvents, update, lifecycle hooks) is isolated: the others and the game go on.
  * - Without Web Audio (Node tests, very old browsers) every call is a no-op.
  */
-import type { AudioEngine, SettingsStore } from '../contracts/app';
+import type { AudioEngine, SettingsStore, UiSound } from '../contracts/app';
 import type { EventBuffer } from '../contracts/events';
 import type { AudioSettings } from '../contracts/settings';
 import type { ReadonlySimState } from '../contracts/state';
@@ -68,6 +68,8 @@ const LOCAL_TUNING = {
   limiterRatio: 20,
   limiterAttack: 0.002,
   limiterRelease: 0.15,
+  /** A menu sound asked for while the context is still starting (the unlock tap) plays once it runs within, ms. */
+  pendingUiMs: 400,
 } as const; // TUNING-CR
 
 export const AUDIO_ENGINE_TUNING = LOCAL_TUNING;
@@ -264,6 +266,10 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
   let stallSec = 0;
   let lastAudioTime = -1;
   let unsubscribe: (() => void) | null = null;
+  /** Menu sound requested before the context ran (the splash tap unlocks and plays START at once), and when. */
+  let pendingUi = -1;
+  let pendingUiAt = 0;
+  const clock = opts.now ?? ((): number => (typeof performance !== 'undefined' ? performance.now() : Date.now()));
   /** Per-module failure counts (index = position in `modules`). */
   let failures: number[] = [];
   /** Current volumes (settings, or a setVolumes preview). */
@@ -310,6 +316,20 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
     if (!outUp) {
       outUp = true;
       if (out) fadeParam(out.gain, 0, 1, ctx.currentTime, LOCAL_TUNING.resumeFade);
+    }
+    if (pendingUi >= 0) {
+      const kind = pendingUi as UiSound;
+      pendingUi = -1;
+      if (clock() - pendingUiAt <= LOCAL_TUNING.pendingUiMs) playUiNow(kind);
+    }
+  }
+
+  function playUiNow(kind: UiSound): void {
+    if (!ui) return;
+    try {
+      ui.play(kind);
+    } catch (err) {
+      moduleFailed(4, err, 'play');
     }
   }
 
@@ -593,12 +613,14 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
       }
     },
     playUi(kind) {
-      if (ui && ac && wanted && ac.state === 'running') {
-        try {
-          ui.play(kind);
-        } catch (err) {
-          moduleFailed(4, err, 'play');
-        }
+      if (!ui || !ac || !wanted) return;
+      if (ac.state === 'running') {
+        pendingUi = -1;
+        playUiNow(kind);
+      } else if (ac.state !== 'closed') {
+        // Still starting (resume() pending inside the unlock gesture): play it as soon as it runs, if soon.
+        pendingUi = kind;
+        pendingUiAt = clock();
       }
     },
     matchStart(state) {
@@ -618,6 +640,7 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
     },
     suspend() {
       wanted = false;
+      pendingUi = -1;
       disarmGesture();
       stalled = false;
       stallSec = 0;

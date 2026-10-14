@@ -26,7 +26,8 @@
  *  - dispossessed before contact (someone else owns / holds the ball): whiff at once, recover.
  *  - contact (first tick with actT >= actContact, not charging): the phase must be live for him, the ball untouched by
  *    anyone else this tick and in reach (his own ball, or within LT.reachRadius and LT.reachHeight). A loose ball still
- *    arriving (first-time shot) or his own ball still dropping may delay the contact up to LT.contactGraceTicks. Then
+ *    arriving (first-time shot: on a path within LT.startArriveLane, the same window startShot accepted) or his own ball
+ *    still dropping may delay the contact up to LT.contactGraceTicks (the recovery bounds it too). Then
  *    solveShot fills the launch and core/kick.ts applyKick plays it (KICK + SHOT events, ball.shotBy / shotOnTarget,
  *    restart.taken). Anything else is a whiff. actContact moves to the actual contact tick and the planned recovery
  *    follows it (actDone = 1). Recovery: MoveMode.LOCKED for LT.contactLockTicks (follow-through), STOP for a tick, then
@@ -71,9 +72,9 @@
  *  - launch.onTarget = 1 when the solved flight crosses the goal line inside the mouth (centre within the posts and
  *    under the bar by a ball radius); tx/tz = the intended aim point; target = -1.
  *
- * Determinism / cost: plain arithmetic, Math.sqrt and dmath (dsin / dcos), s.rng only in the solver, module scratch only
- * (no per-tick allocation). Per tick per shooter: a few flops of movement capping. At contact: up to ~20 air flights of
- * at most LT.maxFlightTicks steps (typically 3-6 flights of 40-90 steps).
+ * Determinism / cost: plain arithmetic, Math.sqrt and dmath (dsin / dcos / dpow), s.rng only in the solver, module
+ * scratch only (no per-tick allocation). Per tick per shooter: a few flops of movement capping. At contact: up to ~20
+ * air flights of at most LT.maxFlightTicks steps (typically 3-6 flights of 40-90 steps; ~0.05 ms per solve in Node).
  *
  * Helper module: shotHooks.ts (import-cycle-safe shells of shotHandler / solveShot, re-exported first below).
  */
@@ -88,8 +89,8 @@ import { createBallState, MoveMode, type PlayerState, type SimState } from '../.
 import { createKickLaunch, ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
 import { T_BALL, T_PASS, T_PLAYER, T_SHOT } from '../../contracts/tuning';
-import { ballAirStep } from '../ball/flight';
-import { dcos, dsin } from '../core/dmath';
+import { ballAirStep, curlSpinY, launchSpin } from '../ball/flight';
+import { dcos, dpow, dsin } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
 import { pressureOn } from '../core/query';
 import { rngGauss } from '../core/rng';
@@ -104,8 +105,9 @@ export const LOCAL_TUNING = { // TUNING-CR
   contactLockTicks: 5,
   /** A held charge waits at most T_PASS.powerFillTicks + this many ticks past the planned contact, ticks. */
   chargeWaitExtraTicks: 20,
-  /** A loose ball still arriving, or his own ball still above reachHeight, may delay the contact by up to, ticks. */
-  contactGraceTicks: 6,
+  /** A loose ball still arriving, or his own ball still above reachHeight, may delay the contact by up to, ticks
+   *  (= startArriveTicks: a first-time shot startShot accepted never whiffs only because the ball is late). */
+  contactGraceTicks: 14,
   /** The ball can be struck within this horizontal distance of the body centre, m ... */
   reachRadius: 1.2,
   /** ... with its centre at or below this height, m. */
@@ -288,6 +290,8 @@ for (const ph of RESTART_PHASES) RESTART_PHASE[ph] = 1;
 const LAUNCH = createKickLaunch();
 /** Scratch ball for the trajectory model (origin at the ball). */
 const FLY = createBallState();
+/** Scratch spin vector (SIM-01 launchSpin output). */
+const SPIN = { x: 0, y: 0, z: 0 };
 /** Solver scratch (doubles handed between helpers without boxing). */
 const F = new Float64Array(40);
 // aim (aimInto): goal-line x, height, z, end (-1/+1), assist strength, origin x/z
@@ -646,8 +650,7 @@ export function shotErrorSigma(s: SimState, slot: number, kind: KickKind, power:
   const a = s.attrs[slot]!;
   const b = s.ball;
   const inv = 1 - shotAccuracy(s, slot, kind, fin(dist));
-  // inv^errExp via exp/log is not needed: errExp is applied as inv * inv^(errExp - 1) with a cheap power series.
-  let sigma = T_SHOT.errorMin + (T_SHOT.errorMax - T_SHOT.errorMin) * LT.errBaseShare * powFrac(inv, LT.errExp);
+  let sigma = T_SHOT.errorMin + (T_SHOT.errorMax - T_SHOT.errorMin) * LT.errBaseShare * dpow(clamp01(inv), LT.errExp);
   sigma *= kindErrMul(kind);
   const pw = clamp01(fin(power));
   if (pw > KNEE) sigma *= 1 + LT.powerErrMul * (pw - KNEE) / (1 - KNEE);
@@ -690,21 +693,6 @@ export function shotErrorSigma(s: SimState, slot: number, kind: KickKind, power:
   return sigma;
 }
 
-/**
- * x^e for x in [0, 1] and e in [1, 2] without Math.pow: x * x^(e - 1), where x^f (0 <= f <= 1) is the linear blend
- * between x^0 = 1 and x^1 = x in log space approximated by sqrt steps (exact at f = 0, 0.5, 1; monotone; error < 2%).
- */
-function powFrac(x: number, e: number): number {
-  const v = clamp01(x);
-  let f = e - 1;
-  if (f < 0) f = 0; else if (f > 1) f = 1;
-  // x^f: piecewise between x^0, x^0.5 and x^1 in f (geometric interpolation via sqrt).
-  const h = Math.sqrt(v);
-  let xf: number;
-  if (f <= 0.5) { const t = f * 2; xf = 1 + (h - 1) * t; } else { const t = (f - 0.5) * 2; xf = h + (v - h) * t; }
-  return v * xf;
-}
-
 // ---------------------------------------------------------------- trajectory model
 
 /**
@@ -725,12 +713,12 @@ function setLaunchFromAngles(): void {
   F[L_DZ] = dz;
 }
 
-/** Put the launch L_* (with the spin from T_CURL / T_BACK about L_DX / L_DZ) on FLY at the origin. */
+/** Put the launch L_* (with the spin from T_CURL / T_BACK about L_DX / L_DZ, SIM-01 launchSpin) on FLY at the origin. */
 function loadFly(): void {
-  const dx = F[L_DX]!, dz = F[L_DZ]!, back = F[T_BACK]!;
+  launchSpin(F[L_DX]!, F[L_DZ]!, F[T_CURL]!, F[T_BACK]!, SPIN);
   FLY.x = 0; FLY.y = F[T_Y0]!; FLY.z = 0;
   FLY.vx = F[L_VX]!; FLY.vy = F[L_VY]!; FLY.vz = F[L_VZ]!;
-  FLY.sx = 0 - dz * back; FLY.sy = F[T_CURL]!; FLY.sz = dx * back + 0;
+  FLY.sx = SPIN.x; FLY.sy = SPIN.y; FLY.sz = SPIN.z;
 }
 
 /**
@@ -791,7 +779,7 @@ function solveAimed(): number {
   let th = (ty - y0 + 0.5 * GRAV * t0 * t0) / (D > 0.1 ? D : 0.1);
   if (th < LT.minElevation) th = LT.minElevation; else if (th > LT.maxElevation) th = LT.maxElevation;
   let prevTh = 0, prevY = 0, havePrev = false;
-  let reached = 0;
+  let reached: number;
   for (let it = 0; ; it++) {
     F[T_TH] = th;
     setLaunchFromAngles();
@@ -829,7 +817,7 @@ function solveChipSpeed(): number {
   let v = den > 0.1 ? Math.sqrt(GRAV * D * D / (2 * ct * ct * den)) : vmax;
   if (v < vmin) v = vmin; else if (v > vmax) v = vmax;
   let prevV = 0, prevY = 0, havePrev = false;
-  let reached = 0;
+  let reached: number;
   for (let it = 0; ; it++) {
     F[T_V] = v;
     setLaunchFromAngles();
@@ -899,7 +887,7 @@ function spinInto(s: SimState, slot: number, kind: KickKind, curve: number, flag
     default:
       if (hasCurve) right = cv * LT.normalCurlSpin * cm;
   }
-  F[T_CURL] = 0 - right; // SIM-01 curlSpinY: positive sy curls left
+  F[T_CURL] = curlSpinY(right); // SIM-01 convention: positive sy curls LEFT of the travel direction
   F[T_BACK] = back;
 }
 
@@ -1012,13 +1000,13 @@ function solveShotImpl(s: SimState, slot: number, out: KickLaunch): number {
     const zc = pz + F[M_LAT]! * nx;
     if (zc < POST_IN && zc > -POST_IN && F[M_Y]! < BAR_IN) out.onTarget = 1;
   }
-  const dx = F[L_DX]!, dz = F[L_DZ]!, back = F[T_BACK]!;
+  launchSpin(F[L_DX]!, F[L_DZ]!, F[T_CURL]!, F[T_BACK]!, SPIN);
   out.vx = F[L_VX]!;
   out.vy = F[L_VY]!;
   out.vz = F[L_VZ]!;
-  out.sx = 0 - dz * back;
-  out.sy = F[T_CURL]!;
-  out.sz = dx * back + 0;
+  out.sx = SPIN.x;
+  out.sy = SPIN.y;
+  out.sz = SPIN.z;
   out.kind = kind;
   out.target = -1;
   out.tx = gx;
@@ -1123,7 +1111,7 @@ function shotUpdate(s: SimState, slot: number, ev: EventSink): void {
     // Grace: a loose ball still arriving (first time), or his own ball still dropping.
     const rec = p.actDur - p.actContact;
     const left = LT.contactGraceTicks - waited;
-    if (left > 0 && waited < rec - 1 && (b.owner === slot || ballArriving(s, slot, left, LT.reachRadius))) {
+    if (left > 0 && waited < rec - 1 && (b.owner === slot || ballArriving(s, slot, left, LT.startArriveLane))) {
       shotMove(s, p);
       return;
     }

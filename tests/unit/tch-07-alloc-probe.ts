@@ -67,6 +67,8 @@ result.busy = measure(() => {
   else if (p === 9) { pushButtonEvent(st, TB.PASS, E.UP, SwipeDir.NONE, t, A); pushButtonEvent(st, TB.PASS, E.DOUBLE_TAP, SwipeDir.NONE, t, A); }
   else if (p === 12) { pushButtonEvent(st, TB.SHOOT, E.DOWN, SwipeDir.NONE, t, A); pushButtonEvent(st, TB.SHOOT, E.SWIPE, SwipeDir.RIGHT, t, A); }
   else if (p === 13) { pushButtonEvent(st, TB.SHOOT, E.UP, SwipeDir.NONE, t, A); }
+  else if (p === 20) { pushButtonEvent(st, TB.PASS, E.DOWN, SwipeDir.NONE, t, A); pushButtonEvent(st, TB.PASS, E.SWIPE, SwipeDir.LEFT, t, A); }
+  else if (p === 21) { pushButtonEvent(st, TB.PASS, E.UP, SwipeDir.NONE, t, A); }
   else if (p === 16) { pushButtonEvent(st, TB.THROUGH, E.DOWN, SwipeDir.NONE, t, A); pushButtonEvent(st, TB.THROUGH, E.SWIPE, SwipeDir.UP, t, A); }
   else if (p === 26) { pushButtonEvent(st, TB.THROUGH, E.UP, SwipeDir.NONE, t, A); }
   else if (p === 28) { pushButtonEvent(st, TB.SPRINT_SKILL, E.DOWN, SwipeDir.NONE, t, A); pushButtonEvent(st, TB.SPRINT_SKILL, E.SWIPE, SwipeDir.DOWN, t, A); }

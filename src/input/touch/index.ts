@@ -9,9 +9,14 @@
  * gestures (everything else). A finger stays with the control that claimed it until it lifts.
  *
  * Timing: pollFrame(now) (every animation frame) and sample() (every tick) advance the buttons' hold / hint timers
- * (cluster.update) and the held-back pitch taps (gestures.update) with the pointer manager's clock, so HOLD and taps
- * reach the mapper on time; after each sample the cluster view applies a mode swap (cluster.sync). Layout, stick
- * config and opacity follow the viewport (resize, orientationchange) and the touch settings (subscribe).
+ * (cluster.update), the held-back pitch taps (gestures.update) and the set-piece flight preview (setPiece.update,
+ * throttled inside) with the pointer manager's clock, so HOLD and taps reach the mapper on time; after each sample the
+ * cluster view applies a mode swap (cluster.sync), and every pointer event refreshes the slot view (cluster.sync in
+ * onChange) before the overlay, so a pressed slot shows in the same frame as its touch-down. Layout, stick config
+ * and opacity follow the viewport (resize, orientationchange) and the touch settings (subscribe).
+ * Set pieces (TCH-06): the set-piece swipe reads the live state (which restart, the RUL-05 flight preview) and the
+ * projector through opts.getState / opts.getProjector. The mapper reads DefenceCluster.slideClear for SLIDE presses
+ * (a SLIDE that went down as CLEAR is a clearance) and DefenceCluster.swipeAim for SWITCH swipes.
  * PAUSE fires opts.onPause when the finger lifts on the button (immediately, even while no tick runs).
  * Lifecycle: releaseAll() cancels every pointer, releases every control and clears the mapper (no stuck sprint, stick
  * or power bar); dispose() also removes every listener and the overlay DOM.
@@ -31,7 +36,7 @@ import { createPitchGestures } from './gestures';
 import { createTouchMapper, type TouchMapper } from './mapper';
 import { createTouchOverlay, type TouchOverlay } from './overlay';
 import { createPointerManager, type PointerManager } from './pointers';
-import { createSetPieceSwipe } from './setpiece';
+import { createSetPieceSwipe, type SetPieceSwipeControl } from './setpiece';
 import { computeStickConfig, createStick, createStickConfig, type StickConfig } from './stick';
 
 export interface TouchInputOptions {
@@ -56,6 +61,8 @@ export interface TouchInputSource extends InputSource {
   /** The four cluster slots and their attack / defence button sets (overlay labels, swap view). */
   readonly cluster: ClusterController;
   readonly mapper: TouchMapper;
+  /** The set-piece swipe control (TCH-06): active swipe, preview kind (diagnostics, tests). */
+  readonly setPiece: Readonly<SetPieceSwipeControl>;
   /** Recompute the layout (viewport, safe area or settings changed). Called automatically on resize. */
   relayout(): void;
 }
@@ -112,7 +119,7 @@ export function createTouchInput(opts: TouchInputOptions): TouchInputSource {
     if (!s || !p) return false;
     return p.pitchToScreen(s.ball.x, s.ball.y, s.ball.z, out);
   };
-  const setPiece = createSetPieceSwipe({ state, ballScreen });
+  const setPiece = createSetPieceSwipe({ state, ballScreen, getState: () => opts.getState(), getProjector: () => opts.getProjector() });
   const stick = createStick({ state, zone: () => true, config: () => stickCfg });
   const gestures = createPitchGestures({ state, zone: () => true, ballScreen, settings: () => touch() });
   const controls: TouchControl[] = [pauseCtl, ...cluster.controls, setPiece, stick, gestures];
@@ -121,12 +128,16 @@ export function createTouchInput(opts: TouchInputOptions): TouchInputSource {
     settings: () => touch(),
     now,
     swipeAim: (id) => defence.swipeAim(id),
+    slideClear: () => defence.slideClear,
   });
   const pointers: PointerManager = createPointerManager({
     el: overlay.el,
     controls,
     now,
-    onChange: () => overlay.sync(),
+    onChange: () => {
+      cluster.sync(now());
+      overlay.sync();
+    },
     onDown: () => {
       // The next screen touch shows controls hidden while a pad drove this side, and skips a cut-scene.
       state.hiddenByPad = false;
@@ -151,10 +162,11 @@ export function createTouchInput(opts: TouchInputOptions): TouchInputSource {
     relayout();
   });
 
-  /** Advance the controls' timers to `t` (HOLD, hints, held-back pitch taps). */
+  /** Advance the controls' timers to `t` (HOLD, hints, held-back pitch taps, set-piece preview). */
   const tick = (t: number): void => {
     cluster.update(t);
     gestures.update(t);
+    setPiece.update(t);
   };
 
   let disposed = false;
@@ -167,6 +179,7 @@ export function createTouchInput(opts: TouchInputOptions): TouchInputSource {
     stickConfig: stickCfg,
     cluster,
     mapper,
+    setPiece,
     relayout,
     pollFrame() {
       if (disposed) return;

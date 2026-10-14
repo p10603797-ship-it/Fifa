@@ -59,6 +59,11 @@ export interface BufferBank {
   pump(budgetMs: number): boolean;
   /** Finish every JavaScript job now (tests, or a screen that may wait). Offline renders stay asynchronous. */
   flush(): void;
+  /**
+   * Finish one JavaScript job now (tiny buffers needed at once, e.g. menu sounds right after the unlock tap).
+   * Returns true when its buffer is ready. Graph jobs are only started (they render asynchronously).
+   */
+  renderNow(handle: number): boolean;
   dispose(): void;
 }
 
@@ -290,6 +295,16 @@ export function createBufferBank(ctx: BaseAudioContext, opts: BufferBankOptions 
         }
         while (j.status === JobStatus.PENDING || j.status === JobStatus.RENDERING) renderChunk(j);
       }
+    },
+    renderNow(handle) {
+      const j = jobs[handle];
+      if (!j || disposed) return false;
+      if (j.graph) {
+        if (j.status === JobStatus.PENDING && !offlineBusy) startOffline(j);
+      } else {
+        while (j.status === JobStatus.PENDING || j.status === JobStatus.RENDERING) renderChunk(j);
+      }
+      return j.status === JobStatus.DONE;
     },
     dispose() {
       disposed = true;

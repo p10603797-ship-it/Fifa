@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { ShaderLib, Vector3 } from 'three';
 import { KitPattern } from '../../src/contracts/enums';
 import type { Kit } from '../../src/contracts/data';
+import { NUMBER_GLYPH_H, NUMBER_GLYPH_W } from '../../src/render/kits';
 import { BODY } from '../../src/render/players/fk';
 import {
   buildPartGeometry, buildPartSoup, HEM_RX, HEM_RZ, NUMBER_PANEL, Part, PART_COUNT, PART_PAIRED, TORSO_Y0, TORSO_Y1,
@@ -137,6 +138,8 @@ describe('GFX-07 part geometry', () => {
   it('the back-number panel sits on the flat back of the torso, inside the shirt body', () => {
     expect(NUMBER_PANEL.y - NUMBER_PANEL.h / 2).toBeGreaterThan(TORSO_Y0 + 0.1);
     expect(NUMBER_PANEL.y + NUMBER_PANEL.h / 2).toBeLessThan(0.5);
+    // Within the narrowest back width over the panel's height (rz >= 0.176 between y 0.16 and 0.48).
+    expect(NUMBER_PANEL.w / 2).toBeLessThan(0.176);
     // Back faces under the panel all face -x.
     for (const t of tris(Part.TORSO)) {
       if (Math.abs(t.c.z) < 0.03 && t.c.x < 0 && Math.abs(t.c.y - NUMBER_PANEL.y) < 0.05) {
@@ -144,6 +147,14 @@ describe('GFX-07 part geometry', () => {
         expect(mean.x).toBeLessThan(-0.8);
       }
     }
+  });
+});
+
+describe('GFX-07 number panel vs the GFX-08 glyph atlas', () => {
+  it('the back panel has the glyph cell aspect (digits are not stretched) and prints readable digits', () => {
+    expect(NUMBER_PANEL.w / NUMBER_PANEL.h).toBeCloseTo(NUMBER_GLYPH_W / NUMBER_GLYPH_H, 6);
+    // Digits fill 72 % of the cell height: at least 17 cm tall on the 180 cm reference body.
+    expect(NUMBER_PANEL.h * 0.72).toBeGreaterThan(0.17);
   });
 });
 

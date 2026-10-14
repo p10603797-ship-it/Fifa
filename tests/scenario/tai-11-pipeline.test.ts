@@ -259,6 +259,52 @@ describe('TAI-11 pipeline', () => {
     expect(b).toEqual(a);
   });
 
+  /** Bot v bot, team 1's CPU on D with a loose ball near him; everybody else far away. */
+  function looseBotScene(seed: number): SimState {
+    const s = makeScenario({ phase: MatchPhase.IN_PLAY, humans: 0, seed });
+    for (let i = 0; i < 22; i++) {
+      const r = s.players[i]!;
+      if (r.isKeeper === 1) continue;
+      r.x = i < 11 ? -40 : 45; r.z = -30 + (i % 11) * 6; r.vx = 0; r.vz = 0;
+    }
+    const p = s.players[D]!;
+    p.x = 10; p.z = 0; p.vx = 0; p.vz = 0; p.fx = 1; p.fz = 0;
+    const ctl = s.ctrl[CPU]!;
+    if (ctl.slot >= 0) s.players[ctl.slot]!.ctrl = -1;
+    ctl.slot = D; p.ctrl = CPU;
+    return s;
+  }
+  const ownerAfter = (s: SimState, n: number, slot: number): number => {
+    let t = -1;
+    runTicks(s, n, undefined, { check: 'core', until: (st) => { if (st.ball.owner === slot) { t = st.tick; return true; } return false; } });
+    return t;
+  };
+
+  it('glitch "Loose ball: two teammates chase or nobody does": the CPU-controlled chaser goes for the ball and wins it', () => {
+    const s = looseBotScene(5);
+    const b = s.ball;
+    b.owner = -1; b.heldBy = -1; b.x = 14; b.z = 3; b.px = b.x; b.pz = b.z; b.vx = 2.5; b.vz = 0.5; b.y = 0.11; b.grounded = 1;
+    b.lastTouch = 9; b.lastTouchTeam = 0; b.passTarget = -1;
+    const t0 = s.tick;
+    const t = ownerAfter(s, 240, D);
+    expect(t, 'D collects the loose ball').toBeGreaterThan(0);
+    expect(t - t0).toBeLessThan(120);
+  });
+
+  it('glitch "receiver trails his own pass": a CPU pass rolling away from its receiver is run down quickly', () => {
+    const s = looseBotScene(6);
+    const b = s.ball;
+    // Our (team 1) pass, already past its receiver D and rolling on toward -x at 7.5 m/s, 1.5 m ahead of him.
+    b.owner = -1; b.heldBy = -1; b.x = 8.5; b.z = 0.3; b.px = b.x; b.pz = b.z; b.vx = -7.5; b.vz = -0.4; b.y = 0.11; b.grounded = 1;
+    b.lastTouch = T; b.lastTouchTeam = 1; b.lastKickBy = T; b.lastKickTeam = 1; b.passTarget = D; b.passX = 4; b.passZ = 0;
+    const p = s.players[D]!;
+    p.vx = -4; p.fx = -1;
+    const t0 = s.tick;
+    const t = ownerAfter(s, 240, D);
+    expect(t, 'D collects his pass').toBeGreaterThan(0);
+    expect(t - t0).toBeLessThan(75);
+  });
+
   it('bot v bot: both CPU brains defend loose balls and carriers without invariant failures', () => {
     const s = makeScenario({ phase: MatchPhase.IN_PLAY, humans: 0, seed: 21 });
     s.ball.x = 0; s.ball.z = 0; s.ball.owner = -1; s.ball.vx = 3; s.ball.vz = 1;

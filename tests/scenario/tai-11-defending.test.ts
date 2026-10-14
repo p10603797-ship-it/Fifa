@@ -15,6 +15,7 @@ import { MoveMode, type SimState } from '../../src/contracts/state';
 import { T_LEVEL, T_SKILL, T_TACKLE } from '../../src/contracts/tuning';
 import { cpuDefend, DEFEND_TUNING as L, noise01, throughOnGoal } from '../../src/ai/cpu/defending';
 import { NULL_SINK } from '../../src/sim/core/events';
+import { createInterceptEstimate, estimateIntercept } from '../../src/ai/steer';
 import { makeScenario } from '../harness/scenario';
 
 const D = 15; // CPU defender (team 1)
@@ -596,6 +597,110 @@ describe('TAI-11 loose balls', () => {
     const f = think(s);
     expect(stick(f).x).toBeGreaterThan(0.99);
     expect(f.buttons & ~Btn.SPRINT).toBe(0);
+  });
+});
+
+describe('TAI-11 loose balls: one chaser (TAI-07 team.chaser)', () => {
+  /** A loose ball nobody passed (last touched by team 0, no pass target), CPU defender D near it. */
+  function rolling(bx: number, bz: number, vx: number, vz: number): SimState {
+    const s = scene({ c: { x: -20, z: 20 }, d: { x: 10, z: 0 } });
+    const b = s.ball;
+    b.owner = -1; b.x = bx; b.z = bz; b.px = b.x; b.pz = b.z; b.vx = vx; b.vz = vz; b.y = 0.11; b.grounded = 1;
+    b.lastTouchTeam = 0; b.passTarget = -1;
+    s.teams[1]!.cpu.seenOwner = -1;
+    return s;
+  }
+
+  it('the CPU-controlled chaser runs at a rolling ball at full stick even when close (no arrival ramp: nobody trails it)', () => {
+    const s = rolling(11.2, 0, 4, 0); // 1.2 m in front of D (x = 10), rolling away from him at 4 m/s
+    s.teams[1]!.chaser = D;
+    const f = think(s);
+    const st = stick(f);
+    expect(st.m).toBeGreaterThan(0.98);
+    expect(st.x).toBeGreaterThan(0.95);
+    // A ball at rest close by: he still walks onto it (at least chaseMinStick), never stops short.
+    const s2 = rolling(10.5, 0, 0, 0);
+    s2.teams[1]!.chaser = D;
+    const st2 = stick(think(s2));
+    expect(st2.m).toBeGreaterThanOrEqual(L.chaseMinStick - 0.01);
+    expect(st2.x).toBeGreaterThan(0.95);
+  });
+
+  it('glitch "Players: orbit or jitter around a target": early at a dropping ball\'s landing spot he arrives and waits', () => {
+    const s = rolling(-2, 0, 9, 0);
+    s.ball.y = 9; s.ball.py = 9; s.ball.vy = 4; s.ball.grounded = 0; // a high ball that comes down well after he is there
+    s.teams[1]!.chaser = D;
+    const ie = createInterceptEstimate();
+    estimateIntercept(s, D, ie);
+    expect(ie.ballT - ie.playerT).toBeGreaterThan(L.chaseEarlyTicks);
+    const p = s.players[D]!;
+    p.x = ie.x - 0.25; p.z = ie.z;
+    estimateIntercept(s, D, ie);
+    const f = think(s);
+    const st = stick(f);
+    expect(st.m).toBeLessThan(0.3); // arrival ramp near the spot, no full-stick overshoot
+    expect(has(f, Btn.SPRINT)).toBe(false);
+  });
+
+  it('a far loose ball: the chaser sprints to its interception point', () => {
+    const s = rolling(20, 8, 0, 0);
+    s.teams[1]!.chaser = D;
+    const f = think(s);
+    const st = stick(f);
+    const gl = Math.hypot(10, 8);
+    expect(st.x * (10 / gl) + st.z * (8 / gl)).toBeGreaterThan(0.95);
+    expect(st.m).toBeGreaterThan(0.98);
+    expect(has(f, Btn.SPRINT)).toBe(true);
+  });
+
+  it('glitch "two teammates chase or nobody does": when an AI teammate is the chaser the controlled player covers goal-side', () => {
+    const s = rolling(14, 6, 0, 0);
+    s.players[T]!.x = 15; s.players[T]!.z = 9; // AI-driven teammate, nearer the ball
+    s.teams[1]!.chaser = T;
+    const f = think(s);
+    const st = stick(f);
+    // Cover point: looseCoverDist goal-side (+x, team 1 defends x = +52.5) of the ball, not the ball itself.
+    const gx = 52.5 - 14, gz = -6, gl = Math.hypot(gx, gz);
+    const cx = 14 + (gx / gl) * L.looseCoverDist, cz = 6 + (gz / gl) * L.looseCoverDist;
+    const tx = cx - 10, tz = cz - 0, tl = Math.hypot(tx, tz);
+    expect(st.x * (tx / tl) + st.z * (tz / tl)).toBeGreaterThan(0.95);
+    const bl = Math.hypot(4, 6);
+    expect(st.x * (4 / bl) + st.z * (6 / bl)).toBeLessThan(0.9); // not straight at the ball
+    // The controlled player himself is the chaser -> he goes for it.
+    s.teams[1]!.chaser = D;
+    const st2 = stick(think(s));
+    expect(st2.x * (4 / bl) + st2.z * (6 / bl)).toBeGreaterThan(0.95);
+    // A chaser who is not a valid AI teammate (an opponent slot, inactive, or held by another controller) -> chase.
+    for (const bad of [C, -1]) {
+      s.teams[1]!.chaser = bad;
+      const st3 = stick(think(s));
+      expect(st3.x * (4 / bl) + st3.z * (6 / bl)).toBeGreaterThan(0.95);
+    }
+    s.teams[1]!.chaser = T; s.players[T]!.active = 0;
+    const st4 = stick(think(s));
+    expect(st4.x * (4 / bl) + st4.z * (6 / bl)).toBeGreaterThan(0.95);
+  });
+
+  it('our pass rolling away from its receiver: he runs onto it (full stick at the ball + SPRINT); a pass coming to him keeps the stick idle', () => {
+    const s = scene({ c: { x: -20, z: 20 }, d: { x: 10, z: 0 } });
+    const b = s.ball;
+    b.owner = -1; b.x = 11.5; b.z = 0.5; b.px = b.x; b.pz = b.z; b.vx = 7; b.vz = 0; b.y = 0.11; b.grounded = 1;
+    b.lastTouch = T; b.lastTouchTeam = 1; b.lastKickTeam = 1; b.passTarget = D; b.passX = 18; b.passZ = 0.5;
+    s.teams[1]!.cpu.seenOwner = -1;
+    let f = think(s);
+    const st = stick(f);
+    expect(st.m).toBeGreaterThan(0.98);
+    const lx = 11.5 + 7 * L.trailLeadSec - 10, lz = 0.5, ll = Math.hypot(lx, lz);
+    expect(st.x * (lx / ll) + st.z * (lz / ll)).toBeGreaterThan(0.99);
+    expect(has(f, Btn.SPRINT)).toBe(true);
+    // Coming toward him: idle stick (SIM-15 moves the receiver to meet it), no sprint while uncontested.
+    b.x = 16; b.vx = -7; b.px = b.x;
+    f = think(s);
+    expect(f.mx === 0 && f.mz === 0 && f.buttons === 0).toBe(true);
+    // Rolling away but nearly stopped: idle stick (SIM-15's meeting point is fine for a slow ball).
+    b.x = 11.5; b.vx = L.trailMinSpeed * 0.5; b.px = b.x;
+    f = think(s);
+    expect(f.mx === 0 && f.mz === 0).toBe(true);
   });
 });
 

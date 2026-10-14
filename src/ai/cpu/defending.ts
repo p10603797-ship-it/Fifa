@@ -14,7 +14,9 @@
  *     brain.seenOwner and a change starts the reaction delay brain.reactT = levelParams(level).reactionTicks (same
  *     semantics as TAI-08, so the two modules share these fields).
  *  1. Our pass in flight: neutral stick so SIM-15 moves the receiver (SIM-16 already switched to him) to meet the
- *     ball; SPRINT held when an opponent can contest the reception. No reaction delay (it is our own pass).
+ *     ball; SPRINT held when an opponent can contest the reception. A ball rolling away from the receiver (ahead of him,
+ *     moving away: overhit, or past his meeting point) is run onto with the stick at full speed + SPRINT (an arrival
+ *     into a target that moves away would leave him trailing it). No reaction delay (it is our own pass).
  *  2. Reaction delay running (reactT > 0): keep the current run (stick along his velocity), no buttons.
  *  3. Opponent carrier at his feet (the main case):
  *     - Player choice (every switchEvalTicks, staggered by team, only when SIM-16's lock-out is over and the current
@@ -43,7 +45,11 @@
  *  4. Ball in the opponent keeper's hands: drift back toward the home position (TAI-01 p.homeX/homeZ).
  *  5. Opponent pass in flight: intercept in the lane (TAI-07 estimateIntercept) when we get there clearly before the
  *     receiver, else stand goal-side of the reception point (ball.passX/Z).
- *  6. Other loose balls: run to the interception point (sprint when far). In our own third with an opponent close, a
+ *  6. Other loose balls: when the controlled player is the team's chaser (TAI-07 team.chaser, or no other valid
+ *     AI-driven chaser) he goes for it: the stick on the interception point (the ball itself when close) at full speed,
+ *     no arrival ramp into a moving ball, sprinting when far — the team AI never moves a controlled player, so without
+ *     this nobody would chase. When another AI-driven teammate is the chaser he covers goal-side of the ball instead
+ *     (exactly one chaser per team). In our own third with an opponent close, a
  *     ball about to reach him (SIM-15 ballEta <= clearEtaTicks) or a header / volley chance is cleared (SHOOT, which
  *     SIM-15 turns into a clearance in the own third).
  * Decision noise draws are a stateless integer hash of (match seed, team, carrier, decision window): deterministic,
@@ -168,6 +174,24 @@ export const LOCAL_TUNING = {
   interceptMarginTicks: 4,
   /** Our pass in flight: hold SPRINT when an opponent is within this distance of the reception point, m. */
   contestDist: 8.0,
+  /** Our pass rolling away from its receiver (ahead of him, faster than this): he runs onto it with the stick, m/s ... */
+  trailMinSpeed: 1.5,
+  /** ... aiming this far ahead along the ball's velocity, s. */
+  trailLeadSec: 0.15,
+  /** Loose-ball chase: sprint when the interception point is farther than this, m ... */
+  chaseSprintDist: 3.0,
+  /** ... aim at the ball itself within this distance of it, m ... */
+  chaseBallDist: 1.5,
+  /** ... full stick (no arrival ramp) unless he reaches the interception point this many ticks before the ball (then
+   *  he arrives and waits: no orbiting a landing spot), or the close ball is slower than chaseSlowBall or coming to
+   *  him; a slowed approach keeps at least chaseMinStick (above the stick dead zone) until within chaseHoldDist.
+   *  ticks / m/s / 0..1 / m. */
+  chaseEarlyTicks: 8,
+  chaseSlowBall: 1.0,
+  chaseMinStick: 0.4,
+  chaseHoldDist: 0.4,
+  /** Loose ball another teammate chases (team.chaser): the controlled player covers this far goal-side of it, m. */
+  looseCoverDist: 7.0,
   /** Reaction delay: keep running along the current velocity when faster than this, m/s. */
   momentumMinSpeed: 0.3,
 } as const; // TUNING-CR
@@ -580,9 +604,22 @@ function maybeClear(s: SimState, team: number, brain: CpuBrainState, lv: LevelPa
   brain.tackleCd = lv.reactionTicks + T_TACKLE.standWindup;
 }
 
-/** Our pass in flight: let SIM-15 move the receiver; sprint if an opponent can contest the reception. */
-function ownPass(s: SimState, team: number): void {
+/**
+ * Our pass in flight: let SIM-15 move the receiver (idle stick: he meets the ball); sprint if an opponent can contest
+ * the reception. When the ball is rolling away from him (it is ahead of him and moving away: overhit, or it slipped
+ * past his meeting point) he runs onto it with the stick at full speed, sprinting, like a human chasing his pass.
+ */
+function ownPass(s: SimState, team: number, p: Readonly<PlayerState>): void {
   const b = s.ball;
+  if (p.slot === b.passTarget) {
+    const bv2 = b.vx * b.vx + b.vz * b.vz;
+    if (bv2 > L.trailMinSpeed * L.trailMinSpeed && (b.x - p.x) * b.vx + (b.z - p.z) * b.vz > 0) {
+      steerTo(p, b.x + b.vx * L.trailLeadSec, b.z + b.vz * L.trailLeadSec, 0);
+      stM = 1;
+      wantSprint = 1;
+      return;
+    }
+  }
   if (nearestOpponentDist(s, team, b.passX, b.passZ) <= L.contestDist) {
     btn |= Btn.SPRINT; // idle stick + SPRINT: the receiver meets the ball at top speed
   }
@@ -605,11 +642,52 @@ function opponentPass(s: SimState, team: number, p: Readonly<PlayerState>): void
   steerTo(p, b.passX + gx * L.standoffLow, b.passZ + gz * L.standoffLow, 1);
 }
 
+/**
+ * Go for a loose ball (he is the team's chaser): the stick on the interception point (on the ball itself when close).
+ * Full speed while the ball would otherwise get there first or roll away from him (an arrival ramp into a moving
+ * target leaves him trailing it); he arrives and waits when he is early at the point, and walks onto a slow ball.
+ * Sprints when the point is far.
+ */
 function chaseLoose(s: SimState, p: Readonly<PlayerState>): void {
-  estimateIntercept(s, p.slot, IE);
-  steerTo(p, IE.x, IE.z, 0);
-  const dx = IE.x - p.x, dz = IE.z - p.z;
-  if (dx * dx + dz * dz > 9) wantSprint = 1;
+  const b = s.ball;
+  const bx = b.x - p.x, bz = b.z - p.z;
+  const d2 = bx * bx + bz * bz;
+  let tx: number, tz: number, rush: boolean;
+  if (d2 <= L.chaseBallDist * L.chaseBallDist) {
+    tx = b.x; tz = b.z;
+    rush = b.vx * b.vx + b.vz * b.vz >= L.chaseSlowBall * L.chaseSlowBall && bx * b.vx + bz * b.vz > 0;
+  } else {
+    estimateIntercept(s, p.slot, IE);
+    tx = IE.x; tz = IE.z;
+    rush = IE.ballT - IE.playerT <= L.chaseEarlyTicks;
+  }
+  steerTo(p, tx, tz, 0);
+  const dx = tx - p.x, dz = tz - p.z;
+  const d = Math.sqrt(dx * dx + dz * dz);
+  if (stM > 0) {
+    if (rush) stM = 1;
+    else if (stM < L.chaseMinStick && d > L.chaseHoldDist) stM = L.chaseMinStick;
+  }
+  if (d > L.chaseSprintDist) wantSprint = 1;
+}
+
+/** A loose ball a teammate chases (team.chaser): cover goal-side of it instead of a second chase. */
+function coverLoose(s: SimState, team: number, p: Readonly<PlayerState>): void {
+  const b = s.ball;
+  const dir = s.teams[team]!.dir;
+  let gx = -dir * HALF_LENGTH - b.x, gz = -b.z;
+  const gl = Math.sqrt(gx * gx + gz * gz);
+  if (gl > EPS) { gx /= gl; gz /= gl; } else { gx = -dir; gz = 0; }
+  const c = gl < L.looseCoverDist ? gl * 0.5 : L.looseCoverDist;
+  steerTo(p, b.x + gx * c, b.z + gz * c, 1);
+}
+
+/** True when the team's loose-ball chaser (TAI-07, last tick) is another active, AI-driven teammate. */
+function otherChaser(s: SimState, team: number, slot: number): boolean {
+  const ch = s.teams[team]!.chaser;
+  if (!validSlot(ch) || ch === slot) return false;
+  const c = s.players[ch]!;
+  return c.active === 1 && c.team === team && c.ctrl < 0;
 }
 
 // ---------------------------------------------------------------- entry
@@ -634,8 +712,8 @@ export function cpuDefend(s: SimState, team: number, out: InputFrame, ev: EventS
   // 1. Our own pass in flight: neutral stick (SIM-15 receiver auto-collect), no reaction delay.
   if (loose && validSlot(b.passTarget) && b.lastTouchTeam === team && s.players[b.passTarget]!.team === team &&
       s.players[b.passTarget]!.active === 1) {
-    ownPass(s, team);
-    out.buttons |= btn;
+    ownPass(s, team, p);
+    flush(out);
     return;
   }
   // 2. Reaction delay after a change of situation: keep the current run.
@@ -658,6 +736,8 @@ export function cpuDefend(s: SimState, team: number, out: InputFrame, ev: EventS
   if (validSlot(b.passTarget) && b.lastTouchTeam !== team && s.players[b.passTarget]!.team !== team &&
       s.players[b.passTarget]!.active === 1) {
     opponentPass(s, team, p);
+  } else if (otherChaser(s, team, slot)) {
+    coverLoose(s, team, p);
   } else {
     chaseLoose(s, p);
   }

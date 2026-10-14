@@ -1,8 +1,8 @@
 /**
  * [GFX-07] The player model module in Node (no WebGL): instanced meshes per part, per-frame placement from the
  * interpolated state and the poses (setPose), height scaling, sent-off players hidden, keepers in keeper kits with
- * long sleeves and gloves (also after a keeper change), shirt numbers via a number atlas (also after a
- * substitution), ground handling, the default pose driver, quality (shadows), clear / dispose, the debug hook.
+ * long sleeves and gloves (also after a keeper change), high-contrast kits (setting at setMatch and toggled
+ * mid-match), shirt numbers via GFX-08's generated number atlas or a custom one (also after a substitution), ground handling, the default pose driver, quality (shadows), clear / dispose, the debug hook.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { Color, DataTexture, Matrix4, PerspectiveCamera, Scene, Vector3 } from 'three';
@@ -17,7 +17,7 @@ import { resolveMatchKits } from '../../src/render/kits';
 import { BODY, Joint, FRAME_SIZE } from '../../src/render/players/fk';
 import { Part } from '../../src/render/players/parts';
 import {
-  createDefaultPoseDriver, createPlayerModel, GLOVE_COLOUR, gridGlyphRect, SKIN_TONES, type NumberAtlas,
+  createDefaultPoseDriver, createNumberAtlas, createPlayerModel, GLOVE_COLOUR, gridGlyphRect, SKIN_TONES, type NumberAtlas,
   type PlayerModelModule, type PoseSink,
 } from '../../src/render/players/model';
 import { createInterpState, type RenderContext, type RenderFrame } from '../../src/render/types';
@@ -329,12 +329,67 @@ describe('GFX-07 player model: kits', () => {
     expect(kit[3 * 4]).toBe(kits.outfield[0].pattern);
   });
 
-  it('without a canvas (Node) there is no number atlas: no glyphs, no crash', () => {
+  it('the default number atlas is GFX-08\'s generated glyph atlas (no canvas or font needed, also in Node)', () => {
     const r = made(rig());
+    for (let i = 0; i < NUM_SLOTS; i++) r.state.attrs[i]!.shirt = i < 11 ? i + 1 : i + 2;
     r.model.setMatch!(r.state, CLUBS);
     step(r);
     const kit = r.model.mesh.geometry.getAttribute('iKit').array as Float32Array;
-    for (let i = 0; i < NUM_SLOTS; i++) expect(kit[i * 4 + 2]).toBe(0);
+    const num = r.model.mesh.geometry.getAttribute('iNum').array as Float32Array;
+    const want = new Float32Array(4);
+    for (let i = 0; i < NUM_SLOTS; i++) {
+      expect(kit[i * 4 + 2], `slot ${i} has a number`).toBe(1);
+      expect(createNumberAtlas()!.glyphRect(r.state.attrs[i]!.shirt, want, 0)).toBe(true);
+      expect(Array.from(num.subarray(i * 4, i * 4 + 4))).toEqual(Array.from(want));
+    }
+    // One shared atlas per page: a second model reuses it.
+    expect(createNumberAtlas()).toBe(createNumberAtlas());
+    const tex = createNumberAtlas()!.texture;
+    expect(tex.name).toBe('kit-numbers');
+    // The model's torso material samples it; setNumberAtlas(null) keeps the default.
+    r.model.setNumberAtlas(null);
+    step(r);
+    expect(kit[9 * 4 + 2]).toBe(1);
+  });
+});
+
+describe('GFX-07 player model: high-contrast kits (Settings > Accessibility)', () => {
+  it('setMatch wears the high-contrast kits when the setting is on; kits exposes what is worn', () => {
+    const r = made(rig());
+    expect(r.model.kits).toBeNull();
+    r.ctx.settings = { ...r.ctx.settings, accessibility: { ...r.ctx.settings.accessibility, highContrastKits: true } };
+    r.model.setMatch!(r.state, CLUBS);
+    step(r);
+    const hc = resolveMatchKits(r.state, CLUBS, true);
+    expect(r.model.kits!.highContrast).toBe(true);
+    expect(r.model.kits!.outfield[0].shirt).toBe(hc.outfield[0].shirt);
+    expect(close(colourA(r, Part.TORSO, 3), linear(hc.outfield[0].shirt))).toBe(true);
+    expect(close(colourA(r, Part.TORSO, 14), linear(hc.outfield[1].shirt))).toBe(true);
+    const k1 = r.state.teams[1]!.keeperSlot;
+    expect(close(colourA(r, Part.TORSO, k1), linear(hc.keeper[1].shirt))).toBe(true);
+  });
+
+  it('toggling the setting mid-match re-resolves the kits on the next frame (and back)', () => {
+    const r = made(rig());
+    r.model.setMatch!(r.state, CLUBS);
+    step(r);
+    const normal = resolveMatchKits(r.state, CLUBS, false);
+    const hc = resolveMatchKits(r.state, CLUBS, true);
+    expect(normal.outfield[0].shirt).not.toBe(hc.outfield[0].shirt); // the fixture actually changes
+    expect(close(colourA(r, Part.TORSO, 3), linear(normal.outfield[0].shirt))).toBe(true);
+    const on = { ...r.ctx.settings, accessibility: { ...r.ctx.settings.accessibility, highContrastKits: true } };
+    r.ctx.settings = on;
+    r.model.onSettings!(on);
+    step(r);
+    expect(r.model.kits!.highContrast).toBe(true);
+    expect(close(colourA(r, Part.TORSO, 3), linear(hc.outfield[0].shirt))).toBe(true);
+    expect(close(colourA(r, Part.PELVIS, 3), linear(hc.outfield[0].shorts))).toBe(true);
+    const off = { ...on, accessibility: { ...on.accessibility, highContrastKits: false } };
+    r.ctx.settings = off;
+    r.model.onSettings!(off);
+    step(r);
+    expect(r.model.kits!.highContrast).toBe(false);
+    expect(close(colourA(r, Part.TORSO, 3), linear(normal.outfield[0].shirt))).toBe(true);
   });
 });
 

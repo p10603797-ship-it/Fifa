@@ -7,6 +7,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../src/sim/kicks/shot', async (o) => (await import('./gkp-06-fakes')).mockShot(await o()));
+// Enter the dispatcher -> registry -> rules -> kicks/shot import cycle from the dispatcher (before anything imports
+// kicks/shot directly), so every module that imports startShot (RUL-06 / RUL-07 / CPU kickers) binds the fake one.
+import '../../src/sim/actions/dispatch';
 
 import { GOAL_HALF_WIDTH, HALF_LENGTH, PLAYERS_PER_TEAM } from '../../src/contracts/constants';
 import { ActionKind, KickKind, MatchPhase, RestartKind } from '../../src/contracts/enums';

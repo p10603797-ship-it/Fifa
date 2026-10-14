@@ -30,7 +30,8 @@
  *       - dribble (TAI-10 bestDribble direction and score; toward goal, away from the nearest opponent ahead when it
  *         gives none): keep chance (pressure x dribbling) * PV(a step ahead) - risk, gain x style dribble;
  *       - skill move (TAI-10 chooseSkill): success estimate from stars and dribbling, beats the man by skillGain m;
- *       - shield (opponent within shieldDist): keep chance from strength;
+ *       - shield (opponent within shieldDist): keep chance from strength, falling as the shield lasts (shieldAgeRef);
+ *         after shieldMaxTicks of shielding it rests for shieldRestEvals decisions (never shields forever);
  *       - clear (own third, opponent within clearPressDist): a flat clearValue (+ own box bonus).
  *     Pressure uses the nearest opponent now and after the level's look-ahead (both moving on). Each utility gets
  *     decision noise rngGauss(s.rng) x decisionNoise x noiseScale; the current dribble / shield plan keeps a
@@ -187,6 +188,12 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   /** Chance of losing the ball shielding at strength 1 / 99. */
   shieldLossWeak: 0.3,
   shieldLossStrong: 0.1,
+  /** Shielding gets riskier the longer it lasts: loss chance x (1 + shield age / shieldAgeRef), ticks ... */
+  shieldAgeRef: 60,
+  /** ... and after shieldMaxTicks of continuous shielding it is off the menu for shieldRestEvals decisions (<= 7), so
+   *  a carrier never stalls behind a shield (glitch "CPU: shields forever"). ticks / evaluations. */
+  shieldMaxTicks: 150,
+  shieldRestEvals: 6,
   // ---- clearance
   /** Clear only in the own third (progress below this) with an opponent within clearPressDist m. */
   clearProgress: -1 / 3,
@@ -573,10 +580,10 @@ function skillOptionInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<Sty
   consider(CpuPlan.SKILL, u, -1, 0, 0, MODE_NONE, sk);
 }
 
-function shieldOptionInto(s: SimState, p: Readonly<PlayerState>, cur: CpuPlan): void {
+function shieldOptionInto(s: SimState, p: Readonly<PlayerState>, cur: CpuPlan, age: number): void {
   if (C.nearD > LT.shieldDist) return;
   const str = clamp01(s.attrs[p.slot]!.strength / 99);
-  const loss = LT.shieldLossWeak + (LT.shieldLossStrong - LT.shieldLossWeak) * str;
+  const loss = clamp01((LT.shieldLossWeak + (LT.shieldLossStrong - LT.shieldLossWeak) * str) * (1 + age / LT.shieldAgeRef));
   let u = (1 - loss) * C.vHere - loss * lossCost(C.prog);
   if (cur === CpuPlan.SHIELD) u += LT.switchMargin;
   u += noise(s);
@@ -596,14 +603,19 @@ function decide(s: SimState, team: number, brain: CpuBrainState, p: Readonly<Pla
   sw: Readonly<StyleWeights>): void {
   fillContext(s, team, p, lv, sw);
   BEST.plan = CpuPlan.NONE; BEST.u = -1e18; BEST.slot = -1; BEST.x = 0; BEST.z = 0; BEST.mode = MODE_NONE; BEST.kind = 0;
+  const cur = brain.plan;
+  const shieldAge = cur === CpuPlan.SHIELD ? brain.planT : 0;
+  if (shieldAge >= LT.shieldMaxTicks) {
+    // Shielded long enough: rest the shield (failure memory) so another option is played.
+    setP1(brain, stepOf(brain), modeOf(brain), startedOf(brain), failMaskOf(brain) | (1 << CpuPlan.SHIELD), LT.shieldRestEvals + 1);
+  }
   const evals = failEvalsOf(brain);
   const failMask = evals > 0 ? failMaskOf(brain) : 0;
-  const cur = brain.plan;
   passOptionsInto(s, p, sw, failMask);
   if ((failMask & (1 << CpuPlan.SHOOT)) === 0) shotOptionInto(s, p, lv, sw);
   dribbleOptionInto(s, p, sw, cur);
   if ((failMask & (1 << CpuPlan.SKILL)) === 0) skillOptionInto(s, p, sw);
-  shieldOptionInto(s, p, cur);
+  if ((failMask & (1 << CpuPlan.SHIELD)) === 0) shieldOptionInto(s, p, cur, shieldAge);
   if ((failMask & (1 << CpuPlan.CLEAR)) === 0) clearOptionInto(s, p);
   // The failure memory lasts failEvals decisions.
   const left = evals > 0 ? evals - 1 : 0;

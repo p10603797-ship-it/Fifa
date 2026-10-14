@@ -35,7 +35,8 @@
  * InstancedBufferAttribute (KIT_UV_ATTRIBUTE, itemSize 4; createKitUvAttribute). Fill it with atlas.shirtUv(...)
  * etc. (no allocation; safe per frame, e.g. after a substitution).
  *
- * GFX-07 usage sketch:
+ * KitSet usage sketch (a renderer whose torsos sample the full atlas; the shipped players/model.ts uses the glyph
+ * atlas below instead):
  *   const kitSet = createKitSet();                        // once (allocates the atlas and the DataTexture)
  *   torsoMat.map = kitSet.texture; applyKitUv(torsoMat);  // torsoGeo.setAttribute(KIT_UV_ATTRIBUTE, createKitUvAttribute(22))
  *   setMatch: const kits = kitSet.setMatch(state, clubs, ctx.settings.accessibility.highContrastKits);
@@ -46,7 +47,7 @@
  * NUMBER GLYPHS for shaders that print the number themselves (players/model.ts as built by GFX-07 draws the kit
  * pattern procedurally and takes a NumberAtlas): createKitNumberAtlas() -> { texture, glyphRect } with the same
  * generated digits, premultiplied white fill / black outline, 1.2 : 1 cells, manual mips;
- * integration: players.setNumberAtlas(createKitNumberAtlas()) and resolveMatchKits(state, clubs, highContrast).
+ * players/model.ts uses it as its default number atlas and wears resolveMatchKits(state, clubs, highContrast).
  * Menus / HUD: crestDataUrl(club) (SVG data URL, cached), crestSvg(crest, size); kitDataUrl(kit, number) / kitSvg
  * (shirt, shorts, socks preview); resolveKits(home, away, slots) and shirtsClash(a, b) for the kit picker
  * (MatchKits.slot vs .requested says when the clash check changed a kit).

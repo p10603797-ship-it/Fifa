@@ -22,8 +22,8 @@ import { createPose, PoseIdx } from '../../src/contracts/render';
 type Rgb = [number, number, number];
 const GPU_ENVIRONMENT_NOISE = [/GL Driver Message/, /Automatic fallback to software WebGL/, /GroupMarkerNotSet/];
 const CANVAS_ONLY = '#ui, #hud, #touch { visibility: hidden !important; }';
-/** Joint indices (src/render/players/fk.ts Joint). */
-const J = { ROOT: 0, SPINE: 1, HEAD: 2, HIP_L: 7, KNEE_L: 8, ANKLE_R: 12 } as const;
+// Joint indices used below (src/render/players/fk.ts Joint): ROOT 0, SPINE 1, HEAD 2, ELBOW_L 4, HIP_L 7, KNEE_L 8,
+// ANKLE_R 12.
 const STRIKER = 9;
 const KEEPER = 0;
 
@@ -142,7 +142,7 @@ test.describe('GFX-07 player model', () => {
     const stats = await page.evaluate(() => window.__dotkickRendererStats!());
     expect(stats.drawCalls).toBeLessThanOrEqual(80);
     expect(stats.triangles).toBeLessThanOrEqual(200_000);
-    expect(stats.triangles).toBeGreaterThan(22_000); // the players alone are ~23k
+    expect(stats.triangles).toBeGreaterThan(22_000); // the players alone are ~24.7k
     await shot(page, info, 'gfx-07-broadcast');
 
     // Front close-up of the striker: region colours.

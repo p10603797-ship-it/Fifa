@@ -153,6 +153,22 @@ describe('TCH-07 x sim: attack table rows start the section 9 kick (combo read a
     expect(starts().map((c) => [c.fn, c.kind, c.charging])).toEqual([['startLob', KickKind.DRIVEN_LOB, 1]]);
   });
 
+  it('crossing zone: PASS swipe left -> ground cross (LOB,LOB converts the first lob), flicked or held; swipe right -> low cross', () => {
+    // #9 wide in the attacking third, inside geometry.inCrossingZone (lead decision on the SIM-15 change request).
+    for (const evs of [flick(TB.PASS, SwipeDir.LEFT), swipeHold(TB.PASS, SwipeDir.LEFT)]) {
+      resetFakes();
+      drive(scene(P, 40, 20), evs, 40, ClusterMode.ATTACK, keepP);
+      expect(starts().map((c) => [c.fn, c.kind])).toEqual([['startLob', KickKind.LOB_PASS], ['startLob', KickKind.GROUND_CROSS]]);
+    }
+    resetFakes();
+    drive(scene(P, 40, 20), flick(TB.PASS, SwipeDir.RIGHT), 40, ClusterMode.ATTACK, keepP);
+    expect(starts().map((c) => [c.fn, c.kind])).toEqual([['startLob', KickKind.LOW_CROSS]]);
+    // Outside the zone (central): the driven lob.
+    resetFakes();
+    drive(scene(P, 40, 4), flick(TB.PASS, SwipeDir.LEFT), 40, ClusterMode.ATTACK, keepP);
+    expect(starts().map((c) => [c.fn, c.kind])).toEqual([['startLob', KickKind.DRIVEN_LOB]]);
+  });
+
   it('PASS double tap -> dinked pass; THROUGH double tap -> dinked through ball (converted during the first wind-up)', () => {
     drive(attack(), doubleTap(TB.PASS), 40, ClusterMode.ATTACK, keepP);
     expect(starts().map((c) => [c.fn, c.kind])).toEqual([['startPass', KickKind.GROUND_PASS], ['startPass', KickKind.DINKED_PASS]]);

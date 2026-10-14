@@ -163,8 +163,39 @@ export class FakeBuffer {
   }
 }
 
+export class FakeBiquad extends FakeNode {
+  type = 'lowpass';
+  readonly frequency: FakeParam;
+  readonly Q: FakeParam;
+  constructor(clock: Clock) {
+    super();
+    this.frequency = new FakeParam(clock, 350);
+    this.Q = new FakeParam(clock, 1);
+  }
+}
+
+export class FakeOscillator extends FakeNode {
+  type = 'sine';
+  readonly frequency: FakeParam;
+  onended: (() => void) | null = null;
+  startedAt = -1;
+  stoppedAt = -1;
+  constructor(clock: Clock) {
+    super();
+    this.frequency = new FakeParam(clock, 440);
+  }
+  start(t = 0): void {
+    this.startedAt = t;
+  }
+  stop(t = 0): void {
+    this.stoppedAt = t;
+  }
+}
+
 export class FakeSource extends FakeNode {
   buffer: FakeBuffer | null = null;
+  loop = false;
+  startOffset = 0;
   readonly playbackRate: FakeParam;
   onended: (() => void) | null = null;
   startedAt = -1;
@@ -174,9 +205,10 @@ export class FakeSource extends FakeNode {
     super();
     this.playbackRate = new FakeParam(clock, 1);
   }
-  start(t = 0): void {
+  start(t = 0, offset = 0): void {
     if (this.startedAt >= 0) throw new Error('InvalidStateError: start twice');
     this.startedAt = t;
+    this.startOffset = offset;
   }
   stop(t = 0): void {
     this.stopCalls++;
@@ -195,7 +227,10 @@ export interface FakeContextOptions {
 /** Fake AudioContext. `mode` decides what resume() does; setState fires statechange like a browser. */
 export function createFakeContext(opts: FakeContextOptions = {}) {
   const listeners: Record<string, (() => void)[]> = {};
-  const created = { gains: [] as FakeGain[], panners: [] as FakePanner[], sources: [] as FakeSource[], buffers: [] as FakeBuffer[], compressors: [] as FakeCompressor[] };
+  const created = {
+    gains: [] as FakeGain[], panners: [] as FakePanner[], sources: [] as FakeSource[], buffers: [] as FakeBuffer[], compressors: [] as FakeCompressor[],
+    filters: [] as FakeBiquad[], oscillators: [] as FakeOscillator[],
+  };
   const destination = new FakeNode();
   const ac = {
     state: (opts.state ?? 'suspended') as string,
@@ -218,6 +253,16 @@ export function createFakeContext(opts: FakeContextOptions = {}) {
       const c = new FakeCompressor(ac);
       created.compressors.push(c);
       return c;
+    }),
+    createBiquadFilter: vi.fn(() => {
+      const f = new FakeBiquad(ac);
+      created.filters.push(f);
+      return f;
+    }),
+    createOscillator: vi.fn(() => {
+      const o = new FakeOscillator(ac);
+      created.oscillators.push(o);
+      return o;
     }),
     createBuffer: vi.fn((ch: number, len: number, sr: number) => {
       const b = new FakeBuffer(ch, len, sr);
@@ -305,3 +350,31 @@ export function createFakeWindow() {
 export const flush = async (): Promise<void> => {
   for (let i = 0; i < 8; i++) await Promise.resolve();
 };
+
+/**
+ * The real engine with the real sound modules (AUD-02..05) on a fake context: unlocked (running) and with every
+ * buffer rendered. For module tests that go through the engine's services (voice pools, bank, registry).
+ */
+export async function bootRealEngine(opts: { createEngine: typeof import('../../src/audio/engine').createAudioEngine }) {
+  const { createSettingsStore } = await import('../../src/platform/settingsStore');
+  const { createMemoryStorage } = await import('../../src/platform/storage');
+  const win = createFakeWindow();
+  vi.stubGlobal('window', win);
+  const ac = createFakeContext();
+  const settings = createSettingsStore(createMemoryStorage());
+  const errors: string[] = [];
+  const engine = opts.createEngine(settings, {
+    createContext: () => asContext(ac),
+    onModuleError: (e, where) => errors.push(`${where}: ${String(e)}`),
+    now: () => 0,
+  });
+  await engine.unlock();
+  await flush();
+  engine.services!.bank.flush();
+  return { ac, engine, settings, errors, win };
+}
+
+/** Sources started on a fake context whose buffer has `length` samples (identify a pre-rendered sound by size). */
+export function sourcesWithLength(ac: FakeContext, length: number): FakeSource[] {
+  return ac.created.sources.filter((s) => s.buffer !== null && s.buffer.length === length);
+}

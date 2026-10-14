@@ -19,7 +19,7 @@
  * like the pitch gestures. Taps elsewhere are never claimed: they reach the pitch gestures (TCH-05) and pass through
  * to the mapper as TAP / DOUBLE_TAP gestures (tap a teammate or a spot). Without opts.getState the restart is unknown
  * and nothing is claimed (the pitch gestures still report swipes from the ball, without a preview), so the touch
- * source must pass getState / getProjector and call update() every frame (TCH-07 wiring).
+ * source passes getState / getProjector and calls update() every frame and before each sample (index.ts).
  *
  * Recognition at the lift (pure core: classifySetPiecePath):
  *  - TAP: never further than T_TOUCHUI.tapMaxPt from the touch-down, lifted within tapMaxMs (a teammate standing at the
@@ -271,8 +271,8 @@ export function setPieceSwipeFrame(cls: Readonly<PathClass>, proj: CameraProject
   if (!isSwipeKind(kind)) return false;
   const okS = Number.isFinite(cls.sx) && Number.isFinite(cls.sy) && proj.screenToPitch(cls.sx, cls.sy, FP0);
   const okE = Number.isFinite(cls.ex) && Number.isFinite(cls.ey) && proj.screenToPitch(cls.ex, cls.ey, FP1);
-  let px = 0, pz = 0;
-  if (okE) { px = FP1.x; pz = FP1.z; } else if (okS) { px = FP0.x; pz = FP0.z; } else return false;
+  if (!okE && !okS) return false;
+  const px = okE ? FP1.x : FP0.x, pz = okE ? FP1.z : FP0.z;
   if (!Number.isFinite(px) || !Number.isFinite(pz)) return false;
   const mx = WORLD_MAX_X * 10, mz = WORLD_MAX_Z * 10;
   out.gesture = kind;

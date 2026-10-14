@@ -137,6 +137,7 @@ describe('GKP-06 free kicks (pure)', () => {
   it('a central free kick with a wall to one side: he stands on the open side, nearer the centre than its middle', () => {
     const s = state();
     restart(s, RestartKind.FREE_KICK, MatchPhase.FREE_KICK, 1, -HALF_LENGTH + 20, 0);
+    s.attrs[s.teams[0]!.keeperSlot]!.gkPositioning = 99; // full accuracy: no under-shift (fkShiftErrWorst)
     wall(s, 0, 3, 2.2);
     wallShadow(s, 1, SH);
     expect(SH.lo).toBeGreaterThan(-1);
@@ -147,7 +148,11 @@ describe('GKP-06 free kicks (pure)', () => {
     // The weighted centre of the mouth (open 1, shadowed fkShadowWeight), on the line toward the ball.
     const lo = SH.lo, hi = Math.min(SH.hi, GOAL_HALF_WIDTH), cut = 1 - LT.fkShadowWeight;
     const anchor = (-cut * 0.5 * (hi * hi - lo * lo)) / (2 * GOAL_HALF_WIDTH - cut * (hi - lo));
-    expect(OUT.z).toBeCloseTo(anchor, 6); // central ball: the spot keeps the anchor's z (the line is along x)
+    // He stands on the line from that goal-line point to the ball: projected from the ball through him onto the goal
+    // line, his position lands on the anchor.
+    const ub = HALF_LENGTH + s.match.restart.x, uk = HALF_LENGTH + OUT.x;
+    const zl = s.match.restart.z + (OUT.z - s.match.restart.z) * (ub / (ub - uk));
+    expect(zl).toBeCloseTo(anchor, 6);
   });
 
   it('the spot moves continuously as the wall is moved sideways (no jumps)', () => {

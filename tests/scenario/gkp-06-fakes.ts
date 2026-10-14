@@ -5,6 +5,8 @@
  * inside the actions stage exactly like a real shot would. Imports contracts only (loaded from inside vi.mock
  * factories, before the sim modules); applyKick is injected by the test file (SHOT.applyKick = applyKick).
  *
+ * SIM-11 is implemented now; the fake stays so the save / goal tests can place a penalty exactly (no kicking error).
+ *
  * Usage: vi.mock('../../src/sim/kicks/shot', async (o) => (await import('./gkp-06-fakes')).mockShot(await o()));
  */
 import { ActionKind, KickKind } from '../../src/contracts/enums';
@@ -99,6 +101,17 @@ export const fakeShotHandler: ActionHandler = {
   },
 };
 
+/**
+ * kicks/shot.ts re-exports the import-cycle-safe shell of its SHOT handler (kicks/shotHooks.ts); actions/registry may
+ * have bound that shell object while the original module was evaluated (the cycle shot -> dispatch -> registry ->
+ * shot), so replacing the export alone would not reach the registry. The shell's methods are patched in place
+ * instead: every holder of the shell (registry included) then runs the fake. Per test file (vitest isolates files).
+ */
 export function mockShot(o: Record<string, unknown>): Record<string, unknown> {
-  return { ...o, startShot: fakeStartShot, shotHandler: fakeShotHandler };
+  const shell = o.shotHandler as { update: ActionHandler['update']; end: ActionHandler['end'] } | undefined;
+  if (shell) {
+    shell.update = fakeShotHandler.update;
+    shell.end = fakeShotHandler.end;
+  }
+  return { ...o, startShot: fakeStartShot, shotHandler: shell ?? fakeShotHandler };
 }

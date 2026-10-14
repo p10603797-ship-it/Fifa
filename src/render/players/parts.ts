@@ -32,10 +32,13 @@ export const PART_NAMES: readonly string[] = ['head', 'torso', 'pelvis', 'upper-
 export const TORSO_Y0 = -0.05;
 export const TORSO_Y1 = 0.555;
 /** Shirt hem half extents (front-back, side-side) at TORSO_Y0. */
-export const HEM_RX = 0.105;
+export const HEM_RX = 0.124;
 export const HEM_RZ = 0.19;
-/** Shirt-number panel on the back (torso local, m): centre height, width (across z) and height. */
-export const NUMBER_PANEL = { y: 0.33, w: 0.28, h: 0.26 } as const;
+/**
+ * Shirt-number panel on the back (torso local, m): centre height, width (across z) and height. Its 1.2 : 1 aspect is
+ * the glyph cell aspect of the number atlas (kits.ts NUMBER_GLYPH_W / NUMBER_GLYPH_H), so digits are not stretched.
+ */
+export const NUMBER_PANEL = { y: 0.33, w: 0.3, h: 0.25 } as const;
 
 /** Accumulates a triangle soup: positions, normals and the colour selector. */
 export class SoupBuilder {
@@ -207,13 +210,13 @@ function buildHead(b: SoupBuilder): void {
 
 /** Torso (spine-pivot local), hem to collar. Colour A = shirt (pattern in the shader), B = trim (collar). */
 function buildTorso(b: SoupBuilder): void {
-  // The hem flares a little (rz 0.19) so it hangs over the shorts and the tops of the thighs; the collar is a
-  // narrow trim band around the neck.
+  // The hem flares a little (rx HEM_RX, rz 0.19) so it hangs over the shorts and the tops of the thighs, also with the
+  // hips flexed; the collar is a narrow trim band around the neck.
   lathe(b, [
     { y: TORSO_Y0, rx: 0, rz: 0 },
     { y: TORSO_Y0, rx: HEM_RX, rz: HEM_RZ },
-    { y: 0.04, rx: 0.108, rz: 0.184 },
-    { y: 0.16, rx: 0.11, rz: 0.176, cx: 0.004 },
+    { y: 0.04, rx: 0.12, rz: 0.184 },
+    { y: 0.16, rx: 0.116, rz: 0.176, cx: 0.004 },
     { y: 0.29, rx: 0.12, rz: 0.19, cx: 0.012 },
     { y: 0.41, rx: 0.118, rz: 0.205, cx: 0.01 },
     { y: 0.48, rx: 0.106, rz: 0.21, cx: 0.004 },
@@ -257,11 +260,16 @@ function buildLowerArm(b: SoupBuilder): void {
   ], { seg: 6 });
 }
 
-/** Thigh (hip local). Colour A = shorts leg, B = skin. */
+/**
+ * Thigh (hip local). Colour A = shorts leg, B = skin. The top tapers inside the shirt and the shorts body (hidden
+ * there) so a flexed hip (running stride, keeper stance) does not cut through the lower shirt as jagged shorts-coloured
+ * "teeth" above the hem (regression test tests/unit/gfx-07-hem.test.ts); the shorts leg flares out below.
+ */
 function buildUpperLeg(b: SoupBuilder): void {
   const t = BODY.thigh;
   lathe(b, [
-    { y: 0.05, rx: 0, rz: 0 }, { y: 0.035, rx: 0.058, rz: 0.058 }, { y: 0.0, rx: 0.076, rz: 0.076 },
+    { y: 0.05, rx: 0, rz: 0 }, { y: 0.035, rx: 0.045, rz: 0.045 }, { y: 0.0, rx: 0.055, rz: 0.055 },
+    { y: -0.05, rx: 0.06, rz: 0.06 }, { y: -0.11, rx: 0.074, rz: 0.074 },
     { y: -0.19, rx: 0.088, rz: 0.088 }, { y: -0.19, rx: 0.074, rz: 0.074, sel: 1 }, { y: -t + 0.06, rx: 0.062, rz: 0.06, sel: 1 },
     { y: -t, rx: 0.056, rz: 0.054, sel: 1 }, { y: -t - 0.04, rx: 0, rz: 0, sel: 1 },
   ], { seg: 6 });

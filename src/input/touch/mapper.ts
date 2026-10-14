@@ -26,11 +26,16 @@
  *     known at touch-down (keeper row, SLIDE / CLEAR) press at once. SPRINT (attack) starts at touch-down when the
  *     stick is pushed, else at the tap time (a tap is a skill move; R2 with a released stick would stop the ball).
  *        attack (ATTACK / SET_PIECE)   tap / hold          up              down           left               right
- *        PASS                          PASS                LOB             L1+PASS        L1+R1+LOB          R1+PASS
+ *        PASS                          PASS                LOB             L1+PASS        L1+R1+LOB (*)      R1+PASS
  *        THROUGH                       THROUGH             L1+THROUGH      L1 tap (run)   -                  -
  *        SHOOT                         SHOOT               L1+SHOOT        R1+SHOOT       SHOOT then PASS    L1+R1+SHOOT
  *        SPRINT & SKILL                hold R2, tap skill  skillUp         KNOCK_ON       HARD_STOP          skillRight
  *        double tap: PASS,PASS / THROUGH,THROUGH.
+ *        (*) PASS swipe left by a controlled player inside the crossing zone (geometry.inCrossingZone, ATTACK mode at
+ *        touch-down) = ground cross: two LOB taps (LOB one tick, released one tick, LOB one tick: SIM-15 reads LOB,LOB
+ *        and converts the first lob's wind-up into GROUND_CROSS; no explicit power, which would end the first kick's
+ *        charge and with it the conversion). Outside the zone it stays L1+R1+LOB (driven lob). PASS swipe right in the
+ *        zone stays R1+PASS: SIM-15 zoneKind resolves it to the low cross there.
  *        keeper (KEEPER): PASS -> PASS, THROUGH -> R1+PASS, SHOOT -> SHOOT, SPRINT & SKILL -> THROUGH (held while down).
  *        defence: SPRINT & TACKLE tap -> SHOOT, hold -> R2 (from touch-down), swipe left -> R1+SHOOT; SLIDE -> LOB
  *        (CLEAR -> SHOOT, as at touch-down); SWITCH tap -> L1, any swipe -> RS_FLICK with ax / az = the swipe in pitch
@@ -172,6 +177,8 @@ export const SwipeCell = {
   FLICK: 5,
   /** Held while the finger is down (keeper rush). */
   HOLD: 6,
+  /** Two one-tick presses of the bits with one released tick between them (a double tap: LOB,LOB ground cross). */
+  DOUBLE: 7,
 } as const;
 export type SwipeCell = (typeof SwipeCell)[keyof typeof SwipeCell];
 
@@ -190,6 +197,19 @@ export const ATTACK_SWIPES: readonly (SwipeRow | null)[] = [
     [SwipeCell.SKILL, SkillMove.HARD_STOP], [SwipeCell.SKILL, 0]],
   null, null, null, null, null,
 ];
+
+/** PASS swipe left inside the crossing zone (ATTACK mode): LOB,LOB = ground cross (lead decision on SIM-15's CR). */
+export const PASS_LEFT_ZONE_CELL: readonly [SwipeCell, number] = [SwipeCell.DOUBLE, Btn.LOB];
+
+/**
+ * Attack-table cell of a swipe on button `id` (ATTACK / SET_PIECE); `crossZone` = the press is an ATTACK-mode press by
+ * a controlled player inside the crossing zone (only PASS swipe left changes there). Pure.
+ */
+export function attackSwipeCell(id: TouchButtonId, dir: SwipeDir, crossZone: boolean): readonly [SwipeCell, number] {
+  if (crossZone && id === TouchButtonId.PASS && dir === SwipeDir.LEFT) return PASS_LEFT_ZONE_CELL;
+  const row = ATTACK_SWIPES[id];
+  return (row && row[dir]) || NO;
+}
 
 /** Defence table swipe cells, indexed by TouchButtonId then SwipeDir; null = no swipes. */
 export const DEFENCE_SWIPES: readonly (SwipeRow | null)[] = [
@@ -292,6 +312,11 @@ export interface TouchMapperOptions {
   now?(): number;
   /** Exact screen-space unit vector of a recognised swipe (TCH-04 DefenceCluster.swipeAim), matched by button + tMs. */
   swipeAim?(id: TouchButtonId): Readonly<{ button: number; dx: number; dy: number; tMs: number }> | null;
+  /**
+   * The current (or last) SLIDE press went down while CLEAR replaced SLIDE (TCH-04 DefenceCluster.slideClear), read
+   * for each SLIDE touch-down drained. Default: TouchIntentState.clearOn as it was when the touch landed.
+   */
+  slideClear?(): boolean;
 }
 
 export interface TouchMapper {
@@ -561,7 +586,7 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
     pState[b] = P_PENDING;
     pMode[b] = mode;
     pDownMs[b] = tMs;
-    pClear[b] = b === TouchButtonId.SLIDE && prevClear ? 1 : 0;
+    pClear[b] = b === TouchButtonId.SLIDE && (opts.slideClear ? opts.slideClear() : prevClear) ? 1 : 0;
     pAfterUp[b] = 0;
     if (mode === ClusterMode.HIDDEN || hiddenNow) {
       pState[b] = P_ACTIVE; // cut-scene: the touch only skips
@@ -617,7 +642,18 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
     }
   }
 
-  function onSwipe(b: number, dir: SwipeDir, tMs: number, projector: CameraProjector | null): void {
+  /** The controlled player is inside the crossing zone of the goal he attacks (PASS swipe left = ground cross). */
+  function inCrossZone(ctx: InputSampleContext): boolean {
+    const s = ctx.state;
+    if (!s) return false;
+    const slot = controlledSlot(s, ctx.side, ctx.human);
+    if (slot < 0) return false;
+    const p = s.players[slot]!;
+    const team = s.teams[p.team];
+    return p.active === 1 && !!team && inCrossingZone(p.x, p.z, team.dir);
+  }
+
+  function onSwipe(b: number, dir: SwipeDir, tMs: number, ctx: InputSampleContext): void {
     const ps = pState[b]!;
     if (ps === P_IDLE || ps === P_SWIPED) return;
     const mode = pMode[b]!;
@@ -627,7 +663,8 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
       case Row.KICK: {
         if (ps !== P_PENDING) return; // already pressed (hold / second tap): the kick has started
         tapValid[b] = 0;
-        const cell = ATTACK_SWIPES[b]![dir]!;
+        const zone = mode === ClusterMode.ATTACK && b === TouchButtonId.PASS && dir === SwipeDir.LEFT && inCrossZone(ctx);
+        const cell = attackSwipeCell(b as TouchButtonId, dir, zone);
         pState[b] = P_ACTIVE;
         if (cell[0] === SwipeCell.POWER) {
           pState[b] = P_SWIPED;
@@ -639,6 +676,10 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
         } else if (cell[0] === SwipeCell.FAKE) {
           pulse(b, Btn.SHOOT, 1, tMs, 0);
           pulse(b, Btn.PASS, 1, tMs, 1);
+        } else if (cell[0] === SwipeCell.DOUBLE) {
+          // schedule() leaves exactly one released tick between two same-owner presses of a bit: down, up, down.
+          pulse(b, cell[1], 1, tMs, 0);
+          pulse(b, cell[1], 1, tMs, 0);
         }
         return;
       }
@@ -656,7 +697,7 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
       case Row.SWITCH: {
         if (ps !== P_PENDING) return;
         pState[b] = P_ACTIVE;
-        swipeAimInto(b, dir, tMs, projector);
+        swipeAimInto(b, dir, tMs, ctx.projector);
         schedule(b, Btn.RS_FLICK, 1, tMs, 0, 0, 0, 1, AIM.ax, AIM.az);
         return;
       }
@@ -1051,7 +1092,7 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
       switch (e.edge) {
         case TouchEdge.DOWN: anyDown = true; onDown(b, e.mode, t, prevClear, hidden); break;
         case TouchEdge.HOLD: onHold(b, t); break;
-        case TouchEdge.SWIPE: onSwipe(b, e.dir, t, ctx.projector); break;
+        case TouchEdge.SWIPE: onSwipe(b, e.dir, t, ctx); break;
         case TouchEdge.UP: onUp(b, t); break;
         case TouchEdge.TAP:
         case TouchEdge.DOUBLE_TAP: onTapEdge(b, e.mode, t); break;

@@ -21,7 +21,9 @@ import { ActionKind, ControllerKind, GestureKind, KickKind, MatchPhase, RestartK
 import type { EventBuffer, EventSink } from '../../src/contracts/events';
 import { Btn, GestureFlag, type InputFrame } from '../../src/contracts/input';
 import type { MatchConfig, SimState } from '../../src/contracts/state';
-import type { ActionHandler, BallPrediction } from '../../src/contracts/systems';
+import type {
+  ActionHandler, ActionRequest, BallPrediction, KickLaunch, KickSolver,
+} from '../../src/contracts/systems';
 
 interface Bundle {
   awardRestart: (s: SimState, kind: RestartKind, team: number, x: number, z: number, ev: EventBuffer) => void;
@@ -40,6 +42,11 @@ interface Bundle {
   copyState: (dst: SimState, src: SimState) => void;
   predictBall: (b: SimState['ball'], ticks: number, out: BallPrediction) => void;
   createBallState: () => SimState['ball'];
+  prepareTakerKick: (s: SimState, slot: number) => number;
+  startShot: (s: SimState, slot: number, kind: KickKind, req: ActionRequest, ev: EventSink) => number;
+  KICK_SOLVERS: readonly (KickSolver | null)[];
+  createActionRequest: () => ActionRequest;
+  createKickLaunch: () => KickLaunch;
 }
 
 const ROOT = resolve(__dirname, '../..');
@@ -50,13 +57,15 @@ beforeAll(async () => {
   const src = (f: string): string => JSON.stringify(join(ROOT, f));
   const entry = join(dir, 'entry.ts');
   writeFileSync(entry, [
-    `export { awardRestart } from ${src('src/sim/rules/restart')};`,
+    `export { awardRestart, prepareTakerKick } from ${src('src/sim/rules/restart')};`,
+    `export { startShot } from ${src('src/sim/kicks/shot')};`,
+    `export { KICK_SOLVERS } from ${src('src/sim/actions/registry')};`,
     `export { freeKickTick, freeKickInput, freeKickDefault, previewFlight, wallJumpHandler } from ${src('src/sim/rules/freekick')};`,
     `export { step } from ${src('src/sim/step')};`,
     `export { initMatch } from ${src('src/sim/init')};`,
     `export { createMatchConfig, createBallState } from ${src('src/contracts/state')};`,
     `export { createInputFrame } from ${src('src/contracts/input')};`,
-    `export { createBallPrediction } from ${src('src/contracts/systems')};`,
+    `export { createBallPrediction, createActionRequest, createKickLaunch } from ${src('src/contracts/systems')};`,
     `export { createEventBuffer } from ${src('src/sim/core/events')};`,
     `export { cloneState, copyState } from ${src('src/sim/core/clone')};`,
     `export { predictBall } from ${src('src/sim/ball/flight')};`,
@@ -208,7 +217,7 @@ describe('RUL-05 budgets', () => {
     for (const [name, b] of Object.entries(res)) expect(b, `${name}: ${JSON.stringify(res)}`).toBeLessThan(1);
   });
 
-  it('previewFlight allocates nothing of its own beyond the FND-03 copyState and SIM-01 predictBall it builds on', () => {
+  it('previewFlight allocates nothing of its own beyond the FND-03 copyState, the SIM-11 starter / solver and SIM-01 predictBall it builds on', () => {
     const ev = m.createEventBuffer();
     const s = readyFreeKick(ev);
     const r = s.match.restart;
@@ -224,14 +233,30 @@ describe('RUL-05 budgets', () => {
       m.predictBall(b, 60, pred);
     };
     res.predictBall = bytesPerCall(shot, 3000);
+    // The kick module's own share: SIM-11 startShot + solveShot on the scratch copy (what the preview runs), refreshed
+    // by copyState each call (so copyState is inside this figure).
+    const req = m.createActionRequest();
+    const launch = m.createKickLaunch();
+    const t = r.taker;
+    const kick = (): void => {
+      m.copyState(scr, s);
+      req.dirX = 1; req.dirZ = 0; req.hasTarget = 1; req.targetX = GX; req.targetZ = r.aimZ; req.power = 0.75;
+      req.curve = 0.3; req.charging = 0; req.assist = 1; req.flags = 0;
+      if (m.prepareTakerKick(scr, t) !== 1) throw new Error('prepare refused');
+      if (m.startShot(scr, t, KickKind.FREE_KICK_SHOT, req, ev) !== 1) throw new Error('shot refused');
+      scr.players[t]!.actCharging = 0;
+      m.KICK_SOLVERS[scr.players[t]!.actKick]!(scr, t, launch);
+    };
+    res.kickModule = bytesPerCall(kick, 3000);
     res.previewAim = bytesPerCall(() => { m.previewFlight(s, pred); }, 3000);
     const swipe = m.createInputFrame();
     swipe.gesture = GestureKind.CURVED_SWIPE; swipe.gFlags = GestureFlag.FROM_BALL;
     swipe.gdx = 120; swipe.gdz = -20; swipe.gPower = 100; swipe.gCurve = 40;
     res.previewSwipe = bytesPerCall(() => { m.previewFlight(s, pred, swipe); }, 3000);
-    const floor = res.copyState! + res.predictBall!;
-    // Slack: the stub kick modules' estimated launch boxes a few doubles (dcos / dsin); no objects, arrays or closures.
-    expect(res.previewAim!, JSON.stringify(res)).toBeLessThan(floor + 128);
-    expect(res.previewSwipe!, JSON.stringify(res)).toBeLessThan(floor + 128);
+    const floor = Math.max(res.copyState!, res.kickModule!) + res.predictBall!;
+    // Slack: a few boxed doubles (request geometry, the swipe's dcos / dsin; GC bookkeeping noise); no objects, arrays,
+    // closures or state copies (each of those is kilobytes).
+    expect(res.previewAim!, JSON.stringify(res)).toBeLessThan(floor + 256);
+    expect(res.previewSwipe!, JSON.stringify(res)).toBeLessThan(floor + 256);
   });
 });

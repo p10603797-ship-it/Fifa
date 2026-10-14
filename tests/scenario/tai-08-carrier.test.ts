@@ -266,6 +266,28 @@ describe('TAI-08 CPU carrier: scripted situations', () => {
     }
   });
 
+  it('glitch "CPU: shields forever": after shieldMaxTicks of shielding the carrier plays on, and the shield rests', () => {
+    CTL.passes = 'none';
+    CTL.skill = SkillMove.NONE;
+    CTL.dribbleScore = 0.05;
+    const s = setup({ carrier: 6, at: { 6: [0, 0], 20: [1.7, 0.4] } });
+    s.attrs[6]!.strength = 99;
+    const plans: CpuPlan[] = [];
+    const n = T_LEVEL.reactionTicks[Difficulty.LEGEND]! + LT.shieldMaxTicks + (LT.shieldRestEvals + 3) * T_AI.carrierEvalInterval;
+    for (let i = 0; i < n; i++) { think(s); plans.push(s.teams[0]!.cpu.plan); }
+    let run = 0, longest = 0, firstEnd = -1;
+    for (let i = 0; i < plans.length; i++) {
+      if (plans[i] === CpuPlan.SHIELD) { run++; longest = Math.max(longest, run); } else { if (run > 0 && firstEnd < 0) firstEnd = i; run = 0; }
+    }
+    expect(plans.includes(CpuPlan.SHIELD)).toBe(true);
+    expect(longest).toBeLessThanOrEqual(LT.shieldMaxTicks + T_AI.carrierEvalInterval);
+    expect(firstEnd).toBeGreaterThan(0);
+    // The shield rests for shieldRestEvals decisions after it ends.
+    let rest = 0;
+    for (let i = firstEnd; i < plans.length && plans[i] !== CpuPlan.SHIELD; i++) rest++;
+    expect(rest).toBeGreaterThanOrEqual((LT.shieldRestEvals - 1) * T_AI.carrierEvalInterval);
+  });
+
   it('beats a close defender with a skill move: frame.skill edge, exit away from him, then dribbles on', () => {
     CTL.passes = 'none';
     const s = setup({ carrier: 6, at: { 6: [0, 0], 20: [2.0, 0.4] } });

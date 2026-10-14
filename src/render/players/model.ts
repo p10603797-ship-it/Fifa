@@ -5,14 +5,18 @@
  *
  * PARTS (parts.ts): head + neck + hair, torso (shirt), pelvis (shorts), upper arm (sleeve), forearm + hand, thigh
  * (shorts leg), shin (sock), boot. One InstancedMesh per part: 22 instances, or 44 for left / right limbs
- * (index = slot * 2 + side, side 0 left, 1 right). 8 draw calls and about 1,040 triangles per player (~23k for 22).
+ * (index = slot * 2 + side, side 0 left, 1 right). 8 draw calls and about 1,120 triangles per player (~24.7k for
+ * 22; budget 14 calls and 30k triangles).
  * Lambert materials (one directional light + ambient from the stadium), patched in onBeforeCompile:
  *   - every part has per-instance colours A and B; the per-vertex selector aSel picks one (crisp kit regions);
  *   - the torso shader draws the kit pattern (plain, stripes, hoops, halves, sash: section 8) procedurally in torso
  *     space with derivative anti-aliasing (no shimmer at distance), a collar trim, and the shirt number on the back
- *     from a glyph atlas (NumberAtlas: RGB white fill / black outline, premultiplied alpha coverage).
- * Kit colours come from resolveMatchKits (GFX-08 clash check): outfield or keeper kit per slot (keepers wear long
- * sleeves and gloves), shorts, socks, number colour. Skin, hair and boot colours vary per player (seeded by club and
+ *     from a glyph atlas (NumberAtlas: RGB white fill / black outline, premultiplied alpha coverage). The default
+ *     atlas is GFX-08's generated one (kits.ts createKitNumberAtlas: digits drawn in code, no font, same pixels in
+ *     every browser); setNumberAtlas can replace it.
+ * Kit colours come from resolveMatchKits (GFX-08 clash check, with Settings > Accessibility > high-contrast kits;
+ * re-resolved when that setting changes): outfield or keeper kit per slot (keepers wear long sleeves and gloves),
+ * shorts, socks, number colour. The resolved kits are exposed as PlayerModelModule.kits. Skin, hair and boot colours vary per player (seeded by club and
  * squad index; render-only).
  *
  * PER FRAME (no allocation): the pose driver writes one Pose per slot through setPose (default: the GFX-12 mapper's
@@ -27,8 +31,8 @@
  */
 
 import {
-  CanvasTexture, Color, DataTexture, DynamicDrawUsage, Group, InstancedBufferAttribute, InstancedMesh,
-  LinearFilter, LinearMipmapLinearFilter, MeshLambertMaterial, RGBAFormat, Vector3, type BufferGeometry, type Texture,
+  Color, DataTexture, DynamicDrawUsage, Group, InstancedBufferAttribute, InstancedMesh, MeshLambertMaterial, RGBAFormat,
+  Vector3, type BufferGeometry, type Texture,
 } from 'three';
 import { NUM_SLOTS } from '../../contracts/constants';
 import type { Club, Kit } from '../../contracts/data';
@@ -37,7 +41,7 @@ import { AnimId, createPose, POSE_SIZE, type Pose } from '../../contracts/render
 import type { Settings } from '../../contracts/settings';
 import type { ReadonlySimState } from '../../contracts/state';
 import { advanceCycle, createAnimBank, createAnimSample, mapAnim, poseFnFor, samplePose } from '../anim/mapper';
-import { resolveMatchKits, type MatchKits } from '../kits';
+import { createKitNumberAtlas, resolveMatchKits, type KitNumberAtlas, type MatchKits } from '../kits';
 import { getTierParams } from '../quality';
 import type { RenderContext, RenderFrame, RenderModule } from '../types';
 import {
@@ -103,6 +107,11 @@ export interface PlayerModelModule extends RenderModule, PoseSink {
   readonly poses: readonly Pose[];
   /** World joint frames per slot after the last update (fk.ts layout, Joint indices). Read-only for others. */
   readonly skeletons: readonly Float64Array[];
+  /**
+   * Kits the players wear (GFX-08 clash check, with the high-contrast setting), null before setMatch. Read-only:
+   * the HUD / radar can take team colours from here so they match the pitch.
+   */
+  readonly kits: MatchKits | null;
   /** Install the animation driver (GFX-12); null restores the default (mapper stub API). */
   setPoseDriver(driver: PoseDriver | null): void;
   /** Use a shirt-number atlas (GFX-08); null restores the built-in fallback. */
@@ -229,11 +238,10 @@ export function luminance(rgb: number): number {
 
 // ============================================================ shirt-number atlas (fallback)
 
-/** Fallback number atlas layout: 10 x 10 cells of CELL px, number n in cell n (row n / 10, column n % 10). */
+/** Number atlas grid: number n in cell n (row n / 10, column n % 10); the same grid as GFX-08's glyph atlas. */
 const ATLAS_COLS = 10;
-const ATLAS_CELL = 64;
 
-/** UV rect of cell n in a 10 x 10 atlas (flipY texture: v up). */
+/** UV rect of cell n in a 10 x 10 atlas (v up). The same convention as kits.ts createKitNumberAtlas().glyphRect. */
 export function gridGlyphRect(n: number, out: Float32Array | number[], o: number): boolean {
   if (!(n >= 1 && n <= 99) || n !== Math.floor(n)) return false;
   const col = n % ATLAS_COLS, row = Math.floor(n / ATLAS_COLS);
@@ -244,53 +252,17 @@ export function gridGlyphRect(n: number, out: Float32Array | number[], o: number
   return true;
 }
 
+/** GFX-08's generated glyph atlas, built once per page (about 80 ms, 1 MB with mips) and shared by every model. */
+let sharedNumbers: KitNumberAtlas | null = null;
+
 /**
- * Build the fallback atlas on a canvas (OffscreenCanvas when there is no document). Numbers 1..99 in a bold sans,
- * white with a black outline, 64 px cells (640 x 640, about 2 MB on the GPU with mipmaps). Null without a canvas.
+ * The default shirt-number atlas: GFX-08's generated digits (kits.ts createKitNumberAtlas: numbers 1..99, bold
+ * rounded sans built from code, white fill / black outline, premultiplied coverage, manual mips). No canvas or font
+ * needed, so it is identical in every browser and in Node. Cached; the model disposes only its GPU copy.
  */
 export function createNumberAtlas(): NumberAtlas | null {
-  const size = ATLAS_COLS * ATLAS_CELL;
-  let canvas: HTMLCanvasElement | OffscreenCanvas | null = null;
-  if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
-    canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-  } else if (typeof OffscreenCanvas !== 'undefined') {
-    canvas = new OffscreenCanvas(size, size);
-  }
-  if (!canvas) return null;
-  const g = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
-  if (!g) return null;
-  g.clearRect(0, 0, size, size);
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.lineJoin = 'round';
-  g.font = `700 ${Math.round(ATLAS_CELL * 0.6)}px "Space Grotesk", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif`;
-  const stroke = ATLAS_CELL * 0.1;
-  for (let n = 1; n <= 99; n++) {
-    const text = String(n);
-    const cx = ((n % ATLAS_COLS) + 0.5) * ATLAS_CELL;
-    const cy = (Math.floor(n / ATLAS_COLS) + 0.53) * ATLAS_CELL;
-    const w = g.measureText(text).width + stroke;
-    const sx = Math.min(1, (ATLAS_CELL * 0.86) / Math.max(1, w));
-    g.save();
-    g.translate(cx, cy);
-    g.scale(sx, 1);
-    g.lineWidth = stroke;
-    g.strokeStyle = '#000';
-    g.strokeText(text, 0, 0);
-    g.fillStyle = '#fff';
-    g.fillText(text, 0, 0);
-    g.restore();
-  }
-  const texture = new CanvasTexture(canvas as HTMLCanvasElement);
-  texture.name = 'player-numbers';
-  texture.premultiplyAlpha = true;
-  texture.generateMipmaps = true;
-  texture.minFilter = LinearMipmapLinearFilter;
-  texture.magFilter = LinearFilter;
-  texture.needsUpdate = true;
-  return { texture, glyphRect: gridGlyphRect };
+  if (!sharedNumbers) sharedNumbers = createKitNumberAtlas();
+  return sharedNumbers;
 }
 
 // ============================================================ shaders
@@ -698,6 +670,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     group,
     poses,
     skeletons,
+    get kits(): MatchKits | null { return kits; },
 
     setPose(slot: number, pose: ArrayLike<number>): void {
       if (!(slot >= 0 && slot < NUM_SLOTS)) return;
@@ -721,7 +694,8 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
 
     setMatch(state: ReadonlySimState, clubs: readonly Club[]): void {
       clubsNow = clubs;
-      kits = resolveMatchKits(state, clubs);
+      highContrast = ctx.settings.accessibility.highContrastKits;
+      kits = resolveMatchKits(state, clubs, highContrast);
       kitsDirty = false;
       if (!externalAtlas && !ownAtlas) {
         ownAtlas = createNumberAtlas();
@@ -738,7 +712,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
       if (!matchOn) return;
       const s = f.curr, it = f.interp;
       if (kitsDirty) {
-        kits = resolveMatchKits(s, clubsNow); // settings change (high-contrast kits): rare, not per frame
+        kits = resolveMatchKits(s, clubsNow, highContrast); // settings change (high-contrast kits): rare, not per frame
         kitsDirty = false;
         applyAll(s);
       }
@@ -788,7 +762,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
       for (let g = 0; g < geos.length; g++) geos[g]!.dispose();
       partMat.dispose();
       torsoMat.dispose();
-      ownAtlas?.texture.dispose();
+      ownAtlas?.texture.dispose(); // the GPU copy only: the shared glyph data stays cached for the next renderer
       ownAtlas = null;
       matchOn = false;
       if (typeof window !== 'undefined' && window.__dotkickPlayers === debug) delete window.__dotkickPlayers;
