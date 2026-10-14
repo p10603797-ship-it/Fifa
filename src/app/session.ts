@@ -338,6 +338,8 @@ export function createSession(deps: SessionDeps): AppSession {
     }
     if (pausedBy !== -1 && byHuman !== pausedBy && !cpuHumans.includes(pausedBy)) return false;
     if (hidden || blocked) return false;
+    // A lost WebGL context must be rebuilt before play continues (INT-C CR 2a); the pause menu stays up.
+    if (renderer.contextLost === true) return false;
     const hooks = setup?.hooks;
     if (hooks?.allowPause) {
       let ok = true;

@@ -9,3 +9,9 @@ Charter (BRIEF §8, §12, §13 budgets, §14 glitch list camera):
   iPad 1180x820; QA-34 draw calls <= 80, triangles <= 200k, texture memory per scene (kick-off, open play, box, corner,
   goal + replay, night); QA-35 context loss, resize, rotation.
 Look at every screenshot you take. Measure, do not guess.
+From INT-C (Wave 2): free-kick view shows the ball between the taker's legs (taker on the camera line — fix the camera
+or CR the sim taker spot); goal-kick keeper still large in frame; dribble touches and first touches have no boot contact
+(KICK events 0.3-1 m from the boot; phase-align the run cycle to the touch schedule where feasible); sharp turns
+(> 2 rad/s) still slip; gfx-12-anim e2e "no joint pops" fails (slot 10 ANKLE_R frame 103, 0.55 > 0.45); swipe-hint
+labels near the bottom-right big button go off screen (INT-B). Render-side per-frame allocation 1.3-2.3 KB in a live
+match is QF-7's, but fix type-feedback deopts you touch anyway.

@@ -6,3 +6,7 @@ steady play: measure with --expose-gc / heap snapshots in Node for sim+AI and Ch
 and AI tick-time worst cases (crowded box, set pieces, 22 players chasing) against 2.5 ms average; QA-38 benchmark under
 CPU throttling (Chromium CDP 4x/6x) and dynamic resolution behaviour (steps down and back up without oscillation).
 Update docs/PERF_REPORT.md sections you measured (lead merges).
+Known inputs: sim ~28 KB heap per tick in the integrated live probe (tests/perf/int-c-render-alloc.test.ts); render 1.3-2.3
+KB per frame (mapper, broadcast camera, markers, crowd deopts on insufficient type feedback); tai-05 alloc budget and
+tai-09 runners fail from V8 double boxing at call boundaries (ticksToReachAtSpeed, press helpers, estimateXg,
+evalIntercept, throughLeadPoint); aud-05/pad-08/tch-06 alloc tests are load-sensitive.

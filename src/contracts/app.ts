@@ -118,6 +118,8 @@ export interface GameRenderer {
   stats(): RenderStats;
   /** X of the camera drawn last (broadcast camera in open play), for stereo panning of sim events (AUD-03). */
   cameraX?(): number;
+  /** True from WebGL context loss until the restored context is rebuilt; the session keeps the match paused meanwhile. */
+  readonly contextLost?: boolean;
   /** Goal replay from the render ring buffer (GFX-16). */
   startReplay(seconds: number): boolean;
   stopReplay(): void;
