@@ -196,3 +196,32 @@ test('INT-C night debug', async ({ page }, testInfo) => {
   console.log(JSON.stringify(info));
   await page.screenshot({ path: testInfo.outputPath('int-c-night-debug.png') });
 });
+
+test('INT-C human touch + tiers', async ({ page }, testInfo) => {
+  test.setTimeout(400_000);
+  const errors = collectErrors(page);
+  await page.goto('/');
+  await page.getByTestId('splash-start').click();
+  await page.getByTestId('main-kickoff').click();
+  await page.waitForFunction(() => {
+    const d = window.__dotkick;
+    return !!d && d.ctx.router.current === 'match' && d.app.session.loaded && d.ctx.session.getState() !== null;
+  }, null, { timeout: 60_000 });
+  await page.waitForTimeout(3000);
+  await page.screenshot({ path: testInfo.outputPath('int-c-human-live.png') });
+  const stats = await page.evaluate(async () => {
+    const d = window.__dotkick!;
+    const out: Record<string, unknown>[] = [];
+    for (const tier of [1, 2, 3]) {
+      d.app.renderer.setQuality(tier);
+      await new Promise((r) => setTimeout(r, 1500));
+      const s = d.app.renderer.stats();
+      const q = (window as unknown as { __dotkickQuality?: () => Record<string, unknown> }).__dotkickQuality?.();
+      out.push({ tier, calls: s.drawCalls, tris: s.triangles, applied: s.qualityTier, shadow: q?.shadowMapEnabled, fps: q?.fps });
+    }
+    return out;
+  });
+  console.log(JSON.stringify(stats));
+  await page.screenshot({ path: testInfo.outputPath('int-c-human-quality.png') });
+  expect(errors).toEqual([]);
+});
