@@ -133,15 +133,15 @@ Total assignments: 201.
 | PLT-05 | 1 | done | lane/squad agent report; 3 own test files pass |  |
 | PLT-06 | 1 | done | README, DEPLOY, ASSETS, DEVICE_CHECKLIST; plt-06-docs 20 tests (links, scripts, every §9/§10 row, licences); README commands run in a fresh copy | Pages workflow file not added (publishing is the user's decision); licence notices into dist -> QF-5 |
 | INT-01 | 2 | running | INT-A running |  |
-| INT-02 | 2 | running | INT-B running |  |
+| INT-02 | 2 | done | INT-B: touch and pad full matches in the real app (int-b-touch-match, int-b-pad-match) | |
 | INT-03 | 2 | running | INT-C running |  |
-| INT-04 | 2 | running | INT-A (sim) + INT-B (app) running |  |
-| INT-05 | 2 | running | INT-B running |  |
-| INT-06 | 2 | running | INT-B running |  |
-| INT-07 | 2 | running | INT-B running |  |
+| INT-04 | 2 | running | INT-B done (app side: rumble in loop, audio camera x + back sound; sim side with INT-A); INT-A sim side running | |
+| INT-05 | 2 | done | INT-B: every local mode to its end screen and back (int-b-modes) | |
+| INT-06 | 2 | done | INT-B: set pieces by touch and by pad (int-b-setpieces) | |
+| INT-07 | 2 | done | INT-B: 1v1 pad v pad and touch v pad, no crosstalk, only pauser resumes | |
 | INT-08 | 2 | done | two-page online e2e: share link, lockstep hashes equal, mirrored pause, 20 s rejoin, Finish against CPU; real WebRTC run through a local PeerServer | not yet run on real iPads (DEVICE_CHECKLIST step 7) |
-| INT-09 | 2 | running | INT-B running |  |
-| INT-10 | 2 | running | INT-B running |  |
+| INT-09 | 2 | done | INT-B: settings live + persisted after reload (int-b-settings) | |
+| INT-10 | 2 | done | INT-B: plt-01-pwa offline boot from the service worker + update toast in the built app | |
 | QA-01 | 3 | queued |  |  |
 | QA-02 | 3 | queued |  |  |
 | QA-03 | 3 | queued |  |  |

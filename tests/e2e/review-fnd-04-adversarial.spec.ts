@@ -490,7 +490,7 @@ test.describe('REVIEW FND-04 adversarial', () => {
     await page.getByTestId('splash-start').tap();
     await expect(page.getByTestId('main-kickoff')).toBeVisible();
     await check('main');
-    for (const id of ['main-settings', 'main-diagnostics', 'main-modes']) {
+    for (const id of ['main-settings', 'main-diagnostics', 'main-mode-kickoff']) { // INT-B: UIX-02 mode entries
       await page.getByTestId(id).tap();
       await expect(page.getByTestId('back')).toBeVisible();
       await check(id);

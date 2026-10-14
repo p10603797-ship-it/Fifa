@@ -130,6 +130,11 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   /** ... whose xG threshold is T_LEVEL.shotThresholdXg x this at style longShot 0 / 1. */
   longShotThreshMax: 1.0,
   longShotThreshMin: 0.7,
+  /** ... x (1 + this x metres beyond longShotDist) [INT-A], 1/m ... */
+  longShotThreshPerM: 0.1,
+  /** ... and no shot from beyond shotMaxDist (+ shotMaxLongShotExtra x style longShot) of the goal centre [INT-A], m. */
+  shotMaxDist: 33,
+  shotMaxLongShotExtra: 4,
   /** Shot power 0..1 at <= shotNearDist m / >= shotFarDist m from the goal centre (linear between). */
   shotPowerNear: 0.65,
   shotPowerFar: 0.84,
@@ -547,7 +552,12 @@ function shotOptionInto(s: SimState, p: Readonly<PlayerState>, lv: Readonly<Leve
   const dist = Math.sqrt(gx * gx + p.z * p.z);
   const long = dist > LT.longShotDist;
   const ls = clamp01(sw.longShot);
-  const thr = fin(lv.shotThresholdXg) * (long ? LT.longShotThreshMax + (LT.longShotThreshMin - LT.longShotThreshMax) * ls : 1);
+  // [INT-A] Range: beyond longShotDist the threshold also grows per metre, and nobody shoots from beyond
+  // shotMaxDist (+ shotMaxLongShotExtra for a long-shot style), so shots come from shooting range, not 40 m out.
+  if (dist > LT.shotMaxDist + LT.shotMaxLongShotExtra * ls) return;
+  const thr = fin(lv.shotThresholdXg) * (long
+    ? (LT.longShotThreshMax + (LT.longShotThreshMin - LT.longShotThreshMax) * ls) * (1 + LT.longShotThreshPerM * (dist - LT.longShotDist))
+    : 1);
   if (xg < thr) return;
   let u = xg * LT.shotXgMul + (1 - xg) * LT.shotMissValue;
   if (inPenaltyArea(p.x, p.z, C.dir)) u += LT.boxShotBonus;

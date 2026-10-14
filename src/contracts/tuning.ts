@@ -203,13 +203,13 @@ export const T_SKILL = {
 
 export const T_GK = {
   /** Reaction delay ticks at reflexes 99 / 1. */
-  reactBest: 6,
-  reactWorst: 20,
+  reactBest: 8,
+  reactWorst: 22,
   /** Dive reach m and dive speed m/s at diving 99 / 1. */
   reachBest: 3.2,
   reachWorst: 2.2,
-  diveSpeedBest: 7.5,
-  diveSpeedWorst: 5.0,
+  diveSpeedBest: 7.0,
+  diveSpeedWorst: 4.6,
   /** Catch vs parry: catch if handling-scaled speed below this m/s. */
   catchSpeed: 18,
   /** Max ticks a keeper may hold the ball (6 s). */

@@ -301,3 +301,8 @@
 .dk-dot.is-on {
   opacity: 0.9;
 }
+
+/* INT-B: a slot showing swipe hints draws above its neighbours, so a hint label is never covered by the next button. */
+.dk-tbtn:has(.dk-hint.is-on) {
+  z-index: 2;
+}

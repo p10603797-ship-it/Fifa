@@ -163,7 +163,8 @@ test.describe('FND-04 app shell', () => {
   test('every menu screen opens and Back returns, by touch and by keyboard', async ({ page }) => {
     const messages = collectConsole(page);
     await bootToMain(page);
-    for (const id of ['main-modes', 'main-practice', 'main-cup', 'main-online', 'main-settings', 'main-diagnostics']) {
+    // INT-B: UIX-02 replaced the Wave 0 'main-modes' / 'main-online' entries with one entry per mode.
+    for (const id of ['main-mode-kickoff', 'main-friend', 'main-practice', 'main-cup', 'main-shootout', 'main-settings', 'main-diagnostics']) {
       await page.getByTestId(id).tap();
       await expect(page.getByTestId('back')).toBeVisible();
       await page.getByTestId('back').tap();
