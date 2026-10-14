@@ -112,7 +112,7 @@ import { Btn } from '../../contracts/input';
 import { createChallengeRecord, MoveMode, type PlayerAttrs, type SimState } from '../../contracts/state';
 import { createBallPrediction, createKickLaunch } from '../../contracts/systems';
 import { T_BALL, T_DRIBBLE, T_GK, T_PLAYER } from '../../contracts/tuning';
-import { createInterceptEstimate, estimateIntercept } from '../../ai/steer';
+import { createInterceptEstimate, estimateIntercept, estimateInterceptSlack } from '../../ai/steer';
 import { predictBall } from '../ball/flight';
 import { applyKick, ballTouchedThisTick, releasePossession } from '../core/kick';
 import { attr, clamp01, dcos, dsin } from '../core/dmath';
@@ -138,6 +138,18 @@ export const LOCAL_TUNING = { // TUNING-CR (GKP-03): move into T_GK
   zoneKeepSlack: 4,
   /** [QF-2] A rush starts only for an interception point at least this far in front of his goal line, m. */
   startMinDepth: 2,
+  /** [QF-2 skeptic] Hysteresis on the interception estimates (see race): a rush under way keeps a point he reaches up
+   *  to this many ticks after the ball ... */
+  keepReachSlack: 6,
+  /** ... and a rush starts only when no outfield teammate reaches the ball up to this many ticks after it in a window
+   *  more than mateNearMissJump ticks earlier than the one he makes in time (a discontinuity of his estimate, not
+   *  the smooth drift of a ball rolling away from him, which the start / abort margins already cover), ticks. */
+  mateNearMissSlack: 6,
+  mateNearMissJump: 15,
+  /** [QF-2 skeptic] Loose-ball one-on-one: starts when the opponent beats every outfield teammate to the ball by this
+   *  many ticks, and is kept until a teammate beats the opponent by oneOnOneMateKeep ticks, ticks. */
+  oneOnOneMateStart: 3,
+  oneOnOneMateKeep: 4,
   /** [QF-2] No AI come-out starts for an opponent's shot (on target: GKP-02 saves it from his set position; off
    *  target: it is going out) faster than this: rushing at a 17 m/s long shot started, aborted and restarted the rush
    *  on consecutive ticks as the defenders' interception estimates on the fast ball jumped, m/s. A weak shot rolling
@@ -320,6 +332,8 @@ const DEC_CLAIM = 3;
 // ---------------------------------------------------------------- module scratch (no per-tick allocation)
 
 const EST = createInterceptEstimate();
+/** [QF-2] Second estimate scratch (a teammate's near-miss estimate in race). */
+const EST2 = createInterceptEstimate();
 const PRED = createBallPrediction();
 const LAUNCH = createKickLaunch();
 const REC = createChallengeRecord();
@@ -567,7 +581,14 @@ function oneOnOne(s: SimState, team: number, k: number, att: number, keep: numbe
  * a playable sample within the horizon.
  */
 function race(s: SimState, team: number, k: number, keep: number): boolean {
+  // [QF-2] Hysteresis on the knife-edge interception estimates (TAI-07 estimateInterceptSlack): a rush under way that
+  // loses its point (he no longer makes any sample in time) keeps the first one he reaches up to keepReachSlack ticks
+  // late, and a start needs every outfield teammate who would reach the ball up to mateNearMissSlack ticks late to be
+  // slower than him (an abort needs a teammate really there first). One estimate flipping between the first-bounce
+  // window and the end of the horizon tick to tick started and aborted the rush on alternate ticks (and swapped
+  // TAI-07's chaser between him and the defender).
   estimateIntercept(s, k, EST);
+  if (keep === 1 && EST.inHorizon !== 1) estimateInterceptSlack(s, k, L.keepReachSlack, EST);
   // [QF-2] A rush already under way keeps its point when the interception slips just past the prediction horizon (a
   // ball rolling slowly toward the byline): requiring it in the horizon for both start and keep made the rush start and
   // abort on alternate ticks (and TAI-07's chaser flip between him and an outfielder).
@@ -577,6 +598,7 @@ function race(s: SimState, team: number, k: number, keep: number): boolean {
   RACE.mateT = 1e9; RACE.oppT = 1e9; RACE.opp = -1; RACE.oppX = 0; RACE.oppZ = 0;
   const b = s.ball;
   const ax = b.x, az = b.z, bx = EST.x, bz = EST.z;
+  const mateSlack = keep === 1 ? 0 : L.mateNearMissSlack;
   const mateCut = keep === 1 ? kT - L.mateAbortMargin : kT + L.mateStartMargin;
   // Opponents up to the keeper's own tick + start margin matter (and, when he loses, for a one-on-one).
   const oppCut = keep === 1 ? kT : kT + L.oppStartMargin;
@@ -586,14 +608,19 @@ function race(s: SimState, team: number, k: number, keep: number): boolean {
     if (q.active !== 1) continue;
     const mate = q.team === team;
     if (mate && q.isKeeper === 1) continue;
-    const cut = mate ? mateCut : oppCut;
+    const cut = mate ? mateCut + mateSlack : oppCut;
     // Lower bound of his ticks to the ball's path between the ball and the keeper's point: cannot matter -> skip.
     F[F_PX] = q.x; F[F_PZ] = q.z; F[F_AX] = ax; F[F_AZ] = az; F[F_BX] = bx; F[F_BZ] = bz;
     distPointSeg();
     const gap = F[F_DIST]! - L.raceReachSlack;
     if (gap > 0 && (gap / topOf(s.attrs[i]!)) * TICK_HZ >= cut) continue;
     estimateIntercept(s, i, EST);
-    const t = EST.ballT;
+    let t = EST.ballT;
+    if (mateSlack > 0 && mate) {
+      // [QF-2] A near miss of a much earlier window (the first bounce he makes or misses by a tick) counts at a start.
+      estimateInterceptSlack(s, i, mateSlack, EST2);
+      if (t - EST2.ballT > L.mateNearMissJump) t = EST2.ballT;
+    }
     if (!isFiniteNum(t)) continue;
     if (mate) {
       if (t < RACE.mateT) RACE.mateT = t;
@@ -719,7 +746,11 @@ function assess(s: SimState, team: number, k: number, keep: number): number {
     }
   }
   // An opponent wins the race to the loose ball ahead of every teammate: a one-on-one at his interception point.
-  if (RACE.opp >= 0 && RACE.oppT < kT && RACE.oppT < RACE.mateT) {
+  // [QF-2] With hysteresis against the nearest teammate: a start needs the opponent there oneOnOneMateStart ticks
+  // first, a one-on-one under way ends only when a teammate is there oneOnOneMateKeep ticks first (an opponent and a
+  // covering defender converging on a pass within a tick of each other flipped it every other tick).
+  const mateEdge = keep === 1 ? L.oneOnOneMateKeep : -L.oneOnOneMateStart;
+  if (RACE.opp >= 0 && RACE.oppT < kT && RACE.oppT < RACE.mateT + mateEdge) {
     F[F_TX] = RACE.oppX; F[F_TZ] = RACE.oppZ;
     if (oneOnOne(s, team, k, RACE.opp, keep)) return DEC_1V1;
   }

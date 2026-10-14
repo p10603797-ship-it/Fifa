@@ -600,6 +600,9 @@ function pressSlide(brain: CpuBrainState, lv: LevelParams): void {
 function maybeClear(s: SimState, team: number, brain: CpuBrainState, lv: LevelParams, p: Readonly<PlayerState>): void {
   if (brain.tackleCd > 0 || !isFree(p) || p.isKeeper === 1) return;
   if ((s.teams[team]!.dir * p.x) / HALF_LENGTH >= L.ownThirdProgress) return;
+  // [QF-2] A teammate already going up for this flight plays it: a second attempt sent two teammates into the same
+  // header (SIM-16 had switched the CPU away from the player it pressed for, ~10 times a match).
+  if (mateOnFlight(s, team, p.slot)) return;
   const eta = ballEta(s, p.slot);
   const arriving = eta >= 0 && eta <= L.clearEtaTicks;
   if (!arriving && !(aerialChance(s, p.slot) > 0)) return;
@@ -607,6 +610,20 @@ function maybeClear(s: SimState, team: number, brain: CpuBrainState, lv: LevelPa
   if (nearestOpponentDist(s, team, p.x, p.z) > L.clearPressureDist && nearestOpponentDist(s, team, b.x, b.z) > L.clearPressureDist) return;
   btn |= Btn.SHOOT;
   brain.tackleCd = lv.reactionTicks + T_TACKLE.standWindup;
+}
+
+/** [QF-2] A teammate of `slot` has an open header / volley attempt (SIM-12, actDone 0) on the ball's current flight. */
+function mateOnFlight(s: SimState, team: number, slot: number): boolean {
+  const flight = s.ball.lastTouchTick;
+  const first = team === 0 ? 0 : PLAYERS_PER_TEAM;
+  for (let i = first; i < first + PLAYERS_PER_TEAM; i++) {
+    if (i === slot) continue;
+    const q = s.players[i]!;
+    if (q.active === 1 && (q.act === ActionKind.HEADER || q.act === ActionKind.VOLLEY) && q.actDone === 0 && q.actB === flight) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

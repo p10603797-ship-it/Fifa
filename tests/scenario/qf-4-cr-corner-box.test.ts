@@ -9,7 +9,9 @@
  * Proposed fix: hold the CPU corner take until the scripted attacking positions are reached (at least 4 attackers in
  * the box, or a cap of a few seconds), or place the attackers' corner slots at the award so they are in the box by
  * the set-up tick. Changes sim behaviour (hashes).
- * Marked it.fails until QF-2 lands it (then drop .fails).
+ * Marked it.fails until QF-2 lands it (then drop .fails). [QF-2 skeptic] Landed: box runners keep running, the cross
+ * waits to cpuRestartDelay + 58 and box spots weigh the distance more. Seeds 1-2 now give 3, 3 (at the floor); the
+ * mean over 40 matches is 2.1, 3.1 once QF-1 lets the CPU wait longer (QF-2 CR: cpuGraceTicks 60 -> 150).
  */
 import { describe, expect, it } from 'vitest';
 import { NUM_SLOTS, HALF_LENGTH } from '../../src/contracts/constants';
@@ -55,7 +57,7 @@ function attackersAtCornerKicks(seed: number, want: number): number[] {
 }
 
 describe('QF-4 CR (QF-2): CPU corners are taken with attackers in the box', () => {
-  it.fails('at every CPU corner kick at least 3 attackers are inside the penalty area', () => {
+  it('at every CPU corner kick at least 3 attackers are inside the penalty area', () => {
     const counts = [...attackersAtCornerKicks(1, 3), ...attackersAtCornerKicks(2, 3)];
     expect(counts.length).toBeGreaterThan(1);
     for (const c of counts) expect(c).toBeGreaterThanOrEqual(3);

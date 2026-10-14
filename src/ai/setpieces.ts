@@ -224,7 +224,10 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** Crosses (corners, free kicks in range): wait for at least minBoxArrivals box runners on their spots, at most
    *  maxArrivalWait ticks beyond cpuRestartDelay (kind modules' CPU fallbacks start at cpuRestartDelay + 60). */
   minBoxArrivals: 3,
-  maxArrivalWait: 45,
+  maxArrivalWait: 58, // [QF-2] was 45: up to just before RUL-04 / RUL-05's CPU fallback (cpuRestartDelay + 60)
+  /** [QF-2] Distance weight of the corner box-runner spots (penalty spot, posts, tactic spots) in the matching cost:
+   *  0.1 sent centre-backs from 45 m away, so the CPU crossed after 2.7 s into a box with 1-2 attackers (QF-4 CR). */
+  cornerRunWd: 1.0,
   /** Wide free kick: probability of a short pass instead of a cross. */
   fkShortChance: 0.12,
   /** Cross targets: box depth from the goal line, m; openness cap m and weight; corner-tactic zone bonus. */
@@ -265,7 +268,7 @@ export const LOCAL_TUNING = { // TUNING-CR
    *  power range 0..1 (uniform). */
   penNaturalChance: 0.58,
   penInsetMin: 0.45,
-  penInsetMax: 1.1,
+  penInsetMax: 1.7, // [QF-2] was 1.1: every CPU penalty went 2.6-3.2 m out, beyond a full dive in time (4% saved)
   penAimErr: 0.25,
   penPowerMin: 0.64,
   penPowerMax: 0.86,
@@ -317,21 +320,22 @@ const tpl = (role: number, suit: number, a: number, z: number, wd: number): Tpl 
 const R = SpotRole;
 
 // Corners (attacked goal line; z mirrored to the corner's side).
-const C_PEN = tpl(R.PEN_SPOT, S_AERIAL, 10.5, 0.5, 0.1);
-const C_FAR = tpl(R.FAR_POST, S_AERIAL, 5.0, -4.5, 0.1);
-const C_NEAR = tpl(R.NEAR_POST, S_AERIAL, 4.5, 2.8, 0.1);
+const C_PEN = tpl(R.PEN_SPOT, S_AERIAL, 10.5, 0.5, LOCAL_TUNING.cornerRunWd);
+const C_FAR = tpl(R.FAR_POST, S_AERIAL, 5.0, -4.5, LOCAL_TUNING.cornerRunWd);
+const C_NEAR = tpl(R.NEAR_POST, S_AERIAL, 4.5, 2.8, LOCAL_TUNING.cornerRunWd);
 const C_STAY1 = tpl(R.STAY_BACK, S_STAY, 54, -8, 0.2);
 const C_EDGE = tpl(R.EDGE, S_SHOOTER, 18.5, -2.5, 0.2);
 const C_SHORT = tpl(R.SHORT, S_SHORT, 4.5, 27, 0.2);
 const C_STAY2 = tpl(R.STAY_BACK, S_STAY, 56, 9, 0.2);
 /** Tactic spots X1, X2 per tactic index (0 default, 1 far post, 2 edge of box, 3 crowd the keeper, 4 near post). */
+const CRW = LOCAL_TUNING.cornerRunWd;
 const C_X1: readonly Tpl[] = [
-  tpl(R.BOX, S_AERIAL, 5.5, 0.8, 0.1), tpl(R.FAR_POST, S_AERIAL, 6.5, -6.5, 0.1), tpl(R.EDGE, S_SHOOTER, 17.5, 5.5, 0.2),
-  tpl(R.SCREEN_KEEPER, S_AERIAL, 1.6, -0.6, 0.1), tpl(R.NEAR_POST, S_AERIAL, 6.0, 4.5, 0.1),
+  tpl(R.BOX, S_AERIAL, 5.5, 0.8, CRW), tpl(R.FAR_POST, S_AERIAL, 6.5, -6.5, CRW), tpl(R.EDGE, S_SHOOTER, 17.5, 5.5, 0.2),
+  tpl(R.SCREEN_KEEPER, S_AERIAL, 1.6, -0.6, CRW), tpl(R.NEAR_POST, S_AERIAL, 6.0, 4.5, CRW),
 ];
 const C_X2: readonly Tpl[] = [
-  tpl(R.BOX, S_AERIAL, 8.5, -7.5, 0.1), tpl(R.FAR_POST, S_AERIAL, 9.5, -9, 0.1), tpl(R.EDGE, S_SHOOTER, 20.5, -9, 0.2),
-  tpl(R.SCREEN_KEEPER, S_AERIAL, 2.0, 1.6, 0.1), tpl(R.NEAR_POST, S_AERIAL, 8.0, 1.5, 0.1),
+  tpl(R.BOX, S_AERIAL, 8.5, -7.5, CRW), tpl(R.FAR_POST, S_AERIAL, 9.5, -9, CRW), tpl(R.EDGE, S_SHOOTER, 20.5, -9, 0.2),
+  tpl(R.SCREEN_KEEPER, S_AERIAL, 2.0, 1.6, CRW), tpl(R.NEAR_POST, S_AERIAL, 8.0, 1.5, CRW),
 ];
 // Corner defence (own goal line = the attacked one).
 const CD_POST = tpl(R.POST_GUARD, S_ANY, 0.7, 3.0, 0.4);
@@ -1331,7 +1335,9 @@ export function setPiecePositions(s: SimState, team: number, ev: EventSink): voi
     const a = s.attrs[slot]!;
     const top = a.topSpeed > 0 ? a.topSpeed : T_PLAYER.topSpeedMin;
     const dx = SPOT_X[slot]! - p.x, dz = SPOT_Z[slot]! - p.z;
-    const far = dx * dx + dz * dz > LT.farDist * LT.farDist;
+    // [QF-2] Corner box runners keep running (the CPU crosses about 2 s after the set-up): no jog inside farDist.
+    const far = dx * dx + dz * dz > LT.farDist * LT.farDist ||
+      (C.kind === RestartKind.CORNER && isBoxRole(SPOT_ROLE[slot]!) && dx * dx + dz * dz > LT.arriveTol * LT.arriveTol);
     routeTo(s, slot);
     assignJob(s, slot, AiJob.SET_PIECE, PT.x, PT.z, top * (far ? LT.farFrac : LT.jogFrac), SPOT_TGT[slot]!);
   }

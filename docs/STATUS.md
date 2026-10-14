@@ -142,28 +142,28 @@ Total assignments: 201.
 | INT-08 | 2 | done | two-page online e2e: share link, lockstep hashes equal, mirrored pause, 20 s rejoin, Finish against CPU; real WebRTC run through a local PeerServer | not yet run on real iPads (DEVICE_CHECKLIST step 7) |
 | INT-09 | 2 | done | INT-B: settings live + persisted after reload (int-b-settings) | |
 | INT-10 | 2 | done | INT-B: plt-01-pwa offline boot from the service worker + update toast in the built app | |
-| QA-01 | 3 | running | QF-1 (hunt + second pass, D-020) | |
-| QA-02 | 3 | running | QF-1 (hunt + second pass, D-020) | |
-| QA-03 | 3 | running | QF-1 (hunt + second pass, D-020) | |
-| QA-04 | 3 | running | QF-1 (hunt + second pass, D-020) | |
-| QA-05 | 3 | running | QF-1 (hunt + second pass, D-020) | |
-| QA-06 | 3 | running | QF-1 (hunt + second pass, D-020) | |
-| QA-07 | 3 | running | QF-1 (hunt + second pass, D-020) | |
-| QA-08 | 3 | running | QF-1 (hunt + second pass, D-020) | |
-| QA-09 | 3 | running | QF-1 (hunt + second pass, D-020) | |
-| QA-10 | 3 | running | QF-1 (hunt + second pass, D-020) | |
-| QA-11 | 3 | running | QF-1 (hunt + second pass, D-020) | |
-| QA-12 | 3 | running | QF-2 (hunt + second pass, D-020) | |
-| QA-13 | 3 | running | QF-2 (hunt + second pass, D-020) | |
-| QA-14 | 3 | running | QF-2 (hunt + second pass, D-020) | |
-| QA-15 | 3 | running | QF-2 (hunt + second pass, D-020) | |
-| QA-16 | 3 | running | QF-2 (hunt + second pass, D-020) | |
-| QA-17 | 3 | running | QF-2 (hunt + second pass, D-020) | |
-| QA-18 | 3 | running | QF-2 (hunt + second pass, D-020) | |
-| QA-19 | 3 | running | QF-2 (hunt + second pass, D-020) | |
-| QA-20 | 3 | running | QF-2 (hunt + second pass, D-020) | |
-| QA-21 | 3 | running | QF-2 (hunt + second pass, D-020) | |
-| QA-22 | 3 | running | QF-2 (hunt + second pass, D-020) | |
+| QA-01 | 3 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
+| QA-02 | 3 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
+| QA-03 | 3 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
+| QA-04 | 3 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
+| QA-05 | 3 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
+| QA-06 | 3 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
+| QA-07 | 3 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
+| QA-08 | 3 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
+| QA-09 | 3 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
+| QA-10 | 3 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
+| QA-11 | 3 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
+| QA-12 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
+| QA-13 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
+| QA-14 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
+| QA-15 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
+| QA-16 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
+| QA-17 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
+| QA-18 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
+| QA-19 | 3 | running | QF-2: ladder 0/5 pairs at 65% (37.5-50% wins, 28-38% draws); balance top v bottom 43-62% -> QF-11 | |
+| QA-20 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
+| QA-21 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
+| QA-22 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
 | QA-23 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
 | QA-24 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
 | QA-25 | 3 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
@@ -186,11 +186,11 @@ Total assignments: 201.
 | QA-42 | 3 | done | QF-6: 33 defects fixed (18 + 15); netsim matrix 24/24, DoD seeds 3-9/2026 0 desyncs; real WebRTC e2e; protocol net2 | 4 cosmetic KNOWN_ISSUES |
 | QA-43 | 3 | queued |  |  |
 | QA-44 | 3 | queued |  |  |
-| FIX-01 | 4 | running | QF-1 (hunt + second pass, D-020) | |
-| FIX-02 | 4 | running | QF-1 (hunt + second pass, D-020) | |
-| FIX-03 | 4 | running | QF-2 (hunt + second pass, D-020) | |
-| FIX-04 | 4 | running | QF-2 (hunt + second pass, D-020) | |
-| FIX-05 | 4 | running | QF-2 (hunt + second pass, D-020) | |
+| FIX-01 | 4 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
+| FIX-02 | 4 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
+| FIX-03 | 4 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
+| FIX-04 | 4 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
+| FIX-05 | 4 | running | QF-2: ladder 0/5 pairs at 65% (37.5-50% wins, 28-38% draws); balance top v bottom 43-62% -> QF-11 | |
 | FIX-06 | 4 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
 | FIX-07 | 4 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
 | FIX-08 | 4 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
@@ -199,7 +199,7 @@ Total assignments: 201.
 | FIX-11 | 4 | done | QF-5: 18 defects fixed (14 + 4); sw.js shell/quota/redirect, build-id update flow, no toast in play, licence notices in dist, audio warm-up + background resume, pause lockout; 797 KB gzip; splash 2.0 s | 3 cosmetic KNOWN_ISSUES |
 | FIX-12 | 4 | done | QF-6: 33 defects fixed (18 + 15); netsim matrix 24/24, DoD seeds 3-9/2026 0 desyncs; real WebRTC e2e; protocol net2 | 4 cosmetic KNOWN_ISSUES |
 | FIX-13 | 4 | queued |  |  |
-| FIX-14 | 4 | running | QF-2 (hunt + second pass, D-020) | |
+| FIX-14 | 4 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
 | SGN-01 | 5 | queued |  |  |
 | SGN-02 | 5 | queued |  |  |
 | SGN-03 | 5 | queued |  |  |

@@ -259,3 +259,37 @@ two scales; estimateXg itself is unchanged in level (TAI-10's tests pin it).
 - Balance (`npx tsx tools/balance.ts --matches 60 --workers 2`): top-bottom (88 v 62) 43.3% wins (was 20%; target
   80%), equal clubs 64.2% points (target 40-60%), mirror 45.8% PASS. Matches of these two clubs average 1.75 goals.
 Both need skill to dominate outcomes far more than now (draws alone cap the win share); see the QF-2 report.
+
+## QF-2 skeptic (Wave 3-4 second pass)
+
+Verification of the first pass on other seeds (`tools/soak.ts --matches 100 --difficulty 3 --enforce all
+--halfMinutes 4 --workers 2`): seed 2 (first-pass code) goals 2.22, shots 14.66, saves 69.2% (96-match batch); with
+the changes below, seed 1 goals 2.57, shots 15.28, save rate 65.5% (96-match batch, `tmp/qf2/exp.sh`), seed 3 goals
+2.38, shots 15.80; every other band, determinism, 0 exceptions / invariant failures / watchdogs on all three. The
+shots band sits ~1 shot above its floor and the save rate at 65.5-69%: a faster keeper (reaction 5 / 17) gives 69.6%
+saves but 2.02 goals, so the first pass's 6 / 19 stays.
+
+| Where | Constant | Was | Now | Why |
+|---|---|---|---|---|
+| GKP-03 (`keeper/sweeper.ts`) | `keepReachSlack` (new) | - | 6 ticks | A rush under way whose interception estimate falls out of the horizon keeps the first point he reaches up to 6 ticks late (TAI-07 `estimateInterceptSlack`). His own reach of a ball rolling to the byline flickered "21 ticks" / "never" and the rush started and aborted on alternate ticks. |
+| GKP-03 | `mateNearMissSlack` / `mateNearMissJump` (new) | - | 6 / 15 ticks | A start also counts a defender who reaches a much earlier window (the first bounce) up to 6 ticks late: his estimate flipped 25 <-> 137 ticks and the keeper started, aborted and restarted the rush (TAI-07's chaser swapped with it). |
+| GKP-03 | `oneOnOneMateStart` / `oneOnOneMateKeep` (new) | (0 / 0) | 3 / 4 ticks | Loose-ball one-on-one: hysteresis between the striker's and the covering defender's arrival (a tie flipped it every other tick). Rush flip-flops in 26 scanned matches: 4 -> 0 (then 0 in 30 more). |
+| TAI-07 (`ai/steer.ts`) | `blockedDist` / `blockedCos` (new) | - | 1.0 m / 0.5 | No ball-facing (lookAt) for a positional player while a body touches him on his way to the target: SIM-05's slide-around skips a player holding a facing, so a marker 2-3 m from his spot ran in place against the man on his line for seconds. |
+| TAI-13 (`ai/setpieces.ts`) | `maxArrivalWait` | 45 | 58 ticks | The CPU corner / wide free-kick cross waits for its box runners up to just before RUL-04 / RUL-05's own CPU fallback (cpuRestartDelay + 60). |
+| TAI-13 | `cornerRunWd` (new; box spots' distance weight) | 0.1 | 1.0 | Box spots went to centre-backs 45 m away by the aerial suitability alone; they also slowed to a jog inside 15 m (now: run until within arriveTol). Attackers in the box at a CPU corner kick: 1.57 -> 2.14 (40 matches); 3.1 once QF-1 raises the fallback (CR). |
+| TAI-13 | `penInsetMax` | 1.1 m | 1.7 m | Every CPU penalty went 2.6-3.2 m out, beyond a full dive in time. |
+| GKP-06 (`keeper/setpieces.ts`) | `diveMidY` | 1.05 m | 1.2 m | GKP-02's dive capsule slopes from the feet (hip - 0.5 m) to the hands, so a mid dive covered only ~1.1 m near his body; every CPU penalty is struck at 1.1-1.6 m. A right guess saved 1 in 19. |
+| GKP-06 | `aiLowChance` / `aiMidChance` | 0.42 / 0.38 | 0.25 / 0.5 | A low dive cannot reach a ball above 0.6 m. Shoot-outs (36 cup matches): 87% -> 81.5% scored, a right guess saves 15%. |
+
+Behaviour fixes without a constant: TAI-11 `maybeClear` presses nothing while a teammate has an open header / volley
+attempt on the ball's flight (two defenders went up for the same header ~10 times a match), and SIM-12 `startAerial`
+ends an AI teammate's open attempt when a controlled player starts his own on the same flight.
+
+Balance and ladder after these changes (same commands as above, seed 1): balance top-bottom 61.7% wins (target 80%,
+FAIL; was 43.3%), equal clubs 53.3% points (PASS; was 64.2%), mirror 56.7% (PASS); ladder 0/5 pairs (52.5 / 62.5 /
+50 / 55 / 55% wins, decisive shares 69-81%; was 37.5-50%). Still a design question (QF-2 first-pass CR 7).
+Lofted passes: SIM-15 `meetPoint` (QF-1) sends a controlled receiver to the first ground-track point he can reach,
+ignoring the ball's height, and the CPU always controls its own receiver: LOB_PASS reached a teammate 2 times in 64,
+keeper overarm throws 1 in 10 (8 out for a throw-in). With the one-line fix proposed to QF-1 (skip samples above head
+height) the same matches give 38 / 65 and 11 / 11, and a 100-match soak still passes every band (pass completion 77.2%,
+shots 14.53, blow-outs 4%): re-check shots and blow-outs, and re-fit TAI-09's aerial completion factors, once it lands.

@@ -109,6 +109,10 @@ export const LOCAL_TUNING = {
   /** Hold short of an occupied target from this distance, m (+ occupiedHoldExtra when already at rest). */
   occupiedStopDist: 1.5,
   occupiedHoldExtra: 0.5,
+  /** [QF-2] A body whose centre is within blockedDist of a positional player and within acos(blockedCos) of his way
+   *  to the target blocks it: he does not turn to face the ball (SIM-05 then slides him round it), m / cos. */
+  blockedDist: 1.0,
+  blockedCos: 0.5,
   /** [INT-A trailing] A ball job chasing a loose ball that rolls away from him (faster than overshootMinSpeed m/s)
    *  aims overshootSec x ball speed (at least overshootMin: more than his braking distance at top speed; at most
    *  overshootMax m) beyond his target along the ball's path, so SIM-04's arrival braking does not leave him trailing
@@ -268,9 +272,10 @@ function ensurePrediction(s: SimState): void {
 
 /**
  * Earliest interception of the predicted ball by `slot` (prediction must be current). Writes IX/IZ/IT/IP/IF[slot].
- * Returns the ball arrival tick IT.
+ * Returns the ball arrival tick IT. [QF-2] `slack` (ticks, default 0): a sample counts as reached when he gets there
+ * at most this many ticks after the ball (negative: that many ticks before it); see estimateInterceptSlack.
  */
-function evalIntercept(s: SimState, slot: number): number {
+function evalIntercept(s: SimState, slot: number, slack = 0): number {
   const p = s.players[slot]!;
   const a = s.attrs[slot]!;
   const counted = lockCountedByReach(p);
@@ -300,15 +305,16 @@ function evalIntercept(s: SimState, slot: number): number {
     const dx = xs[i]! - p.x, dz = zs[i]! - p.z;
     const d = Math.sqrt(dx * dx + dz * dz);
     const lb = busy + (d > LT.chaseReachSlack ? (d - LT.chaseReachSlack) * L : 0);
-    if (lb > tick) { i++; continue; }
+    if (lb > tick + slack) { i++; continue; }
     if (evals >= LT.chaseMaxEvals) break;
     evals++;
     const tt = extra + ticksToReach(s, slot, xs[i]!, zs[i]!);
-    if (tt <= tick) { found = i; foundTT = tt; break; }
-    // Lipschitz skip: tt(j) >= tt - K * |P_j - P_i| >= tt - K * (CUM[j] - CUM[i]); skip while that exceeds j + 1.
+    if (tt <= tick + slack) { found = i; foundTT = tt; break; }
+    // Lipschitz skip: tt(j) >= tt - K * |P_j - P_i| >= tt - K * (CUM[j] - CUM[i]); skip while that exceeds j + 1
+    // (+ slack).
     const ci = CUM[i]!;
     let j = i + 1;
-    while (j < n && tt - K * (CUM[j]! - ci) > j + 1) j++;
+    while (j < n && tt - K * (CUM[j]! - ci) > j + 1 + slack) j++;
     i = j;
   }
   if (found >= 0) {
@@ -351,6 +357,21 @@ export function createInterceptEstimate(): InterceptEstimate {
 export function estimateIntercept(s: SimState, slot: number, out: InterceptEstimate): number {
   ensurePrediction(s);
   evalIntercept(s, slot);
+  out.x = IX[slot]!; out.z = IZ[slot]!; out.ballT = IT[slot]!; out.playerT = IP[slot]!; out.inHorizon = IF[slot]!;
+  return out.ballT;
+}
+
+/**
+ * [QF-2] estimateIntercept with an arrival slack: the first playable sample `slot` reaches at most `slack` ticks after
+ * the ball is there (slack > 0: a near miss counts as reached; slack < 0: he must be there that many ticks early).
+ * The first reachable sample of a long or bouncing flight is a knife edge (a man who makes the first-bounce window by
+ * one tick is 25 ticks away, by one tick too few 140), so a decision with a start and a keep side (GKP-03 come-out)
+ * judges the two sides with different slacks: hysteresis instead of a start / abort flip-flop. slack 0 is exactly
+ * estimateIntercept. Returns out.ballT.
+ */
+export function estimateInterceptSlack(s: SimState, slot: number, slack: number, out: InterceptEstimate): number {
+  ensurePrediction(s);
+  evalIntercept(s, slot, slack === slack ? slack : 0);
   out.x = IX[slot]!; out.z = IZ[slot]!; out.ballT = IT[slot]!; out.playerT = IP[slot]!; out.inHorizon = IF[slot]!;
   return out.ballT;
 }
@@ -567,7 +588,31 @@ function steerJob(s: SimState, slot: number): void {
   p.moveMode = MoveMode.ARRIVE;
   p.tgtSpeed = req;
   p.wantSprint = sprint ? 1 : 0;
-  p.lookAt = ballJob ? (d <= LT.ballJobFaceDist ? 1 : 0) : (face === 1 && d <= LT.faceBallDist ? 1 : 0);
+  // [QF-2] Not while a body blocks the way: SIM-05's slide-around ignores a player holding a facing, so a marker 2-3 m
+  // from his spot pushed into the man standing on his line for ever (glitch "run in place against each other").
+  p.lookAt = ballJob ? (d <= LT.ballJobFaceDist ? 1 : 0)
+    : (face === 1 && d <= LT.faceBallDist && !pathBlocked(s, slot, dx, dz, d) ? 1 : 0);
+}
+
+/**
+ * [QF-2] True if another active player's body touches `slot` on his way to the target (centre within blockedDist and
+ * within acos(blockedCos) of the direction (dx, dz) / d).
+ */
+function pathBlocked(s: SimState, slot: number, dx: number, dz: number, d: number): boolean {
+  if (!(d > 1e-6)) return false;
+  const p = s.players[slot]!;
+  const ux = dx / d, uz = dz / d;
+  const r2max = LT.blockedDist * LT.blockedDist;
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    if (i === slot) continue;
+    const q = s.players[i]!;
+    if (q.active !== 1) continue;
+    const rx = q.x - p.x, rz = q.z - p.z;
+    const r2 = rx * rx + rz * rz;
+    if (r2 > r2max || r2 < 1e-12) continue;
+    if (rx * ux + rz * uz >= LT.blockedCos * Math.sqrt(r2)) return true;
+  }
+  return false;
 }
 
 export function executeJobs(s: SimState, team: number, ev: EventSink): void {

@@ -98,11 +98,14 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** AI dive choice: shift of that chance toward the side of the kicker's previous penalty (0..1). */
   aiHistoryWeight: 0.12,
   /** AI dive height chances: low, mid; high takes the rest (0..1). */
-  aiLowChance: 0.42,
-  aiMidChance: 0.38,
-  /** Dive target hand height per class low / mid / high, m (GKP-02 classes: < 0.6 low, < 1.5 mid). */
+  aiLowChance: 0.25, // [QF-2] was 0.42 / 0.38: penalties are struck mid-height far more often than along the ground
+  aiMidChance: 0.5,
+  /** Dive target hand height per class low / mid / high, m (GKP-02 classes: < 0.6 low, < 1.5 mid). [QF-2] mid was
+   *  1.05: GKP-02's dive capsule slopes from the feet (hip - 0.5 m) up to the hands, so a mid dive covered only up to
+   *  ~1.1 m near his body and a penalty struck at 1.1-1.5 m (every CPU penalty, most human ones) went in over a keeper
+   *  who had guessed right (1 save in 19 right guesses; 4% of shoot-out kicks saved). */
   diveLowY: 0.3,
-  diveMidY: 1.05,
+  diveMidY: 1.2,
   diveHighY: 1.9,
   /** Dive target this far in front of his position (toward the kicker), m. */
   diveForward: 0.3,

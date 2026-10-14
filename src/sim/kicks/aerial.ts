@@ -905,7 +905,25 @@ function startAerial(
   const target = req.targetSlot >= 0 && req.targetSlot < NS ? req.targetSlot : -1;
   const power = req.power === req.power ? req.power : 0.5;
   beginAerial(s, slot, act, kind, power, dx, dz, target, ((assist & 3) << ASSIST_SHIFT) | extra, 0);
+  yieldTeammates(s, slot);
   return 1;
+}
+
+/**
+ * [QF-2] The controlled player's attempt takes the flight: an AI-driven teammate's open attempt on it ends (abort
+ * recovery after his landing), so two teammates never go up for the same ball. (AI attempts already skip a flight a
+ * teammate attempts, teamAttempting; SIM-16 switching away from a player mid-attempt left the reverse case open.)
+ */
+function yieldTeammates(s: SimState, slot: number): void {
+  const p = s.players[slot]!;
+  const flight = s.ball.lastTouchTick;
+  const first = p.team === 0 ? 0 : NS / 2;
+  for (let i = first; i < first + NS / 2; i++) {
+    if (i === slot) continue;
+    const q = s.players[i]!;
+    if (q.active !== 1 || !isAerialAct(q.act) || q.actDone !== 0 || q.actB !== flight || q.ctrl >= 0) continue;
+    finishAttempt(s, i, true);
+  }
 }
 
 /** Start a HEADER (HEADER_SHOT / HEADER_PASS) under a dropping ball. Returns 1 if started. */
