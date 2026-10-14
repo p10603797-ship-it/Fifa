@@ -61,7 +61,9 @@
  *  p0 (tick of the previous call), p1 (step | mode << 4 | started << 6 | failMask << 7 | failEvals << 17),
  *  p2 (utility of the committed plan), p3 (buttons to press, or the SkillMove for SKILL).
  * Determinism / cost: plain arithmetic + Math.sqrt / Math.round, s.rng only for noise, slot-order loops, module
- * scratch only (no allocation). Per tick O(11); per evaluation one TAI-09 scan plus a few TAI-10 calls.
+ * scratch only (no allocation; on the hot paths doubles travel through typed scratch — SV stick, NZ noise, CU option —
+ * instead of call arguments / return values, which V8 would box). Per tick O(11); per evaluation one TAI-09 scan plus
+ * a few TAI-10 calls (about 0.04 ms per full evaluation on desktop Node, tests/perf/tai-08-budget.test.ts).
  */
 import {
   CPU_CONTROLLER_BASE, DT, GOAL_HALF_WIDTH, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PLAYERS_PER_TEAM,
@@ -255,6 +257,12 @@ const MAX_OPTIONS = 48;
 const OPTS: PassOption[] = createPassOptions(MAX_OPTIONS);
 /** bestDribble / fallback direction (scratch). */
 const DRB = { x: 0, z: 0 };
+/** Stick scratch for stickOut / canSprint: direction x, z and magnitude. */
+const SV = new Float64Array(3);
+/** Noise scratch: NZ[0] decision noise (noise()), NZ[1] a Gaussian draw (gauss()). */
+const NZ = new Float64Array(2);
+/** Candidate option for consider(): utility, target x / direction x, target z / direction z. */
+const CU = new Float64Array(3);
 
 /** Execution steps (brain.p1 bits 0..3). */
 const STEP_NONE = 0;
@@ -328,8 +336,12 @@ function readyToAct(p: Readonly<PlayerState>): boolean {
   return p.active === 1 && p.stunT <= 0 && (p.act === ActionKind.NONE || p.act === ActionKind.SHIELD);
 }
 
-/** Write the movement stick toward (dx, dz) at magnitude mag (0..1); released when the direction is degenerate. */
-function stickToward(out: InputFrame, dx: number, dz: number, mag: number): void {
+/**
+ * Write the movement stick toward (SV[0], SV[1]) at magnitude SV[2] (0..1); released when the direction is degenerate.
+ * The arguments travel through the SV scratch so no double crosses a call boundary on the per-tick path (V8 boxes those).
+ */
+function stickOut(out: InputFrame): void {
+  const dx = SV[0]!, dz = SV[1]!, mag = SV[2]!;
   const d = Math.sqrt(dx * dx + dz * dz);
   if (!(d > 1e-6) || !(mag > 0)) { out.mx = 0; out.mz = 0; return; }
   const k = (STICK_MAX * (mag < 1 ? mag : 1)) / d;
@@ -398,7 +410,7 @@ function emitCarry(s: SimState, p: Readonly<PlayerState>, out: InputFrame): void
   const v = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
   if (v < 0.5) return;
   const jog = s.attrs[p.slot]!.topSpeed * T_PLAYER.jogFraction;
-  stickToward(out, p.vx, p.vz, jog > 0 ? v / jog : 1);
+  SV[0] = p.vx; SV[1] = p.vz; SV[2] = jog > 0 ? v / jog : 1; stickOut(out);
 }
 
 // ---------------------------------------------------------------- decision
@@ -435,13 +447,21 @@ function fillContext(s: SimState, team: number, p: Readonly<PlayerState>, lv: Re
   C.pressure = pressD <= LT.pressNear ? 1 : pressD >= LT.pressFar ? 0 : 1 - (pressD - LT.pressNear) / (LT.pressFar - LT.pressNear);
 }
 
-function noise(s: SimState): number {
-  return C.noiseSd > 0 ? rngGauss(s.rng) * C.noiseSd : 0;
+/** Decision noise into NZ[0] (results travel through typed scratch: V8 boxes doubles returned across calls). */
+function noise(s: SimState): void {
+  NZ[0] = C.noiseSd > 0 ? rngGauss(s.rng) * C.noiseSd : 0;
 }
 
-function consider(plan: CpuPlan, u: number, slot: number, x: number, z: number, mode: number, kind: number): void {
+/** One standard Gaussian draw (s.rng) into NZ[1]. */
+function gauss(s: SimState): void {
+  NZ[1] = rngGauss(s.rng);
+}
+
+/** Keep the option (utility CU[0], target / direction CU[1], CU[2]) if it beats the best so far. */
+function consider(plan: CpuPlan, slot: number, mode: number, kind: number): void {
+  const u = CU[0]!;
   if (!(u > BEST.u)) return;
-  BEST.plan = plan; BEST.u = u; BEST.slot = slot; BEST.x = x; BEST.z = z; BEST.mode = mode; BEST.kind = kind;
+  BEST.plan = plan; BEST.u = u; BEST.slot = slot; BEST.x = CU[1]!; BEST.z = CU[2]!; BEST.mode = mode; BEST.kind = kind;
 }
 
 function planOfPass(kind: number): CpuPlan {
@@ -494,8 +514,10 @@ function passOptionsInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<Sty
     let u = C.vHere + gain - settle;
     const prog = fin(o.progress);
     if (C.counter === 1 && prog > 0) u += LT.counterPerM * prog * clamp01(sw.counter) * 2;
-    u += noise(s);
-    consider(plan, u, tgt, ox, oz, modeOfPass(o.kind), o.kind);
+    noise(s);
+    u += NZ[0]!;
+    CU[0] = u; CU[1] = ox; CU[2] = oz;
+    consider(plan, tgt, modeOfPass(o.kind), o.kind);
   }
 }
 
@@ -512,8 +534,10 @@ function shotOptionInto(s: SimState, p: Readonly<PlayerState>, lv: Readonly<Leve
   let u = xg + (1 - xg) * LT.shotMissValue;
   if (inPenaltyArea(p.x, p.z, C.dir)) u += LT.boxShotBonus;
   if (long && u > C.vHere) u = C.vHere + (u - C.vHere) * styleMul(ls);
-  u += noise(s);
-  consider(CpuPlan.SHOOT, u, -1, 0, 0, MODE_BUTTON, KickKind.SHOT_NORMAL);
+  noise(s);
+  u += NZ[0]!;
+  CU[0] = u; CU[1] = 0; CU[2] = 0;
+  consider(CpuPlan.SHOOT, -1, MODE_BUTTON, KickKind.SHOT_NORMAL);
 }
 
 /** Toward the attacked goal, turned 45 degrees away from an opponent close ahead (into DRB). */
@@ -559,8 +583,10 @@ function dribbleOptionInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<S
   let u = C.vHere + gain;
   if (p.isKeeper === 1) u -= LT.keeperDribblePenalty;
   if (cur === CpuPlan.DRIBBLE) u += LT.switchMargin;
-  u += noise(s);
-  consider(CpuPlan.DRIBBLE, u, -1, dx, dz, MODE_NONE, KickKind.NONE);
+  noise(s);
+  u += NZ[0]!;
+  CU[0] = u; CU[1] = dx; CU[2] = dz;
+  consider(CpuPlan.DRIBBLE, -1, MODE_NONE, KickKind.NONE);
 }
 
 function skillOptionInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<StyleWeights>): void {
@@ -576,8 +602,10 @@ function skillOptionInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<Sty
   const raw = succ * posValue(nprog) - (1 - succ) * lossCost(C.prog);
   let gain = raw - C.vHere;
   if (gain > 0) gain *= styleMul(sw.dribble);
-  const u = C.vHere + gain + noise(s);
-  consider(CpuPlan.SKILL, u, -1, 0, 0, MODE_NONE, sk);
+  noise(s);
+  const u = C.vHere + gain + NZ[0]!;
+  CU[0] = u; CU[1] = 0; CU[2] = 0;
+  consider(CpuPlan.SKILL, -1, MODE_NONE, sk);
 }
 
 function shieldOptionInto(s: SimState, p: Readonly<PlayerState>, cur: CpuPlan, age: number): void {
@@ -586,16 +614,20 @@ function shieldOptionInto(s: SimState, p: Readonly<PlayerState>, cur: CpuPlan, a
   const loss = clamp01((LT.shieldLossWeak + (LT.shieldLossStrong - LT.shieldLossWeak) * str) * (1 + age / LT.shieldAgeRef));
   let u = (1 - loss) * C.vHere - loss * lossCost(C.prog);
   if (cur === CpuPlan.SHIELD) u += LT.switchMargin;
-  u += noise(s);
-  consider(CpuPlan.SHIELD, u, -1, 0, 0, MODE_NONE, KickKind.NONE);
+  noise(s);
+  u += NZ[0]!;
+  CU[0] = u; CU[1] = 0; CU[2] = 0;
+  consider(CpuPlan.SHIELD, -1, MODE_NONE, KickKind.NONE);
 }
 
 function clearOptionInto(s: SimState, p: Readonly<PlayerState>): void {
   if (C.prog >= LT.clearProgress || C.nearD > LT.clearPressDist) return;
   let u = LT.clearValue;
   if (inPenaltyArea(p.x, p.z, -C.dir)) u += LT.clearBoxBonus;
-  u += noise(s);
-  consider(CpuPlan.CLEAR, u, -1, 0, 0, MODE_BUTTON, KickKind.LOB_PASS);
+  noise(s);
+  u += NZ[0]!;
+  CU[0] = u; CU[1] = 0; CU[2] = 0;
+  consider(CpuPlan.CLEAR, -1, MODE_BUTTON, KickKind.LOB_PASS);
 }
 
 /** Score every option and commit to the best (see the header). */
@@ -660,13 +692,15 @@ function commitShot(s: SimState, team: number, brain: CpuBrainState, p: Readonly
   else if (kz < -LT.keeperSideDead) side = 1;
   else side = p.z > 0 ? -1 : 1; // far post
   const ex = fin(lv.executionError);
-  let az = side * (GOAL_HALF_WIDTH - LT.shotInset) + rngGauss(s.rng) * LT.aimNoise * ex;
+  gauss(s);
+  let az = side * (GOAL_HALF_WIDTH - LT.shotInset) + NZ[1]! * LT.aimNoise * ex;
   const lim = GOAL_HALF_WIDTH + 1;
   if (az > lim) az = lim; else if (az < -lim) az = -lim;
   const dx = gx - p.x;
   const dist = Math.sqrt(dx * dx + p.z * p.z);
   const f = clamp01((dist - LT.shotNearDist) / (LT.shotFarDist - LT.shotNearDist));
-  let power = LT.shotPowerNear + (LT.shotPowerFar - LT.shotPowerNear) * f + rngGauss(s.rng) * LT.powerNoise * ex;
+  gauss(s);
+  let power = LT.shotPowerNear + (LT.shotPowerFar - LT.shotPowerNear) * f + NZ[1]! * LT.powerNoise * ex;
   if (power < LT.shotPowerMin) power = LT.shotPowerMin; else if (power > LT.shotPowerMax) power = LT.shotPowerMax;
   let btn: number = Btn.SHOOT;
   const a = s.attrs[p.slot]!;
@@ -680,7 +714,8 @@ function commitClear(s: SimState, team: number, brain: CpuBrainState, p: Readonl
   const side = p.z >= 0 ? 1 : -1;
   const tx = clampTapX(p.x + C.dir * LT.clearDist);
   const tz = clampTapZ(side * LT.clearSide);
-  const power = LT.clearPower + rngGauss(s.rng) * LT.powerNoise * fin(lv.executionError);
+  gauss(s);
+  const power = LT.clearPower + NZ[1]! * LT.powerNoise * fin(lv.executionError);
   commitKick(brain, CpuPlan.CLEAR, MODE_BUTTON, -1, tx, tz, Btn.LOB, holdFor(power, powerFill(s, team)));
 }
 
@@ -691,8 +726,10 @@ function commitPass(s: SimState, team: number, brain: CpuBrainState, p: Readonly
   const mode = BEST.mode;
   const ex = fin(lv.executionError);
   if (plan === CpuPlan.THROUGH) {
-    let tx = BEST.x + rngGauss(s.rng) * LT.tapNoise * ex;
-    const tz = BEST.z + rngGauss(s.rng) * LT.tapNoise * ex;
+    gauss(s);
+    let tx = BEST.x + NZ[1]! * LT.tapNoise * ex;
+    gauss(s);
+    const tz = BEST.z + NZ[1]! * LT.tapNoise * ex;
     if (C.dir * (tx - q.x) < LT.throughMinLead) tx = q.x + C.dir * LT.throughMinLead;
     commitKick(brain, plan, mode, slot, clampTapX(tx), clampTapZ(tz), 0, 0);
     return;
@@ -704,7 +741,8 @@ function commitPass(s: SimState, team: number, brain: CpuBrainState, p: Readonly
   if (mode === MODE_BUTTON) {
     const dx = q.x - p.x, dz = q.z - p.z;
     const d = Math.sqrt(dx * dx + dz * dz);
-    let power = LT.drivenPowerBase + LT.drivenPowerPerM * d + rngGauss(s.rng) * LT.powerNoise * ex;
+    gauss(s);
+    let power = LT.drivenPowerBase + LT.drivenPowerPerM * d + NZ[1]! * LT.powerNoise * ex;
     if (power > LT.drivenPowerMax) power = LT.drivenPowerMax;
     commitKick(brain, plan, mode, slot, q.x, q.z, Btn.PASS | Btn.MOD_R, holdFor(power, powerFill(s, team)));
     return;
@@ -726,7 +764,8 @@ function commitSkill(s: SimState, brain: CpuBrainState, p: Readonly<PlayerState>
   }
   const ex = -fz * side + fx * LT.skillForward;
   const ez = fx * side + fz * LT.skillForward;
-  rotateInto(ex, ez, rngGauss(s.rng) * LT.dirNoise * fin(lv.executionError));
+  gauss(s);
+  rotateInto(ex, ez, NZ[1]! * LT.dirNoise * fin(lv.executionError));
   brain.plan = CpuPlan.SKILL;
   brain.planSlot = -1;
   brain.planX = DRB.x;
@@ -760,7 +799,8 @@ function commit(s: SimState, team: number, brain: CpuBrainState, p: Readonly<Pla
         const bl = Math.sqrt(bx * bx + bz * bz);
         if (bl > 0.3) { dx = bx / bl; dz = bz / bl; }
       }
-      rotateInto(dx, dz, rngGauss(s.rng) * LT.dirNoise * fin(lv.executionError));
+      gauss(s);
+      rotateInto(dx, dz, NZ[1]! * LT.dirNoise * fin(lv.executionError));
       commitContinuous(brain, CpuPlan.DRIBBLE);
       brain.planX = DRB.x;
       brain.planZ = DRB.z;
@@ -806,9 +846,10 @@ function nearestOpponent(s: SimState, p: Readonly<PlayerState>): void {
   C.nearD = bi >= 0 ? Math.sqrt(best) : 1e9;
 }
 
-/** Space to sprint along the unit direction (dx, dz): nobody tight, nobody close in the cone ahead, stamina left. */
-function canSprint(s: SimState, team: number, p: Readonly<PlayerState>, dx: number, dz: number): boolean {
+/** Space to sprint along the unit direction (SV[0], SV[1]): nobody tight, nobody close in the cone ahead, stamina left. */
+function canSprint(s: SimState, team: number, p: Readonly<PlayerState>): boolean {
   if (p.isKeeper === 1 || p.stamina <= LT.sprintMinStamina) return false;
+  const dx = SV[0]!, dz = SV[1]!;
   const space = LT.sprintSpaceDist * (s.teams[team]!.phase === TeamPhase.TRANSITION_ATTACK ? LT.counterSpaceMul : 1);
   const first = team === 0 ? PLAYERS_PER_TEAM : 0;
   for (let i = first; i < first + PLAYERS_PER_TEAM; i++) {
@@ -845,8 +886,10 @@ function runDribble(s: SimState, team: number, brain: CpuBrainState, p: Readonly
     if (bd > T_DRIBBLE.controlRadius + v * LT.reachLookahead + LT.leashMargin) { dx = bx / bd; dz = bz / bd; }
   }
   nearestOpponent(s, p);
-  const sprint = !turning && canSprint(s, team, p, dx, dz);
-  stickToward(out, dx, dz, sprint ? 1 : C.nearD <= LT.tightDist ? LT.tightStick : LT.jogStick);
+  SV[0] = dx; SV[1] = dz;
+  const sprint = !turning && canSprint(s, team, p);
+  SV[2] = sprint ? 1 : C.nearD <= LT.tightDist ? LT.tightStick : LT.jogStick;
+  stickOut(out);
   if (sprint) out.buttons |= Btn.SPRINT;
   brain.planT++;
 }
@@ -854,7 +897,7 @@ function runDribble(s: SimState, team: number, brain: CpuBrainState, p: Readonly
 function runSkill(s: SimState, team: number, brain: CpuBrainState, p: Readonly<PlayerState>, out: InputFrame): void {
   const step = stepOf(brain);
   if (step === STEP_FIRE) {
-    stickToward(out, brain.planX, brain.planZ, 1);
+    SV[0] = brain.planX; SV[1] = brain.planZ; SV[2] = 1; stickOut(out);
     if (!readyToAct(p)) {
       brain.planT++;
       if (brain.planT > LT.readyWaitTicks) abortPlan(brain, false);
@@ -866,7 +909,7 @@ function runSkill(s: SimState, team: number, brain: CpuBrainState, p: Readonly<P
   }
   if (p.act === ActionKind.SKILL) {
     markStarted(brain);
-    stickToward(out, brain.planX, brain.planZ, 1);
+    SV[0] = brain.planX; SV[1] = brain.planZ; SV[2] = 1; stickOut(out);
     return;
   }
   if (startedOf(brain) === 1) {
@@ -898,7 +941,7 @@ function runKick(s: SimState, brain: CpuBrainState, p: Readonly<PlayerState>, ou
       setStep(brain, STEP_FIRE);
       step = STEP_FIRE;
     } else {
-      stickToward(out, dx, dz, LT.aimStick);
+      SV[0] = dx; SV[1] = dz; SV[2] = LT.aimStick; stickOut(out);
       brain.planT++;
       return;
     }
@@ -906,14 +949,14 @@ function runKick(s: SimState, brain: CpuBrainState, p: Readonly<PlayerState>, ou
   const mode = modeOf(brain);
   if (step === STEP_FIRE) {
     if (!readyToAct(p)) {
-      stickToward(out, dx, dz, LT.aimStick);
+      SV[0] = dx; SV[1] = dz; SV[2] = LT.aimStick; stickOut(out);
       brain.planT++;
       if (brain.planT > LT.readyWaitTicks) abortPlan(brain, false);
       return;
     }
     if (mode === MODE_BUTTON) {
       out.buttons |= brain.p3;
-      stickToward(out, dx, dz, 1);
+      SV[0] = dx; SV[1] = dz; SV[2] = 1; stickOut(out);
       setStep(brain, STEP_HOLD);
       brain.planT = 1;
       return;
@@ -930,11 +973,11 @@ function runKick(s: SimState, brain: CpuBrainState, p: Readonly<PlayerState>, ou
     if (brain.planT >= brain.holdTicks) {
       // Release this tick (no buttons): the power bar stops at the held time.
       setStep(brain, STEP_WAIT);
-      stickToward(out, dx, dz, 1);
+      SV[0] = dx; SV[1] = dz; SV[2] = 1; stickOut(out);
       return;
     }
     out.buttons |= brain.p3 & FACE_MASK;
-    stickToward(out, dx, dz, 1);
+    SV[0] = dx; SV[1] = dz; SV[2] = 1; stickOut(out);
     brain.planT++;
     if (startedOf(brain) === 0 && brain.planT > LT.startTimeoutTicks) abortPlan(brain, true);
     return;

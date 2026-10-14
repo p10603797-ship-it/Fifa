@@ -32,6 +32,22 @@ describe('AUD-01 buffer bank', () => {
     expect(Array.from(buf.data[1]!)).toEqual(Array.from(ref[1]!));
   });
 
+  it('renderNow finishes one job at once (menu sounds right after the unlock tap) and leaves the others to pump', () => {
+    const ac = createFakeContext();
+    const bank = createBufferBank(asContext(ac), { chunk: 1000 });
+    const big = bank.define('big', 1, 1, tone);
+    const small = bank.define('small', 0.05, 1, tone);
+    expect(bank.renderNow(small)).toBe(true);
+    expect(bank.get(small)).not.toBeNull();
+    expect(bank.get(big)).toBeNull();
+    expect(bank.pending).toBe(1);
+    expect(bank.renderNow(small)).toBe(true); // already done: no-op
+    expect(bank.renderNow(99)).toBe(false);
+    while (!bank.pump(0)) { /* the remaining job renders in chunks */ }
+    expect(bank.get(big)).not.toBeNull();
+    expect(bank.pending).toBe(0);
+  });
+
   it('pump stays within its time budget and always makes progress (no frame hitch)', () => {
     const ac = createFakeContext();
     let t = 0;

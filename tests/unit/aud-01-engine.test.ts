@@ -585,6 +585,11 @@ describe('AUD-01 update, bank pumping and UI sounds', () => {
     engine.update(STATE, 1 / 60);
     expect(chunks).toBeLessThanOrEqual(T.bankBudgetMs + 1);
     expect(bank.get(h)).toBeNull();
+    // In menus (no match state) frames are mostly idle: a larger slice, still bounded.
+    chunks = 0;
+    engine.update(null, 1 / 60);
+    expect(chunks).toBeGreaterThan(T.bankBudgetMs);
+    expect(chunks).toBeLessThanOrEqual(T.bankMenuBudgetMs + 1);
     for (let i = 0; i < 200 && bank.pending > 0; i++) frames(ac, engine, 1);
     expect(bank.get(h)).not.toBeNull();
     engine.update(STATE, 5); // a long stall: modules see at most maxDt
@@ -603,15 +608,40 @@ describe('AUD-01 update, bank pumping and UI sounds', () => {
     expect(mods.crowd.updates).toBe(2);
   });
 
-  it('playUi plays only once the context runs', async () => {
-    const { ac, engine } = harness();
+  it('playUi plays only once the context runs; a stale request (older than pendingUiMs) is dropped', async () => {
+    const { ac, engine, tick } = harness();
     ac.mode = 'refuse';
     await engine.unlock();
     engine.playUi(UiSound.CONFIRM);
     expect(mods.ui.plays).toEqual([]);
+    tick(T.pendingUiMs + 1);
     ac.setState('running');
+    expect(mods.ui.plays).toEqual([]);
     engine.playUi(UiSound.BACK);
     expect(mods.ui.plays).toEqual([UiSound.BACK]);
+  });
+
+  it('the splash tap: START asked for while the unlock is still starting the context plays once it runs', async () => {
+    const { ac, engine, tick } = harness();
+    ac.mode = 'hang'; // resume() pending (the context starts asynchronously after the gesture)
+    void engine.unlock();
+    engine.playUi(UiSound.START);
+    expect(mods.ui.plays).toEqual([]);
+    tick(100);
+    ac.setState('running');
+    expect(mods.ui.plays).toEqual([UiSound.START]);
+    // Played once only.
+    frames(ac, engine, 3);
+    ac.setState('suspended');
+    ac.setState('running');
+    expect(mods.ui.plays).toEqual([UiSound.START]);
+    // Backgrounding drops a pending request.
+    ac.setState('suspended');
+    engine.playUi(UiSound.CONFIRM);
+    engine.suspend();
+    engine.resume();
+    ac.setState('running');
+    expect(mods.ui.plays).toEqual([UiSound.START]);
   });
 });
 

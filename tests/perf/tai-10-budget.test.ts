@@ -38,31 +38,33 @@ const PROBE = `
     midfield: () => scene(6, 0, 0, 0.9),
     duel: () => { const s = scene(9, 20, 2, 1.5); const d = s.players[13]; d.x = 23; d.z = 2.3; d.vx = -3; return s; },
   };
-  const FNS = {
-    xg: (s, slot) => estimateXg(s, slot, s.players[slot].x, s.players[slot].z),
-    dribble: (s, slot, out) => bestDribble(s, slot, out),
-    skill: (s, slot) => chooseSkill(s, slot),
-  };
-  const res = { us: {}, alloc: {}, v: {} };
+  // Each probe accumulates into a typed array and returns nothing, so the harness's own (megamorphic) calls box no
+  // doubles: what is measured is the functions' own allocation.
   const out = { x: 0, z: 0 };
   const acc = new Float64Array(1);
+  const FNS = {
+    xg: (s, slot) => { acc[0] += estimateXg(s, slot, s.players[slot].x, s.players[slot].z); },
+    dribble: (s, slot) => { acc[0] += bestDribble(s, slot, out); },
+    skill: (s, slot) => { acc[0] += chooseSkill(s, slot); },
+  };
+  const res = { us: {}, alloc: {}, v: {} };
   for (const [cname, mk] of Object.entries(CASES)) {
     const s = mk();
     const slot = s.ball.owner;
     for (const [fname, fn] of Object.entries(FNS)) {
       const key = cname + '.' + fname;
-      for (let i = 0; i < 5000; i++) acc[0] += fn(s, slot, out);
+      for (let i = 0; i < 5000; i++) fn(s, slot);
       let best = Infinity;
       for (let b = 0; b < 1500; b++) {
         const t0 = performance.now();
-        for (let i = 0; i < 16; i++) acc[0] += fn(s, slot, out);
+        for (let i = 0; i < 16; i++) fn(s, slot);
         best = Math.min(best, (performance.now() - t0) / 16);
       }
       res.us[key] = best * 1000;
-      res.v[key] = fn(s, slot, out);
+      acc[0] = 0; fn(s, slot); res.v[key] = acc[0];
       globalThis.gc();
       const h0 = process.memoryUsage().heapUsed;
-      for (let i = 0; i < 20000; i++) acc[0] += fn(s, slot, out);
+      for (let i = 0; i < 20000; i++) fn(s, slot);
       res.alloc[key] = (process.memoryUsage().heapUsed - h0) / 20000;
     }
   }

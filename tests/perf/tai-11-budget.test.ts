@@ -1,13 +1,14 @@
 /**
- * TAI-11 budget: cpuDefend < 0.03 ms per call and no source-level allocation per call.
+ * TAI-11 budget: cpuDefend < 0.03 ms per call and no source-level allocation per call (measured for defending.ts).
  *
  * Measured in a plain Node child process (node --import tsx), not inside the Vitest worker (Vitest's SSR transform
  * turns every imported binding into a getter and would measure the test runner). Best of many short batches so a
  * busy machine does not make the check flaky. Scenarios cover the expensive paths: a carrier dribbling at the
  * defender with the ball exposed (tackle timing, careful prediction, slide checks, keeper-rush channel scan), the
  * player-choice evaluation on every call (10 SIM-04 ticksToReach estimates), an opponent pass in flight (two TAI-07
- * interception estimates) and a loose ball in our third (interception + clearance checks). Positions drift every call
- * so nothing is cached between calls.
+ * interception estimates), a loose ball in our third (interception + clearance checks), a loose ball the CPU-controlled
+ * chaser runs down, one an AI teammate chases (cover) and our own pass rolling away from its receiver. Positions drift
+ * every call so nothing is cached between calls.
  */
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -65,8 +66,37 @@ const PROBE = `
       s.players[C].x = 40; s.players[C].z = 3;
       s.teams[1].cpu.seenOwner = -1; s.teams[1].cpu.reactT = 0; s.teams[1].cpu.tackleCd = 0;
     },
+    looseChase: (s, k) => {
+      const b = s.ball;
+      b.owner = -1; b.heldBy = -1; b.x = 5 + (k % 50) * 0.01; b.z = 4; b.vx = 6; b.vz = 1; b.y = 0.11; b.grounded = 1;
+      b.lastTouchTeam = 0; b.passTarget = -1;
+      s.players[D].x = 0; s.players[D].z = 0; s.players[D].act = 0;
+      s.teams[1].chaser = D;
+      s.teams[1].cpu.seenOwner = -1; s.teams[1].cpu.reactT = 0;
+    },
+    looseCover: (s, k) => {
+      const b = s.ball;
+      b.owner = -1; b.heldBy = -1; b.x = 5 + (k % 50) * 0.01; b.z = 4; b.vx = 2; b.vz = 0; b.y = 0.11; b.grounded = 1;
+      b.lastTouchTeam = 0; b.passTarget = -1;
+      s.players[D].x = 0; s.players[D].z = 0; s.players[D].act = 0;
+      s.players[16].x = 6; s.players[16].z = 6; s.players[16].ctrl = -1;
+      s.teams[1].chaser = 16;
+      s.teams[1].cpu.seenOwner = -1; s.teams[1].cpu.reactT = 0;
+    },
+    ownPassTrail: (s, k) => {
+      const b = s.ball;
+      b.owner = -1; b.heldBy = -1; b.x = 2 + (k % 50) * 0.01; b.z = 0; b.vx = 7; b.vz = 0; b.y = 0.11; b.grounded = 1;
+      b.lastTouch = 16; b.lastTouchTeam = 1; b.passTarget = D; b.passX = 8; b.passZ = 0;
+      s.players[D].x = 0.5; s.players[D].z = 0; s.players[D].act = 0;
+      s.teams[1].cpu.seenOwner = -1; s.teams[1].cpu.reactT = 0;
+    },
   };
-  const out = { us: {}, alloc: {}, buttons: {} };
+  const inspector = await import('node:inspector');
+  const sess = new inspector.Session();
+  sess.connect();
+  const post = (m, p) => new Promise((res, rej) => sess.post(m, p ?? {}, (e, r) => (e ? rej(e) : res(r))));
+  await post('HeapProfiler.enable');
+  const out = { us: {}, alloc: {}, allocTotal: {}, buttons: {} };
   for (const [name, setup] of Object.entries(CASES)) {
     const s = base();
     const f = s.teams[1].cpu.out;
@@ -88,23 +118,34 @@ const PROBE = `
       best = Math.min(best, (performance.now() - t0) / 400);
     }
     out.us[name] = best * 1000;
-    globalThis.gc();
-    const h0 = process.memoryUsage().heapUsed;
-    for (let i = 0; i < 40000; i++) call();
-    out.alloc[name] = (process.memoryUsage().heapUsed - h0) / 40000;
+    // Allocation by V8's sampling heap profiler (garbage included): bytes per call allocated with a frame of
+    // defending.ts on top (its own code, incl. doubles it boxes for the calls it makes), and in total (incl. SIM-04 /
+    // TAI-07 estimates it calls, and the probe's setup).
+    await post('HeapProfiler.startSampling', { samplingInterval: 128, includeObjectsCollectedByMinorGC: true, includeObjectsCollectedByMajorGC: true });
+    for (let i = 0; i < 20000; i++) call();
+    const { profile } = await post('HeapProfiler.stopSampling');
+    let own = 0, total = 0;
+    const walk = (n) => {
+      if (n.selfSize) { total += n.selfSize; if (n.callFrame.url.endsWith('/defending.ts')) own += n.selfSize; }
+      for (const ch of n.children) walk(ch);
+    };
+    walk(profile.head);
+    out.alloc[name] = own / 20000;
+    out.allocTotal[name] = total / 20000;
     out.buttons[name] = seen;
   }
   console.log(JSON.stringify(out));
 `;
 
 describe('TAI-11 budget', () => {
-  const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', '--input-type=module', '-e', PROBE], {
+  const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', PROBE], {
     cwd: ROOT, encoding: 'utf8', timeout: 240_000,
   });
   const ok = r.status === 0;
   const res = ok
     ? JSON.parse(r.stdout.trim().split('\n').pop()!) as {
-      us: Record<string, number>; alloc: Record<string, number>; buttons: Record<string, number>;
+      us: Record<string, number>; alloc: Record<string, number>; allocTotal: Record<string, number>;
+      buttons: Record<string, number>;
     }
     : null;
   if (res) console.log(`TAI-11 probe: ${JSON.stringify(res)}`);
@@ -118,18 +159,22 @@ describe('TAI-11 budget', () => {
     expect(b.switchEval! & ((1 << 16) | (1 << 4))).not.toBe(0); // TAP gesture or MOD_L
     expect(b.opponentPass! & (1 << 7)).not.toBe(0); // SPRINT toward the lane
     expect(b.looseOwnThird! & (1 << 1)).not.toBe(0); // SHOOT: clearance
+    expect(b.looseChase! & (1 << 7)).not.toBe(0); // SPRINT after the ball
+    expect(b.ownPassTrail! & (1 << 7)).not.toBe(0); // SPRINT onto our own pass
   });
 
-  for (const name of ['carrierExposed', 'switchEval', 'opponentPass', 'looseOwnThird']) {
+  for (const name of ['carrierExposed', 'switchEval', 'opponentPass', 'looseOwnThird', 'looseChase', 'looseCover', 'ownPassTrail']) {
     it(`cpuDefend < 0.03 ms per call: ${name}`, () => {
       expect(res).not.toBeNull();
       expect(res!.us[name]!).toBeLessThan(30);
     });
     it(`no source-level allocation per call: ${name}`, () => {
       expect(res).not.toBeNull();
-      // SIM-04 ticksToReach / TAI-07 estimateIntercept may box double arguments in V8 (16 bytes each); an object
-      // literal, closure or array per call or per candidate would blow well past this.
-      expect(res!.alloc[name]!).toBeLessThan(256);
+      // Bytes per call allocated by defending.ts itself (sampled: a few bytes of noise). The source allocates nothing
+      // per call; what remains is V8 boxing doubles passed to calls it did not inline (16 bytes each; JavaScriptCore on
+      // the iPad NaN-boxes doubles). An object literal, closure or array per call or per candidate would blow well past
+      // this. SIM-04 / TAI-07 allocation inside the estimates it calls is reported (allocTotal), not judged here.
+      expect(res!.alloc[name]!).toBeLessThan(128);
     });
   }
 });

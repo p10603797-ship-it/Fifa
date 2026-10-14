@@ -1,34 +1,19 @@
 import { describe, it } from 'vitest';
-import { ActionKind, KickKind } from '../../src/contracts/enums';
+import { ActionKind, ChallengeKind, MatchPhase } from '../../src/contracts/enums';
 import { EventType } from '../../src/contracts/events';
-import { startTackle } from '../../src/sim/defend/tackle';
-import { createEventBuffer } from '../../src/sim/core/events';
-import { P1, P2, owned, place, scene, stepN, pass, loose } from './sim-14-helpers';
-
+import { makeScenario, runTicks } from '../harness/scenario';
+const w = (...a: unknown[]) => process.stderr.write('\n' + a.join(' '));
 describe('explore', () => {
-  it('stand tackle from front', () => {
-    const s = scene(3);
-    place(s, P1, 0, 0, 1, 0);
-    owned(s, P1, 0.6, 0);
-    place(s, P2, 2.0, 0, -1, 0);
-    const ev = createEventBuffer();
-    process.stderr.write("\n"+['start', startTackle(s, P2, ActionKind.STAND_TACKLE, -1, ev)].join(" "));
-    const out = stepN(s, 40, (st, e) => {
-      const p = st.players[P2]!;
-      process.stderr.write("\n"+[st.tick, ActionKind[p.act], p.actT, p.x.toFixed(2), p.vx.toFixed(2), 'ball', st.ball.x.toFixed(2), st.ball.owner, e.filter(x=>x.type===EventType.TACKLE||x.type===EventType.KICK||x.type===EventType.FOUL).map(x=>`${EventType[x.type]} a${x.a} b${x.b} c${x.c} d${x.d}`).join(';')].join(" "));
-    });
-  });
-  it('slide from behind', () => {
-    const s = scene(3);
-    place(s, P1, 0, 0, 1, 0, 3);
-    owned(s, P1, 0.6, 0);
-    place(s, P2, -3, 0, 1, 0, 7);
-    const ev = createEventBuffer();
-    process.stderr.write("\n"+['start', startTackle(s, P2, ActionKind.SLIDE_TACKLE, -1, ev)].join(" "));
-    stepN(s, 80, (st, e) => {
-      const p = st.players[P2]!; const q = st.players[P1]!;
-      const ch = st.match.challenges.filter(c=>c.active);
-      process.stderr.write("\n"+[st.tick, ActionKind[p.act], p.actT, p.x.toFixed(2), p.vx.toFixed(2), 'v', ActionKind[q.act], q.x.toFixed(2), 'ball', st.ball.x.toFixed(2), st.ball.owner, e.filter(x=>x.type===EventType.TACKLE||x.type===EventType.KICK||x.type===EventType.FOUL||x.type===EventType.CARD).map(x=>`${EventType[x.type]} a${x.a} b${x.b} c${x.c} d${x.d}`).join(';'), ch.length].join(" "));
-    });
+  it('bot soak', () => {
+    for (const seed of [1, 2]) {
+      const s = makeScenario({ seed, config: { halfMinutes: 2 } });
+      const t0 = Date.now();
+      let err = '';
+      let ev: ReturnType<typeof runTicks> = [];
+      try { ev = runTicks(s, 7200, undefined, { check: 'all' }); } catch (e) { err = String(e).slice(0, 600); }
+      const tk = ev.filter(e => e.type === EventType.TACKLE);
+      const byKind = [0,1,2,3,4,5].map(k => `${ChallengeKind[k]}:${tk.filter(e=>e.d===k).length}/${tk.filter(e=>e.d===k&&e.c===1).length}`).join(' ');
+      w('seed', seed, 'ms', Date.now() - t0, 'tick', s.tick, 'phase', MatchPhase[s.match.phase], 'tackles', byKind, 'intercepts', ev.filter(e => e.type === EventType.INTERCEPT).length, 'fouls', ev.filter(e => e.type === EventType.FOUL).length, 'cards', ev.filter(e => e.type === EventType.CARD).length, 'goals', s.teams[0]!.goals + '-' + s.teams[1]!.goals, 'clear', ev.filter(e => e.type === EventType.KICK && e.b === 22).length, 'passes', ev.filter(e => e.type === EventType.KICK && e.b >= 1 && e.b <= 12).length, 'poss', ev.filter(e => e.type === EventType.POSSESSION).length, 'defl', ev.filter(e => e.type === EventType.KICK && e.b === 26).length, 'pokes', ev.filter(e => e.type === EventType.KICK && e.b === 27).length, 'err', err);
+    }
   });
 });

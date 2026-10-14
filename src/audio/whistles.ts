@@ -243,14 +243,16 @@ export function createWhistles(ctx: AudioCtx): WhistleModule {
   }
   const lastAt = new Float64Array(4).fill(-1e9);
   const stats: WhistleStats = { whistles: new Int32Array(4), stings: new Int32Array(STING_COUNT), repeats: 0 };
-  let seed = 0x2545f491;
+  const seed = new Uint32Array([0x2545f491]);
 
+  /** Playback-rate jitter so repeated whistles are not identical (xorshift32 in a typed array: no boxing). */
   function spread(): number {
-    seed ^= seed << 13;
-    seed ^= seed >>> 17;
-    seed ^= seed << 5;
-    seed >>>= 0;
-    return 1 + T.pitchSpread * ((seed / 4294967296) * 2 - 1);
+    let x = seed[0]!;
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    seed[0] = x;
+    return 1 + T.pitchSpread * ((seed[0]! / 4294967296) * 2 - 1);
   }
 
   const mod: WhistleModule = {

@@ -235,6 +235,13 @@ describe('TAI-10 estimateXg: blockers, pressure, keeper, attributes', () => {
     const s3 = shot(38, 3);
     place(s3, 13, 30, 3);
     expect(xg(s3)).toBeCloseTo(base, 9);
+    // A long shot: a blocker far down the line (can be shot over) blocks less than one close to the shooter.
+    const lr = (ahead: number): number => { const s = shot(24, 0); const [x, z] = onLine(24, 0, ahead); place(s, 13, x, z); return xg(s); };
+    const lrBase = xg(shot(24, 0));
+    expect(lr(3)).toBeLessThan(lr(9));
+    expect(lr(9)).toBeLessThan(lr(18));
+    expect(lr(18)).toBeLessThan(lrBase);
+    expect(lr(18)).toBeGreaterThan(lrBase * 0.4);
   });
 
   it('a blocker right in front of the ball smothers the shot (floor), never below 0', () => {

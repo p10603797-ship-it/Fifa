@@ -33,8 +33,8 @@
  * ripple at the hit point shivers the net.
  * Time advances with FrameInfo.dtMs and stops while paused.
  *
- * DEBUG: window.__dotkickGoals (GoalsDebug): closeUp(end) overrides ctx.camera's pose after the cameras ran (goal
- * close-up for e2e screenshots), snapshot() reports ripples, sway, detail and draw-call counts.
+ * DEBUG: window.__dotkickGoals (GoalsDebug): closeUp(end) overrides ctx.camera's pose and FOV after the cameras ran
+ * (goal close-up for e2e screenshots), snapshot() reports ripples, sway, detail and draw-call counts.
  * No allocation in update() / onEvents().
  */
 
@@ -133,6 +133,8 @@ const LOCAL_TUNING = { // TUNING-CR (render only; no gameplay effect)
   closeUpAngleDeg: 40,
   closeUpEyeY: 3.2,
   closeUpLookY: 1.1,
+  /** Close-up vertical field of view, deg (fixed, so the picture does not depend on the broadcast camera's widening). */
+  closeUpFovDeg: 26,
 } as const;
 
 /** Tuning (read-only) for tests and tools. */
@@ -257,12 +259,27 @@ export function netPinWeight(d: number): number {
   return smooth01(d / LOCAL_TUNING.pinDist);
 }
 
+/** wobbleSway(ages[k], amps[k]) into out[k]: the per-frame form (no double crosses a call boundary). */
+function swayCore(ages: Float64Array, amps: Float64Array, out: Float64Array, k: number): void {
+  const T = LOCAL_TUNING;
+  const age = ages[k]!, amp = amps[k]!;
+  if (!(age > 0) || age >= T.wobbleDuration || amp === 0) { out[k] = 0; return; }
+  let c = (age - 0.7 * T.wobbleDuration) / (0.3 * T.wobbleDuration);
+  c = c < 0 ? 0 : c > 1 ? 1 : c;
+  const cut = 1 - c * c * (3 - 2 * c);
+  out[k] = amp * Math.sin(WOBBLE_W * age) * Math.exp(-age / T.wobbleDecay) * cut;
+}
+
+const WOB_AGE = new Float64Array(1);
+const WOB_AMP = new Float64Array(1);
+const WOB_OUT = new Float64Array(1);
+
 /** Frame sway at bar height (m) `age` s after a hit of amplitude amp (m): damped sine, exactly 0 after wobbleDuration. */
 export function wobbleSway(age: number, amp: number): number {
-  const T = LOCAL_TUNING;
-  if (!(age > 0) || age >= T.wobbleDuration || amp === 0) return 0;
-  const cut = 1 - smooth01((age - 0.7 * T.wobbleDuration) / (0.3 * T.wobbleDuration));
-  return amp * Math.sin(WOBBLE_W * age) * Math.exp(-age / T.wobbleDecay) * cut;
+  WOB_AGE[0] = age;
+  WOB_AMP[0] = amp;
+  swayCore(WOB_AGE, WOB_AMP, WOB_OUT, 0);
+  return WOB_OUT[0]!;
 }
 
 /** Sway amplitude (m) for a POST event: bar = 1 for the crossbar. */
@@ -337,15 +354,29 @@ export function predictNetImpact(
 
 // ============================================================ frame instances
 
+/** Instance matrix storage: float32 for the InstancedMesh, float64 for exact maths (tests, goalFrameMatrices). */
+export type MatrixArray = Float32Array | Float64Array;
+
 /**
- * Write the matrix of a unit cylinder (radius 1, height 1, centred, along y) stretched from A to B with `radius` and
- * extended by extA / extB beyond the ends, into arr at instance i (column-major, as InstancedMesh.instanceMatrix).
- * Orthogonal columns (no shear), so three.js transforms the normals correctly.
+ * Tube registers / table rows (doubles travel through typed arrays: V8 boxes doubles passed to a call it does not
+ * inline, which would allocate every frame). Row layout: A (x, y, z), B (x, y, z), radius, extA, extB, leanA, leanB
+ * (x shift of the A / B end per unit of frame lean; 0 for the fixed back frame).
  */
-export function writeTube(
-  arr: Float32Array, i: number, ax: number, ay: number, az: number, bx: number, by: number, bz: number,
-  radius: number, extA = 0, extB = 0,
-): void {
+const TUBE_STRIDE = 11;
+const TUBE_IO = new Float64Array(TUBE_STRIDE);
+/** Current frame lean (x shift per metre of height) for tubeCore. */
+const LEAN = new Float64Array(1);
+
+/**
+ * Write the matrix of a unit cylinder (radius 1, height 1, centred, along y) for the tube in row `o` of `src` (with
+ * the ends shifted by LEAN[0] x leanA / leanB along x) into arr at instance i (column-major, as
+ * InstancedMesh.instanceMatrix). Orthogonal columns (no shear), so three.js transforms the normals correctly.
+ */
+function tubeCore(arr: MatrixArray, i: number, src: Float64Array, o: number): void {
+  const lean = LEAN[0]!;
+  const ax = src[o]! + lean * src[o + 9]!, ay = src[o + 1]!, az = src[o + 2]!;
+  const bx = src[o + 3]! + lean * src[o + 10]!, by = src[o + 4]!, bz = src[o + 5]!;
+  const radius = src[o + 6]!, extA = src[o + 7]!, extB = src[o + 8]!;
   let dx = bx - ax, dy = by - ay, dz = bz - az;
   const l = Math.sqrt(dx * dx + dy * dy + dz * dz);
   if (l > 1e-9) { dx /= l; dy /= l; dz /= l; } else { dx = 0; dy = 1; dz = 0; }
@@ -357,22 +388,38 @@ export function writeTube(
   const e3x = e1y * dz - e1z * dy, e3y = e1z * dx - e1x * dz, e3z = e1x * dy - e1y * dx;
   const len = l + extA + extB;
   const shift = (extB - extA) / 2;
-  const o = i * 16;
-  arr[o] = e1x * radius; arr[o + 1] = e1y * radius; arr[o + 2] = e1z * radius; arr[o + 3] = 0;
-  arr[o + 4] = dx * len; arr[o + 5] = dy * len; arr[o + 6] = dz * len; arr[o + 7] = 0;
-  arr[o + 8] = e3x * radius; arr[o + 9] = e3y * radius; arr[o + 10] = e3z * radius; arr[o + 11] = 0;
-  arr[o + 12] = (ax + bx) / 2 + dx * shift; arr[o + 13] = (ay + by) / 2 + dy * shift; arr[o + 14] = (az + bz) / 2 + dz * shift;
-  arr[o + 15] = 1;
+  const m = i * 16;
+  arr[m] = e1x * radius; arr[m + 1] = e1y * radius; arr[m + 2] = e1z * radius; arr[m + 3] = 0;
+  arr[m + 4] = dx * len; arr[m + 5] = dy * len; arr[m + 6] = dz * len; arr[m + 7] = 0;
+  arr[m + 8] = e3x * radius; arr[m + 9] = e3y * radius; arr[m + 10] = e3z * radius; arr[m + 11] = 0;
+  arr[m + 12] = (ax + bx) / 2 + dx * shift; arr[m + 13] = (ay + by) / 2 + dy * shift; arr[m + 14] = (az + bz) / 2 + dz * shift;
+  arr[m + 15] = 1;
 }
 
 /**
- * All FRAME_INSTANCES frame matrices into arr (16 floats each). Order: [post -z, post +z, bar] for the goal at -x,
- * then the goal at +x (indices 0..5, as goalFrameMatrices), then 8 support tubes per goal (-x goal 6..13, +x goal
- * 14..21). swayNeg / swayPos: frame sway at bar height (m, + = into the goal) for the goal at -x / +x; the frame
- * rotates about the goal line on the ground, so the bar and the front ends of the roof side bars move with it and
- * the rest of the back frame stays put.
+ * Write the matrix of a unit cylinder (radius 1, height 1, centred, along y) stretched from A to B with `radius` and
+ * extended by extA / extB beyond the ends, into arr at instance i (column-major, as InstancedMesh.instanceMatrix).
+ * Orthogonal columns (no shear), so three.js transforms the normals correctly.
  */
-export function writeGoalFrame(arr: Float32Array, swayNeg: number, swayPos: number): void {
+export function writeTube(
+  arr: MatrixArray, i: number, ax: number, ay: number, az: number, bx: number, by: number, bz: number,
+  radius: number, extA = 0, extB = 0,
+): void {
+  const t = TUBE_IO;
+  t[0] = ax; t[1] = ay; t[2] = az; t[3] = bx; t[4] = by; t[5] = bz; t[6] = radius; t[7] = extA; t[8] = extB;
+  t[9] = 0; t[10] = 0;
+  LEAN[0] = 0;
+  tubeCore(arr, i, t, 0);
+}
+
+/**
+ * Rest geometry of every frame tube (FRAME_INSTANCES rows of TUBE_STRIDE), in instance order: [post -z, post +z, bar]
+ * for the goal at -x, then the goal at +x (0..5), then 8 support tubes per goal (-x goal 6..13, +x goal 14..21):
+ * rear ground bar, two rear uprights, rear top bar, two roof side bars (front end on the bar: leans with the frame),
+ * two ground side bars.
+ */
+const FRAME_TABLE: Float64Array = (() => {
+  const t = new Float64Array(FRAME_INSTANCES * TUBE_STRIDE);
   const pr = POST_RADIUS;
   const sr = LOCAL_TUNING.supportRadius;
   const postH = GH + 2 * pr;
@@ -382,38 +429,66 @@ export function writeGoalFrame(arr: Float32Array, swayNeg: number, swayPos: numb
   const zSup = GW + sr;
   const uBack = GB + sr;
   const topY = GH + sr;
+  const row = (i: number, v: readonly number[]): void => { for (let k = 0; k < TUBE_STRIDE; k++) t[i * TUBE_STRIDE + k] = v[k]!; };
   for (let k = 0; k < 2; k++) {
     const e = k === 0 ? -1 : 1;
-    const sway = k === 0 ? swayNeg : swayPos;
-    /** World x shift per metre of height (rotation about the goal line). */
-    const lean = (e * sway) / GH;
     const base = k * 3;
-    // Posts: from the ground to the top of the bar.
-    writeTube(arr, base, e * xAxis, 0, -zPost, e * xAxis + lean * postH, postH, -zPost, pr);
-    writeTube(arr, base + 1, e * xAxis, 0, zPost, e * xAxis + lean * postH, postH, zPost, pr);
+    const xp = e * xAxis;
+    // Posts: from the ground to the top of the bar (the top leans with the frame).
+    row(base, [xp, 0, -zPost, xp, postH, -zPost, pr, 0, 0, 0, postH]);
+    row(base + 1, [xp, 0, zPost, xp, postH, zPost, pr, 0, 0, 0, postH]);
     // Bar: between the outer faces of the posts.
-    const bx = e * xAxis + lean * barY;
-    writeTube(arr, base + 2, bx, barY, -zPost, bx, barY, zPost, pr, pr, pr);
+    row(base + 2, [xp, barY, -zPost, xp, barY, zPost, pr, pr, pr, barY, barY]);
     const s = 6 + k * 8;
     const xb = e * uBack;
     const xf = e * xAxis;
     // Rear ground bar, rear uprights, rear top bar.
-    writeTube(arr, s, xb, sr, -zSup, xb, sr, zSup, sr, sr, sr);
-    writeTube(arr, s + 1, xb, 0, -zSup, xb, topY, -zSup, sr, 0, sr);
-    writeTube(arr, s + 2, xb, 0, zSup, xb, topY, zSup, sr, 0, sr);
-    writeTube(arr, s + 3, xb, topY, -zSup, xb, topY, zSup, sr, sr, sr);
+    row(s, [xb, sr, -zSup, xb, sr, zSup, sr, sr, sr, 0, 0]);
+    row(s + 1, [xb, 0, -zSup, xb, topY, -zSup, sr, 0, sr, 0, 0]);
+    row(s + 2, [xb, 0, zSup, xb, topY, zSup, sr, 0, sr, 0, 0]);
+    row(s + 3, [xb, topY, -zSup, xb, topY, zSup, sr, sr, sr, 0, 0]);
     // Roof side bars (front end on the bar, moves with the sway) and ground side bars.
-    const xft = xf + lean * topY;
-    writeTube(arr, s + 4, xft, topY, -zSup, xb, topY, -zSup, sr);
-    writeTube(arr, s + 5, xft, topY, zSup, xb, topY, zSup, sr);
-    writeTube(arr, s + 6, xf, sr, -zSup, xb, sr, -zSup, sr);
-    writeTube(arr, s + 7, xf, sr, zSup, xb, sr, zSup, sr);
+    row(s + 4, [xf, topY, -zSup, xb, topY, -zSup, sr, 0, 0, topY, 0]);
+    row(s + 5, [xf, topY, zSup, xb, topY, zSup, sr, 0, 0, topY, 0]);
+    row(s + 6, [xf, sr, -zSup, xb, sr, -zSup, sr, 0, 0, 0, 0]);
+    row(s + 7, [xf, sr, zSup, xb, sr, zSup, sr, 0, 0, 0, 0]);
   }
+  return t;
+})();
+
+/** Goal (0 = -x, 1 = +x) of frame instance i. */
+function frameGoal(i: number): number {
+  return i < 3 ? 0 : i < 6 ? 1 : i < 14 ? 0 : 1;
+}
+
+/** writeGoalFrame with the sways in `sway` ([-x goal, +x goal]); the per-frame form (no double crosses a call). */
+function frameCore(arr: MatrixArray, sway: Float64Array): void {
+  for (let i = 0; i < FRAME_INSTANCES; i++) {
+    const k = frameGoal(i);
+    // World x shift per metre of height (rotation about the goal line), + = into the goal.
+    LEAN[0] = ((k === 0 ? -1 : 1) * sway[k]!) / GH;
+    tubeCore(arr, i, FRAME_TABLE, i * TUBE_STRIDE);
+  }
+}
+
+const SWAY_IO = new Float64Array(2);
+
+/**
+ * All FRAME_INSTANCES frame matrices into arr (16 floats each). Order: [post -z, post +z, bar] for the goal at -x,
+ * then the goal at +x (indices 0..5, as goalFrameMatrices), then 8 support tubes per goal (-x goal 6..13, +x goal
+ * 14..21). swayNeg / swayPos: frame sway at bar height (m, + = into the goal) for the goal at -x / +x; the frame
+ * rotates about the goal line on the ground, so the bar and the front ends of the roof side bars move with it and
+ * the rest of the back frame stays put.
+ */
+export function writeGoalFrame(arr: MatrixArray, swayNeg: number, swayPos: number): void {
+  SWAY_IO[0] = swayNeg;
+  SWAY_IO[1] = swayPos;
+  frameCore(arr, SWAY_IO);
 }
 
 /** Instance transforms for the goal frame at rest: [post -z, post +z, bar] for the goal at -x, then the goal at +x. */
 export function goalFrameMatrices(): Matrix4[] {
-  const arr = new Float32Array(FRAME_INSTANCES * 16);
+  const arr = new Float64Array(FRAME_INSTANCES * 16);
   writeGoalFrame(arr, 0, 0);
   const out: Matrix4[] = [];
   for (let i = 0; i < 6; i++) out.push(new Matrix4().fromArray(arr, i * 16));
@@ -688,10 +763,15 @@ export function createGoals(ctx: RenderContext): GoalsModule {
   /** Contact state per goal and sheet: touching flag and last contact time. */
   const touching = new Uint8Array(2 * SHEETS);
   const lastContact = new Float64Array(2 * SHEETS);
-  let time = 0;
+  /**
+   * Per-frame doubles: module time (s), last interpolated ball centre, last apparent ball velocity. In a typed array
+   * because a closure variable holding a double is boxed again on every assignment (per-frame garbage).
+   */
+  const V = new Float64Array(7);
+  const V_TIME = 0, V_LX = 1, V_LY = 2, V_LZ = 3, V_PVX = 4, V_PVY = 5, V_PVZ = 6;
   let hasLast = false;
-  let lastX = 0, lastY = 0, lastZ = 0;
-  let pvx = 0, pvy = 0, pvz = 0;
+  /** detect() registers: interpolated ball centre and its apparent velocity (doubles never cross a call boundary). */
+  const D = new Float64Array(6);
   const impact = createNetImpact();
   // Debug close-up.
   let closeEnd = 0;
@@ -713,23 +793,24 @@ export function createGoals(ctx: RenderContext): GoalsModule {
     lastEntry.fill(-INF);
     touching.fill(0);
     lastContact.fill(-INF);
-    time = 0;
+    V.fill(0);
     hasLast = false;
-    pvx = 0; pvy = 0; pvz = 0;
-    writeGoalFrame(frameArr, 0, 0);
+    frameCore(frameArr, sway);
     frame.instanceMatrix.needsUpdate = true;
     frameDirty = false;
     writeUniforms();
   }
 
   function writeUniforms(): void {
-    const amp = uniforms.uAmp.value;
     for (let i = 0; i < RIPPLE_SLOTS; i++) {
       const o = i * 5;
-      uRip[i]!.set(rip[o]!, rip[o + 1]!, rip[o + 2]!, rip[o + 3]!);
-      amp.setComponent(i, rip[o + 4]!);
+      const u = uRip[i]!;
+      u.x = rip[o]!; u.y = rip[o + 1]!; u.z = rip[o + 2]!; u.w = rip[o + 3]!;
     }
-    uniforms.uSway.value.set(sway[0]!, sway[1]!);
+    const amp = uniforms.uAmp.value;
+    amp.x = rip[4]!; amp.y = rip[9]!; amp.z = rip[14]!; amp.w = rip[19]!;
+    const sw = uniforms.uSway.value;
+    sw.x = sway[0]!; sw.y = sway[1]!;
   }
 
   /** Start a ripple at (x, y, z) with signed amplitude amp after `delay` s. Replaces a free or the oldest slot. */
@@ -743,13 +824,13 @@ export function createGoals(ctx: RenderContext): GoalsModule {
       if (rip[o + 3]! > oldest) { oldest = rip[o + 3]!; slot = i; }
     }
     const o = slot * 5;
-    rip[o] = x; rip[o + 1] = y; rip[o + 2] = z; rip[o + 3] = -(delay > 0 ? delay : 0); rip[o + 4] = amp;
+    rip[o] = x; rip[o + 1] = y; rip[o + 2] = z; rip[o + 3] = delay > 0 ? -delay : 0; rip[o + 4] = amp;
   }
 
   /** The ball entered the net of `end` at p with velocity v (speed in m/s). */
   function entry(end: number, px: number, py: number, pz: number, vx: number, vy: number, vz: number, speed: number): void {
     const k = end < 0 ? 0 : 1;
-    lastEntry[k] = time;
+    lastEntry[k] = V[V_TIME]!;
     const amp = netRippleAmplitude(speed);
     if (amp === 0) return;
     predictNetImpact(end, px, py, pz, vx, vy, vz, impact);
@@ -768,8 +849,10 @@ export function createGoals(ctx: RenderContext): GoalsModule {
     if (ra > 0) addRipple(x, y, z, ra, 0);
   }
 
-  /** Interpolated-ball detection: entries (replays) and sheet contacts. dt > 0. */
-  function detect(bx: number, by: number, bz: number, vx: number, vy: number, vz: number): void {
+  /** Interpolated-ball detection from the D registers (ball, apparent velocity): entries (replays), sheet contacts. */
+  function detect(): void {
+    const bx = D[0]!, by = D[1]!, bz = D[2]!, vx = D[3]!, vy = D[4]!, vz = D[5]!;
+    const time = V[V_TIME]!, pvx = V[V_PVX]!, pvy = V[V_PVY]!, pvz = V[V_PVZ]!;
     const slop = T.contactSlop;
     const near = R + slop;
     for (let k = 0; k < 2; k++) {
@@ -781,7 +864,7 @@ export function createGoals(ctx: RenderContext): GoalsModule {
       }
       const inside = u > GL && u < GB && by < GH && bz < GW && bz > -GW;
       // Entry into the net volume (whole ball over the line, inside the mouth).
-      const u0 = e * lastX;
+      const u0 = e * V[V_LX]!;
       if (u0 <= NET_FRONT && u > NET_FRONT && inside && time - lastEntry[k]! >= T.entryWindow) {
         entry(e, bx, by, bz, vx, vy, vz, Math.sqrt(vx * vx + vy * vy + vz * vz));
       }
@@ -838,6 +921,11 @@ export function createGoals(ctx: RenderContext): GoalsModule {
     cam.up.set(0, 1, 0);
     cam.lookAt(camTarget);
     cam.updateMatrixWorld(true);
+    if (cam.fov !== T.closeUpFovDeg) {
+      // Debug only. The cameras rewrite the FOV every frame it differs from theirs, so this never sticks.
+      cam.fov = T.closeUpFovDeg;
+      cam.updateProjectionMatrix();
+    }
   }
 
   const debug: GoalsDebug = {
@@ -855,7 +943,7 @@ export function createGoals(ctx: RenderContext): GoalsModule {
       }
       const idx = netGeo.getIndex();
       return {
-        time,
+        time: V[V_TIME]!,
         ripples,
         sway: [sway[0]!, sway[1]!],
         netDetail,
@@ -895,7 +983,7 @@ export function createGoals(ctx: RenderContext): GoalsModule {
       const it = fr.interp;
       const bx = it.ballX, by = it.ballY, bz = it.ballZ;
       if (dt > 0) {
-        time += dt;
+        V[V_TIME] = V[V_TIME]! + dt;
         // Ripples age; finished ones free their slot.
         for (let i = 0; i < RIPPLE_SLOTS; i++) {
           const o = i * 5;
@@ -908,28 +996,29 @@ export function createGoals(ctx: RenderContext): GoalsModule {
           const age = wobAge[k]! + dt;
           if (age >= T.wobbleDuration) { wobAge[k] = 0; wobAmp[k] = 0; sway[k] = 0; } else {
             wobAge[k] = age;
-            sway[k] = wobbleSway(age, wobAmp[k]!);
+            swayCore(wobAge, wobAmp, sway, k);
           }
           frameDirty = true;
         }
         if (Number.isFinite(bx) && Number.isFinite(by) && Number.isFinite(bz)) {
           if (hasLast) {
-            const vx = (bx - lastX) / dt, vy = (by - lastY) / dt, vz = (bz - lastZ) / dt;
+            const vx = (bx - V[V_LX]!) / dt, vy = (by - V[V_LY]!) / dt, vz = (bz - V[V_LZ]!) / dt;
             const sp2 = vx * vx + vy * vy + vz * vz;
             if (sp2 <= T.teleportSpeed * T.teleportSpeed) {
-              detect(bx, by, bz, vx, vy, vz);
-              pvx = vx; pvy = vy; pvz = vz;
+              D[0] = bx; D[1] = by; D[2] = bz; D[3] = vx; D[4] = vy; D[5] = vz;
+              detect();
+              V[V_PVX] = vx; V[V_PVY] = vy; V[V_PVZ] = vz;
             } else {
-              pvx = 0; pvy = 0; pvz = 0;
+              V[V_PVX] = 0; V[V_PVY] = 0; V[V_PVZ] = 0;
               touching.fill(0);
             }
           }
-          lastX = bx; lastY = by; lastZ = bz;
+          V[V_LX] = bx; V[V_LY] = by; V[V_LZ] = bz;
           hasLast = true;
         }
       }
       if (frameDirty) {
-        writeGoalFrame(frameArr, sway[0]!, sway[1]!);
+        frameCore(frameArr, sway);
         frame.instanceMatrix.needsUpdate = true;
         frameDirty = false;
       }
@@ -943,7 +1032,7 @@ export function createGoals(ctx: RenderContext): GoalsModule {
         if (ev.type === EventType.NET) {
           const end = ev.a < 0 ? -1 : 1;
           const k = end < 0 ? 0 : 1;
-          if (time - lastEntry[k]! < T.entryWindow && lastEntry[k]! > -INF) continue;
+          if (V[V_TIME]! - lastEntry[k]! < T.entryWindow && lastEntry[k]! > -INF) continue;
           const b = state.ball;
           entry(end, ev.x, ev.y, ev.z, b.vx, b.vy, b.vz, ev.c);
         } else if (ev.type === EventType.POST) {

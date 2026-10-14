@@ -58,8 +58,9 @@ const LOCAL_TUNING = {
   menusVoices: 4,
   /** Largest frame time passed to modules, s (a long frame never jumps smoothing). */
   maxDt: 0.1,
-  /** Main-thread time for buffer pre-rendering per frame, ms. */
+  /** Main-thread time for buffer pre-rendering per frame during a match, and in menus (mostly idle frames), ms. */
   bankBudgetMs: 2,
+  bankMenuBudgetMs: 5,
   /** A 'running' context whose clock has not moved for this long (frame time) is treated as interrupted, s. */
   stallSec: 0.75,
   /** Limiter on the master: threshold dBFS, knee dB, ratio, attack s, release s. */
@@ -593,7 +594,7 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
       const ctx = ac;
       if (!ctx) return;
       const dt = Number.isFinite(dtSec) && dtSec > 0 ? (dtSec > LOCAL_TUNING.maxDt ? LOCAL_TUNING.maxDt : dtSec) : 0;
-      if (services && services.bank.pending > 0) services.bank.pump(LOCAL_TUNING.bankBudgetMs);
+      if (services && services.bank.pending > 0) services.bank.pump(state ? LOCAL_TUNING.bankBudgetMs : LOCAL_TUNING.bankMenuBudgetMs);
       if (ctx.state !== 'running') {
         stallSec = 0;
         lastAudioTime = -1;

@@ -35,10 +35,14 @@
  *    positive sy curls LEFT of travel, built with curlSpinY); an explicit request curve sets the curl instead.
  *    solveLaunchSpin solves speed and the aim azimuth with that curl so the first landing is the aim point.
  *    GROUND_CROSS: along the floor (SIM-01 groundPassSpeed to arrive with lerp(groundCrossArriveMin, Max, power) m/s).
+ *    A zone aim farther than crossMaxDist (a cross asked for far from the box, e.g. LOB, LOB in midfield) goes to the
+ *    teammate SIM-08 selectReceiver picks (led like a pass) when there is one.
  *  - launch.target = actSlot, else the best attacker (closest teammate, keeper excluded, at his position
  *    LT.receiverLookSec-capped ahead along his run) within LT.spaceReceiverRadius of the aim point, else -1.
  * ERROR (both): SIM-08 kickErrorAim (accuracy longPassing for lobs, crossing for crosses; facing, pressure, sprint,
- * weak foot, power, stamina) rotates the launch; a second draw scales the speed by 1 + lengthErrorMul x error (clamped).
+ * weak foot, power, stamina) rotates the launch; a second draw scales the speed by 1 + lengthErrorMul x error (clamped;
+ * the kind's max launch speed still holds). A cross's power only picks its zone, so its error sees at most SIM-08's
+ * power knee (no "extreme power" penalty for a far-post cross).
  * crossTarget is pure (CPU passing uses it). Determinism / cost: dmath + Math.sqrt, s.rng only in the solvers (always
  * eight draws: two kickErrorAim calls), slot-order scans with strict tie breaks, module scratch only. At contact: one
  * solveLaunchSpin (<= 12 drag flights of ~1-3 s), up to LT.lobLeadIters for a led receiver, O(11 x 11) selection.
@@ -90,8 +94,8 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** ... judged at his position this far ahead along his run (at most), s. */
   receiverLookSec: 1.5,
   /** Lengthwise error: speed x (1 + lengthErrorMul x a second angular error draw in rad), clamped to +-lengthErrorCap. */
-  lengthErrorMul: 0.5,
-  lengthErrorCap: 0.12,
+  lengthErrorMul: 0.35,
+  lengthErrorCap: 0.1,
   /** Target points stay this far inside the touchlines and goal lines, m. */
   pitchMargin: 1,
   // ---- cross targets: depth from the attacked goal line, lateral offset toward the crosser's side (+) / far side (-), m
@@ -142,6 +146,9 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** Manual cross distance along the request direction at power 0 and 1, m. */
   crossDistMin: 15,
   crossDistMax: 45,
+  /** A zone aim farther than this from the ball (a cross asked for far from the box) goes to a teammate chosen like a
+   *  pass (SIM-08 selectReceiver) when there is one, m. */
+  crossMaxDist: 45,
   /** Ground cross lead: travel-time look-ahead cap, s. */
   groundLeadMaxSec: 3,
 } as const;
@@ -461,17 +468,21 @@ function requestDir(s: SimState, slot: number): void {
  * Apply the kick error to the launch in F_V* / F_S* (rotation by kickErrorAim, speed scale by a second draw) and write
  * velocity and spin into out. Always draws twice (eight rng draws).
  */
-function applyError(s: SimState, slot: number, power: number, accuracy: number, out: KickLaunch): void {
+function applyError(s: SimState, slot: number, power: number, accuracy: number, vmax: number, out: KickLaunch): void {
   const vx0 = F[F_VX]!, vz0 = F[F_VZ]!;
   const err = kickErrorAim(s, slot, power, accuracy, vx0, vz0);
   const lenErr = kickErrorAim(s, slot, power, accuracy, vx0, vz0);
   let k = 1 + LT.lengthErrorMul * lenErr;
   if (k < 1 - LT.lengthErrorCap) k = 1 - LT.lengthErrorCap;
   if (k > 1 + LT.lengthErrorCap) k = 1 + LT.lengthErrorCap;
+  // The kind's max launch speed holds after the error too.
+  const vy0 = F[F_VY]!;
+  const sp = Math.sqrt(vx0 * vx0 + vy0 * vy0 + vz0 * vz0) * k;
+  if (sp > vmax && sp > 0) k *= vmax / sp;
   const ce = dcos(err), se = dsin(err);
   out.vx = (vx0 * ce - vz0 * se) * k;
   out.vz = (vx0 * se + vz0 * ce) * k;
-  out.vy = F[F_VY]! * k;
+  out.vy = vy0 * k;
   const sx0 = F[F_SX]!, sz0 = F[F_SZ]!;
   out.sx = sx0 * ce - sz0 * se;
   out.sy = F[F_SY]!;
@@ -531,7 +542,7 @@ function solveLobImpl(s: SimState, slot: number, out: KickLaunch): number {
     aerialTo(s, angle, curl, back, LT.loftSpeedMax);
   }
   if (r < 0) r = attackerNear(s, slot, F[F_TX]!, F[F_TZ]!, F[F_T]!);
-  applyError(s, slot, power, attr01(s.attrs[slot]!.longPassing), out);
+  applyError(s, slot, power, attr01(s.attrs[slot]!.longPassing), LT.loftSpeedMax, out);
   out.kind = kind;
   out.target = r;
   out.tx = F[F_TX]!;
@@ -603,8 +614,22 @@ function solveCrossImpl(s: SimState, slot: number, out: KickLaunch): number {
       F[F_TZ] = clampZ(b.z + F[F_UZ]! * d);
     } else {
       crossAim(s, slot, ground, power, p.actDirX, p.actDirZ);
+      if (aimDist(s) && F[F_D]! > LT.crossMaxDist) {
+        // Far from the box (e.g. LOB, LOB in midfield): play it to a teammate like a pass when there is one.
+        requestDir(s, slot);
+        const rr = selectReceiver(s, slot, F[F_UX]!, F[F_UZ]!, power, assist, ground ? 0 : 1);
+        if (rr >= 0) {
+          const q = s.players[rr]!;
+          const zx = F[F_TX]!, zz = F[F_TZ]!;
+          F[F_TX] = clampX(q.x);
+          F[F_TZ] = clampZ(q.z);
+          lead = aimDist(s);
+          if (lead) r = rr;
+          else { F[F_TX] = zx; F[F_TZ] = zz; }
+        }
+      }
     }
-    if (!aimDist(s)) {
+    if (!lead && !aimDist(s)) {
       // On top of the ball: fall back to the zone aim, then to the request direction.
       crossAim(s, slot, ground, power, 0, 0);
       if (!aimDist(s)) { requestDir(s, slot); F[F_TX] = b.x + F[F_UX]! * LT.crossDistMin; F[F_TZ] = b.z + F[F_UZ]! * LT.crossDistMin; }
@@ -636,7 +661,10 @@ function solveCrossImpl(s: SimState, slot: number, out: KickLaunch): number {
     }
   }
   if (r < 0) r = attackerNear(s, slot, F[F_TX]!, F[F_TZ]!, F[F_T]!);
-  applyError(s, slot, power, attr01(s.attrs[slot]!.crossing), out);
+  // The power bar picks the cross's zone (the launch speed is solved), so it is no "extreme power" strike: the error
+  // sees at most SIM-08's power knee.
+  const errPower = power < PT.powerKnee ? power : PT.powerKnee;
+  applyError(s, slot, errPower, attr01(s.attrs[slot]!.crossing), ground ? T_PASS.groundMax * T_PASS.drivenMul : LT.crossSpeedMax, out);
   out.kind = kind;
   out.target = r;
   out.tx = F[F_TX]!;

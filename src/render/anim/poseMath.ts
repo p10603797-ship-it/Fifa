@@ -255,6 +255,24 @@ export function setFootPitch(out: Pose, side: number, pitch: number): void {
   else out[P.ANKLE_R] = clamp(ankle, POSE_MIN[P.ANKLE_R]!, POSE_MAX[P.ANKLE_R]!);
 }
 
+/**
+ * World pitch of the foot axis of leg `side` given the root and leg angles in `out` (inverse of setFootPitch).
+ */
+export function footPitchOf(out: Pose, side: number): number {
+  const left = side < 0;
+  const hp = left ? out[P.HIP_L_PITCH]! : out[P.HIP_R_PITCH]!;
+  const rD = left ? out[P.HIP_L_ROLL]! : -out[P.HIP_R_ROLL]!;
+  const q = (left ? out[P.ANKLE_L]! - out[P.KNEE_L]! : out[P.ANKLE_R]! - out[P.KNEE_R]!);
+  const rp = out[P.ROOT_PITCH]!, rr = out[P.ROOT_ROLL]!;
+  const cr = Math.cos(rr);
+  const r0 = -cr * Math.sin(rp), r1 = cr * Math.cos(rp), r2 = -Math.sin(rr);
+  const chp = Math.cos(hp), shp = Math.sin(hp), crd = Math.cos(rD), srd = Math.sin(rD);
+  const a1 = r0 * chp + r1 * shp;
+  const b1 = -r0 * shp * crd + r1 * chp * crd + r2 * srd;
+  const fy = a1 * Math.cos(q) + b1 * Math.sin(q);
+  return Math.asin(fy < -1 ? -1 : fy > 1 ? 1 : fy);
+}
+
 /** Ankle position for a toe point and foot pitch (sagittal plane, foot pointing +x): written to ANKLE_AT[0..1]. */
 export const ANKLE_AT = new Float64Array(2);
 export function ankleFromToe(toeX: number, toeY: number, pitch: number): void {
@@ -270,8 +288,66 @@ export function ankleFromToe(toeX: number, toeY: number, pitch: number): void {
  */
 export function plantToe(out: Pose, side: number, toeX: number, toeY: number, toeZ: number, pitch: number): void {
   ankleFromToe(toeX, toeY, pitch);
-  legIK(out, side, ANKLE_AT[0]!, ANKLE_AT[1]!, toeZ);
+  let ax = ANKLE_AT[0]!, ay = ANKLE_AT[1]!, az = toeZ;
+  for (let it = 0; it < 5; it++) {
+    legIK(out, side, ax, ay, az);
+    setFootPitch(out, side, pitch);
+    // An ankle at its limit cannot give the wanted pitch: keep the toe planted and let the heel take the pitch it can.
+    const got = footPitchOf(out, side);
+    if (Math.abs(got - pitch) > 1e-4) pitch = got;
+    // Hip roll / root rotation tilt the boot: refine the ankle target from the solved toe offset.
+    toeOffsetOf(out, side);
+    const nx = toeX - TOE_D[0]!, ny = toeY - TOE_D[1]!, nz = toeZ - TOE_D[2]!;
+    const dx = nx - ax, dy = ny - ay, dz = nz - az;
+    ax = nx; ay = ny; az = nz;
+    if (dx * dx + dy * dy + dz * dz < 1e-8) break;
+  }
+  legIK(out, side, ax, ay, az);
   setFootPitch(out, side, pitch);
+}
+
+/** Toe point minus ankle joint (model space) of the last toeOffsetOf call. */
+export const TOE_D = new Float64Array(3);
+
+/**
+ * Model-space vector from the ankle joint of leg `side` to its toe point for the angles in `out` (exact chain of
+ * fk.ts): R_root Rz(hip pitch) Rx(hip roll) Rz(ankle - knee) (toeX, -ankleY, 0). Written to TOE_D.
+ */
+export function toeOffsetOf(out: Pose, side: number): void {
+  const left = side < 0;
+  const hp = left ? out[P.HIP_L_PITCH]! : out[P.HIP_R_PITCH]!;
+  const rD = left ? out[P.HIP_L_ROLL]! : -out[P.HIP_R_ROLL]!;
+  const q = left ? out[P.ANKLE_L]! - out[P.KNEE_L]! : out[P.ANKLE_R]! - out[P.KNEE_R]!;
+  const cq = Math.cos(q), sq = Math.sin(q);
+  // Rz(q) (toeX, -ankleY, 0)
+  const wx = BODY.toeX * cq + BODY.ankleY * sq;
+  const wy0 = BODY.toeX * sq - BODY.ankleY * cq;
+  // Rx(rD)
+  const wy = wy0 * Math.cos(rD), wz = wy0 * Math.sin(rD);
+  // Rz(hp)
+  const chp = Math.cos(hp), shp = Math.sin(hp);
+  let x = wx * chp - wy * shp, y = wx * shp + wy * chp, z = wz;
+  // Root: Rz(-pitch), then Rx(roll), then Ry(yaw).
+  const rp = out[P.ROOT_PITCH]!, rr = out[P.ROOT_ROLL]!, yaw = out[P.ROOT_YAW]!;
+  if (rp !== 0) { const c = Math.cos(rp), s = Math.sin(rp); const nx = c * x + s * y, ny = -s * x + c * y; x = nx; y = ny; }
+  if (rr !== 0) { const c = Math.cos(rr), s = Math.sin(rr); const ny = c * y - s * z, nz = s * y + c * z; y = ny; z = nz; }
+  if (yaw !== 0) { const c = Math.cos(yaw), s = Math.sin(yaw); const nx = c * x + s * z, nz = -s * x + c * z; x = nx; z = nz; }
+  TOE_D[0] = x; TOE_D[1] = y; TOE_D[2] = z;
+}
+
+/**
+ * Swing foot: like plantToe for a lowest-sole height h, but when the ankle limits cannot give the wanted pitch
+ * (a heel kicked up behind the body points the toes down) the foot keeps the pitch it can reach and the toe target
+ * is re-solved so no part of the sole goes below height h.
+ */
+export function placeSwingFoot(out: Pose, side: number, toeX: number, h: number, toeZ: number, pitch: number): void {
+  plantToe(out, side, toeX, toeHeightForLowest(h, pitch), toeZ, pitch);
+  for (let it = 0; it < 2; it++) {
+    const got = footPitchOf(out, side);
+    if (Math.abs(got - pitch) < 1e-3) return;
+    pitch = got;
+    plantToe(out, side, toeX, toeHeightForLowest(h, pitch), toeZ, pitch);
+  }
 }
 
 /** Height of the lowest sole point (toe or heel) above the toe for a foot pitch: toe y for a lowest point h. */
@@ -307,12 +383,17 @@ export interface Clip {
   readonly repeat: number;
 }
 
-/** A key as authored: time, joint values by PoseIdx name, optional IK targets [x, y, z, pitch] per leg. */
+/**
+ * A key as authored: time, joint values by PoseIdx name, optional IK targets [ankle x, y, z, foot pitch] per leg.
+ * Channels a key does not name carry over from the previous key (the first key starts from the neutral pose);
+ * `reset: true` starts the key from the neutral pose instead.
+ */
 export interface KeySpec {
   t: number;
   pose?: Partial<Record<keyof typeof PoseIdx, number>>;
   ikL?: readonly [number, number, number, number];
   ikR?: readonly [number, number, number, number];
+  reset?: boolean;
 }
 
 export interface ClipOptions {
@@ -322,33 +403,32 @@ export interface ClipOptions {
 }
 
 /**
- * Build a clip (module load only). Channels missing from a key are 0 (joints) or, for IK legs, every key must give
- * the target. Times must start at 0, end at 1 and increase.
+ * Build a clip (module load only). Times must start at 0, end at 1 and increase. A leg is IK-driven when any key
+ * gives its target (keys before the first target use the first one).
  */
 export function createClip(keys: readonly KeySpec[], opts: ClipOptions = {}): Clip {
   const n = keys.length;
   const times = new Float32Array(n);
   const values = new Float32Array(n * KEY_SIZE);
   let ikLeft = 0, ikRight = 0;
+  let firstL: readonly number[] | null = null, firstR: readonly number[] | null = null;
   for (let k = 0; k < n; k++) {
-    if (keys[k]!.ikL) ikLeft = 1;
-    if (keys[k]!.ikR) ikRight = 1;
+    const key = keys[k]!;
+    if (key.ikL) { ikLeft = 1; if (!firstL) firstL = key.ikL; }
+    if (key.ikR) { ikRight = 1; if (!firstR) firstR = key.ikR; }
   }
   for (let k = 0; k < n; k++) {
     const key = keys[k]!;
     times[k] = key.t;
     if (k > 0 && !(key.t > keys[k - 1]!.t)) throw new Error('clip key times must increase');
     const o = k * KEY_SIZE;
+    if (k > 0 && !key.reset) for (let c = 0; c < POSE_SIZE; c++) values[o + c] = values[o - KEY_SIZE + c]!;
     if (key.pose) {
       for (const name of Object.keys(key.pose) as (keyof typeof PoseIdx)[]) values[o + PoseIdx[name]] = key.pose[name]!;
     }
-    if (ikLeft) {
-      if (!key.ikL) throw new Error('every key of an IK clip needs ikL');
-      for (let c = 0; c < IK_CH; c++) values[o + IKL + c] = key.ikL[c]!;
-    }
-    if (ikRight) {
-      if (!key.ikR) throw new Error('every key of an IK clip needs ikR');
-      for (let c = 0; c < IK_CH; c++) values[o + IKR + c] = key.ikR[c]!;
+    for (let c = 0; c < IK_CH; c++) {
+      if (ikLeft) values[o + IKL + c] = key.ikL ? key.ikL[c]! : k > 0 ? values[o - KEY_SIZE + IKL + c]! : firstL![c]!;
+      if (ikRight) values[o + IKR + c] = key.ikR ? key.ikR[c]! : k > 0 ? values[o - KEY_SIZE + IKR + c]! : firstR![c]!;
     }
   }
   if (times[0] !== 0 || Math.abs(times[n - 1]! - 1) > 1e-6) throw new Error('clip keys must span t = 0..1');

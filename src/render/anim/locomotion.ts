@@ -28,7 +28,7 @@
 
 import { AnimId, PoseIdx, type Pose, type PoseFn } from '../../contracts/render';
 import type { PoseTable } from '../types';
-import { clamp, lerp, plantToe, smooth01, smoothRange, TAU, toeHeightForLowest, wrap01 } from './poseMath';
+import { clamp, lerp, placeSwingFoot, plantToe, smooth01, smoothRange, TAU, toeHeightForLowest, wrap01 } from './poseMath';
 
 const P = PoseIdx;
 
@@ -98,35 +98,39 @@ interface GaitStyle {
   swingH: number;
   /** Max heel lift at toe-off (rad). */
   heelLift: number;
+  /** Heel lift through the whole stance (rad): crouched styles stand on the balls of the feet. */
+  ballLift: number;
   /** Mid-stance toe position ahead of the hips (m) at rest / moving. */
   centreRest: number;
   centreMove: number;
 }
 
 const RUN: GaitStyle = {
-  shuffle: 0, baseRest: 0.115, baseMove: 0.085, crouchRest: -0.015, crouchRun: -0.115, swingH: 0.3, heelLift: 0.8,
+  shuffle: 0, baseRest: 0.115, baseMove: 0.085, crouchRest: -0.015, crouchRun: -0.09, swingH: 0.3, heelLift: 0.8, ballLift: 0,
   centreRest: 0.15, centreMove: 0.05,
 };
 const STRAFE_STYLE: GaitStyle = {
-  shuffle: 1, baseRest: 0.13, baseMove: 0.15, crouchRest: -0.04, crouchRun: -0.1, swingH: 0.14, heelLift: 0.6,
+  shuffle: 1, baseRest: 0.13, baseMove: 0.15, crouchRest: -0.04, crouchRun: -0.1, swingH: 0.14, heelLift: 0.6, ballLift: 0.05,
   centreRest: 0.15, centreMove: 0.12,
 };
 const JOCKEY_STYLE: GaitStyle = {
-  shuffle: 1, baseRest: 0.19, baseMove: 0.19, crouchRest: -0.17, crouchRun: -0.06, swingH: 0.1, heelLift: 0.5,
+  shuffle: 1, baseRest: 0.19, baseMove: 0.19, crouchRest: -0.17, crouchRun: -0.06, swingH: 0.1, heelLift: 0.5, ballLift: 0.18,
   centreRest: 0.15, centreMove: 0.13,
 };
 const SHIELD_STYLE: GaitStyle = {
-  shuffle: 1, baseRest: 0.21, baseMove: 0.2, crouchRest: -0.12, crouchRun: -0.05, swingH: 0.09, heelLift: 0.5,
+  shuffle: 1, baseRest: 0.21, baseMove: 0.2, crouchRest: -0.12, crouchRun: -0.05, swingH: 0.09, heelLift: 0.5, ballLift: 0.12,
   centreRest: 0.14, centreMove: 0.12,
 };
 const KEEPER_STYLE: GaitStyle = {
-  shuffle: 1, baseRest: 0.2, baseMove: 0.19, crouchRest: -0.2, crouchRun: -0.05, swingH: 0.09, heelLift: 0.5,
+  shuffle: 1, baseRest: 0.2, baseMove: 0.19, crouchRest: -0.2, crouchRun: -0.05, swingH: 0.09, heelLift: 0.5, ballLift: 0.2,
   centreRest: 0.16, centreMove: 0.13,
 };
 
-/** Gait values for the current call: [duty, stride, travel, base, pelvisDrop, swingH, heelLift, phaseOffset, centre]. */
-const G = new Float64Array(9);
+/** Gait values of the current call (gaitParams): duty, stride, travel, base, pelvis drop, swing height, heel lift,
+ *  left-foot phase offset, stance centre, ball-of-foot lift. */
+const G = new Float64Array(10);
 const G_DUTY = 0, G_STRIDE = 1, G_TRAVEL = 2, G_BASE = 3, G_DROP = 4, G_SWING = 5, G_HEEL = 6, G_OFFSET = 7, G_CENTRE = 8;
+const G_BALL = 9;
 
 /** Run duty factor (fraction of the cycle a foot is planted) at speed. */
 export function runDuty(speed: number): number {
@@ -136,7 +140,7 @@ export function runDuty(speed: number): number {
   return Math.max(0.28, 0.34 - 0.012 * (v - 4));
 }
 
-function gaitParams(st: GaitStyle, speed: number, sideways: number, sprintStyle: number): void {
+function gaitParams(st: GaitStyle, speed: number, forward: number, sideways: number, sprintStyle: number): void {
   const v = speed > 0 ? (speed < 12 ? speed : 12) : 0;
   const move = smoothRange(0, 1.2, v);
   if (st.shuffle === 1) {
@@ -157,7 +161,13 @@ function gaitParams(st: GaitStyle, speed: number, sideways: number, sprintStyle:
   G[G_TRAVEL] = G[G_DUTY]! * G[G_STRIDE]!;
   G[G_BASE] = lerp(st.baseRest, st.baseMove, move);
   G[G_HEEL] = st.heelLift * smoothRange(0.2, 1.2, v);
-  G[G_CENTRE] = lerp(st.centreRest, st.centreMove, smoothRange(0.5, 3, v));
+  // A crouched pelvis puts the feet further forward so the shins stay near vertical (ankles in range).
+  const deep = -G[G_DROP]! - 0.06;
+  G[G_CENTRE] = lerp(st.centreRest, st.centreMove, smoothRange(0.5, 3, v)) + (deep > 0 ? deep * 1.1 : 0);
+  G[G_BALL] = st.ballLift;
+  // The heel rolls up only when stepping forward (a backward or side step leaves the foot flat / on its ball).
+  if (forward < 1) G[G_HEEL] = G[G_HEEL]! * (forward > 0 ? forward : 0);
+  if (G[G_HEEL]! < st.ballLift) G[G_HEEL] = st.ballLift;
 }
 
 /** Per-foot placement scratch: toe x, z offset along the motion, lowest-sole height, pitch, planted (1/0). */
@@ -174,7 +184,8 @@ function footAt(u: number): void {
     F[0] = travel * (0.5 - s);
     F[2] = 0;
     const roll = smoothRange(0.55, 1, s);
-    F[3] = -heel * roll * roll;
+    const ball = G[G_BALL]!;
+    F[3] = -(ball + (heel - ball) * roll * roll);
     F[4] = 1;
     return;
   }
@@ -186,8 +197,9 @@ function footAt(u: number): void {
   const s2 = s * s, s3 = s2 * s;
   F[0] = (2 * s3 - 3 * s2 + 1) * p0 + (s3 - 2 * s2 + s) * m + (-2 * s3 + 3 * s2) * p1 + (s3 - s2) * m;
   const sn = Math.sin(Math.PI * s);
-  F[2] = H * sn * sn * sn;
-  F[3] = -heel * (1 - s) * (1 - s) + 0.28 * sn * s * smooth01(H * 8);
+  F[2] = H * sn * sn * sn * sn;
+  const ball = G[G_BALL]!;
+  F[3] = -heel * (1 - s) * (1 - s) - ball * s * s + 0.28 * sn * s * smooth01(H * 8);
   F[4] = 0;
 }
 
@@ -199,9 +211,10 @@ function gaitLegs(out: Pose, cycle: number, dirX: number, dirZ: number, bob: num
   const u = wrap01(cycle / TAU);
   const duty = G[G_DUTY]!;
   const travel = G[G_TRAVEL]!;
-  // Pelvis: lowest at each mid-stance (two bobs per cycle).
+  // Pelvis: highest over each mid-stance (two bobs per cycle), where the planted leg is under the body; lower at
+  // touchdown / toe-off where the leg reaches out (keeps knees and ankles in a natural range at any stride).
   const midR = duty * 0.5;
-  out[P.ROOT_Y] = G[G_DROP]! - bob * travel * Math.cos(TAU * 2 * (u - midR)) * 0.5;
+  out[P.ROOT_Y] = G[G_DROP]! + bob * travel * Math.cos(TAU * 2 * (u - midR)) * 0.5;
   out[P.ROOT_YAW] = 0;
   const base = G[G_BASE]!;
   for (let leg = 0; leg < 2; leg++) {
@@ -213,8 +226,8 @@ function gaitLegs(out: Pose, cycle: number, dirX: number, dirZ: number, bob: num
     // Feet move along the motion direction; the stance centre sits ahead of the hips along +x (toe ahead of ankle).
     const tx = G[G_CENTRE]! + along * dirX;
     const tz = side * base + along * dirZ;
-    const ty = toeHeightForLowest(F[2]!, pitch);
-    plantToe(out, side, tx, ty, tz, pitch);
+    if (F[4] === 1) plantToe(out, side, tx, toeHeightForLowest(F[2]!, pitch), tz, pitch);
+    else placeSwingFoot(out, side, tx, F[2]!, tz, pitch);
   }
 }
 
@@ -268,7 +281,7 @@ export const idlePose: PoseFn = (out, t) => {
 function runPose(out: Pose, cycle: number, speed: number, sprint: number): void {
   clearUpper(out);
   const v = speed > 0 ? speed : 0;
-  gaitParams(RUN, v, 0, sprint);
+  gaitParams(RUN, v, 1, 0, sprint);
   gaitLegs(out, cycle, 1, 0, 0.05 * smoothRange(2, 5, v));
   const run = smoothRange(1.5, 4, v);
   // Pelvis twist with the stride, shoulders counter-rotate.
@@ -306,7 +319,7 @@ export const turnLeanPose: PoseFn = (out, _t, cycle, speed, side, foot) => {
 function shuffleLegs(out: Pose, st: GaitStyle, t: number, cycle: number, speed: number): void {
   const a = TAU * t;
   const dx = Math.cos(a), dz = Math.sin(a);
-  gaitParams(st, speed, dz, 0);
+  gaitParams(st, speed, dx, dz, 0);
   gaitLegs(out, cycle, dx, dz, 0.03);
 }
 

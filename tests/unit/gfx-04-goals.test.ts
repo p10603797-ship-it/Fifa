@@ -5,6 +5,7 @@
  * interpolated ball positions (replays), including a real sim shot into the net. The e2e spec gfx-04-goals checks the
  * pixels.
  */
+import { spawnSync } from 'node:child_process';
 import { Matrix4, PerspectiveCamera, Scene, Vector3, type WebGLRenderer } from 'three';
 import { describe, expect, it } from 'vitest';
 import {
@@ -194,6 +195,7 @@ describe('GFX-04 geometry', () => {
     const ms = goalFrameMatrices();
     expect(ms.length).toBe(6);
     const pos = new Vector3();
+    // goalFrameMatrices works in float64 (exact); the InstancedMesh copy is float32.
     pos.setFromMatrixPosition(ms[0]!);
     expect(pos.z).toBeCloseTo(-(GW + POST_RADIUS), 6);
     expect(pos.x).toBeCloseTo(-(HALF_LENGTH - POST_RADIUS), 6);
@@ -299,10 +301,12 @@ describe('GFX-04 geometry', () => {
         if (Math.abs(nx) > 0.5) { expect(u).toBeCloseTo(GB, 5); expect(nx * Math.sign(x)).toBe(1); }
         else if (ny > 0.5) expect(y).toBeCloseTo(GH, 5);
         else { expect(Math.abs(nz)).toBe(1); expect(z * nz).toBeCloseTo(GW, 5); }
-        // Pin: 0 on any edge of the box (posts, bar, back frame, ground).
-        const onEdge = Math.abs(u - GL) < 1e-4 || Math.abs(u - GB) < 1e-4 || y < 1e-4 || Math.abs(y - GH) < 1e-4
-          ? (Math.abs(nx) > 0.5 ? Math.abs(Math.abs(z) - GW) < 1e-4 || y < 1e-4 || Math.abs(y - GH) < 1e-4 : true)
-          : Math.abs(Math.abs(z) - GW) < 1e-4;
+        // Pin: 0 on every edge of its sheet (posts, bar, back frame, ground). Back: z = +-GW, y = 0, y = GH;
+        // roof: u = GL (bar), u = GB, z = +-GW; sides: u = GL (post), u = GB, y = 0, y = GH.
+        const atU = Math.abs(u - GL) < 1e-4 || Math.abs(u - GB) < 1e-4;
+        const atY = y < 1e-4 || Math.abs(y - GH) < 1e-4;
+        const atZ = Math.abs(Math.abs(z) - GW) < 1e-4;
+        const onEdge = Math.abs(nx) > 0.5 ? atZ || atY : ny > 0.5 ? atU || atZ : atU || atY;
         if (onEdge) { edgeVerts++; expect(p).toBe(0); }
         if (p === 1) interiorFull++;
         expect(p).toBeGreaterThanOrEqual(0);
@@ -615,6 +619,7 @@ describe('GFX-04 goals module (headless scene)', () => {
     const dir = new Vector3();
     cam.getWorldDirection(dir);
     expect(dir.x).toBeGreaterThan(0.3);
+    expect(cam.fov).toBe(T.closeUpFovDeg); // fixed close-up framing, whatever the broadcast camera's widening
     r.goals.debug.closeUp(0);
     cam.position.set(1, 2, 3);
     r.step(16);
@@ -673,4 +678,17 @@ describe('GFX-04 scenario: a real shot into the net', () => {
     expect(lastActiveTick).toBeLessThan(149);
     goals.dispose();
   });
+});
+
+describe('GFX-04 no per-frame allocation', () => {
+  it('update() (ripples, frame shake, contact detection) and onEvents() allocate nothing', () => {
+    const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', 'tests/unit/gfx-04-alloc-probe.ts', '50000'], {
+      cwd: process.cwd(), encoding: 'utf8', timeout: 150_000,
+    });
+    expect(r.status, r.stderr).toBe(0);
+    const bytes = JSON.parse(r.stdout.trim().split('\n').pop()!) as Record<string, number>;
+    expect(Object.keys(bytes).sort()).toEqual(['events', 'frames']);
+    // A single boxed double is 12 bytes; what remains is measurement noise.
+    for (const [name, b] of Object.entries(bytes)) expect(b, name).toBeLessThan(8);
+  }, 180_000);
 });

@@ -7,10 +7,11 @@
  *
  *  estimateXg(s, slot, x, z) — chance 0..xgCap that a shot by `slot` from (x, z) scores. (x, z) may be hypothetical
  *  (the carrier's feet, a spot he could dribble to); the slot gives the team, attributes and facing.
- *   1. Clean chance (no blocker, no pressure, keeper set): goal-mouth angle theta (posts seen from the spot, dmath
- *      datan2) through a Hill curve xgMax x theta^3 / (theta^3 + xgHalf), x 1 / (1 + farPerM x (d - farFrom)) beyond
- *      farFrom m (d = distance to the goal centre). Calibration (central, clean): 6 m ~0.6, penalty spot ~0.4, edge of
- *      the box ~0.16, 22 m ~0.06, 25 m ~0.04, 30 m ~0.02. 0 on / behind the goal line or beyond maxDist.
+ *   1. Clean chance (no blocker, no pressure, keeper set): goal-mouth angle theta (posts seen from the spot; atan by
+ *      a fixed series, |error| < 2e-7 rad) through a Hill curve xgMax x theta^3 / (theta^3 + xgHalf), x 1 / (1 +
+ *      farPerM x (d - farFrom)) beyond farFrom m (d = distance to the goal centre). Calibration (central, clean,
+ *      average attributes): 6 m ~0.68, 8 m ~0.56, penalty spot ~0.38, edge of the box ~0.17, 20 m ~0.09, 25 m ~0.04,
+ *      30 m ~0.02. 0 on / behind the goal line or beyond maxDist.
  *   2. Keeper: the clean chance moves toward the open-goal chance (openBase - openPerM x d, at least openMin, x
  *      min(1, theta / openAngleFull)) by `open` 0..1, the largest of
  *       - lateral misposition: in the shooter's frame (u toward the goal centre) the goal mouth is the slope interval
@@ -24,26 +25,33 @@
  *       - down (diving, fallen, getting up, stumbling, stunned): downOpen;
  *       - no active keeper, or the keeper level with / behind the shooter: 1.
  *   3. Blockers: each outfield opponent between the spot and the goal covers [s - blockRadius / t, s + blockRadius / t]
- *      of the mouth's slope interval; the chance x (1 - blockEff x covered share) per blocker, at least blockFloor.
+ *      of the mouth's slope interval (t his distance along the shot); the chance x (1 - eff x covered share) per
+ *      blocker, eff = blockEff falling linearly to blockEff x blockFarKeep from blockNear to blockFar m (a far blocker
+ *      can be shot over or wrong-footed); at least blockFloor in all.
  *   4. Pressure: nearest opponent to (x, z) after pressLook s of his current velocity -> 0 at >= pressFar m, 1 at <=
  *      pressNear m; x (1 - pressMax x pressure x (1 - composureRelief x composure)).
  *   5. Attributes (mild): accuracy = finishing .. longShots blended over finishRange..longRange m (like SIM-07);
  *      x clamp(1 + attrSpan x (accuracy - attrRef) / 29, attrMin, attrMax). Weak foot (SIM-07's rule: a shot turning
  *      toward the preferred foot's side is struck with the weaker foot): x (1 - weakMax x smoothstep(weakTurnLo,
  *      weakTurnHi, turn sine) x (5 - weakFoot) / 4).
- *   Typical box shots (8..16 m, a defender close or in the way) land in 0.08..0.35, long shots (22..30 m) 0.02..0.05,
- *   one-on-ones (8..12 m, nobody between) 0.35..0.6 (tests pin these bands).
+ *   Typical box shots (11..16.5 m, a defender pressing or half in the way) land in 0.08..0.35, long shots (24..30 m,
+ *   keeper set) 0.02..0.05, one-on-ones (8..11 m with nobody between, or 12..14 m with the keeper rushing out)
+ *   0.35..0.6 (tests pin these bands).
  *
  *  bestDribble(s, slot, out) — samples DRIBBLE_DIRS = 12 directions every 30 degrees from the direction to the attacked
  *  goal centre (goalward first: ties keep the more goalward one). Per direction:
- *   - space: at probe distances probe1..probe3 m the carrier arrives after r / (topSpeed x stamina x dribbleSpeedFrac)
- *     + a turn cost (turnCost s x (1 - cos(velocity, direction)) / 2 x speed fraction); every opponent after oppReact s
- *     (moving on with his velocity meanwhile) + a run of (distance - oppReach) at his top speed. The smallest margin
- *     (opponent time - carrier time) -> smoothstep(spaceLo, spaceHi);
+ *   - space: at probe distances probe1..probe3 m the carrier arrives after a turn cost (turnCost s x (1 - cos(velocity,
+ *     direction)) / 2 x speed fraction) + a run from his speed along the direction, accelerating (attrs.accel) to his
+ *     dribbling speed (topSpeed x dribbleSpeedFrac, both x SIM-04 stamina factor); every opponent after oppReact s
+ *     (moving on with his velocity meanwhile) + a run of (distance - oppReach) from his speed toward the point,
+ *     accelerating to his top speed. Margin = opponent time - carrier time (+ probeSlack2 / probeSlack3 at the longer
+ *     probes, where the carrier can still adjust); the smallest -> space = smoothstep(spaceLo, spaceHi);
  *   - progress (1 + cos to the goal direction) / 2; separation: nearest opponent to the far probe / sepRef;
  *   - staying on the pitch: x clamp01((run until edgeMargin inside a touchline / goal line - 1) / (probe3 - 1)).
- *  Score = (wSpace x space + wProg x progress + wSep x separation) / (sum of weights) x pitch factor, 0..1. Writes the
- *  best unit direction and returns its score; an invalid slot gets 0 and (0, 0) (TAI-08 then falls back).
+ *  The direction maximises (wSpace x space + wProg x progress + wSep x separation) x pitch factor. The returned score
+ *  is that direction's room to carry the ball, (spaceShare x space + (1 - spaceShare) x separation) x pitch factor,
+ *  0..1 (TAI-08 scales the carry by it; it values the progress itself). An invalid slot gets 0 and (0, 0) (TAI-08 then
+ *  falls back).
  *
  *  chooseSkill(s, slot) — only for an active outfield ball owner (at his feet, not in hands). The defender is the
  *  nearest opponent in front (cos to the facing >= frontCos) within knockMaxDist. Space probes (clearance from every
@@ -66,15 +74,17 @@
  *  written into SKILL_CHOICE (move, side -1 left / +1 right of the facing with the more space, 0 straight on, and a
  *  suggested unit exit direction) for callers that want the side.
  *
- * Determinism / cost: +, -, x, /, Math.sqrt and dmath datan2 only, no RNG, slot-order loops with strict comparisons;
- * state is only read. Allocation-free (module-level typed scratch). estimateXg ~O(11), bestDribble 12 x 3 x 11 cheap
- * distance checks (far opponents skipped once per call), chooseSkill ~O(11 x 8): each well under 0.05 ms.
+ * Determinism / cost: +, -, x, / and Math.sqrt only (dmath dcos / dsin once at module load), no RNG, slot-order loops
+ * with strict comparisons; state is only read. Allocation-free: module-level typed scratch, and no internal call passes
+ * or returns a double (the exported functions are thin wrappers around kernels that hand results through R[], so
+ * V8 boxes nothing). Measured (tests/perf/tai-10-budget.test.ts, Node): estimateXg ~0.4 us, bestDribble ~5 us
+ * (12 x 3 x 11 arrival checks, far opponents skipped once per call), chooseSkill ~0.4 us — all far under 0.05 ms.
  */
 import { GOAL_HALF_WIDTH, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PLAYERS_PER_TEAM, TICK_HZ } from '../../contracts/constants';
 import { ActionKind, Foot, SkillMove } from '../../contracts/enums';
 import type { SimState } from '../../contracts/state';
 import { T_DRIBBLE, T_GK, T_PLAYER, T_SKILL } from '../../contracts/tuning';
-import { datan2, dcos, dsin, PI } from '../../sim/core/dmath';
+import { dcos, dsin, PI } from '../../sim/core/dmath';
 
 export const LOCAL_TUNING = { // TUNING-CR (TAI-10): move into T_AI as xg* / dribble* / skill* (m, s, m/s, 0..1)
   // ---- xG: clean chance
@@ -119,6 +129,11 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-10): move into T_AI as xg* / dri
   blockRadius: 0.75,
   blockEff: 0.85,
   blockFloor: 0.06,
+  /** A blocker further than blockNear m from the shot blocks less (the ball can rise over him or he is wrong-footed):
+   *  blockEff x 1 .. blockFarKeep from blockNear to blockFar m. */
+  blockNear: 4,
+  blockFar: 16,
+  blockFarKeep: 0.4,
   // ---- xG: pressure
   /** Pressure 1 at <= pressNear m, 0 at >= pressFar m, the opponent moved on pressLook s first. */
   pressNear: 1.0,
@@ -220,8 +235,9 @@ const ODOWN = new Int32Array(PLAYERS_PER_TEAM);
 /** Opponent too far to matter for this bestDribble call. */
 const OFAR = new Int32Array(PLAYERS_PER_TEAM);
 const NI = new Int32Array(1);
-/** Scalar results of internal helpers (no doubles cross a call boundary). */
-const R = new Float64Array(4);
+/** Scalars handed to / from internal helpers: no double crosses a call boundary (V8 would box it). R[0] clearance,
+ *  R[1] estimateXg result, R[2] bestDribble result, R[3] / R[4] atan argument / result, R[5] / R[6] the spot. */
+const R = new Float64Array(8);
 
 /** Number of dribble directions sampled. */
 export const DRIBBLE_DIRS = 12;
@@ -316,26 +332,54 @@ function insidePitch(px: number, pz: number, m: number): boolean {
   return px <= HALF_LENGTH - m && px >= -HALF_LENGTH + m && pz <= HALF_WIDTH - m && pz >= -HALF_WIDTH + m;
 }
 
+const TAN_PI_8 = 0.41421356237309503;
+const QUARTER_PI = PI / 4;
+
+/** atan(R[3]) for R[3] in [-1, 1] into R[4]: range reduction at tan(pi / 8) and a 7-term odd series (|error| < 2e-7,
+ *  strictly increasing). */
+function atanUnit(): void {
+  const r = R[3]!;
+  const ar = r < 0 ? -r : r;
+  let t = ar, base = 0;
+  if (ar > TAN_PI_8) { t = (ar - 1) / (ar + 1); base = QUARTER_PI; }
+  const t2 = t * t;
+  const v = base + t * (1 + t2 * (-1 / 3 + t2 * (1 / 5 + t2 * (-1 / 7 + t2 * (1 / 9 + t2 * (-1 / 11 + t2 / 13))))));
+  R[4] = r < 0 ? -v : v;
+}
+
 // ---------------------------------------------------------------- xG
 
 /** Expected-goal estimate 0..1 for a shot by slot from (x, z). Pure. */
 export function estimateXg(s: SimState, slot: number, x: number, z: number): number {
-  if (!validSlot(slot) || !finite(x) || !finite(z)) return 0;
+  R[5] = x; R[6] = z;
+  xgKernel(s, slot);
+  return R[1]!;
+}
+
+/** estimateXg for the spot (R[5], R[6]) into R[1]. */
+function xgKernel(s: SimState, slot: number): void {
+  R[1] = 0;
+  const x = R[5]!, z = R[6]!;
+  if (!validSlot(slot) || !finite(x) || !finite(z)) return;
   const p = s.players[slot]!;
   const team = p.team;
-  if (p.active !== 1 || (team !== 0 && team !== 1)) return 0;
+  if (p.active !== 1 || (team !== 0 && team !== 1)) return;
   const dir = s.teams[team]!.dir === -1 ? -1 : 1;
   const ax = dir * HALF_LENGTH - x;
   // Forward distance to the goal line (dir x ax): nothing on or behind it.
-  if (dir * ax <= 0.05) return 0;
+  if (dir * ax <= 0.05) return;
   const d2 = ax * ax + z * z;
   const d = Math.sqrt(d2);
-  if (d > LT.maxDist || d < 1e-6) return 0;
+  if (d > LT.maxDist || d < 1e-6) return;
   const gh = GOAL_HALF_WIDTH;
   const adx = ax < 0 ? -ax : ax;
-  // Goal-mouth angle: atan2(|v1 x v2|, v1 . v2) with v1 / v2 toward the posts.
-  const theta = datan2(adx * 2 * gh, d2 - gh * gh);
-  if (!(theta > 0)) return 0;
+  // Goal-mouth angle: atan2(cr, dot) in (0, pi) with cr = |v1 x v2| > 0, dot = v1 . v2 (v1 / v2 toward the posts).
+  const cr = adx * 2 * gh, dot = d2 - gh * gh;
+  let theta: number;
+  if (dot > 0 && cr <= dot) { R[3] = cr / dot; atanUnit(); theta = R[4]!; }
+  else if (cr > (dot < 0 ? -dot : dot)) { R[3] = dot / cr; atanUnit(); theta = PI / 2 - R[4]!; }
+  else { R[3] = cr / -dot; atanUnit(); theta = PI - R[4]!; }
+  if (!(theta > 0)) return;
   // 1. Clean chance.
   const t3 = theta * theta * theta;
   let xg = (LT.xgMax * t3) / (t3 + LT.xgHalf);
@@ -414,7 +458,8 @@ export function estimateXg(s: SimState, slot: number, x: number, z: number): num
     const sb = (rx * wx + rz * wz) / t, rb = LT.blockRadius / t;
     const lo = sb - rb > sL ? sb - rb : sL, hi = sb + rb < sR ? sb + rb : sR;
     if (hi <= lo) continue;
-    block *= 1 - (LT.blockEff * (hi - lo)) / width;
+    const far = t > LT.blockNear ? (t < LT.blockFar ? (t - LT.blockNear) / (LT.blockFar - LT.blockNear) : 1) : 0;
+    block *= 1 - (LT.blockEff * (1 + (LT.blockFarKeep - 1) * far) * (hi - lo)) / width;
   }
   if (block < LT.blockFloor) block = LT.blockFloor;
   xg *= block;
@@ -443,21 +488,27 @@ export function estimateXg(s: SimState, slot: number, x: number, z: number): num
       xg *= 1 - (LT.weakMax * smooth01((weakTurn - LT.weakTurnLo) / (LT.weakTurnHi - LT.weakTurnLo)) * (5 - wf)) / 4;
     }
   }
-  if (!(xg > 0)) return 0;
-  return xg < LT.xgCap ? xg : LT.xgCap;
+  if (!(xg > 0)) return;
+  R[1] = xg < LT.xgCap ? xg : LT.xgCap;
 }
 
 // ---------------------------------------------------------------- dribble
 
 /** Best dribble direction for slot into space; returns a score 0..1 and writes the unit direction. */
 export function bestDribble(s: SimState, slot: number, out: { x: number; z: number }): number {
-  out.x = 0; out.z = 0;
-  if (!validSlot(slot)) return 0;
+  dribbleKernel(s, slot, out);
+  return R[2]!;
+}
+
+/** bestDribble with the score into R[2]. */
+function dribbleKernel(s: SimState, slot: number, out: { x: number; z: number }): void {
+  out.x = 0; out.z = 0; R[2] = 0;
+  if (!validSlot(slot)) return;
   const p = s.players[slot]!;
   const team = p.team;
-  if (p.active !== 1 || (team !== 0 && team !== 1)) return 0;
+  if (p.active !== 1 || (team !== 0 && team !== 1)) return;
   const x = p.x, z = p.z;
-  if (!finite(x) || !finite(z)) return 0;
+  if (!finite(x) || !finite(z)) return;
   const dir = s.teams[team]!.dir === -1 ? -1 : 1;
   prepOpponents(s, team);
   const n = NI[0]!;
@@ -544,10 +595,10 @@ export function bestDribble(s: SimState, slot: number, out: { x: number; z: numb
     const j = ((LT.wSpace * space + LT.wProg * prog + LT.wSep * sep) / wSum) * lineF;
     if (j > best) { best = j; bx = dx; bz = dz; bestSc = (LT.spaceShare * space + (1 - LT.spaceShare) * sep) * lineF; }
   }
-  if (!(best > 0)) return 0;
+  if (!(best > 0)) return;
   const l = Math.sqrt(bx * bx + bz * bz);
   out.x = bx / l; out.z = bz / l;
-  return bestSc > 0 ? (bestSc < 1 ? bestSc : 1) : 0;
+  R[2] = bestSc > 0 ? (bestSc < 1 ? bestSc : 1) : 0;
 }
 
 // ---------------------------------------------------------------- skill moves

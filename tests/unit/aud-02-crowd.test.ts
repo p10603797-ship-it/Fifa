@@ -292,9 +292,10 @@ describe('AUD-02 crowd module on the engine', () => {
     expect(bedGains[1]).toBeInstanceOf(FakeGain);
     // The roar opens up (brighter) with the build-up, also by smooth automation.
     expect(roarFilter.frequency.value).toBeGreaterThan(T.roarLpMin + 200);
-    expect(roarFilter.frequency.log).not.toContain('value');
+    // Only the initial value written when the node was created (before any sound) is a plain write.
+    expect(roarFilter.frequency.log.slice(1)).not.toContain('value');
     for (const g of bedGains) {
-      expect(g.gain.log).not.toContain('value');
+      expect(g.gain.log.slice(1)).not.toContain('value');
       expect(g.gain.maxStep(boot.ac.currentTime - 2, boot.ac.currentTime)).toBeLessThan(0.01);
     }
     // ATTACK_BUILD boosts.
@@ -309,6 +310,22 @@ describe('AUD-02 crowd module on the engine', () => {
     frames(boot, null, 2);
     for (const g of bedGains) expect(g.gain.value).toBeLessThan(0.02);
     expect(boot.errors).toEqual([]);
+    boot.engine.dispose();
+  });
+
+  it('a settled crowd sends no AudioParam automation (no work per frame once the level is steady)', async () => {
+    const boot = await bootRealEngine({ createEngine: createAudioEngine });
+    const s = makeScenario({ phase: MatchPhase.IN_PLAY, ball: { x: 0, z: 0 } });
+    boot.engine.matchStart(s);
+    frames(boot, s, 8);
+    const loops = boot.ac.created.sources.filter((x: FakeSource) => x.loop);
+    const murmurGain = loops[0]!.outputs[0] as FakeGain;
+    const n = murmurGain.gain.log.length;
+    frames(boot, s, 2);
+    expect(murmurGain.gain.log.length).toBe(n);
+    s.ball.x = 50;
+    frames(boot, s, 0.5);
+    expect(murmurGain.gain.log.length).toBeGreaterThan(n);
     boot.engine.dispose();
   });
 

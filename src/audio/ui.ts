@@ -158,9 +158,9 @@ export function createUi(ctx: AudioCtx): UiModule {
     const gain = ac.createGain();
     osc.type = 'triangle';
     osc.frequency.setValueAtTime(note[1], t);
-    gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(sp.level, t + 0.005);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + len);
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(sp.level, t + 0.005);
+    gain.gain.linearRampToValueAtTime(0, t + len);
     osc.connect(gain);
     gain.connect(ctx.menus);
     osc.start(t);

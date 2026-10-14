@@ -12,8 +12,8 @@
  *   Per-frame angle clamped (no backwards strobing), placements (restarts, replay cuts) and paused frames do not spin.
  * - Blobs: ball blob diameter and opacity follow ballBlob(height); one InstancedMesh of NUM_SLOTS player blobs sized
  *   by player height; inactive (sent-off) slots collapse to a zero-size blob.
- * - Quality tiers: sphere detail per tier (PERFORMANCE / BALANCED / QUALITY); at QUALITY the ball also casts into
- *   the one shadow map GFX-02 enables (blobs stay as the contact / height cue).
+ * - Quality tiers: sphere detail per tier (PERFORMANCE / BALANCED / QUALITY); at tiers with a shadow map (GFX-02
+ *   getTierParams().shadowMap: QUALITY) the ball also casts into it (blobs stay as the contact / height cue).
  * Draw calls: 3 (ball, ball blob, player blobs). No allocation in update().
  */
 
@@ -23,6 +23,7 @@ import {
 } from 'three';
 import { BALL_RADIUS, NUM_SLOTS } from '../contracts/constants';
 import { QualityTier } from '../contracts/enums';
+import { getTierParams } from './quality';
 import type { RenderContext, RenderFrame, RenderModule } from './types';
 
 const LOCAL_TUNING = { // TUNING-CR (GFX-13 ball and blob shadows)
@@ -304,7 +305,7 @@ export function createBall(ctx: RenderContext): BallModule {
   ball.name = 'ball';
   ball.visible = false;
   ball.renderOrder = 1;
-  ball.castShadow = ctx.tier === QualityTier.QUALITY;
+  ball.castShadow = getTierParams(ctx.tier).shadowMap;
 
   const blobTex = createBlobTexture();
   const quad = new PlaneGeometry(1, 1);
@@ -393,7 +394,7 @@ export function createBall(ctx: RenderContext): BallModule {
     },
     setQuality(tier: QualityTier) {
       ball.geometry = geoFor(tier);
-      ball.castShadow = tier === QualityTier.QUALITY;
+      ball.castShadow = getTierParams(tier).shadowMap;
     },
     clearMatch() {
       active = false;

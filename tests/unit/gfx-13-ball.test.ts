@@ -4,6 +4,7 @@
  * scene (meshes, draw calls, positions, inactive player blobs, quality tiers, dispose). Node only; the e2e spec
  * gfx-13-markers checks the pixels.
  */
+import { spawnSync } from 'node:child_process';
 import { Mesh, PerspectiveCamera, Quaternion, Scene, SRGBColorSpace, Vector3, type WebGLRenderer } from 'three';
 import { describe, expect, it } from 'vitest';
 import { BALL_RADIUS, NUM_SLOTS } from '../../src/contracts/constants';
@@ -273,4 +274,17 @@ describe('GFX-13 ball module (headless)', () => {
     mod.dispose();
     expect(ctx.scene.children.filter((c) => c instanceof Mesh)).toHaveLength(0);
   });
+});
+
+describe('GFX-13 no per-frame allocation', () => {
+  it('ball, blob shadows and every on-pitch aid (landing target, labels, off-screen arrow) allocate nothing per frame', () => {
+    const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', 'tests/unit/gfx-13-alloc-probe.ts', '50000'], {
+      cwd: process.cwd(), encoding: 'utf8', timeout: 150_000,
+    });
+    expect(r.status, r.stderr).toBe(0);
+    const bytes = JSON.parse(r.stdout.trim().split('\n').pop()!) as Record<string, number>;
+    expect(Object.keys(bytes).sort()).toEqual(['ball', 'markers', 'markersArrow']);
+    // A single boxed double is 12 bytes; what remains is measurement noise.
+    for (const [name, b] of Object.entries(bytes)) expect(b, name).toBeLessThan(8);
+  }, 180_000);
 });

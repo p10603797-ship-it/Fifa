@@ -46,7 +46,7 @@ import type { EventSink } from '../../contracts/events';
 import type { SimState } from '../../contracts/state';
 import { ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { T_BALL, T_PASS, T_PLAYER } from '../../contracts/tuning';
-import { createLaunchSolution, groundPassSpeed, solveLaunchSpin } from '../ball/flight';
+import { createLaunchSolution, groundPassSpeed, groundRollTime, solveLaunchSpin } from '../ball/flight';
 import { datan, dcos, dexp, dsin } from '../core/dmath';
 import { secondLastDefenderX } from '../core/query';
 import { inPenaltyArea } from '../pitch/geometry';
@@ -59,8 +59,11 @@ export const LOCAL_TUNING = { // TUNING-CR
   // ---- lead search
   /** Lead distance range ahead of the runner along his run, m, and the number of samples over it. */
   leadMin: 0,
-  leadMax: 26,
-  leadSamples: 27,
+  leadMax: 30,
+  leadSamples: 31,
+  /** No sample in time: the least-late one is still played (ball at full speed / flattest angle) when it is at most
+   *  this late for the runner, s. */
+  maxLateSec: 0.6,
   /** Runners slower than this (or running backward) are led toward the attacked goal, m/s. */
   runMinSpeed: 1,
   /** Runner times below this cannot be met by a kicked ball, s. */
@@ -84,7 +87,10 @@ export const LOCAL_TUNING = { // TUNING-CR
   lobbedAngle: 0.7,
   dinkedAngle: 0.45,
   /** A lofted through ball lands this long before the runner reaches the lead point, s. */
-  loftLandEarly: 0.2,
+  loftLandEarly: 0.05,
+  /** Lofted flight-time refinement with drag: Newton steps on the launch angle, and the tolerance, s. */
+  loftTimeIters: 3,
+  loftTimeTol: 0.02,
   /** Shortest lofted flight considered, s. */
   minFlight: 0.25,
   /** Max launch speed of a lofted through ball, m/s. */
@@ -154,6 +160,8 @@ const SPACE_LIM_Z = HALF_WIDTH - 1;
 const COS_CONE = dcos(T_PASS.coneHalfAngle * LT.coneMul);
 const COS_CONE_SEMI = dcos(T_PASS.coneHalfAngle * LT.semiConeMul);
 const N = LT.leadSamples;
+/** tan of the lofted minimum angles by mode (index 1 lobbed, 2 dinked). */
+const TAN_MIN = new Float64Array([0, dsin(LT.lobbedAngleMin) / dcos(LT.lobbedAngleMin), dsin(LT.dinkedAngleMin) / dcos(LT.dinkedAngleMin)]);
 const AIM_MIN_DIST = 0.25;
 
 // ---------------------------------------------------------------- module scratch (no per-tick allocation)
@@ -163,6 +171,8 @@ const SX = new Float64Array(N);
 const SZ = new Float64Array(N);
 const STR = new Float64Array(N);
 const SV = new Float64Array(N);
+/** Per-sample lateness of the fastest ball (s; Infinity when not playable at all). */
+const SLATE = new Float64Array(N);
 /** Per-sample status: 0 late / infeasible, 1 ideal, 2 early, 3 firm; danger flag. */
 const SST = new Uint8Array(N);
 const SDG = new Uint8Array(N);
@@ -299,12 +309,17 @@ function leadSearch(s: SimState, slot: number, r: number, power: number, mode: n
     const D = Math.sqrt(dx * dx + dz * dz);
     let st = ST_LATE;
     SV[i] = 0;
+    SLATE[i] = Infinity;
     if (D >= LT.minBallDist && tr >= LT.minRunnerTime) {
       if (ground) {
         const v0 = timedGroundSpeed(D, tr);
         const va = F[F_VY]!;
         SV[i] = v0;
-        if (v0 > vmaxG) st = ST_LATE;
+        if (v0 > vmaxG) {
+          st = ST_LATE;
+          const tb = groundRollTime(vmaxG, D);
+          if (tb >= 0) SLATE[i] = tb - tr;
+        }
         else if (va < amin || v0 < LT.groundSpeedMin) st = ST_EARLY;
         else {
           // Ball velocity at the meeting relative to his (sprinting toward the point, accelerating from now).
@@ -320,7 +335,10 @@ function leadSearch(s: SimState, slot: number, r: number, power: number, mode: n
         const tf = tr - LT.loftLandEarly;
         if (tf >= LT.minFlight) {
           const th = datan(G * tf * tf / (2 * D));
-          if (th >= thMin) {
+          if (th < thMin) {
+            SV[i] = thMin;
+            SLATE[i] = Math.sqrt(2 * D * TAN_MIN[mode]! / G) - tf;
+          } else {
             const thc = th > thMax ? thMax : th;
             const s2 = dsin(2 * thc);
             const v = s2 > 1e-6 ? Math.sqrt(G * D / s2) : 1e9;
@@ -331,7 +349,7 @@ function leadSearch(s: SimState, slot: number, r: number, power: number, mode: n
       }
     }
     SST[i] = st;
-    SDG[i] = st !== ST_LATE && contested(s, team, px, pz, tr, ground, b.x, b.z, D) ? 1 : 0;
+    SDG[i] = (st !== ST_LATE || SLATE[i]! <= LT.maxLateSec) && contested(s, team, px, pz, tr, ground, b.x, b.z, D) ? 1 : 0;
   }
   // Power picks within the ideal samples; danger moves the pick.
   let lo = -1, hi = -1;
@@ -359,6 +377,17 @@ function leadSearch(s: SimState, slot: number, r: number, power: number, mode: n
     for (let i = 0; i < n && pick < 0; i++) if (SST[i] === ST_EARLY && SDG[i] === 0) pick = i;
     for (let i = 0; i < n && pick < 0; i++) if (SST[i] === ST_EARLY) pick = i;
     for (let i = n - 1; i >= 0 && pick < 0; i--) if (SST[i] === ST_FIRM) pick = i;
+  }
+  if (pick < 0) {
+    // Nothing in time: the least-late sample (safe first) when it is late by at most maxLateSec.
+    let best: number = LT.maxLateSec;
+    for (let pass = 0; pass < 2 && pick < 0; pass++) {
+      for (let i = 0; i < n; i++) {
+        if (SST[i] !== ST_LATE || (pass === 0 && SDG[i] === 1)) continue;
+        const late = SLATE[i]!;
+        if (late <= best) { best = late; pick = i; }
+      }
+    }
   }
   if (pick < 0) return 0;
   F[F_LX] = SX[pick]!;
@@ -524,15 +553,28 @@ function solveThroughImpl(s: SimState, slot: number, out: KickLaunch): number {
     const thMin = mode === 2 ? LT.dinkedAngleMin : LT.lobbedAngleMin;
     const thMax = mode === 2 ? LT.dinkedAngleMax : LT.lobbedAngleMax;
     let th: number = mode === 2 ? LT.dinkedAngle : LT.lobbedAngle;
+    const back = mode === 1 ? LT.lobbedBackspin : 0;
+    const dx = F[F_TX]! - b.x, dz = F[F_TZ]! - b.z;
     if (timed) {
       let tf = tr - LT.loftLandEarly;
       if (tf < LT.minFlight) tf = LT.minFlight;
       th = datan(G * tf * tf / (2 * D));
       if (th < thMin) th = thMin;
       if (th > thMax) th = thMax;
+      // Drag lengthens the flight: Newton steps on the solved flight time (drag-free slope dT/dth = T / sin 2th).
+      for (let it = 0; it < LT.loftTimeIters; it++) {
+        solveLaunchSpin(dx, dz, th, b.y, 0, back, SOL);
+        const T = SOL.flightT;
+        const e = T - tf;
+        if (!(T > 0) || (e < LT.loftTimeTol && e > -LT.loftTimeTol)) break;
+        let nth = th - e * dsin(2 * th) / T;
+        if (nth < thMin) nth = thMin;
+        if (nth > thMax) nth = thMax;
+        if (nth === th) break;
+        th = nth;
+      }
     }
-    const back = mode === 1 ? LT.lobbedBackspin : 0;
-    solveLaunchSpin(F[F_TX]! - b.x, F[F_TZ]! - b.z, th, b.y, 0, back, SOL);
+    solveLaunchSpin(dx, dz, th, b.y, 0, back, SOL);
     const k = SOL.speed > LT.loftSpeedMax && SOL.speed > 0 ? LT.loftSpeedMax / SOL.speed : 1;
     F[F_VX] = SOL.vx * k; F[F_VY] = SOL.vy * k; F[F_VZ] = SOL.vz * k;
     out.sx = SOL.sx; out.sy = SOL.sy; out.sz = SOL.sz;
@@ -547,10 +589,15 @@ function solveThroughImpl(s: SimState, slot: number, out: KickLaunch): number {
   let ks = 1 + LT.lengthErrorMul * lenErr;
   if (ks < 1 - LT.lengthErrorCap) ks = 1 - LT.lengthErrorCap;
   if (ks > 1 + LT.lengthErrorCap) ks = 1 + LT.lengthErrorCap;
+  // The kind's max launch speed holds after the error too.
+  const vcap = mode === 0 ? LT.groundSpeedMax * amul : LT.loftSpeedMax;
+  const vy0 = F[F_VY]!;
+  const sp = Math.sqrt(vx0 * vx0 + vy0 * vy0 + vz0 * vz0) * ks;
+  if (sp > vcap && sp > 0) ks *= vcap / sp;
   const ce = dcos(err), se = dsin(err);
   out.vx = (vx0 * ce - vz0 * se) * ks;
   out.vz = (vx0 * se + vz0 * ce) * ks;
-  out.vy = F[F_VY]! * ks;
+  out.vy = vy0 * ks;
   const sx0 = out.sx, sz0 = out.sz;
   out.sx = sx0 * ce - sz0 * se;
   out.sz = sx0 * se + sz0 * ce;

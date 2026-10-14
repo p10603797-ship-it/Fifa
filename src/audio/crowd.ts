@@ -71,9 +71,10 @@ const LOCAL_TUNING = {
   /** Roar low-pass cutoff from calm to excited, Hz. */
   roarLpMin: 900,
   roarLpMax: 4200,
-  /** AudioParam update period and glide time constant, s. */
+  /** AudioParam update period and glide time constant, s; smallest intensity change worth an update. */
   paramInterval: 0.08,
   paramTc: 0.12,
+  paramEpsilon: 0.004,
   /** Bed fade in at match start and out at match end, s. */
   fadeIn: 1.5,
   fadeOut: 1.2,
@@ -182,55 +183,123 @@ export function goalProximity(ballX: number): number {
   return clamp01((ax - LOCAL_TUNING.finalThirdX) / (HALF_LENGTH - LOCAL_TUNING.finalThirdX));
 }
 
-/**
- * Intensity target 0..1 (pure). attackTeam = team with (or last touching) the ball, -1 unknown; attackDir = that
- * team's attack direction (+1 attacks +x); boost = decaying extra from ATTACK_BUILD and reactions.
- */
-export function crowdTarget(phase: MatchPhase, ballX: number, attackTeam: number, attackDir: number, perspective: number, boost: number): number {
+/** Slots of the per-frame crowd maths record (one Float64Array: no boxed doubles per frame). */
+export const enum Io {
+  PHASE = 0,
+  BALL_X = 1,
+  /** Team with (or last touching) the ball, -1 unknown. */
+  TEAM = 2,
+  /** That team's attack direction (+1 attacks +x). */
+  DIR = 3,
+  PERSPECTIVE = 4,
+  /** Decaying extra intensity from ATTACK_BUILD and reactions. */
+  BOOST = 5,
+  TARGET = 6,
+  INTENSITY = 7,
+  DT = 8,
+  RISE_TC = 9,
+  FALL_TC = 10,
+  /** Time since the last AudioParam update, s; intensity last sent to the AudioParams. */
+  CLOCK = 11,
+  APPLIED = 12,
+  COUNT = 13,
+}
+
+/** Intensity per MatchPhase where it does not depend on the ball (NaN: computed or unknown). */
+const PHASE_LEVEL = new Float64Array(32).fill(Number.NaN);
+PHASE_LEVEL[MatchPhase.PRE_MATCH] = LOCAL_TUNING.preMatch;
+PHASE_LEVEL[MatchPhase.KICK_OFF] = LOCAL_TUNING.kickOff;
+PHASE_LEVEL[MatchPhase.THROW_IN] = LOCAL_TUNING.throwIn;
+PHASE_LEVEL[MatchPhase.GOAL_KICK] = LOCAL_TUNING.goalKick;
+PHASE_LEVEL[MatchPhase.CORNER] = LOCAL_TUNING.corner;
+PHASE_LEVEL[MatchPhase.PENALTY] = LOCAL_TUNING.penalty;
+PHASE_LEVEL[MatchPhase.GOAL] = LOCAL_TUNING.goal;
+PHASE_LEVEL[MatchPhase.CELEBRATION] = LOCAL_TUNING.celebration;
+PHASE_LEVEL[MatchPhase.REPLAY] = LOCAL_TUNING.replay;
+PHASE_LEVEL[MatchPhase.HALF_TIME] = LOCAL_TUNING.halfTime;
+PHASE_LEVEL[MatchPhase.FULL_TIME] = LOCAL_TUNING.fullTime;
+PHASE_LEVEL[MatchPhase.EXTRA_TIME] = LOCAL_TUNING.extraTimeBreak;
+PHASE_LEVEL[MatchPhase.SHOOT_OUT] = LOCAL_TUNING.shootOut;
+PHASE_LEVEL[MatchPhase.POST_MATCH] = LOCAL_TUNING.postMatch;
+
+/** io[TARGET] from io[PHASE, BALL_X, TEAM, DIR, PERSPECTIVE, BOOST]. Everything inline: no calls, no boxing. */
+export function targetInto(io: Float64Array): void {
   const T = LOCAL_TUNING;
+  const phase = io[Io.PHASE]!;
+  const x0 = io[Io.BALL_X]!;
+  const x = x0 - x0 === 0 ? x0 : 0; // finite or 0
+  const ax = x < 0 ? -x : x;
+  let prox = (ax - T.finalThirdX) / (HALF_LENGTH - T.finalThirdX);
+  prox = prox < 0 ? 0 : prox > 1 ? 1 : prox;
   let v: number;
-  switch (phase) {
-    case MatchPhase.IN_PLAY: {
-      const prox = goalProximity(ballX);
-      let w = Math.pow(prox, T.ballExponent) * T.ballWeight;
-      if (attackTeam === 0 || attackTeam === 1) {
-        const attacking = (ballX > 0 ? 1 : -1) === (attackDir < 0 ? -1 : 1);
-        if (!attacking) w *= T.defendingFactor;
-        if (attackTeam !== perspective) w *= T.awayAttackFactor;
-      }
-      v = T.baseInPlay + w;
-      break;
+  if (phase === MatchPhase.IN_PLAY) {
+    let w = Math.pow(prox, T.ballExponent) * T.ballWeight;
+    const team = io[Io.TEAM]!;
+    if (team === 0 || team === 1) {
+      const attacking = (x > 0 ? 1 : -1) === (io[Io.DIR]! < 0 ? -1 : 1);
+      if (!attacking) w *= T.defendingFactor;
+      if (team !== io[Io.PERSPECTIVE]!) w *= T.awayAttackFactor;
     }
-    case MatchPhase.PRE_MATCH: v = T.preMatch; break;
-    case MatchPhase.KICK_OFF: v = T.kickOff; break;
-    case MatchPhase.THROW_IN: v = T.throwIn; break;
-    case MatchPhase.GOAL_KICK: v = T.goalKick; break;
-    case MatchPhase.CORNER: v = T.corner; break;
-    case MatchPhase.FREE_KICK: v = T.freeKickBase + T.freeKickNearGoal * goalProximity(ballX); break;
-    case MatchPhase.PENALTY: v = T.penalty; break;
-    case MatchPhase.GOAL: v = T.goal; break;
-    case MatchPhase.CELEBRATION: v = T.celebration; break;
-    case MatchPhase.REPLAY: v = T.replay; break;
-    case MatchPhase.HALF_TIME: v = T.halfTime; break;
-    case MatchPhase.FULL_TIME: v = T.fullTime; break;
-    case MatchPhase.EXTRA_TIME: v = T.extraTimeBreak; break;
-    case MatchPhase.SHOOT_OUT: v = T.shootOut; break;
-    case MatchPhase.POST_MATCH: v = T.postMatch; break;
-    default: v = T.baseInPlay;
+    v = T.baseInPlay + w;
+  } else if (phase === MatchPhase.FREE_KICK) {
+    v = T.freeKickBase + T.freeKickNearGoal * prox;
+  } else {
+    const lv = phase >= 0 && phase < PHASE_LEVEL.length ? PHASE_LEVEL[phase]! : Number.NaN;
+    v = lv === lv ? lv : T.baseInPlay;
   }
   // Lulls stay lulls: boosts lift open play and set pieces, not the breaks.
   const lull = phase === MatchPhase.HALF_TIME || phase === MatchPhase.POST_MATCH || phase === MatchPhase.EXTRA_TIME;
-  if (!lull && Number.isFinite(boost) && boost > 0) v += boost;
-  return clamp01(v);
+  const boost = io[Io.BOOST]!;
+  if (!lull && boost > 0 && boost - boost === 0) v += boost;
+  io[Io.TARGET] = v > 1 ? 1 : v > 0 ? v : 0;
+}
+
+/** One smoothing step of io[INTENSITY] toward io[TARGET] over io[DT] (io[RISE_TC] / io[FALL_TC]); inline, no boxing. */
+export function smoothInto(io: Float64Array): void {
+  const c0 = io[Io.INTENSITY]!;
+  const c = c0 > 1 ? 1 : c0 > 0 ? c0 : 0;
+  const t0 = io[Io.TARGET]!;
+  const dt = io[Io.DT]!;
+  if (!(t0 - t0 === 0) || !(dt - dt === 0) || dt <= 0) {
+    io[Io.INTENSITY] = c;
+    return;
+  }
+  const target = t0 > 1 ? 1 : t0 > 0 ? t0 : 0;
+  const tc0 = target > c ? io[Io.RISE_TC]! : io[Io.FALL_TC]!;
+  const tc = tc0 > 1e-4 ? tc0 : 1e-4;
+  const v = c + (target - c) * (1 - Math.exp(-dt / tc));
+  io[Io.INTENSITY] = v > 1 ? 1 : v > 0 ? v : 0;
+}
+
+const PURE_IO = new Float64Array(Io.COUNT);
+
+/**
+ * Intensity target 0..1 (pure wrapper of targetInto). attackTeam = team with (or last touching) the ball, -1
+ * unknown; attackDir = that team's attack direction (+1 attacks +x); boost = decaying extra from ATTACK_BUILD and
+ * reactions.
+ */
+export function crowdTarget(phase: MatchPhase, ballX: number, attackTeam: number, attackDir: number, perspective: number, boost: number): number {
+  const io = PURE_IO;
+  io[Io.PHASE] = phase;
+  io[Io.BALL_X] = ballX;
+  io[Io.TEAM] = attackTeam;
+  io[Io.DIR] = attackDir;
+  io[Io.PERSPECTIVE] = perspective;
+  io[Io.BOOST] = boost;
+  targetInto(io);
+  return io[Io.TARGET]!;
 }
 
 /** One smoothing step toward `target` (rise and fall time constants, s). Pure; non-finite input keeps `cur`. */
 export function smoothIntensity(cur: number, target: number, dt: number, riseTc: number = LOCAL_TUNING.riseTc, fallTc: number = LOCAL_TUNING.fallTc): number {
-  const c = clamp01(cur);
-  if (!Number.isFinite(target) || !Number.isFinite(dt) || dt <= 0) return c;
-  const tc = target > c ? riseTc : fallTc;
-  const k = 1 - Math.exp(-dt / Math.max(1e-4, tc));
-  return clamp01(c + (clamp01(target) - c) * k);
+  const io = PURE_IO;
+  io[Io.INTENSITY] = cur;
+  io[Io.TARGET] = target;
+  io[Io.DT] = dt;
+  io[Io.RISE_TC] = riseTc;
+  io[Io.FALL_TC] = fallTc;
+  smoothInto(io);
+  return io[Io.INTENSITY]!;
 }
 
 /** Bed gains and roar brightness for an intensity (pure). */
@@ -551,11 +620,12 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
   let running = false;
   let inMatch = false;
   let paused = false;
-  let intensity = 0;
-  let target = 0;
-  let boost = 0;
-  let paramClock = 0;
   let perspective = 0;
+  /** Per-frame maths record (a double in a closure slot or a call argument is boxed; typed-array slots are not). */
+  const st = new Float64Array(Io.COUNT);
+  st[Io.RISE_TC] = T.riseTc;
+  st[Io.FALL_TC] = T.fallTc;
+  st[Io.APPLIED] = -1;
   const levels: BedLevels = { murmur: 0, roar: 0, roarCutoff: T.roarLpMin };
   const reaction: ReactionCue = { reaction: Reaction.NONE, gain: 0, rate: 1, boost: 0 };
   const lastAt = new Float64Array(REACTION_COUNT).fill(-1e9);
@@ -598,11 +668,12 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
     running = murmurSrc !== null || roarSrc !== null;
     if (running) {
       stats.bedStarts++;
-      bedLevels(intensity, levels);
+      st[Io.APPLIED] = st[Io.INTENSITY]!;
+      bedLevels(st[Io.INTENSITY]!, levels);
       // Fade in: a glide with a time constant of a third of the fade reaches ~95% by the end.
       glide(murmurGain.gain, levels.murmur, t, T.fadeIn / 3);
       glide(roarGain.gain, levels.roar, t, T.fadeIn / 3);
-      paramClock = -T.fadeIn; // leave the fade alone until it is nearly done
+      st[Io.CLOCK] = -T.fadeIn; // leave the fade alone until it is nearly done
     }
   }
 
@@ -615,7 +686,8 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
   }
 
   function applyLevels(): void {
-    bedLevels(intensity, levels);
+    st[Io.APPLIED] = st[Io.INTENSITY]!;
+    bedLevels(st[Io.INTENSITY]!, levels);
     const t = ac.currentTime;
     glide(murmurGain.gain, levels.murmur, t, T.paramTc);
     glide(roarGain.gain, levels.roar, t, T.paramTc);
@@ -624,10 +696,10 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
 
   const mod: CrowdModule = {
     get intensity() {
-      return intensity;
+      return st[Io.INTENSITY]!;
     },
     get target() {
-      return target;
+      return st[Io.TARGET]!;
     },
     get bedRunning() {
       return running;
@@ -641,7 +713,7 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
       crowdReaction(cue, team, strength, perspective, reaction);
       const r = reaction.reaction;
       if (r === Reaction.NONE || !(reaction.gain > 0)) return;
-      if (reaction.boost > 0) boost = boost + reaction.boost > 1 ? 1 : boost + reaction.boost;
+      if (reaction.boost > 0) st[Io.BOOST] = Math.min(1, st[Io.BOOST]! + reaction.boost);
       const now = ac.currentTime;
       if (now - lastAt[r]! < T.reactionCooldown && reaction.gain <= lastGain[r]!) {
         stats.skipped++;
@@ -658,32 +730,38 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
     attackBuild(team, value) {
       void team;
       const b = T.attackBuildBoost * clamp01(value);
-      if (b > boost) boost = b;
+      if (b > st[Io.BOOST]!) st[Io.BOOST] = b;
     },
     update(state, dtSec) {
-      const dt = Number.isFinite(dtSec) && dtSec > 0 ? dtSec : 0;
+      st[Io.DT] = dtSec > 0 && dtSec - dtSec === 0 ? dtSec : 0;
       if (!state || !inMatch) {
         if (running) fadeOutBed();
-        target = 0;
-        intensity = smoothIntensity(intensity, 0, dt);
+        st[Io.TARGET] = 0;
+        smoothInto(st);
         return;
       }
-      boost *= Math.exp(-dt / T.boostTc);
+      st[Io.BOOST] = st[Io.BOOST]! * Math.exp(-st[Io.DT]! / T.boostTc);
       const b = state.ball;
       let team = -1;
       if (b.owner >= 0 && b.owner < state.players.length) team = state.players[b.owner]!.team;
       else if (b.lastTouchTeam === 0 || b.lastTouchTeam === 1) team = b.lastTouchTeam;
-      const dir = team === 0 || team === 1 ? state.teams[team]!.dir : 1;
-      target = crowdTarget(state.match.phase, b.x, team, dir, perspective, boost);
-      intensity = smoothIntensity(intensity, target, dt);
+      st[Io.PHASE] = state.match.phase;
+      st[Io.BALL_X] = b.x;
+      st[Io.TEAM] = team;
+      st[Io.DIR] = team === 0 || team === 1 ? state.teams[team]!.dir : 1;
+      st[Io.PERSPECTIVE] = perspective;
+      targetInto(st);
+      smoothInto(st);
       if (!running) {
         tryStartBed();
         return;
       }
-      paramClock += dt;
-      if (paramClock >= T.paramInterval) {
-        paramClock = 0;
-        applyLevels();
+      st[Io.CLOCK] = st[Io.CLOCK]! + st[Io.DT]!;
+      if (st[Io.CLOCK]! >= T.paramInterval) {
+        st[Io.CLOCK] = 0;
+        // Only when the level moved: a steady crowd sends no automation at all.
+        const d = st[Io.INTENSITY]! - st[Io.APPLIED]!;
+        if (d > T.paramEpsilon || d < -T.paramEpsilon) applyLevels();
       }
     },
     setPaused(p) {
@@ -692,9 +770,10 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
     matchStart(state) {
       inMatch = true;
       perspective = perspectiveTeam(state);
-      boost = 0;
-      intensity = crowdTarget(state.match.phase, state.ball.x, -1, 1, perspective, 0);
-      target = intensity;
+      st[Io.BOOST] = 0;
+      st[Io.INTENSITY] = crowdTarget(state.match.phase, state.ball.x, -1, 1, perspective, 0);
+      st[Io.TARGET] = st[Io.INTENSITY]!;
+      st[Io.APPLIED] = -1;
       lastAt.fill(-1e9);
       tryStartBed();
     },

@@ -346,8 +346,8 @@ export function createSfx(ctx: AudioCtx): SfxModule {
   if (bank) for (let s = 0; s < SFX_SAMPLE_COUNT; s++) handles[s] = bank.define(SAMPLE_IDS[s]!, HIT_SPECS[s]!.dur, 1, renderHit(s));
   const cue: SfxCue = { sample: SfxSample.NONE, gain: 0, rate: 1, priority: 0 };
   const stats: SfxStats = { played: new Int32Array(SFX_SAMPLE_COUNT), dropped: 0, lastPan: 0 };
-  let cameraX = Number.NaN;
-  let estX = 0;
+  /** [camera x from the renderer (NaN = none), estimate from the ball]: a typed array (no boxing per frame). */
+  const cam = new Float64Array([Number.NaN, 0]);
 
   function play(c: SfxCue, x: number): void {
     const s = c.sample;
@@ -356,7 +356,7 @@ export function createSfx(ctx: AudioCtx): SfxModule {
       stats.dropped++;
       return;
     }
-    const camX = Number.isFinite(cameraX) ? cameraX : estX;
+    const camX = Number.isFinite(cam[0]!) ? cam[0]! : cam[1]!;
     const pan = panFor(x, camX, LOCAL_TUNING.panSpan, LOCAL_TUNING.panWidth);
     const v = svc.effects.play(bank.get(handles[s]!), c.gain, pan, c.rate, c.priority, SFX_GROUP_BASE + s);
     if (v < 0) {
@@ -391,10 +391,10 @@ export function createSfx(ctx: AudioCtx): SfxModule {
       play(resetCue(cue, SfxSample.GLOVE, 0.4 + 0.5 * clamp01(strength), 1, 1.2), x);
     },
     setCameraX(x) {
-      cameraX = Number.isFinite(x) ? x : Number.NaN;
+      cam[0] = Number.isFinite(x) ? x : Number.NaN;
     },
     update(state) {
-      if (state) estX = estimateCameraX(state.ball.x);
+      if (state) cam[1] = estimateCameraX(state.ball.x);
     },
     dispose() {
       /* voices belong to the engine's pool; buffers to the bank */

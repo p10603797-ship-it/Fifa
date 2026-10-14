@@ -14,8 +14,8 @@
  *   HARD_TACKLE   as STAND with reach x hardReachMul, lunge x hardLungeMul, recovery x hardRecoveryMul, hardBonus win
  *                 chance, harder pokes (ball driven through) and a STUMBLE for the victim of a ball-first body contact.
  *   SLIDE_TACKLE  slideWindup / slideContactTicks / slideRecovery. The slide speed v0 = clamp(his speed along the slide,
- *                 slideMinSpeed, slideMaxSpeed) decays linearly to 0 over slideGlideTicks from the contact (LOCKED, no
- *                 homing once on the ground). The foot zone is the segment from his centre to slideFootReach ahead,
+ *                 slideMinSpeed, slideMaxSpeed), reached by the end of the wind-up, decays linearly to 0 over
+ *                 slideGlideTicks from the contact (LOCKED, no homing once on the ground). The foot zone is the segment from his centre to slideFootReach ahead,
  *                 slideFootRadius wide; together with the glide that is about T_TACKLE.slideReach at a sprint. A slide
  *                 always plays a loose ball its feet reach (never left under him). Quick get-up (quickGetUp, the
  *                 human's second X): the recovery after the window shrinks to T_TACKLE.slideGetUpQuick.
@@ -83,13 +83,15 @@
  * pick-ups) that ENTERS the reach (T_TACKLE.interceptReach) of a free outfield opponent of the passer this tick
  * (swept: the ball's segment this tick against his position; outside his reach the tick before), in the order the
  * ball reaches them, gets one s.rng roll each: chance = lerp(interceptChanceMin, Max, interceptions / agility blend)
- * x ball speed (1 up to interceptEasySpeed .. interceptHardMul at interceptHardSpeed) x distance (1 inside half the
- * reach .. interceptEdgeMul at the edge) x height (1 up to 0.5 m .. interceptHighMul at the max) x facing (1 ball in
+ * x ball speed (1 up to interceptEasySpeed .. interceptHardMul at interceptHardSpeed) x distance of the pass line from
+ * him (1 inside half the reach .. interceptEdgeMul at the edge) x height (1 up to 0.5 m .. interceptHighMul at the
+ * max) x facing (1 ball in
  * front .. interceptBehindMul from behind). (No "reactions" attribute exists: agility stands in for it.) Success:
  * the ball moves back to the contact point on its own path; slow enough relative to him (lerp(interceptControlSpeedLo,
  * Hi, ballControl)) -> controlled (takePossession, cushioned to his feet), else blocked (DEFLECTION off him). A ball
- * whose path runs through his body (interceptBodyBlock x body radius) is blocked even when the roll fails. Both emit
- * INTERCEPT (a = interceptor, b = passer). The passing team never intercepts its own pass (receptions are SIM-07's).
+ * whose path runs through his body (interceptBodyBlock x body radius) on any tick cannot slip past even when the roll
+ * failed: trapped below bodyControlFrac of that speed, else blocked. Both emit INTERCEPT (a = interceptor, b =
+ * passer). The passing team never intercepts its own pass (receptions are SIM-07's).
  *
  * Determinism / cost: plain arithmetic, Math.sqrt and dmath, s.rng only, slot-order loops with strict tie breaks, module
  * scratch only. Per tick O(22) plus O(11) when a pass is in flight; a tackle resolution is O(1).
@@ -303,8 +305,10 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** Block: normal restitution and kept tangential share (relative to him). */
   blockRestitution: 0.3,
   blockTangentKeep: 0.5,
-  /** A path within this fraction of his body radius cannot slip past him. */
+  /** A path within this fraction of his body radius cannot slip past him ... */
   interceptBodyBlock: 0.8,
+  /** ... and he traps it (instead of a block) below this share of his controlled-interception speed. */
+  bodyControlFrac: 0.6,
 } as const;
 
 const L = LOCAL_TUNING;
@@ -326,8 +330,11 @@ const V = createV2();
 const CAND_SLOT = new Int32Array(PLAYERS_PER_TEAM);
 const CAND_T = new Float64Array(PLAYERS_PER_TEAM);
 const CAND_D = new Float64Array(PLAYERS_PER_TEAM);
+const CAND_F = new Uint8Array(PLAYERS_PER_TEAM);
 /** Scratch numbers handed between helpers: [0] distance, [1] param, [2] x, [3] z. */
 const G = new Float64Array(4);
+/** segDist inputs: segment a (0, 1) - b (2, 3), point (4, 5). */
+const S = new Float64Array(6);
 
 // ---------------------------------------------------------------- small helpers
 
@@ -409,9 +416,13 @@ function keeperClaims(s: SimState, slot: number): boolean {
   return dx * dx + dz * dz <= L.keeperPriorityDist * L.keeperPriorityDist;
 }
 
-/** Distance from (px, pz) to segment a-b into G[0], the segment parameter into G[1], the closest point into G[2..3]. */
-function segDist(ax: number, az: number, bx: number, bz: number, px: number, pz: number): void {
-  const dx = bx - ax, dz = bz - az;
+/**
+ * Distance from point S[4..5] to segment S[0..1]-S[2..3] into G[0], the segment parameter into G[1], the closest point
+ * into G[2..3]. Inputs and outputs cross through Float64Arrays: doubles passed to a call V8 does not inline are boxed.
+ */
+function segDist(): void {
+  const ax = S[0]!, az = S[1]!, px = S[4]!, pz = S[5]!;
+  const dx = S[2]! - ax, dz = S[3]! - az;
   const l2 = dx * dx + dz * dz;
   let t = 0;
   if (l2 > 1e-12) {
@@ -758,7 +769,9 @@ function ballInZone(s: SimState, p: PlayerState, k: ActionKind): boolean {
   const dx = b.x - p.x, dz = b.z - p.z;
   if (k === ActionKind.SLIDE_TACKLE) {
     if (!(b.y <= L.slideBallHeight)) return false;
-    segDist(p.x, p.z, p.x + p.actDirX * L.slideFootReach, p.z + p.actDirZ * L.slideFootReach, b.x, b.z);
+    S[0] = p.x; S[1] = p.z; S[2] = p.x + p.actDirX * L.slideFootReach; S[3] = p.z + p.actDirZ * L.slideFootReach;
+    S[4] = b.x; S[5] = b.z;
+    segDist();
     const d = G[0]!;
     G[0] = Math.sqrt(dx * dx + dz * dz);
     return d <= L.slideFootRadius;
@@ -781,7 +794,9 @@ function bodyInZone(s: SimState, p: PlayerState, k: ActionKind, v: number): bool
   const d = Math.sqrt(dx * dx + dz * dz);
   if (d <= bodyRadiusOf(s, p.slot) + rv + L.bodyMargin) return true;
   if (k === ActionKind.SLIDE_TACKLE) {
-    segDist(p.x, p.z, p.x + p.actDirX * L.slideFootReach, p.z + p.actDirZ * L.slideFootReach, q.x, q.z);
+    S[0] = p.x; S[1] = p.z; S[2] = p.x + p.actDirX * L.slideFootReach; S[3] = p.z + p.actDirZ * L.slideFootReach;
+    S[4] = q.x; S[5] = q.z;
+    segDist();
     return G[0]! <= rv + L.slideBodyMargin;
   }
   if (d - rv > standReachOf(k) * L.bodyReachFrac) return false;
@@ -1043,7 +1058,8 @@ function unstickBall(s: SimState, ev: EventSink): void {
     const fl = Math.sqrt(fx * fx + fz * fz);
     if (fl < 1e-6) { fx = 1; fz = 0; } else { fx /= fl; fz /= fl; }
     const h = L.downBodyHalf;
-    segDist(p.x - fx * h, p.z - fz * h, p.x + fx * h, p.z + fz * h, b.x, b.z);
+    S[0] = p.x - fx * h; S[1] = p.z - fz * h; S[2] = p.x + fx * h; S[3] = p.z + fz * h; S[4] = b.x; S[5] = b.z;
+    segDist();
     if (G[0]! > L.downBodyRadius) continue;
     let nx = b.x - G[2]!, nz = b.z - G[3]!;
     const nl = Math.sqrt(nx * nx + nz * nz);
@@ -1141,41 +1157,47 @@ export function interceptContacts(s: SimState, ev: EventSink): void {
   for (let j = first; j < first + PLAYERS_PER_TEAM; j++) {
     const q = s.players[j]!;
     if (q.active !== 1 || q.isKeeper === 1 || q.team === passTeam || !isFree(q) || q.noTouchT > 0) continue;
-    // Entry edge: outside his reach at the start of the tick (both positions one tick back).
+    S[0] = b.px; S[1] = b.pz; S[2] = b.x; S[3] = b.z; S[4] = q.x; S[5] = q.z;
+    segDist();
+    const d = G[0]!, t = G[1]!;
+    if (d > reach) continue;
+    // Entry edge: outside his reach at the start of the tick (both positions one tick back) -> one roll. A path through
+    // his body is a contact on any tick (it cannot slip past him).
     const qx0 = q.x - q.vx * DTS, qz0 = q.z - q.vz * DTS;
     const ex = b.px - qx0, ez = b.pz - qz0;
-    if (ex * ex + ez * ez <= reach * reach) continue;
-    segDist(b.px, b.pz, b.x, b.z, q.x, q.z);
-    if (G[0]! > reach) continue;
-    const yAt = b.py + (b.y - b.py) * G[1]!;
+    const entry = ex * ex + ez * ez > reach * reach ? 1 : 0;
+    const body = d <= bodyRadiusOf(s, j) * L.interceptBodyBlock ? 1 : 0;
+    if (entry === 0 && body === 0) continue;
+    const yAt = b.py + (b.y - b.py) * t;
     if (!(yAt <= L.interceptMaxHeight)) continue;
     if (keeperClaims(s, j)) continue;
     // insertion by path order (ties: lower slot first, already in slot order)
     let k = n;
-    while (k > 0 && CAND_T[k - 1]! > G[1]!) {
-      CAND_T[k] = CAND_T[k - 1]!; CAND_D[k] = CAND_D[k - 1]!; CAND_SLOT[k] = CAND_SLOT[k - 1]!;
+    while (k > 0 && CAND_T[k - 1]! > t) {
+      CAND_T[k] = CAND_T[k - 1]!; CAND_D[k] = CAND_D[k - 1]!; CAND_SLOT[k] = CAND_SLOT[k - 1]!; CAND_F[k] = CAND_F[k - 1]!;
       k--;
     }
-    CAND_T[k] = G[1]!; CAND_D[k] = G[0]!; CAND_SLOT[k] = j;
+    // The chance reads how far from him the pass runs (its line), not where it first touches his reach.
+    const miss = ((q.x - b.x) * b.vz - (q.z - b.z) * b.vx) / sp;
+    CAND_T[k] = t; CAND_D[k] = miss < 0 ? -miss : miss; CAND_SLOT[k] = j; CAND_F[k] = entry + 2 * body;
     n++;
   }
   const passer = b.lastKickBy;
   for (let c = 0; c < n; c++) {
     const j = CAND_SLOT[c]!;
     const q = s.players[j]!;
-    const t = CAND_T[c]!, d = CAND_D[c]!;
+    const t = CAND_T[c]!, d = CAND_D[c]!, f = CAND_F[c]!;
     const yAt = b.py + (b.y - b.py) * t;
-    const chance = interceptChance(s, j, d, sp, yAt);
-    const won = rngFloat(s.rng) < chance;
-    const through = d <= bodyRadiusOf(s, j) * L.interceptBodyBlock;
-    if (!won && !through) continue;
+    const won = (f & 1) !== 0 && rngFloat(s.rng) < interceptChance(s, j, d, sp, yAt);
+    if (!won && (f & 2) === 0) continue;
     // Back to the contact point on its own path.
     b.x = b.px + (b.x - b.px) * t;
     b.z = b.pz + (b.z - b.pz) * t;
-    b.y = yAt > 0.11 ? yAt : b.y;
+    b.y = yAt;
     const rvx = b.vx - q.vx, rvz = b.vz - q.vz;
-    const ctrl = lerp(L.interceptControlSpeedLo, L.interceptControlSpeedHi, attr01(s.attrs[j]!.ballControl));
-    if (won && rvx * rvx + rvz * rvz <= ctrl * ctrl) {
+    let ctrl = lerp(L.interceptControlSpeedLo, L.interceptControlSpeedHi, attr01(s.attrs[j]!.ballControl));
+    if (!won) ctrl *= L.bodyControlFrac; // straight at him: he traps it only when it is gentle
+    if (rvx * rvx + rvz * rvz <= ctrl * ctrl) {
       takePossession(s, j, ev);
       let fx = b.x - q.x, fz = b.z - q.z;
       const fl = Math.sqrt(fx * fx + fz * fz);
@@ -1215,8 +1237,11 @@ function slideMove(s: SimState, p: PlayerState): void {
   p.wantSprint = 0;
   let sp: number;
   if (p.actT < p.actContact) {
+    // Going down: his speed along the slide ramps to v0 by the contact.
     homeDir(s, p, L.lungeTurnPerTick);
-    sp = p.actB;
+    let along = p.vx * p.actDirX + p.vz * p.actDirZ;
+    if (along < 0) along = 0;
+    sp = along + (p.actB - along) * (p.actContact > 0 ? p.actT / p.actContact : 1);
   } else {
     const g = p.actT - p.actContact;
     if (g >= L.slideGlideTicks) return; // on the ground: locked friction
