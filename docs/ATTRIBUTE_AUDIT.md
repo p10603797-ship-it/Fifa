@@ -16,7 +16,7 @@ Two halves, both re-runnable by QA:
 - **Dynamic audit**: `tests/sim/dat-05-attributes.test.ts`, one micro-test per attribute. The same scenario is played
   with only that attribute at 40 and 90 (height 170 vs 195 cm, weak foot and skill moves 1 vs 5, preferred foot right vs
   left) and the outcome must move the right way by a visible margin. `DAT05_REPORT=1 npx vitest run
-  tests/sim/dat-05-attributes.test.ts` prints the measured table (copied below). Levels: **pipeline** = the real
+  tests/sim/dat-05-attributes.test.ts --disableConsoleIntercept` prints the measured table (copied below). Levels: **pipeline** = the real
   `step()` pipeline (or the sim's stage functions in pipeline order); **solver** = the real kick solver at contact over
   160-200 rng seeds, flown with the sim's ball physics; **model** = the sim's own decision function evaluated on a
   scenario state (the chance it rolls against).
@@ -85,7 +85,7 @@ role and the shirt is shown on the kit; neither is audited here.
 
 ## Dynamic audit: measured values
 
-From `DAT05_REPORT=1 npx vitest run tests/sim/dat-05-attributes.test.ts` (seeded, deterministic; numbers move when
+From `DAT05_REPORT=1 npx vitest run tests/sim/dat-05-attributes.test.ts --disableConsoleIntercept` (seeded, deterministic; numbers move when
 the consuming modules are retuned, the assertions only require the direction and a visible margin).
 
 | Attribute | Level | Measured outcome | Low | High |

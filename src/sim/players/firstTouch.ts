@@ -64,7 +64,7 @@
  *  of a received pass (-1 otherwise); actKick = KickKind.FIRST_TOUCH.
  *
  * PASS_COMPLETE (a = receiver, b = passer = ball.lastKickBy): the pass-completion stat. An "untouched pass" is a
- * ball whose last kick is a pass kind (isFootPassKind, the kinds the stats screen counts as passes) and that nobody
+ * ball whose last kick is a pass kind (isCompletablePassKind: the foot passes of isFootPassKind plus HEADER_PASS) and that nobody
  * has touched since (lastTouch === lastKickBy, lastTouchTick === lastKickTick). It is completed, at most once per
  * tick and once per pass (the first two routes touch the ball, so it is no longer untouched; the first-time route
  * fires only on the arrival edge), when a teammate of the passer:
@@ -223,7 +223,16 @@ function contactsLive(s: SimState): boolean {
 /** A pass kind (isFootPassKind) that nobody has touched since it was kicked. */
 export function isUntouchedPass(b: Readonly<BallState>): boolean {
   const k = b.lastKickBy;
-  return validSlot(k) && b.lastTouch === k && b.lastTouchTick === b.lastKickTick && isFootPassKind(b.lastKickKind);
+  return validSlot(k) && b.lastTouch === k && b.lastTouchTick === b.lastKickTick && isCompletablePassKind(b.lastKickKind);
+}
+
+/**
+ * Kick kinds a teammate can complete (PASS_COMPLETE): the foot passes plus HEADER_PASS [INT-A: a headed pass that
+ * reaches a teammate is a completed pass; without it every header pass counted as a failed attempt in the soak's
+ * pass-completion band]. The stats screen (modes/stats.ts) still counts only foot passes as attempts and completions.
+ */
+export function isCompletablePassKind(k: KickKind): boolean {
+  return isFootPassKind(k) || k === KickKind.HEADER_PASS;
 }
 
 // ---------------------------------------------------------------- quality

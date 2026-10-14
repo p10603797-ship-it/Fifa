@@ -19,3 +19,10 @@ and FIX-xx ids; report against each id.
   tests may need refresh (update the ones you own; CR the rest).
 - Report sections: per QA/FIX id — what you attacked (scenarios, seeds, counts), defects found (symptom, root cause,
   fix, regression test name), what remains; then tests run, CRs, KNOWN_ISSUES candidates.
+
+Glitch audit at charter time (`npm run glitch-audit`, 41/55): missing named tests — QF-1: ball stuck on the roof of
+the net, behind the goal, wedged against a post or board, resting on the goal line; goal through the side netting;
+players walking through the goal frame or net; game runs fast after a pause / tab switch / 120 Hz (with QF-5 for the
+app loop). QF-2: keeper dives after the ball has passed, fights a defender for the same ball, stuck in a dive.
+QF-5: audio silent after returning from the background. QF-6: desync, both sides waiting forever, rematch with stale
+state. Title words must contain the item keywords in tools/glitch-audit.ts.

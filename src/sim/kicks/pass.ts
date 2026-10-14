@@ -155,9 +155,10 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** Lofted passes fly over the lane: lane risk multiplier, 0..1. */
   loftLaneMul: 0.3,
   // ---- speed and lead
-  /** Assisted arrival speed of a ground pass at power 0 and 1, m/s. */
-  arriveMin: 3.5,
-  arriveMax: 8,
+  /** Assisted arrival speed of a ground pass at power 0 and 1, m/s (INT-A: was 3.5 / 8 — soft passes took 2+ s over
+   *  20 m, closing every forward lane). */
+  arriveMin: 7,
+  arriveMax: 12,
   /** Semi assistance: share of the power-only speed blended into the assisted speed, 0..1. */
   semiPowerBlend: 0.5,
   /** Power floor of a pass (an instant tap), 0..1. */

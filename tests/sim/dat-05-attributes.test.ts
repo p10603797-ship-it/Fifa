@@ -11,7 +11,7 @@
  * there are no it.todo entries; if a consumer is replaced by a stub later its micro-test fails loudly.
  *
  * DAT05_REPORT=1 prints the measured table (copied into docs/ATTRIBUTE_AUDIT.md):
- *   DAT05_REPORT=1 npx vitest run tests/sim/dat-05-attributes.test.ts
+ *   DAT05_REPORT=1 npx vitest run tests/sim/dat-05-attributes.test.ts --disableConsoleIntercept
  */
 import '../../src/sim/actions/dispatch'; // load the action registry first (import-cycle order)
 import { afterAll, describe, expect, it } from 'vitest';

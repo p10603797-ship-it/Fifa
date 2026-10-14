@@ -126,8 +126,8 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-09): move into T_AI as pass* (ti
   /** Ground pass arrival speed = lerp(groundArriveMin, groundArriveMax, clamp(distance / groundArriveDist,
    *  groundArriveFloor, 1)) — what the CPU's tap plays (SIM-15 gesture power = distance / 45 m, at least 0.2; SIM-08
    *  assisted arrival lerp(3.5, 8, power)), m/s / m / 0..1. */
-  groundArriveMin: 3.5,
-  groundArriveMax: 8,
+  groundArriveMin: 7,
+  groundArriveMax: 12,
   groundArriveDist: 45,
   groundArriveFloor: 0.2,
   /** Minimum arrival speed of a through ball, m/s. */
