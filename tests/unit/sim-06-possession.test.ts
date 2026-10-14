@@ -144,6 +144,29 @@ describe('SIM-06 dribble touches: closer at a jog, further at a sprint', () => {
     expect(maxD).toBeLessThan(T_DRIBBLE.touchAheadClose * 1.35);
   });
 
+  it('strafe touches follow SIM-04\'s strafe cap: sideways and toward the look target both peak near touchAheadClose', () => {
+    // The push is solved for the planned speed; SIM-04 caps a sideways strafe lower than a forward one, so a dribble
+    // model using the forward cap for every direction would push a sideways strafe touch well past close control.
+    const peaks: number[] = [];
+    for (const [ix, iz] of [[0, 1], [1, 0]] as const) {
+      const s = world(3);
+      const p = s.players[DRIBBLER]!;
+      let peak = 0;
+      for (let t = 0; t < 360; t++) {
+        stick(s, DRIBBLER, ix, iz);
+        p.lookAt = 1; p.lookX = 52.5; p.lookZ = 0;
+        tick(s);
+        if (t > 60) peak = Math.max(peak, (s.ball.x - p.x) * ix + (s.ball.z - p.z) * iz);
+      }
+      expect(s.ball.owner).toBe(DRIBBLER);
+      peaks.push(peak);
+    }
+    for (const peak of peaks) {
+      expect(peak).toBeGreaterThan(T_DRIBBLE.touchAheadClose * 0.6);
+      expect(peak).toBeLessThan(T_DRIBBLE.touchAheadClose * 1.15);
+    }
+  });
+
   it('near opponents a jog dribble pulls the ball in toward close control', () => {
     const free = runStraight(world(4), 420, 0);
     const s = world(4);
@@ -600,6 +623,22 @@ describe('SIM-06 possession loss', () => {
     tick(s);
     expect([s.ball.owner, s.ball.heldBy]).toEqual([k, k]);
     expect(s.ball.x).toBe(x);
+  });
+
+  it('a keeper taking an opponent\'s ball into his hands: possession is his, POSSESSION emitted once', () => {
+    const s = world(1, 0, 0);
+    const k = 0;
+    const kp = s.players[k]!;
+    kp.x = -45; kp.z = 0; kp.act = ActionKind.GK_HOLD; kp.actDur = 1e6;
+    const o = s.players[OPP]!;
+    o.x = -44; o.z = 0;
+    Object.assign(s.ball, { x: -44.6, z: 0, y: 1.2, vx: 0, vy: 0, vz: 0, owner: OPP, heldBy: k, lastTouch: OPP, lastTouchTeam: 1 });
+    const ev1 = tick(s);
+    expect([s.ball.owner, s.ball.heldBy, s.ball.lastTouch]).toEqual([k, k, k]);
+    expect(ev1.filter((e) => e.type === EventType.POSSESSION).map((e) => [e.a, e.b])).toEqual([[0, k]]);
+    const ev2 = tick(s);
+    expect(ev2.filter((e) => e.type === EventType.POSSESSION)).toHaveLength(0);
+    expect(s.ball.owner).toBe(k);
   });
 });
 

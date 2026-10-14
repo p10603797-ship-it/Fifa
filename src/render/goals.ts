@@ -1,129 +1,985 @@
 /**
- * [GFX-04] Goals and nets with ripple (section 8 "Look"; NET events ripple the net).
- * Geometry follows contracts/constants: inside of the posts at z = +-GOAL_HALF_WIDTH, underside of the bar at
- * GOAL_HEIGHT, POST_RADIUS cylinders standing on the goal line, net GOAL_DEPTH deep.
+ * [GFX-04] Goals and nets with ripple (section 8 "Look": "goals with nets that ripple"; section 13 budgets).
+ * Geometry follows contracts/constants and matches sim/ball/contact.ts: inside of the posts at z = +-GOAL_HALF_WIDTH,
+ * underside of the bar at GOAL_HEIGHT, POST_RADIUS cylinders standing on the goal line (back of the post on the
+ * line), net box GOAL_DEPTH deep (back, roof, two sides; open at the mouth).
  *
- * WAVE 0 BASELINE (FND-05): white posts and bars as one instanced cylinder mesh (6 instances, 1 draw call) and a
- * simple net box (back, roof, sides) with a generated grid texture (1 draw call). GFX-04 adds the shaped net,
- * ripple on NET events and quality tiers.
+ * DRAW CALLS: 2 for both goals (budget 6).
+ *  - `frame`: one InstancedMesh of a unit cylinder (Lambert, per-instance colour): per goal two posts and the bar
+ *    (white, POST_RADIUS) plus the back support frame (8 thin grey tubes: rear ground bar, two rear uprights, rear
+ *    top bar, two roof side bars, two ground side bars). 22 instances. Casts a shadow only at tiers with a shadow map.
+ *  - `net`: one Mesh / ShaderMaterial (unlit, transparent, two-sided, no depth write) holding a soft ground shadow
+ *    under each net (drawn first in the index order) and the four net sheets of both goals as vertex grids. The net
+ *    pattern is procedural in the fragment shader (anti-aliased square mesh that converges to its average coverage
+ *    with distance, so there is no moire and it reads as a translucent white box from the broadcast camera and as
+ *    cords in a close-up). Grid density follows getTierParams().netDetail (GOAL_TUNING.netStep).
+ *
+ * RIPPLE (vertex shader, no CPU cost per vertex): up to RIPPLE_SLOTS ripples, each a centre, an age (s) and a signed
+ * amplitude (m, + = outward from the goal box) in uniforms. Displacement along the sheet normal is
+ * rippleDisplacement(distance, age, amp) x the vertex pin weight (0 on every sheet edge: the net is tied to the
+ * posts, bar, back frame and ground): a fast bulge where the ball hits plus a damped ring wave, cut smoothly to
+ * exactly 0 at GOAL_TUNING.rippleDuration (~1.1 s). A pending ripple has a negative age (no displacement yet).
+ * Triggers:
+ *  - NET event (ball entered the net volume, a = end, c = speed, x/y/z = ball): the impact point is predicted from
+ *    the ball position and velocity (predictNetImpact: first sheet on the ball's path, hit after at most
+ *    impactDelayMax) and an outward ripple scaled by speed is scheduled there.
+ *  - The interpolated ball crossing into a net volume (what the NET event reports) when no entry was seen for that
+ *    goal recently: replays (GFX-16) show the ripple without sim events. Live, the event always comes first.
+ *  - The interpolated ball touching a sheet with an approach speed (side netting or roof from outside: inward
+ *    ripple; inside contacts after the entry window: outward). Per-sheet hysteresis + cooldown; apparent speeds
+ *    above teleportSpeed (restarts, replay jumps) are ignored.
+ * POST event (a = end, b = 0 post / 1 bar, c = impact speed): the goal frame shakes (rotation about the goal line on
+ * the ground; the bar and the front of the net move with it; the back frame stays put) for wobbleDuration, and a small
+ * ripple at the hit point shivers the net.
+ * Time advances with FrameInfo.dtMs and stops while paused.
+ *
+ * DEBUG: window.__dotkickGoals (GoalsDebug): closeUp(end) overrides ctx.camera's pose after the cameras ran (goal
+ * close-up for e2e screenshots), snapshot() reports ripples, sway, detail and draw-call counts.
+ * No allocation in update() / onEvents().
  */
 
 import {
-  BufferAttribute, BufferGeometry, CylinderGeometry, DataTexture, DoubleSide, InstancedMesh, LinearFilter,
-  LinearMipmapLinearFilter, Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, Quaternion, RepeatWrapping,
-  RGBAFormat, Vector3,
+  BufferAttribute, BufferGeometry, Color, CylinderGeometry, DoubleSide, InstancedMesh, Matrix4, Mesh,
+  MeshLambertMaterial, ShaderMaterial, Vector2, Vector3, Vector4,
 } from 'three';
-import { GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_LENGTH, POST_RADIUS } from '../contracts/constants';
+import {
+  BALL_RADIUS, GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_LENGTH, POST_RADIUS,
+} from '../contracts/constants';
+import { QualityTier } from '../contracts/enums';
+import { EventType, type EventBuffer } from '../contracts/events';
+import type { ReadonlySimState } from '../contracts/state';
+import { getTierParams } from './quality';
 import type { RenderContext, RenderFrame, RenderModule } from './types';
 
-/** Net mesh cell size (m). */
-const NET_CELL = 0.14;
+const LOCAL_TUNING = { // TUNING-CR (render only; no gameplay effect)
+  // ---- net look
+  /** Drawn net mesh cell size, m. */
+  netCell: 0.15,
+  /** Drawn cord width, m. */
+  netCord: 0.024,
+  /** Alpha of a cord (fully covered pixel). */
+  netCordAlpha: 0.95,
+  /** Alpha between the cords (a faint fill so the box reads from far away). */
+  netHaze: 0.06,
+  /** Displaced (stretched) net draws this much more opaque at a displacement of stretchRef m (ripple reads from afar). */
+  netStretchAlpha: 1.2,
+  stretchRef: 0.25,
+  /** Net colour by day / at night (sRGB hex). */
+  netColourDay: 0xffffff,
+  netColourNight: 0xdfe5ee,
+  /** Vertex spacing of the net grid per TierParams.netDetail (0 coarse, 1 medium, 2 full), m. */
+  netStep: [0.46, 0.26, 0.16] as readonly number[],
+  /** The ripple fades to 0 within this distance of a sheet edge (tied to the frame / ground), m. */
+  pinDist: 0.45,
+  /** Ground shadow under each net: alpha at the centre, margin around the footprint (m), height above the grass (m). */
+  shadowAlpha: 0.2,
+  shadowMargin: 0.2,
+  shadowY: 0.012,
+  // ---- ripple shape (shared by the shader and rippleDisplacement)
+  /** Displacement is exactly 0 from this age on, s. */
+  rippleDuration: 1.1,
+  /** The envelope starts its smooth cut at this age, s. */
+  rippleFadeStart: 0.7,
+  /** Time to the peak of the bulge, s. */
+  bulgeRise: 0.09,
+  /** Gaussian radius of the bulge, m. */
+  bulgeRadius: 0.6,
+  /** Ring wave speed (m/s), wavelength (m), decay time (s), distance falloff (m), ramp behind the front (m). */
+  waveSpeed: 4.5,
+  waveLength: 1.15,
+  waveDecay: 0.35,
+  waveFalloff: 2.5,
+  waveFront: 0.35,
+  /** Ring amplitude relative to the bulge. */
+  waveShare: 0.4,
+  // ---- ripple triggers
+  /** Bulge per m/s of ball speed, m/(m/s); capped at netMaxAmp (m). */
+  netGain: 0.016,
+  netMaxAmp: 0.45,
+  /** Slower balls do not ripple the net, m/s. */
+  netMinSpeed: 1.5,
+  /** Longest wait from the goal mouth to the predicted impact, s. */
+  impactDelayMax: 0.12,
+  /** Extra distance counted as touching a sheet (interpolated positions), m. */
+  contactSlop: 0.05,
+  /** Minimum time between two contact ripples on one sheet, s. */
+  contactCooldown: 0.3,
+  /** A second entry into the same goal within this time is the same one (event + interpolation), s. */
+  entryWindow: 0.6,
+  /** Apparent ball speeds above this are teleports (restarts, replay start): no contacts or entries, m/s. */
+  teleportSpeed: 45,
+  // ---- frame
+  /** Back support tube radius, m. */
+  supportRadius: 0.025,
+  /** Posts and bar / back support colours (sRGB hex). */
+  frameColour: 0xf7f7f3,
+  supportColour: 0xb4bcc6,
+  /** Radial segments of the frame cylinder. */
+  frameSegments: 12,
+  // ---- frame shake (POST)
+  /** Sway at bar height per m/s of impact speed for a post / bar hit, m/(m/s); capped at wobbleMax (m). */
+  wobbleGainPost: 0.0025,
+  wobbleGainBar: 0.0035,
+  wobbleMax: 0.08,
+  /** Shake frequency (Hz), decay time (s), total duration (s; exactly 0 after). */
+  wobbleHz: 5.5,
+  wobbleDecay: 0.22,
+  wobbleDuration: 1.0,
+  /** Net shiver from a frame hit: ripple amplitude per m/s, cap (m). */
+  postRippleGain: 0.004,
+  postRippleMax: 0.08,
+  // ---- debug close-up
+  closeUpDist: 13,
+  closeUpAngleDeg: 40,
+  closeUpEyeY: 3.2,
+  closeUpLookY: 1.1,
+} as const;
+
+/** Tuning (read-only) for tests and tools. */
+export const GOAL_TUNING = LOCAL_TUNING;
+
+/** Concurrent ripples (shader uniforms). */
+export const RIPPLE_SLOTS = 4;
+/** Instances in the frame mesh: per goal 2 posts + bar + 8 support tubes. */
+export const FRAME_INSTANCES = 22;
+/** Sheet ids (predictNetImpact, contact detection). */
+export const SHEET_BACK = 0;
+export const SHEET_ROOF = 1;
+export const SHEET_SIDE_POS = 2;
+export const SHEET_SIDE_NEG = 3;
+
+/** End-relative net box (u = end * x grows into the goal). */
+const GL = HALF_LENGTH;
+const GB = HALF_LENGTH + GOAL_DEPTH;
+const GW = GOAL_HALF_WIDTH;
+const GH = GOAL_HEIGHT;
+const R = BALL_RADIUS;
+/** Whole ball over the goal line (sim/ball/contact.ts NET_FRONT). */
+const NET_FRONT = GL + R;
+const INF = 1e9;
+const WAVE_K = (2 * Math.PI) / LOCAL_TUNING.waveLength;
+const WOBBLE_W = 2 * Math.PI * LOCAL_TUNING.wobbleHz;
+
+export interface GoalsSnapshot {
+  time: number;
+  ripples: { x: number; y: number; z: number; age: number; amp: number }[];
+  /** Frame sway at bar height for the goal at -x and +x, m. */
+  sway: [number, number];
+  netDetail: number;
+  netVertices: number;
+  netTriangles: number;
+  frameInstances: number;
+  /** Goal meshes drawn (each one draw call). */
+  drawCalls: number;
+}
+
+/** Debug hook (window.__dotkickGoals). */
+export interface GoalsDebug {
+  /** Goal close-up: end -1 / +1 (0 = off). Overrides ctx.camera's pose after the cameras ran. */
+  closeUp(end: number, angleDeg?: number, dist?: number, eyeY?: number): void;
+  snapshot(): GoalsSnapshot;
+}
+
+declare global {
+  interface Window {
+    __dotkickGoals?: GoalsDebug;
+  }
+}
 
 export interface GoalsModule extends RenderModule {
   readonly frame: InstancedMesh;
   readonly net: Mesh;
+  /** Net shader uniforms (ripple slots, sway) for tests and tools. */
+  readonly uniforms: NetUniforms;
+  readonly debug: GoalsDebug;
 }
 
-/** Instance transforms for the goal frame: [post -z, post +z, bar] for the goal at -x, then the goal at +x. */
-export function goalFrameMatrices(): Matrix4[] {
-  const out: Matrix4[] = [];
-  const postH = GOAL_HEIGHT + 2 * POST_RADIUS;
-  const barLen = 2 * (GOAL_HALF_WIDTH + 2 * POST_RADIUS);
-  const q = new Quaternion();
-  const qBar = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), Math.PI / 2);
-  for (const end of [-1, 1]) {
-    const x = end * (HALF_LENGTH - POST_RADIUS);
-    for (const side of [-1, 1]) {
-      out.push(new Matrix4().compose(new Vector3(x, postH / 2, side * (GOAL_HALF_WIDTH + POST_RADIUS)), q, new Vector3(1, postH, 1)));
-    }
-    out.push(new Matrix4().compose(new Vector3(x, GOAL_HEIGHT + POST_RADIUS, 0), qBar, new Vector3(1, barLen, 1)));
+export interface NetUniforms {
+  [name: string]: { value: unknown };
+  /** xyz = ripple centre (m), w = age (s; <= 0 pending). */
+  uRip: { value: Vector4[] };
+  /** Signed amplitude per slot, m (0 = free). */
+  uAmp: { value: Vector4 };
+  /** Frame sway at bar height for the goal at -x (x) and +x (y), m. */
+  uSway: { value: Vector2 };
+  uColour: { value: Color };
+}
+
+// ============================================================ pure maths (mirrored in the shader)
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+function smooth01(v: number): number {
+  const x = clamp01(v);
+  return x * x * (3 - 2 * x);
+}
+
+/** Ripple envelope: 1 until rippleFadeStart, smooth cut to exactly 0 at rippleDuration; 0 for age <= 0. */
+export function rippleEnvelope(age: number): number {
+  const T = LOCAL_TUNING;
+  if (!(age > 0) || age >= T.rippleDuration) return 0;
+  return 1 - smooth01((age - T.rippleFadeStart) / (T.rippleDuration - T.rippleFadeStart));
+}
+
+/**
+ * Net displacement (m, along the sheet normal, before the pin weight) at distance r (m) from a ripple centre, age s
+ * after the impact, for amplitude amp (m). Bulge (Gaussian, rises in bulgeRise then decays) plus a ring wave behind
+ * a front moving at waveSpeed, decaying with time and distance. |result| <= |amp| * (1 + waveShare); exactly 0 for
+ * age <= 0 and age >= rippleDuration. The vertex shader evaluates the same formula.
+ */
+export function rippleDisplacement(r: number, age: number, amp: number): number {
+  const T = LOCAL_TUNING;
+  const env = rippleEnvelope(age);
+  if (env === 0 || amp === 0) return 0;
+  const q = age / T.bulgeRise;
+  const bulge = Math.exp(-(r * r) / (T.bulgeRadius * T.bulgeRadius)) * q * Math.exp(1 - q);
+  const lag = T.waveSpeed * age - r;
+  let wave = 0;
+  if (lag > 0) {
+    wave = Math.sin(WAVE_K * lag) * Math.exp(-age / T.waveDecay) * Math.exp(-r / T.waveFalloff) * clamp01(lag / T.waveFront);
   }
+  return amp * env * (bulge + T.waveShare * wave);
+}
+
+/** Upper bound of |rippleDisplacement(r, age, amp)| over every r (decays monotonically after the bulge peak). */
+export function rippleBound(age: number, amp: number): number {
+  const T = LOCAL_TUNING;
+  const env = rippleEnvelope(age);
+  if (env === 0) return 0;
+  const q = age / T.bulgeRise;
+  return Math.abs(amp) * env * (q * Math.exp(1 - q) + T.waveShare * Math.exp(-age / T.waveDecay));
+}
+
+/** Pin weight of a net vertex at distance d (m) from the nearest sheet edge: 0 on the edge, 1 from pinDist in. */
+export function netPinWeight(d: number): number {
+  return smooth01(d / LOCAL_TUNING.pinDist);
+}
+
+/** Frame sway at bar height (m) `age` s after a hit of amplitude amp (m): damped sine, exactly 0 after wobbleDuration. */
+export function wobbleSway(age: number, amp: number): number {
+  const T = LOCAL_TUNING;
+  if (!(age > 0) || age >= T.wobbleDuration || amp === 0) return 0;
+  const cut = 1 - smooth01((age - 0.7 * T.wobbleDuration) / (0.3 * T.wobbleDuration));
+  return amp * Math.sin(WOBBLE_W * age) * Math.exp(-age / T.wobbleDecay) * cut;
+}
+
+/** Sway amplitude (m) for a POST event: bar = 1 for the crossbar. */
+export function wobbleAmplitude(bar: number, impactSpeed: number): number {
+  const T = LOCAL_TUNING;
+  const g = bar === 1 ? T.wobbleGainBar : T.wobbleGainPost;
+  const a = g * (impactSpeed > 0 ? impactSpeed : 0);
+  return a > T.wobbleMax ? T.wobbleMax : a;
+}
+
+/** Outward ripple amplitude (m) for a ball meeting the net at `speed` m/s (0 below netMinSpeed). */
+export function netRippleAmplitude(speed: number): number {
+  const T = LOCAL_TUNING;
+  if (!(speed >= T.netMinSpeed)) return 0;
+  const a = speed * T.netGain;
+  return a > T.netMaxAmp ? T.netMaxAmp : a;
+}
+
+export interface NetImpact {
+  /** Ball centre where it meets the net, projected onto the sheet (m, world). */
+  x: number;
+  y: number;
+  z: number;
+  /** Time to the impact along the straight path, s (0 if not moving into a sheet). */
+  t: number;
+  /** SHEET_* id. */
+  sheet: number;
+}
+
+/** A fresh NetImpact (preallocate once). */
+export function createNetImpact(): NetImpact {
+  return { x: 0, y: 0, z: 0, t: 0, sheet: SHEET_BACK };
+}
+
+/**
+ * Where a ball inside (or entering) the net of `end` at p moving with v meets the net: the first sheet its straight
+ * path reaches (the ball surface touching it), projected onto that sheet and clamped into it. A ball that would hit
+ * the ground first rolls on (y >= BALL_RADIUS). A ball not moving into any sheet hits the back at its own height.
+ * Writes and returns `out`. Pure, no allocation.
+ */
+export function predictNetImpact(
+  end: number, px: number, py: number, pz: number, vx: number, vy: number, vz: number, out: NetImpact,
+): NetImpact {
+  const e = end < 0 ? -1 : 1;
+  const u = e * px;
+  const du = e * vx;
+  let t = INF;
+  let sheet = SHEET_BACK;
+  if (du > 1e-6) { const tb = (GB - R - u) / du; if (tb < t) { t = tb; sheet = SHEET_BACK; } }
+  if (vy > 1e-6) { const tr = (GH - R - py) / vy; if (tr < t) { t = tr; sheet = SHEET_ROOF; } }
+  if (vz > 1e-6) { const tp = (GW - R - pz) / vz; if (tp < t) { t = tp; sheet = SHEET_SIDE_POS; } }
+  if (vz < -1e-6) { const tn = (-GW + R - pz) / vz; if (tn < t) { t = tn; sheet = SHEET_SIDE_NEG; } }
+  if (t >= INF) { t = 0; sheet = SHEET_BACK; }
+  if (t < 0) t = 0;
+  let cu = u + du * t;
+  let cy = py + vy * t;
+  let cz = pz + vz * t;
+  if (cy < R) cy = R;
+  cu = cu < GL ? GL : cu > GB ? GB : cu;
+  cy = cy > GH ? GH : cy;
+  cz = cz < -GW ? -GW : cz > GW ? GW : cz;
+  if (sheet === SHEET_BACK) cu = GB;
+  else if (sheet === SHEET_ROOF) cy = GH;
+  else cz = sheet === SHEET_SIDE_POS ? GW : -GW;
+  out.x = e * cu;
+  out.y = cy;
+  out.z = cz;
+  out.t = t;
+  out.sheet = sheet;
   return out;
 }
 
-function createNetTexture(): DataTexture {
-  const n = 16;
-  const data = new Uint8Array(n * n * 4);
-  for (let y = 0; y < n; y++) {
-    for (let x = 0; x < n; x++) {
-      const i = (y * n + x) * 4;
-      const line = x < 2 || y < 2;
-      data[i] = 255; data[i + 1] = 255; data[i + 2] = 255; data[i + 3] = line ? 235 : 0;
-    }
-  }
-  const tex = new DataTexture(data, n, n, RGBAFormat);
-  tex.wrapS = RepeatWrapping;
-  tex.wrapT = RepeatWrapping;
-  tex.generateMipmaps = true;
-  tex.minFilter = LinearMipmapLinearFilter;
-  tex.magFilter = LinearFilter;
-  tex.needsUpdate = true;
-  return tex;
+// ============================================================ frame instances
+
+/**
+ * Write the matrix of a unit cylinder (radius 1, height 1, centred, along y) stretched from A to B with `radius` and
+ * extended by extA / extB beyond the ends, into arr at instance i (column-major, as InstancedMesh.instanceMatrix).
+ * Orthogonal columns (no shear), so three.js transforms the normals correctly.
+ */
+export function writeTube(
+  arr: Float32Array, i: number, ax: number, ay: number, az: number, bx: number, by: number, bz: number,
+  radius: number, extA = 0, extB = 0,
+): void {
+  let dx = bx - ax, dy = by - ay, dz = bz - az;
+  const l = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (l > 1e-9) { dx /= l; dy /= l; dz /= l; } else { dx = 0; dy = 1; dz = 0; }
+  // e1 = normalize(d x ref), ref = +z unless d is close to z (then +x); e3 = e1 x d.
+  let e1x: number, e1y: number, e1z: number;
+  if (dz * dz < 0.81) { e1x = dy; e1y = -dx; e1z = 0; } else { e1x = 0; e1y = dz; e1z = -dy; }
+  const el = Math.sqrt(e1x * e1x + e1y * e1y + e1z * e1z);
+  e1x /= el; e1y /= el; e1z /= el;
+  const e3x = e1y * dz - e1z * dy, e3y = e1z * dx - e1x * dz, e3z = e1x * dy - e1y * dx;
+  const len = l + extA + extB;
+  const shift = (extB - extA) / 2;
+  const o = i * 16;
+  arr[o] = e1x * radius; arr[o + 1] = e1y * radius; arr[o + 2] = e1z * radius; arr[o + 3] = 0;
+  arr[o + 4] = dx * len; arr[o + 5] = dy * len; arr[o + 6] = dz * len; arr[o + 7] = 0;
+  arr[o + 8] = e3x * radius; arr[o + 9] = e3y * radius; arr[o + 10] = e3z * radius; arr[o + 11] = 0;
+  arr[o + 12] = (ax + bx) / 2 + dx * shift; arr[o + 13] = (ay + by) / 2 + dy * shift; arr[o + 14] = (az + bz) / 2 + dz * shift;
+  arr[o + 15] = 1;
 }
 
-/** Net box for both goals: back, roof and two sides per goal. UVs in cells so the grid tiles. */
-function createNetGeometry(): BufferGeometry {
-  const pos: number[] = [];
-  const uv: number[] = [];
-  const quad = (ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number,
-    dx: number, dy: number, dz: number, uLen: number, vLen: number): void => {
-    // a-b-c-d counter-clockwise; two triangles a,b,c and a,c,d.
-    const u = uLen / NET_CELL, v = vLen / NET_CELL;
-    pos.push(ax, ay, az, bx, by, bz, cx, cy, cz, ax, ay, az, cx, cy, cz, dx, dy, dz);
-    uv.push(0, 0, u, 0, u, v, 0, 0, u, v, 0, v);
+/**
+ * All FRAME_INSTANCES frame matrices into arr (16 floats each). Order: [post -z, post +z, bar] for the goal at -x,
+ * then the goal at +x (indices 0..5, as goalFrameMatrices), then 8 support tubes per goal (-x goal 6..13, +x goal
+ * 14..21). swayNeg / swayPos: frame sway at bar height (m, + = into the goal) for the goal at -x / +x; the frame
+ * rotates about the goal line on the ground, so the bar and the front ends of the roof side bars move with it and
+ * the rest of the back frame stays put.
+ */
+export function writeGoalFrame(arr: Float32Array, swayNeg: number, swayPos: number): void {
+  const pr = POST_RADIUS;
+  const sr = LOCAL_TUNING.supportRadius;
+  const postH = GH + 2 * pr;
+  const barY = GH + pr;
+  const xAxis = GL - pr;
+  const zPost = GW + pr;
+  const zSup = GW + sr;
+  const uBack = GB + sr;
+  const topY = GH + sr;
+  for (let k = 0; k < 2; k++) {
+    const e = k === 0 ? -1 : 1;
+    const sway = k === 0 ? swayNeg : swayPos;
+    /** World x shift per metre of height (rotation about the goal line). */
+    const lean = (e * sway) / GH;
+    const base = k * 3;
+    // Posts: from the ground to the top of the bar.
+    writeTube(arr, base, e * xAxis, 0, -zPost, e * xAxis + lean * postH, postH, -zPost, pr);
+    writeTube(arr, base + 1, e * xAxis, 0, zPost, e * xAxis + lean * postH, postH, zPost, pr);
+    // Bar: between the outer faces of the posts.
+    const bx = e * xAxis + lean * barY;
+    writeTube(arr, base + 2, bx, barY, -zPost, bx, barY, zPost, pr, pr, pr);
+    const s = 6 + k * 8;
+    const xb = e * uBack;
+    const xf = e * xAxis;
+    // Rear ground bar, rear uprights, rear top bar.
+    writeTube(arr, s, xb, sr, -zSup, xb, sr, zSup, sr, sr, sr);
+    writeTube(arr, s + 1, xb, 0, -zSup, xb, topY, -zSup, sr, 0, sr);
+    writeTube(arr, s + 2, xb, 0, zSup, xb, topY, zSup, sr, 0, sr);
+    writeTube(arr, s + 3, xb, topY, -zSup, xb, topY, zSup, sr, sr, sr);
+    // Roof side bars (front end on the bar, moves with the sway) and ground side bars.
+    const xft = xf + lean * topY;
+    writeTube(arr, s + 4, xft, topY, -zSup, xb, topY, -zSup, sr);
+    writeTube(arr, s + 5, xft, topY, zSup, xb, topY, zSup, sr);
+    writeTube(arr, s + 6, xf, sr, -zSup, xb, sr, -zSup, sr);
+    writeTube(arr, s + 7, xf, sr, zSup, xb, sr, zSup, sr);
+  }
+}
+
+/** Instance transforms for the goal frame at rest: [post -z, post +z, bar] for the goal at -x, then the goal at +x. */
+export function goalFrameMatrices(): Matrix4[] {
+  const arr = new Float32Array(FRAME_INSTANCES * 16);
+  writeGoalFrame(arr, 0, 0);
+  const out: Matrix4[] = [];
+  for (let i = 0; i < 6; i++) out.push(new Matrix4().fromArray(arr, i * 16));
+  return out;
+}
+
+// ============================================================ net geometry
+
+/** Net sheet grid sizes for a vertex spacing (m): [segments along, segments across] for back, roof, side. */
+export function netGridSegments(step: number): { back: [number, number]; roof: [number, number]; side: [number, number] } {
+  const n = (len: number): number => Math.max(2, Math.ceil(len / step - 1e-9));
+  return {
+    back: [n(2 * GW), n(GH)],
+    roof: [n(2 * GW), n(GOAL_DEPTH)],
+    side: [n(GOAL_DEPTH), n(GH)],
   };
-  const w = GOAL_HALF_WIDTH, h = GOAL_HEIGHT;
-  for (const end of [-1, 1]) {
-    const x0 = end * HALF_LENGTH;
-    const x1 = end * (HALF_LENGTH + GOAL_DEPTH);
-    quad(x1, 0, -w, x1, 0, w, x1, h, w, x1, h, -w, 2 * w, h); // back
-    quad(x0, h, -w, x0, h, w, x1, h, w, x1, h, -w, 2 * w, GOAL_DEPTH); // roof
-    quad(x0, 0, -w, x1, 0, -w, x1, h, -w, x0, h, -w, GOAL_DEPTH, h); // side -z
-    quad(x0, 0, w, x1, 0, w, x1, h, w, x0, h, w, GOAL_DEPTH, h); // side +z
+}
+
+/**
+ * Both nets in one geometry: per goal a ground shadow quad (first in the index order, aPin = -1, aGrid = -1..1
+ * across it), then back, roof and the two sides as vertex grids with `position` (rest), `normal` (outward from the
+ * goal box), `aGrid` (metres along the sheet, for the cord pattern) and `aPin` (netPinWeight of the distance to the
+ * nearest sheet edge). Built at setup / tier changes only.
+ */
+export function createNetGeometry(step: number): BufferGeometry {
+  const seg = netGridSegments(step);
+  const sheetVerts = (s: [number, number]): number => (s[0] + 1) * (s[1] + 1);
+  const sheetTris = (s: [number, number]): number => s[0] * s[1] * 2;
+  const perGoalV = 4 + sheetVerts(seg.back) + sheetVerts(seg.roof) + 2 * sheetVerts(seg.side);
+  const perGoalT = 2 + sheetTris(seg.back) + sheetTris(seg.roof) + 2 * sheetTris(seg.side);
+  const nv = 2 * perGoalV;
+  const pos = new Float32Array(nv * 3);
+  const nrm = new Float32Array(nv * 3);
+  const grid = new Float32Array(nv * 2);
+  const pin = new Float32Array(nv);
+  const idx = nv > 65535 ? new Uint32Array(2 * perGoalT * 3) : new Uint16Array(2 * perGoalT * 3);
+  let v = 0;
+  let t = 0;
+  const T = LOCAL_TUNING;
+
+  const vert = (x: number, y: number, z: number, nx: number, ny: number, nz: number, g0: number, g1: number, p: number): void => {
+    pos[v * 3] = x; pos[v * 3 + 1] = y; pos[v * 3 + 2] = z;
+    nrm[v * 3] = nx; nrm[v * 3 + 1] = ny; nrm[v * 3 + 2] = nz;
+    grid[v * 2] = g0; grid[v * 2 + 1] = g1;
+    pin[v] = p;
+    v++;
+  };
+  /** Sheet: origin O, axis A (unit, length la, na segments), axis B (unit, length lb, nb segments), normal N. */
+  const sheet = (
+    ox: number, oy: number, oz: number, ax: number, ay: number, az: number, la: number, na: number,
+    bx: number, by: number, bz: number, lb: number, nb: number, nx: number, ny: number, nz: number,
+  ): void => {
+    const first = v;
+    for (let j = 0; j <= nb; j++) {
+      const sb = (lb * j) / nb;
+      for (let i = 0; i <= na; i++) {
+        const sa = (la * i) / na;
+        const d = Math.min(sa, la - sa, sb, lb - sb);
+        vert(ox + ax * sa + bx * sb, oy + ay * sa + by * sb, oz + az * sa + bz * sb, nx, ny, nz, sa, sb, netPinWeight(d));
+      }
+    }
+    for (let j = 0; j < nb; j++) {
+      for (let i = 0; i < na; i++) {
+        const a = first + j * (na + 1) + i;
+        const b = a + 1;
+        const c = a + na + 1;
+        const d = c + 1;
+        idx[t++] = a; idx[t++] = b; idx[t++] = d;
+        idx[t++] = a; idx[t++] = d; idx[t++] = c;
+      }
+    }
+  };
+
+  // Ground shadows first (drawn under the net in the same draw call).
+  for (let k = 0; k < 2; k++) {
+    const e = k === 0 ? -1 : 1;
+    const m = T.shadowMargin;
+    const x0 = e * (GL - m * 0.5), x1 = e * (GB + m);
+    const first = v;
+    vert(x0, T.shadowY, -GW - m, 0, 1, 0, -1, -1, -1);
+    vert(x1, T.shadowY, -GW - m, 0, 1, 0, 1, -1, -1);
+    vert(x1, T.shadowY, GW + m, 0, 1, 0, 1, 1, -1);
+    vert(x0, T.shadowY, GW + m, 0, 1, 0, -1, 1, -1);
+    idx[t++] = first; idx[t++] = first + 1; idx[t++] = first + 2;
+    idx[t++] = first; idx[t++] = first + 2; idx[t++] = first + 3;
+  }
+  for (let k = 0; k < 2; k++) {
+    const e = k === 0 ? -1 : 1;
+    // Back: z from -GW to GW, y up.
+    sheet(e * GB, 0, -GW, 0, 0, 1, 2 * GW, seg.back[0], 0, 1, 0, GH, seg.back[1], e, 0, 0);
+    // Roof: z from -GW to GW, u from GL to GB.
+    sheet(e * GL, GH, -GW, 0, 0, 1, 2 * GW, seg.roof[0], e, 0, 0, GOAL_DEPTH, seg.roof[1], 0, 1, 0);
+    // Sides: u from GL to GB, y up.
+    sheet(e * GL, 0, GW, e, 0, 0, GOAL_DEPTH, seg.side[0], 0, 1, 0, GH, seg.side[1], 0, 0, 1);
+    sheet(e * GL, 0, -GW, e, 0, 0, GOAL_DEPTH, seg.side[0], 0, 1, 0, GH, seg.side[1], 0, 0, -1);
   }
   const geo = new BufferGeometry();
-  geo.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));
-  geo.setAttribute('uv', new BufferAttribute(new Float32Array(uv), 2));
-  geo.computeVertexNormals();
+  geo.setAttribute('position', new BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new BufferAttribute(nrm, 3));
+  geo.setAttribute('aGrid', new BufferAttribute(grid, 2));
+  geo.setAttribute('aPin', new BufferAttribute(pin, 1));
+  geo.setIndex(new BufferAttribute(idx, 1));
+  geo.computeBoundingSphere();
   return geo;
 }
 
+// ============================================================ net shader
+
+function f(n: number): string {
+  const s = String(n);
+  return s.indexOf('.') >= 0 || s.indexOf('e') >= 0 ? s : `${s}.0`;
+}
+
+/** Vertex shader: ripple displacement along the normal x pin weight, plus the frame sway near the goal mouth. */
+export function netVertexShader(): string {
+  const T = LOCAL_TUNING;
+  return /* glsl */ `
+attribute vec2 aGrid;
+attribute float aPin;
+uniform vec4 uRip[${RIPPLE_SLOTS}];
+uniform vec4 uAmp;
+uniform vec2 uSway;
+varying vec2 vGrid;
+varying float vPin;
+varying float vDisp;
+varying float vShade;
+
+float ripple(vec3 p, vec4 rip, float amp) {
+  float s = rip.w;
+  if (amp == 0.0 || s <= 0.0 || s >= ${f(T.rippleDuration)}) return 0.0;
+  float r = distance(p, rip.xyz);
+  float env = 1.0 - smoothstep(${f(T.rippleFadeStart)}, ${f(T.rippleDuration)}, s);
+  float q = s / ${f(T.bulgeRise)};
+  float bulge = exp(-(r * r) / ${f(T.bulgeRadius * T.bulgeRadius)}) * q * exp(1.0 - q);
+  float lag = ${f(T.waveSpeed)} * s - r;
+  float wave = 0.0;
+  if (lag > 0.0) {
+    wave = sin(${f(WAVE_K)} * lag) * exp(-s / ${f(T.waveDecay)}) * exp(-r / ${f(T.waveFalloff)})
+      * clamp(lag / ${f(T.waveFront)}, 0.0, 1.0);
+  }
+  return amp * env * (bulge + ${f(T.waveShare)} * wave);
+}
+
+void main() {
+  vec3 p = position;
+  float d = 0.0;
+  if (aPin > 0.0) {
+    d = ripple(p, uRip[0], uAmp.x) + ripple(p, uRip[1], uAmp.y) + ripple(p, uRip[2], uAmp.z) + ripple(p, uRip[3], uAmp.w);
+    d *= aPin;
+  }
+  vec3 q = p + normal * d;
+  if (aPin >= 0.0) {
+    float e = p.x < 0.0 ? -1.0 : 1.0;
+    float front = clamp(1.0 - (abs(p.x) - ${f(GL)}) / ${f(GOAL_DEPTH)}, 0.0, 1.0);
+    float sway = e < 0.0 ? uSway.x : uSway.y;
+    q.x += e * sway * (p.y / ${f(GH)}) * front;
+  }
+  vGrid = aGrid;
+  vPin = aPin;
+  vDisp = d;
+  // Fixed per-sheet shade (no lights): roof brightest, sides, then the back, so the box reads in 3D.
+  vShade = 0.8 + 0.2 * max(normal.y, 0.0) + 0.1 * abs(normal.z);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(q, 1.0);
+}
+`;
+}
+
+/** Fragment shader: anti-aliased cord grid (converges to its mean coverage with distance) or the ground shadow. */
+export function netFragmentShader(): string {
+  const T = LOCAL_TUNING;
+  return /* glsl */ `
+uniform vec3 uColour;
+varying vec2 vGrid;
+varying float vPin;
+varying float vDisp;
+varying float vShade;
+
+float netCover(vec2 uv, float lw) {
+  vec4 dd = vec4(dFdx(uv), dFdy(uv));
+  vec2 deriv = max(vec2(length(dd.xz), length(dd.yw)), vec2(1e-5));
+  vec2 target = vec2(lw);
+  vec2 drawW = clamp(target, deriv, vec2(0.5));
+  vec2 aa = deriv * 1.5;
+  vec2 g2 = abs(fract(uv + 0.5) - 0.5) * 2.0;
+  vec2 g = 1.0 - smoothstep(drawW - aa, drawW + aa, g2);
+  g *= clamp(target / drawW, 0.0, 1.0);
+  g = mix(g, target, clamp(deriv * 2.0 - 1.0, 0.0, 1.0));
+  return mix(g.x, 1.0, g.y);
+}
+
+void main() {
+  if (vPin < -0.5) {
+    vec2 a = abs(vGrid);
+    float fade = (1.0 - smoothstep(0.55, 1.0, a.x)) * (1.0 - smoothstep(0.75, 1.0, a.y));
+    gl_FragColor = vec4(0.0, 0.0, 0.0, ${f(T.shadowAlpha)} * fade);
+  } else {
+    float cover = netCover(vGrid * ${f(1 / T.netCell)}, ${f(T.netCord / T.netCell)});
+    float alpha = mix(${f(T.netHaze)}, ${f(T.netCordAlpha)}, cover);
+    alpha = min(1.0, alpha * (1.0 + ${f(T.netStretchAlpha)} * clamp(abs(vDisp) / ${f(T.stretchRef)}, 0.0, 1.0)));
+    gl_FragColor = vec4(uColour * vShade, alpha);
+  }
+  #include <colorspace_fragment>
+}
+`;
+}
+
+// ============================================================ module
+
+/** Contact-detection state per goal and sheet: 1 while touching (re-armed after separating). */
+const SHEETS = 4;
+
 export function createGoals(ctx: RenderContext): GoalsModule {
-  const cyl = new CylinderGeometry(POST_RADIUS, POST_RADIUS, 1, 12, 1);
-  const frameMat = new MeshLambertMaterial({ color: 0xf6f6f2 });
-  const mats = goalFrameMatrices();
-  const frame = new InstancedMesh(cyl, frameMat, mats.length);
-  for (let i = 0; i < mats.length; i++) frame.setMatrixAt(i, mats[i]!);
+  const T = LOCAL_TUNING;
+
+  // ---- frame
+  const cyl = new CylinderGeometry(1, 1, 1, T.frameSegments, 1);
+  const frameMat = new MeshLambertMaterial({ color: 0xffffff });
+  const frame = new InstancedMesh(cyl, frameMat, FRAME_INSTANCES);
+  const frameArr = frame.instanceMatrix.array as Float32Array;
+  writeGoalFrame(frameArr, 0, 0);
+  const tmpColour = new Color();
+  for (let i = 0; i < FRAME_INSTANCES; i++) {
+    tmpColour.setHex(i < 6 ? T.frameColour : T.supportColour);
+    frame.setColorAt(i, tmpColour);
+  }
   frame.instanceMatrix.needsUpdate = true;
+  if (frame.instanceColor) frame.instanceColor.needsUpdate = true;
   frame.computeBoundingSphere();
+  frame.frustumCulled = false; // both goals, a few cm of sway
   frame.name = 'goal-frames';
   frame.visible = false;
 
-  const netTex = createNetTexture();
-  const netGeo = createNetGeometry();
-  const netMat = new MeshBasicMaterial({
-    color: 0xffffff, map: netTex, transparent: true, opacity: 0.85, side: DoubleSide, depthWrite: false,
+  // ---- net
+  const uRip: Vector4[] = [];
+  for (let i = 0; i < RIPPLE_SLOTS; i++) uRip.push(new Vector4(0, 0, 0, 0));
+  const uniforms: NetUniforms = {
+    uRip: { value: uRip },
+    uAmp: { value: new Vector4(0, 0, 0, 0) },
+    uSway: { value: new Vector2(0, 0) },
+    uColour: { value: new Color(T.netColourDay) },
+  };
+  const netMat = new ShaderMaterial({
+    name: 'goal-net',
+    uniforms,
+    vertexShader: netVertexShader(),
+    fragmentShader: netFragmentShader(),
+    transparent: true,
+    depthWrite: false,
+    side: DoubleSide,
   });
+  let netDetail = detailFor(ctx.tier);
+  let netGeo = createNetGeometry(T.netStep[netDetail]!);
   const net = new Mesh(netGeo, netMat);
   net.name = 'goal-nets';
   net.renderOrder = 2;
+  net.frustumCulled = false; // both goals in one mesh; the vertex shader moves vertices
   net.visible = false;
 
   ctx.scene.add(frame);
   ctx.scene.add(net);
 
+  // ---- state (preallocated)
+  /** Ripple slots: x, y, z, age (s), amp (m) per slot. */
+  const rip = new Float64Array(RIPPLE_SLOTS * 5);
+  /** Wobble per goal (k = 0 for -x): age (s), amplitude (m). */
+  const wobAge = new Float64Array(2);
+  const wobAmp = new Float64Array(2);
+  const sway = new Float64Array(2);
+  let frameDirty = false;
+  /** Time of the last entry per goal (s), -INF = none. */
+  const lastEntry = new Float64Array(2);
+  /** Contact state per goal and sheet: touching flag and last contact time. */
+  const touching = new Uint8Array(2 * SHEETS);
+  const lastContact = new Float64Array(2 * SHEETS);
+  let time = 0;
+  let hasLast = false;
+  let lastX = 0, lastY = 0, lastZ = 0;
+  let pvx = 0, pvy = 0, pvz = 0;
+  const impact = createNetImpact();
+  // Debug close-up.
+  let closeEnd = 0;
+  let closeAngle: number = T.closeUpAngleDeg;
+  let closeDist: number = T.closeUpDist;
+  let closeEyeY: number = T.closeUpEyeY;
+  const camTarget = new Vector3();
+
+  function detailFor(tier: QualityTier): number {
+    const d = getTierParams(tier).netDetail;
+    return d <= 0 ? 0 : d >= 2 ? 2 : 1;
+  }
+
+  function resetState(): void {
+    rip.fill(0);
+    wobAge.fill(0);
+    wobAmp.fill(0);
+    sway.fill(0);
+    lastEntry.fill(-INF);
+    touching.fill(0);
+    lastContact.fill(-INF);
+    time = 0;
+    hasLast = false;
+    pvx = 0; pvy = 0; pvz = 0;
+    writeGoalFrame(frameArr, 0, 0);
+    frame.instanceMatrix.needsUpdate = true;
+    frameDirty = false;
+    writeUniforms();
+  }
+
+  function writeUniforms(): void {
+    const amp = uniforms.uAmp.value;
+    for (let i = 0; i < RIPPLE_SLOTS; i++) {
+      const o = i * 5;
+      uRip[i]!.set(rip[o]!, rip[o + 1]!, rip[o + 2]!, rip[o + 3]!);
+      amp.setComponent(i, rip[o + 4]!);
+    }
+    uniforms.uSway.value.set(sway[0]!, sway[1]!);
+  }
+
+  /** Start a ripple at (x, y, z) with signed amplitude amp after `delay` s. Replaces a free or the oldest slot. */
+  function addRipple(x: number, y: number, z: number, amp: number, delay: number): void {
+    if (amp === 0 || !Number.isFinite(x + y + z + amp + delay)) return;
+    let slot = -1;
+    let oldest = -INF;
+    for (let i = 0; i < RIPPLE_SLOTS; i++) {
+      const o = i * 5;
+      if (rip[o + 4] === 0) { slot = i; break; }
+      if (rip[o + 3]! > oldest) { oldest = rip[o + 3]!; slot = i; }
+    }
+    const o = slot * 5;
+    rip[o] = x; rip[o + 1] = y; rip[o + 2] = z; rip[o + 3] = -(delay > 0 ? delay : 0); rip[o + 4] = amp;
+  }
+
+  /** The ball entered the net of `end` at p with velocity v (speed in m/s). */
+  function entry(end: number, px: number, py: number, pz: number, vx: number, vy: number, vz: number, speed: number): void {
+    const k = end < 0 ? 0 : 1;
+    lastEntry[k] = time;
+    const amp = netRippleAmplitude(speed);
+    if (amp === 0) return;
+    predictNetImpact(end, px, py, pz, vx, vy, vz, impact);
+    const delay = impact.t < T.impactDelayMax ? impact.t : T.impactDelayMax;
+    addRipple(impact.x, impact.y, impact.z, amp, delay);
+  }
+
+  function postHit(end: number, bar: number, speed: number, x: number, y: number, z: number): void {
+    const k = end < 0 ? 0 : 1;
+    const a = wobbleAmplitude(bar, speed);
+    // A new hit restarts the shake unless the current one is still stronger.
+    const remaining = wobAmp[k]! * Math.exp(-wobAge[k]! / T.wobbleDecay) * (wobAge[k]! < T.wobbleDuration ? 1 : 0);
+    if (a > remaining) { wobAge[k] = 0; wobAmp[k] = a; }
+    let ra = speed * T.postRippleGain;
+    if (ra > T.postRippleMax) ra = T.postRippleMax;
+    if (ra > 0) addRipple(x, y, z, ra, 0);
+  }
+
+  /** Interpolated-ball detection: entries (replays) and sheet contacts. dt > 0. */
+  function detect(bx: number, by: number, bz: number, vx: number, vy: number, vz: number): void {
+    const slop = T.contactSlop;
+    const near = R + slop;
+    for (let k = 0; k < 2; k++) {
+      const e = k === 0 ? -1 : 1;
+      const u = e * bx;
+      if (u < GL - 1 || u > GB + 1 || bz > GW + 1 || bz < -GW - 1 || by > GH + 1) {
+        for (let s = 0; s < SHEETS; s++) touching[k * SHEETS + s] = 0;
+        continue;
+      }
+      const inside = u > GL && u < GB && by < GH && bz < GW && bz > -GW;
+      // Entry into the net volume (whole ball over the line, inside the mouth).
+      const u0 = e * lastX;
+      if (u0 <= NET_FRONT && u > NET_FRONT && inside && time - lastEntry[k]! >= T.entryWindow) {
+        entry(e, bx, by, bz, vx, vy, vz, Math.sqrt(vx * vx + vy * vy + vz * vz));
+      }
+      const inEntry = time - lastEntry[k]! < T.entryWindow;
+      const du = e * vx;
+      const pdu = e * pvx;
+      for (let s = 0; s < SHEETS; s++) {
+        // Signed distance outward from the sheet, whether the ball faces the sheet, normal velocity (outward).
+        let d: number, inRect: boolean, vn: number, pvn: number, cx: number, cy: number, cz: number;
+        if (s === SHEET_BACK) {
+          d = u - GB; inRect = bz >= -GW && bz <= GW && by <= GH; vn = du; pvn = pdu;
+          cx = e * GB; cy = by; cz = bz;
+        } else if (s === SHEET_ROOF) {
+          d = by - GH; inRect = u >= GL && u <= GB && bz >= -GW && bz <= GW; vn = vy; pvn = pvy;
+          cx = bx; cy = GH; cz = bz;
+        } else if (s === SHEET_SIDE_POS) {
+          d = bz - GW; inRect = u >= GL && u <= GB && by <= GH; vn = vz; pvn = pvz;
+          cx = bx; cy = by; cz = GW;
+        } else {
+          d = -GW - bz; inRect = u >= GL && u <= GB && by <= GH; vn = -vz; pvn = -pvz;
+          cx = bx; cy = by; cz = -GW;
+        }
+        const ti = k * SHEETS + s;
+        const ad = d < 0 ? -d : d;
+        if (!inRect || ad > near + slop) { touching[ti] = 0; continue; }
+        if (touching[ti] === 1 || ad > near) continue;
+        touching[ti] = 1;
+        const fromInside = d < 0;
+        if (fromInside && inEntry) continue; // the entry ripple stands for this impact
+        if (time - lastContact[ti]! < T.contactCooldown) continue;
+        // Approach speed toward the sheet (this frame or the one before: the bounce may already be in).
+        let ap = fromInside ? vn : -vn;
+        const pap = fromInside ? pvn : -pvn;
+        if (pap > ap) ap = pap;
+        const amp = netRippleAmplitude(ap);
+        if (amp === 0) continue;
+        lastContact[ti] = time;
+        cy = cy < 0 ? 0 : cy > GH ? GH : cy;
+        cz = cz < -GW ? -GW : cz > GW ? GW : cz;
+        addRipple(cx, cy, cz, fromInside ? amp : -amp, 0);
+      }
+    }
+  }
+
+  function applyCloseUp(): void {
+    if (closeEnd === 0) return;
+    const e = closeEnd;
+    const a = (closeAngle * Math.PI) / 180;
+    // Looking into the goal from the pitch side, turned by the angle toward +z (the broadcast side).
+    const tx = e * (GL + GOAL_DEPTH * 0.4);
+    const cam = ctx.camera;
+    cam.position.set(tx - e * Math.cos(a) * closeDist, closeEyeY, Math.sin(a) * closeDist);
+    camTarget.set(tx, T.closeUpLookY, 0);
+    cam.up.set(0, 1, 0);
+    cam.lookAt(camTarget);
+    cam.updateMatrixWorld(true);
+  }
+
+  const debug: GoalsDebug = {
+    closeUp(end: number, angleDeg?: number, dist?: number, eyeY?: number): void {
+      closeEnd = end < 0 ? -1 : end > 0 ? 1 : 0;
+      closeAngle = angleDeg ?? T.closeUpAngleDeg;
+      closeDist = dist !== undefined && dist > 1 ? dist : T.closeUpDist;
+      closeEyeY = eyeY ?? T.closeUpEyeY;
+    },
+    snapshot(): GoalsSnapshot {
+      const ripples: GoalsSnapshot['ripples'] = [];
+      for (let i = 0; i < RIPPLE_SLOTS; i++) {
+        const o = i * 5;
+        if (rip[o + 4] !== 0) ripples.push({ x: rip[o]!, y: rip[o + 1]!, z: rip[o + 2]!, age: rip[o + 3]!, amp: rip[o + 4]! });
+      }
+      const idx = netGeo.getIndex();
+      return {
+        time,
+        ripples,
+        sway: [sway[0]!, sway[1]!],
+        netDetail,
+        netVertices: netGeo.getAttribute('position').count,
+        netTriangles: idx ? idx.count / 3 : 0,
+        frameInstances: frame.count,
+        drawCalls: (frame.visible ? 1 : 0) + (net.visible ? 1 : 0),
+      };
+    },
+  };
+  if (typeof window !== 'undefined') window.__dotkickGoals = debug;
+
+  function applyLook(): void {
+    uniforms.uColour.value.setHex(ctx.night ? T.netColourNight : T.netColourDay);
+    frame.castShadow = getTierParams(ctx.tier).shadowMap;
+  }
+
+  resetState();
+  applyLook();
+
   return {
     frame,
     net,
-    setMatch() { frame.visible = true; net.visible = true; },
-    update(_f: RenderFrame) { /* GFX-04: net ripple */ },
-    warmUp() { if (ctx.renderer) ctx.renderer.initTexture(netTex); },
-    clearMatch() { frame.visible = false; net.visible = false; },
+    uniforms,
+    debug,
+    setMatch(_state: ReadonlySimState) {
+      resetState();
+      applyLook();
+      frame.visible = true;
+      net.visible = true;
+    },
+
+    update(fr: RenderFrame) {
+      let dt = fr.frame.paused ? 0 : fr.frame.dtMs / 1000;
+      if (!(dt > 0)) dt = 0;
+      else if (dt > 0.25) dt = 0.25;
+      const it = fr.interp;
+      const bx = it.ballX, by = it.ballY, bz = it.ballZ;
+      if (dt > 0) {
+        time += dt;
+        // Ripples age; finished ones free their slot.
+        for (let i = 0; i < RIPPLE_SLOTS; i++) {
+          const o = i * 5;
+          if (rip[o + 4] === 0) continue;
+          const age = rip[o + 3]! + dt;
+          if (age >= T.rippleDuration) { rip[o + 3] = 0; rip[o + 4] = 0; } else rip[o + 3] = age;
+        }
+        for (let k = 0; k < 2; k++) {
+          if (wobAmp[k] === 0) continue;
+          const age = wobAge[k]! + dt;
+          if (age >= T.wobbleDuration) { wobAge[k] = 0; wobAmp[k] = 0; sway[k] = 0; } else {
+            wobAge[k] = age;
+            sway[k] = wobbleSway(age, wobAmp[k]!);
+          }
+          frameDirty = true;
+        }
+        if (Number.isFinite(bx) && Number.isFinite(by) && Number.isFinite(bz)) {
+          if (hasLast) {
+            const vx = (bx - lastX) / dt, vy = (by - lastY) / dt, vz = (bz - lastZ) / dt;
+            const sp2 = vx * vx + vy * vy + vz * vz;
+            if (sp2 <= T.teleportSpeed * T.teleportSpeed) {
+              detect(bx, by, bz, vx, vy, vz);
+              pvx = vx; pvy = vy; pvz = vz;
+            } else {
+              pvx = 0; pvy = 0; pvz = 0;
+              touching.fill(0);
+            }
+          }
+          lastX = bx; lastY = by; lastZ = bz;
+          hasLast = true;
+        }
+      }
+      if (frameDirty) {
+        writeGoalFrame(frameArr, sway[0]!, sway[1]!);
+        frame.instanceMatrix.needsUpdate = true;
+        frameDirty = false;
+      }
+      writeUniforms();
+      if (closeEnd !== 0) applyCloseUp();
+    },
+
+    onEvents(events: EventBuffer, state: ReadonlySimState) {
+      for (let i = 0; i < events.count; i++) {
+        const ev = events.get(i);
+        if (ev.type === EventType.NET) {
+          const end = ev.a < 0 ? -1 : 1;
+          const k = end < 0 ? 0 : 1;
+          if (time - lastEntry[k]! < T.entryWindow && lastEntry[k]! > -INF) continue;
+          const b = state.ball;
+          entry(end, ev.x, ev.y, ev.z, b.vx, b.vy, b.vz, ev.c);
+        } else if (ev.type === EventType.POST) {
+          postHit(ev.a < 0 ? -1 : 1, ev.b, ev.c, ev.x, ev.y, ev.z);
+        }
+      }
+    },
+
+    warmUp() {
+      // Programs compile with the scene (index.ts); nothing to upload (the net pattern is procedural).
+    },
+
+    setQuality(tier: QualityTier) {
+      frame.castShadow = getTierParams(tier).shadowMap;
+      const d = detailFor(tier);
+      if (d === netDetail) return;
+      netDetail = d;
+      const old = netGeo;
+      netGeo = createNetGeometry(T.netStep[d]!);
+      net.geometry = netGeo;
+      old.dispose();
+    },
+
+    clearMatch() {
+      frame.visible = false;
+      net.visible = false;
+      closeEnd = 0;
+      resetState();
+    },
+
     dispose() {
       ctx.scene.remove(frame);
       ctx.scene.remove(net);
       cyl.dispose(); frameMat.dispose(); frame.dispose();
-      netGeo.dispose(); netMat.dispose(); netTex.dispose();
+      netGeo.dispose(); netMat.dispose();
+      if (typeof window !== 'undefined' && window.__dotkickGoals === debug) delete window.__dotkickGoals;
     },
   };
 }

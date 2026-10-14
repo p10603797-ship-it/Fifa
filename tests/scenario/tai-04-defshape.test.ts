@@ -237,6 +237,54 @@ describe('TAI-04 line flatness (settled defence)', () => {
   }
 });
 
+describe('TAI-04 back line staggers toward the ball side', () => {
+  for (const def of DIRS) {
+    it.each([1, -1])(`ball out wide on side %i, defending team ${def}: ball-side defenders up to \`stagger\` above the line, far side on it`, (side) => {
+      const r = new Rig({ def });
+      // Carrier out wide in midfield, facing across; nobody in the back line's zones, so every back-liner keeps the
+      // line (no marking, no chaser for an owned ball) and his target is the line + stagger alone.
+      r.opps = [{ k: 6, u: -2, v: 22 * side, fu: 0, fv: -side }];
+      r.ownerK = 6;
+      r.run(240);
+      // Where the settled players stand (real pipeline), before this module's next output is read.
+      const stand = new Map(r.back().map((i) => [i, r.u(r.s.players[i]!.x)] as const));
+      r.s.tick++;
+      resetJobs(r.s, r.def);
+      assignChaser(r.s, r.def, NULL_SINK);
+      assignDefensiveShape(r.s, r.def, NULL_SINK);
+      const L = r.lineU();
+      const bv = r.v(r.s.ball.z);
+      expect(bv).toBeCloseTo(22 * side, 9);
+      const rows = r.back().map((i) => {
+        const p = r.s.players[i]!;
+        return { i, job: p.job, lat: Math.abs(r.v(p.tgtZ) - bv), tu: r.u(p.tgtX), u: stand.get(i)! };
+      }).sort((a, b) => a.lat - b.lat);
+      expect(rows.length).toBe(4);
+      for (const row of rows) expect(row.job, `slot ${row.i}`).toBe(AiJob.HOLD_SHAPE);
+      const near = rows[0]!;
+      // The back-liner nearest the ball laterally has the highest target: above the line, at most `stagger` above.
+      for (const row of rows) expect(near.tu).toBeGreaterThanOrEqual(row.tu);
+      expect(near.tu).toBeGreaterThan(L + 0.25 * LT.stagger);
+      expect(near.tu).toBeLessThanOrEqual(L + LT.stagger + 1e-9);
+      // Never reversed: the further across from the ball, the lower (never below the line).
+      for (let k = 1; k < rows.length; k++) {
+        expect(rows[k]!.tu, `slot ${rows[k]!.i}`).toBeLessThanOrEqual(rows[k - 1]!.tu + 1e-9);
+        expect(rows[k]!.tu, `slot ${rows[k]!.i}`).toBeGreaterThanOrEqual(L - 1e-9);
+      }
+      // Defenders staggerRange (20 m) or more across from the ball aim exactly at the line.
+      expect(LT.staggerRange).toBeLessThanOrEqual(20);
+      const far = rows.filter((row) => row.lat >= LT.staggerRange);
+      expect(far.length).toBeGreaterThanOrEqual(1);
+      for (const row of far) expect(row.tu, `slot ${row.i}`).toBeCloseTo(L, 9);
+      // And the settled players stand that way: the ball-side defender higher than the furthest one, the line level.
+      const furthest = rows[rows.length - 1]!;
+      expect(near.u - furthest.u).toBeGreaterThan(0.25 * LT.stagger);
+      expect(near.u - furthest.u).toBeLessThan(LT.stagger + 0.5);
+      expect(sd(rows.map((row) => row.u))).toBeLessThan(1.5);
+    });
+  }
+});
+
 describe('TAI-04 stepping up and dropping', () => {
   it.each(DIRS)('steps up together on a backward pass and stays level (defending team %i)', (def) => {
     const r = new Rig({ def });

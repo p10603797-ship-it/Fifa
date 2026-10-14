@@ -427,6 +427,23 @@ describe('PAD-08 keyboard: press latch, releaseAll and stuck-key guards', () => 
     expect(r.kb.rsDirs).toBe(0);
   });
 
+  it('Glitch "stuck sprint or stick" (keyboard): blur or a hidden page drops a held Shift and movement; re-press works', () => {
+    const r = rig();
+    r.down('ShiftLeft'); r.down('KeyD');
+    let f = r.tick();
+    expect([f.buttons, f.mx]).toEqual([Btn.SPRINT, AXIS_SCALE]);
+    r.target.dispatchEvent(new Event('blur')); // Shift and D keyups go to another window
+    f = r.tick();
+    expect([f.buttons, f.mx]).toEqual([0, 0]);
+    expect([r.kb.held, r.kb.dirs]).toEqual([0, 0]);
+    r.up('ShiftLeft'); r.up('KeyD'); // late keyups are harmless
+    r.down('ShiftRight');
+    expect(r.tick().buttons).toBe(Btn.SPRINT); // not suppressed: a blur forgets keys, it does not lock them
+    r.doc.visibilityState = 'hidden';
+    r.doc.dispatchEvent(new Event('visibilitychange'));
+    expect(r.tick().buttons).toBe(0);
+  });
+
   it('isEditableTarget: text-like inputs, textarea, select, contenteditable; never sliders, toggles or buttons', () => {
     const yes = [{ tagName: 'input' }, { tagName: 'INPUT', type: 'text' }, { tagName: 'input', type: 'Number' }, { tagName: 'textarea' },
       { tagName: 'select' }, { tagName: 'div', isContentEditable: true }];

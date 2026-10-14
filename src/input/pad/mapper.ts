@@ -30,6 +30,9 @@
  *    held for one sample; a release + re-press between two samples (button still reported held) is reported as a
  *    release on the next sample and the press on the one after, so double taps are never merged. Presses seen only at
  *    a manager poll that this source did not read (another poller, other timestamp) are recovered from prevPressed.
+ *    At most two unreported presses per button are kept (a distinct press needs one sample down and one up, so the
+ *    sim can show 30 presses per second; more taps than that within one sample interval merge): button mashing never
+ *    queues actions that fire after the player stopped.
  *  - Modifier order: a modifier (L1 / R1) pressed at a LATER poll than a face button whose press is not reported yet
  *    (same sample interval) is reported one sample after that face press, so the sim (which resolves combos at the
  *    face press) sees the face button first ("A modifier combo resolves when the face button is pressed, never when
@@ -37,8 +40,10 @@
  *  - Buttons already held before the source first sees its pad (e.g. the press that started the match), anything held
  *    when a lost pad reconnects, and buttons held at releaseAll() (pause, resume, blur, possession swap) are
  *    suppressed until physically released (a button pressed at the very poll the source first reads still counts).
- *    The right-stick recogniser is reset then too (sticks ignored until centred), D-pad sequences and latched
- *    commands are dropped.
+ *    releaseAll() covers the manager's latest poll even when this source has not read it yet (two pads: the first
+ *    Options press pauses and the session's releaseAll swallows the second pad's Options of the same poll, so both
+ *    players pausing at once never pauses and resumes). The right-stick recogniser is reset then too (sticks ignored
+ *    until centred), D-pad sequences and latched commands are dropped.
  *  - Options pauses on its press edge (after the poll's state is stored, so onPause may call releaseAll()).
  * Holds, double taps, combos, buffering and power are resolved in the sim from these edges (SIM-15).
  *
@@ -447,10 +452,21 @@ export function createPadSource(opts: PadSourceOptions): PadInputSource {
     },
     releaseAll() {
       clearEdges();
-      const s = manager.find(opts.key);
-      if (s && s.connected && primed) {
-        readLogical(s, idx, mine);
-        suppress = mine | LOGICAL.down;
+      const s = disposed ? null : manager.find(opts.key);
+      if (s && s.connected) {
+        // Everything held at the manager's latest poll waits for a physical release, even when this source has not
+        // read that poll yet (another source's onPause paused the match first, or another poller ran): the poll
+        // counts as read, so its presses (Options included: no second pause) are dropped. Primes a fresh source.
+        const was = primed ? mine : 0;
+        bind(s);
+        readLogical(s, idx, was);
+        suppress = was | LOGICAL.down;
+        mine = LOGICAL.down;
+        seenPoll[0] = manager.lastPollMs;
+        if (!primed) {
+          primed = true;
+          reported = 0;
+        }
       } else {
         suppress = 0;
       }

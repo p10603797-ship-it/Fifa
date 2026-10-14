@@ -6,6 +6,13 @@
  * Measured in a plain Node child process (node --import tsx), not inside the Vitest worker (Vitest's SSR transform
  * makes hot loops several times slower than the shipped code). Best of many short batches so a busy machine does not
  * make the check flaky.
+ *
+ * Allocation: V8's background (concurrent) TurboFan compiles make its inlining decisions depend on thread timing; on a
+ * busy machine a small callee (assignJob) is sometimes left out-of-line and its double arguments get boxed (16 B per
+ * call: a JIT artifact, not an allocation in the source; the flaky "16.8 B/tick" failure). The probe therefore compiles
+ * on the main thread (--no-concurrent-recompilation: the same code every run) and takes the smallest of several
+ * batches after a GC, so one-off compiler / IC allocations do not count while any steady per-tick source-level
+ * allocation (object/array literal, closure, string) still shows in every batch.
  */
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -48,16 +55,22 @@ const PROBE = `
       best = Math.min(best, (performance.now() - t0) / 1000);
     }
     out.us[name] = best * 1000;
-    globalThis.gc();
-    const h0 = process.memoryUsage().heapUsed;
-    for (let i = 0; i < 200000; i++) tick();
-    out.alloc[name] = (process.memoryUsage().heapUsed - h0) / 200000;
+    let alloc = Infinity;
+    for (let b = 0; b < 5; b++) {
+      globalThis.gc();
+      const h0 = process.memoryUsage().heapUsed;
+      for (let i = 0; i < 40000; i++) tick();
+      alloc = Math.min(alloc, (process.memoryUsage().heapUsed - h0) / 40000);
+    }
+    out.alloc[name] = alloc;
   }
   console.log(JSON.stringify(out));
 `;
 
 describe('TAI-06 budget', () => {
-  const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', '--input-type=module', '-e', PROBE], {
+  const r = spawnSync(process.execPath, [
+    '--expose-gc', '--no-concurrent-recompilation', '--import', 'tsx', '--input-type=module', '-e', PROBE,
+  ], {
     cwd: ROOT, encoding: 'utf8', timeout: 240_000,
   });
   const ok = r.status === 0;

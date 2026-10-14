@@ -230,10 +230,75 @@ describe('RUL-09 DOGSO (denying an obvious goal-scoring chance)', () => {
     expect(classifyChallenge(s, rec(s, K.PUSH_PULL, 0, 0, 3))).toBe(O.FOUL_RED);
   });
 
-  it('serious foul play is decided before DOGSO (red roll fails -> yellow)', () => {
+  it('gap: violent DOGSO foul only a yellow — serious foul play whose red roll fails still falls through to DOGSO (red)', () => {
     const s = through(25);
+    // draw 0.5: the foul roll passes (0.97), the serious-foul-play red roll fails (slide 0.35, hard 0.175).
     H.draw = 0.5;
-    expect(classifyChallenge(s, rec(s, K.SLIDE, 0, 1, 8))).toBe(O.FOUL_YELLOW);
+    H.calls = 0;
+    const slide = rec(s, K.SLIDE, 0, 1, 8);
+    expect(seriousFoulRedChance(slide)).toBe(T_FOUL.slideFromBehindRed);
+    expect(isDogso(s, slide)).toBe(true);
+    expect(classifyChallenge(s, slide)).toBe(O.FOUL_RED);
+    expect(H.calls).toBe(2); // foul roll + red roll; the DOGSO check draws nothing
+    const hard = rec(s, K.HARD, 0, 1, 8);
+    expect(classifyChallenge(s, hard)).toBe(O.FOUL_RED);
+    H.draw = 0;
+    // And the red roll passing is still red.
+    expect(classifyChallenge(s, rec(s, K.SLIDE, 0, 1, 8))).toBe(O.FOUL_RED);
+  });
+
+  it('serious foul play with a failed red roll and no DOGSO (a defender covers) is a yellow', () => {
+    const s = through(25);
+    s.players[13]!.x = 40; s.players[13]!.z = 2;
+    H.draw = 0.5;
+    const r = rec(s, K.SLIDE, 0, 1, 8);
+    expect(isDogso(s, r)).toBe(false);
+    expect(classifyChallenge(s, r)).toBe(O.FOUL_YELLOW);
+    H.draw = 0;
+  });
+
+  it('serious foul play denying a goal in the penalty area: red roll fails -> yellow (attempt), passes -> red', () => {
+    const s = through(45, 2);
+    const r = rec(s, K.SLIDE, 0, 1, 8);
+    expect(isDogso(s, r)).toBe(true);
+    H.draw = 0.5;
+    expect(classifyChallenge(s, r)).toBe(O.FOUL_YELLOW);
+    H.draw = 0.3;
+    expect(classifyChallenge(s, r)).toBe(O.FOUL_RED);
+    H.draw = 0;
+  });
+
+  it('a DOGSO foul outside the area is red whatever the challenge, never lighter than a gentle tackle', () => {
+    const s = through(25);
+    const kinds = [K.STAND, K.HARD, K.SLIDE, K.SHOULDER, K.PUSH_PULL, K.KEEPER];
+    const dirs = [-1, 0, 0.5, 1];
+    const speeds = [1, 3, T_FOUL.recklessSpeed + 0.5, 7.5, 9, 12];
+    const draws = [0, 0.05, 0.1, 0.17, 0.2, 0.3, 0.34, 0.36, 0.5, 0.7, 0.9, 0.96];
+    let fouls = 0;
+    for (const kind of kinds) for (const fb of dirs) for (const cs of speeds) for (const bf of [0, 1]) for (const d of draws) {
+      H.draw = d;
+      const r = rec(s, kind, bf, fb, cs);
+      expect(isDogso(s, r)).toBe(true);
+      const out = classifyChallenge(s, r);
+      if (out !== O.CLEAN) fouls++;
+      expect(out === O.CLEAN || out === O.FOUL_RED, `${K[kind]} fb=${fb} cs=${cs} bf=${bf} draw=${d} -> ${O[out]}`).toBe(true);
+    }
+    expect(fouls).toBeGreaterThan(100);
+    H.draw = 0;
+  });
+
+  it('a DOGSO foul inside the area is never a plain FOUL: attempts are at least yellow, push/pull red', () => {
+    const s = through(45, 2);
+    const draws = [0, 0.1, 0.2, 0.3, 0.5, 0.9];
+    for (const kind of [K.STAND, K.HARD, K.SLIDE, K.SHOULDER, K.PUSH_PULL, K.KEEPER]) for (const fb of [-1, 0, 1]) {
+      for (const cs of [2, 6, 9]) for (const d of draws) {
+        H.draw = d;
+        const out = classifyChallenge(s, rec(s, kind, 0, fb, cs));
+        if (out === O.CLEAN) continue;
+        if (kind === K.PUSH_PULL) expect(out).toBe(O.FOUL_RED);
+        else expect(out === O.FOUL_YELLOW || out === O.FOUL_RED).toBe(true);
+      }
+    }
     H.draw = 0;
   });
 

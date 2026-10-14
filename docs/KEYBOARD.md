@@ -78,6 +78,9 @@ gestures (tap to a side = body feint, hold to a side = ball roll, and so on).
 | Q or Page Up | L1 / LB | previous tab |
 | E or Page Down | R1 / RB | next tab |
 | P | Options / Menu | pause / resume |
+| Tab / Shift + Tab | (none) | browser focus order; the focus ring follows, so Enter confirms the control Tab reached |
 
 On a slider or toggle, left and right change the value instead of moving focus. The focus ring appears with the first
-key or controller press and disappears on the next touch or click.
+key or controller press and disappears on the next touch or click. A held direction never runs away: switching window
+or tab, a hidden page or releasing Cmd stops the repeat. Keys typed into a text field stay there (only Esc leaves it).
+Ctrl, Alt and Cmd combinations are left to the browser.

@@ -28,6 +28,10 @@
  *    [data-focus-visible] and FOCUS_VISIBLE_CLASS while the ring is visible. The ring shows after controller or
  *    keyboard navigation and hides on the next pointer press (which also moves focus to the pressed control), so
  *    touch users never see it. The first direction press while the ring is hidden only reveals it.
+ *  - Native focus that moves without the navigator (the Tab key, a screen calling el.focus()) onto a candidate of the
+ *    top root takes the ring along, so the outline and CONFIRM always name the same control; keyboard focus
+ *    (:focus-visible) also shows the ring. Moving the ring onto a text field (which keeps native focus off until
+ *    CONFIRM) blurs the previous control so a later window focus cannot pull the ring back to it.
  *  - If the focused element is removed (a screen re-renders), the root's remembered element, its default or its first
  *    candidate takes over (MutationObserver on the top root, plus a check before every action).
  *
@@ -211,6 +215,15 @@ function isTextEntry(el: HTMLElement): boolean {
   return isEditableTarget(el);
 }
 
+/** True when the engine shows a keyboard focus indicator on el (:focus-visible); false where unsupported. */
+function matchesFocusVisible(el: HTMLElement): boolean {
+  try {
+    return el.matches(':focus-visible');
+  } catch {
+    return false;
+  }
+}
+
 function fire(el: HTMLElement, type: string): void {
   const view = el.ownerDocument?.defaultView as (Window & typeof globalThis) | null | undefined;
   const Ctor = view?.Event ?? (typeof Event !== 'undefined' ? Event : null);
@@ -348,11 +361,23 @@ export function createFocusNavigator(opts: FocusNavigatorOptions = {}): DotkickF
     el.classList.add(FOCUS_CLASS);
     const ri = rootIndexOf(el);
     if (ri >= 0) remembered[ri] = el;
-    if (nativeFocus && !isTextEntry(el)) {
+    if (!nativeFocus) return;
+    if (!isTextEntry(el)) {
       try {
         el.focus({ preventScroll: true });
       } catch {
         /* not focusable */
+      }
+      return;
+    }
+    // A text field takes the ring but not native focus (no on-screen keyboard until CONFIRM). Native focus must not
+    // stay on the previous control: when the window regains focus its focusin would pull the ring back there.
+    const active = doc ? (doc.activeElement as HTMLElement | null) : null;
+    if (active && active !== el && active !== doc!.body && typeof active.blur === 'function') {
+      try {
+        active.blur();
+      } catch {
+        /* old engines */
       }
     }
   }
@@ -487,8 +512,22 @@ export function createFocusNavigator(opts: FocusNavigatorOptions = {}): DotkickF
     const el = t.closest<HTMLElement>(FOCUS_SELECTOR);
     if (el && root.contains(el) && isVisible(el)) setCurrent(el, false);
   };
+  /**
+   * Native focus moved without the navigator (Tab key, a screen calling el.focus()): the ring follows it, so the
+   * outline and CONFIRM always name the same control. Keyboard-driven focus (:focus-visible) also shows the ring.
+   */
+  const onFocusIn = (e: Event): void => {
+    if (disposed) return;
+    const t = e.target as HTMLElement | null;
+    if (!t || t === current || typeof t.matches !== 'function') return;
+    const root = top();
+    if (!root || !root.contains(t) || !t.matches(FOCUS_SELECTOR) || !isVisible(t)) return;
+    setCurrent(t, false);
+    if (matchesFocusVisible(t)) setRing(true);
+  };
   const win = doc?.defaultView ?? null;
   win?.addEventListener('pointerdown', onPointer, true);
+  win?.addEventListener('focusin', onFocusIn, true);
 
   const api: DotkickFocusNavigator = {
     get current() { return current; },
@@ -578,6 +617,7 @@ export function createFocusNavigator(opts: FocusNavigatorOptions = {}): DotkickF
       if (disposed) return;
       disposed = true;
       win?.removeEventListener('pointerdown', onPointer, true);
+      win?.removeEventListener('focusin', onFocusIn, true);
       observer?.disconnect();
       observer = null;
       observed = null;

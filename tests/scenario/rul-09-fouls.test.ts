@@ -371,6 +371,28 @@ describe('RUL-09 cards', () => {
     expect(ofType(ev, EventType.CARD).map((e) => [e.a, e.b])).toEqual([[TAC, CardKind.RED]]);
   });
 
+  it('gap: violent DOGSO foul only a yellow — a last-defender slide from behind on a through carrier is red on every seed', () => {
+    H.draw = null; // the real seeded RNG: the serious-foul-play red roll fails on most of these seeds
+    let reds = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      H.sent.length = 0;
+      const s = foulScene({ seed });
+      duel(s, 28, 0);
+      give(s, VIC);
+      for (let i = 12; i < 22; i++) if (i !== TAC) s.players[i]!.x = 0; // everyone else upfield of the victim
+      violent(s);
+      const ev = tickFouls(s);
+      const f = ofType(ev, EventType.FOUL);
+      if (f.length === 0) continue; // the 3% foul roll failure
+      expect(f[0]!.c, `seed ${seed}`).toBe(O.FOUL_RED);
+      expect(ofType(ev, EventType.CARD).map((e) => [e.a, e.b])).toEqual([[TAC, CardKind.RED]]);
+      expect(H.sent).toEqual([TAC]);
+      expect(restartOf(ev)!.a).toBe(RestartKind.FREE_KICK);
+      reds++;
+    }
+    expect(reds).toBeGreaterThan(30);
+  });
+
   it('glitch: card shown to the wrong player — the card always goes to the tackler of the record', () => {
     // Away slot 18 fouls home slot 3 while others (incl. a booked victim, the ball owner, the nearest player) are about.
     const s = foulScene();

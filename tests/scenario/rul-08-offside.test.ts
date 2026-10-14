@@ -756,6 +756,289 @@ describe('RUL-08 resets: deliberate play by the defending team, out of play', ()
   });
 });
 
+// ---------------------------------------------------------------- save window
+
+describe('RUL-08 save window: only the first contact after an on-target shot is a save', () => {
+  /** On-target shot by the kicker at tick 100 with the striker flagged; the ball flies toward goal at 12 m/s. */
+  function shotScene(): Scene {
+    const sc = scene({ lineU: 30, ballU: 10, strikerU: 36 });
+    kick(sc, sc.kicker, KickKind.SHOT_NORMAL, -1, 1);
+    tickOffside(sc);
+    expect(flagged(sc.s, sc.striker)).toBe(true);
+    expect(sc.s.match.offside.passTick).toBe(sc.s.tick);
+    return sc;
+  }
+
+  /** `n` ticks of flight with no contact, offsideTick on each (the ball keeps its velocity). */
+  function fly(sc: Scene, n: number): void {
+    for (let i = 0; i < n; i++) {
+      nextTick(sc);
+      tickOffside(sc);
+    }
+  }
+
+  /** The striker then gets the ball: number of OFFSIDE calls. */
+  function strikerGetsIt(sc: Scene, how: 'possession' | 'hit' = 'possession'): number {
+    nextTick(sc, 10);
+    if (how === 'possession') takePossession(sc.s, sc.striker, EV);
+    else recordTouch(sc.s, sc.striker);
+    return offsides(tickOffside(sc)).length;
+  }
+
+  it('regression: a block (deflection) then a clearance by the same defender resets offside (clearance hits the striker)', () => {
+    const sc = shotScene();
+    fly(sc, 19);
+    nextTick(sc);
+    kick(sc, sc.liner, KickKind.DEFLECTION);
+    tickOffside(sc);
+    expect(flagged(sc.s, sc.striker)).toBe(true); // the block keeps the flags
+    nextTick(sc, 10);
+    kick(sc, sc.liner, KickKind.CLEARANCE);
+    tickOffside(sc);
+    expect(sc.s.match.offside.flags).toBe(0); // his clearance is deliberate play
+    expect(strikerGetsIt(sc, 'hit')).toBe(0);
+  });
+
+  it('regression: the ball bouncing off a defender, then his own clearance, resets offside', () => {
+    const sc = shotScene();
+    nextTick(sc, 20);
+    recordTouch(sc.s, sc.liner);
+    tickOffside(sc);
+    expect(flagged(sc.s, sc.striker)).toBe(true);
+    nextTick(sc, 10);
+    kick(sc, sc.liner, KickKind.CLEARANCE);
+    tickOffside(sc);
+    expect(sc.s.match.offside.flags).toBe(0);
+    expect(strikerGetsIt(sc)).toBe(0);
+  });
+
+  it('regression: a keeper parry, then the same keeper\'s clearance, resets offside', () => {
+    const sc = shotScene();
+    nextTick(sc, 20);
+    kick(sc, sc.keeper, KickKind.GK_PARRY);
+    tickOffside(sc);
+    expect(flagged(sc.s, sc.striker)).toBe(true);
+    nextTick(sc, 10);
+    kick(sc, sc.keeper, KickKind.CLEARANCE);
+    tickOffside(sc);
+    expect(sc.s.match.offside.flags).toBe(0);
+    expect(strikerGetsIt(sc)).toBe(0);
+  });
+
+  it('a keeper tip, then the same keeper\'s punch, resets offside', () => {
+    const sc = shotScene();
+    nextTick(sc, 20);
+    kick(sc, sc.keeper, KickKind.GK_TIP);
+    tickOffside(sc);
+    nextTick(sc, 10);
+    kick(sc, sc.keeper, KickKind.GK_PUNCH);
+    tickOffside(sc);
+    expect(sc.s.match.offside.flags).toBe(0);
+    expect(strikerGetsIt(sc)).toBe(0);
+  });
+
+  it('a save, then the saver\'s deliberate pass, resets offside', () => {
+    const sc = shotScene();
+    nextTick(sc, 20);
+    kick(sc, sc.liner, KickKind.CLEARANCE); // clearance off the line: the save
+    tickOffside(sc);
+    expect(flagged(sc.s, sc.striker)).toBe(true);
+    nextTick(sc, 10);
+    kick(sc, sc.liner, KickKind.GROUND_PASS);
+    tickOffside(sc);
+    expect(sc.s.match.offside.flags).toBe(0);
+    expect(strikerGetsIt(sc)).toBe(0);
+  });
+
+  it('a save, then a rebound off the same saver, keeps the flags: the striker is offside', () => {
+    const sc = shotScene();
+    nextTick(sc, 20);
+    kick(sc, sc.liner, KickKind.HEADER_PASS); // headed off the line: the save
+    tickOffside(sc);
+    nextTick(sc, 5);
+    recordTouch(sc.s, sc.liner); // the ball comes back off him: not deliberate
+    tickOffside(sc);
+    expect(flagged(sc.s, sc.striker)).toBe(true);
+    expect(strikerGetsIt(sc)).toBe(1);
+  });
+
+  it('the window closes at the first contact that keeps the flags (passTick moves to it)', () => {
+    const sc = shotScene();
+    nextTick(sc, 20);
+    kick(sc, sc.liner, KickKind.DEFLECTION);
+    tickOffside(sc);
+    expect(sc.s.match.offside.passTick).toBe(sc.s.tick);
+    expect(sc.s.match.offside.passTeam).toBe(sc.att);
+    expect(sc.s.match.offside.passBy).toBe(sc.kicker);
+  });
+
+  it('the window stays open while the shot is still going in, on every tick until the save', () => {
+    const sc = shotScene();
+    const shotTick = sc.s.tick;
+    fly(sc, 15);
+    sc.s.ball.vx = sc.dir * (LOCAL_TUNING.saveMinGoalSpeed + 0.2); // slowing, still going in
+    fly(sc, 15);
+    expect(sc.s.match.offside.passTick).toBe(shotTick);
+    nextTick(sc);
+    kick(sc, sc.liner, KickKind.CLEARANCE);
+    tickOffside(sc);
+    expect(flagged(sc.s, sc.striker)).toBe(true); // a save
+    expect(strikerGetsIt(sc)).toBe(1);
+  });
+
+  it('regression: an on-target shot off the woodwork, then a defender\'s clearance, resets offside', () => {
+    const sc = shotScene();
+    const { s } = sc;
+    fly(sc, 20);
+    // Off the post: back out of the goal mouth, no player contact.
+    s.ball.x = sc.dir * 52.2; s.ball.z = 3.5; s.ball.vx = -sc.dir * 8; s.ball.vz = 1.5;
+    fly(sc, 1);
+    expect(flagged(s, sc.striker)).toBe(true); // the woodwork is no deliberate play
+    expect(s.match.offside.passTick).toBe(s.tick); // ... but the shot can no longer be saved
+    fly(sc, 5);
+    nextTick(sc);
+    kick(sc, sc.liner, KickKind.CLEARANCE);
+    tickOffside(sc);
+    expect(s.match.offside.flags).toBe(0);
+    expect(strikerGetsIt(sc)).toBe(0);
+  });
+
+  it('an on-target shot off the woodwork straight to the offside striker is still offside', () => {
+    const sc = shotScene();
+    const { s } = sc;
+    fly(sc, 20);
+    s.ball.x = sc.dir * 52.2; s.ball.z = 3.5; s.ball.vx = -sc.dir * 8; s.ball.vz = 1.5;
+    fly(sc, 1);
+    expect(strikerGetsIt(sc)).toBe(1);
+  });
+
+  it('an on-target shot that rolls to a stop short of the goal can no longer be saved: the clearance resets', () => {
+    const sc = shotScene();
+    const { s } = sc;
+    fly(sc, 30);
+    s.ball.vx = 0; s.ball.vz = 0; s.ball.vy = 0;
+    fly(sc, 1);
+    expect(flagged(s, sc.striker)).toBe(true);
+    nextTick(sc);
+    kick(sc, sc.liner, KickKind.CLEARANCE);
+    tickOffside(sc);
+    expect(s.match.offside.flags).toBe(0);
+    expect(strikerGetsIt(sc)).toBe(0);
+  });
+
+  it('a stopped ball after a pass (not a shot) changes nothing: the flags stand until someone plays it', () => {
+    const sc = scene({ lineU: 30, ballU: 10, strikerU: 36 });
+    pass(sc, -1, KickKind.CROSS);
+    const pt = sc.s.match.offside.passTick;
+    fly(sc, 5);
+    sc.s.ball.vx = 0; sc.s.ball.vz = 0;
+    fly(sc, 5);
+    expect(sc.s.match.offside.passTick).toBe(pt);
+    expect(flagged(sc.s, sc.striker)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------- safety-net free kick
+
+describe('RUL-08 a free kick taken after offsideTick (RUL-11 safety net) is judged on the next tick', () => {
+  interface NetOpts { prevPhase?: MatchPhase; byTaker?: boolean; judged?: boolean; ticksAgo?: number; kind?: KickKind }
+
+  /**
+   * Phase FREE_KICK for the attacking team with the kicker as the taker; at tick 100 the ball is kicked after this
+   * tick's offsideTick (as forceRestartKick does in restartTick / watchdogTick) and the phase becomes IN_PLAY. Then
+   * offsideTick runs `ticksAgo` ticks later (phaseT as step() counts it).
+   */
+  function safetyNet(o: NetOpts = {}): Scene {
+    const sc = scene({ lineU: 30, ballU: 10, strikerU: 36 });
+    const { s } = sc;
+    const m = s.match;
+    const r = m.restart;
+    m.phase = MatchPhase.FREE_KICK;
+    r.kind = RestartKind.FREE_KICK; r.team = sc.att; r.taker = sc.kicker; r.ready = 1; r.taken = 0;
+    tickOffside(sc); // this tick's offsideTick: the free kick is not taken yet
+    const by = o.byTaker === false ? sc.att * PLAYERS_PER_TEAM + 7 : sc.kicker;
+    if (by !== sc.kicker) put(s, by, sc.dir, 9.7, 0.5);
+    kick(sc, by, o.kind ?? KickKind.GROUND_PASS, sc.striker);
+    r.taken = 1;
+    if (o.judged) { m.offside.passTick = s.tick; m.offside.passTeam = sc.att; m.offside.passBy = sc.kicker; }
+    m.prevPhase = o.prevPhase ?? MatchPhase.FREE_KICK;
+    m.phase = MatchPhase.IN_PLAY;
+    r.kind = RestartKind.NONE;
+    m.phaseT = 0;
+    const n = o.ticksAgo ?? 1;
+    nextTick(sc, n);
+    m.phaseT = n;
+    tickOffside(sc);
+    return sc;
+  }
+
+  it('the snapshot is taken one tick late with the kick tick as passTick', () => {
+    const sc = safetyNet();
+    const o = sc.s.match.offside;
+    expect(flagged(sc.s, sc.striker)).toBe(true);
+    expect(o.passTick).toBe(sc.s.tick - 1);
+    expect(o.passTeam).toBe(sc.att);
+    expect(o.passBy).toBe(sc.kicker);
+    // ... and involvement follows as for any pass
+    nextTick(sc, 30);
+    takePossession(sc.s, sc.striker, EV);
+    const off = offsides(tickOffside(sc));
+    expect(off).toHaveLength(1);
+    expect(sc.s.match.restart.team).toBe(sc.def);
+  });
+
+  it('an onside receiver is not flagged', () => {
+    const sc = scene({ lineU: 30, ballU: 10, strikerU: 28 });
+    const { s } = sc;
+    const m = s.match;
+    m.phase = MatchPhase.FREE_KICK;
+    m.restart.kind = RestartKind.FREE_KICK; m.restart.team = sc.att; m.restart.taker = sc.kicker; m.restart.ready = 1;
+    tickOffside(sc);
+    kick(sc, sc.kicker, KickKind.GROUND_PASS, sc.striker);
+    m.restart.taken = 1; m.prevPhase = MatchPhase.FREE_KICK; m.phase = MatchPhase.IN_PLAY; m.phaseT = 0;
+    nextTick(sc); m.phaseT = 1;
+    tickOffside(sc);
+    expect(s.match.offside.flags).toBe(0);
+    expect(s.match.offside.passTick).toBe(s.tick - 1);
+  });
+
+  const NOT_JUDGED: { name: string; o: NetOpts }[] = [
+    { name: 'a safety-net corner (no offside from a corner)', o: { prevPhase: MatchPhase.CORNER } },
+    { name: 'a safety-net throw-in', o: { prevPhase: MatchPhase.THROW_IN } },
+    { name: 'a safety-net goal kick', o: { prevPhase: MatchPhase.GOAL_KICK } },
+    { name: 'a safety-net kick-off', o: { prevPhase: MatchPhase.KICK_OFF } },
+    { name: 'a safety-net penalty', o: { prevPhase: MatchPhase.PENALTY } },
+    { name: 'a kick by somebody other than the restart taker', o: { byTaker: false } },
+    { name: 'a kick of a kind offside is not judged from (a dribble touch)', o: { kind: KickKind.DRIBBLE_TOUCH } },
+    { name: 'a kick older than one tick', o: { ticksAgo: 2 } },
+  ];
+  for (const row of NOT_JUDGED) {
+    it(`no late snapshot for ${row.name}`, () => {
+      const sc = safetyNet(row.o);
+      expect(sc.s.match.offside.flags).toBe(0);
+      expect(sc.s.match.offside.passTick).not.toBe(sc.s.tick - (row.o.ticksAgo ?? 1));
+    });
+  }
+
+  it('a free kick already judged on its own tick is not judged again', () => {
+    const sc = safetyNet({ judged: true });
+    expect(sc.s.match.offside.flags).toBe(0); // the stored (empty) snapshot stands
+    expect(sc.s.match.offside.passTick).toBe(sc.s.tick - 1);
+  });
+
+  it('config.offside = 0: no late snapshot either', () => {
+    const sc = scene({ lineU: 30, ballU: 10, strikerU: 36, offside: 0 });
+    const m = sc.s.match;
+    m.phase = MatchPhase.FREE_KICK;
+    m.restart.kind = RestartKind.FREE_KICK; m.restart.team = sc.att; m.restart.taker = sc.kicker; m.restart.ready = 1;
+    kick(sc, sc.kicker, KickKind.GROUND_PASS, sc.striker);
+    m.restart.taken = 1; m.prevPhase = MatchPhase.FREE_KICK; m.phase = MatchPhase.IN_PLAY; m.phaseT = 0;
+    nextTick(sc); m.phaseT = 1;
+    tickOffside(sc);
+    expect(m.offside.flags).toBe(0);
+  });
+});
+
 // ---------------------------------------------------------------- restart spot, config
 
 describe('RUL-08 restart and settings', () => {

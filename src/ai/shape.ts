@@ -55,7 +55,7 @@ import { FORMATIONS, ShapeLine, slotLine } from '../data/formations';
 import {
   BOX_SPOTS, createTacticParams, EXTRA_STRIKER_SHAPES, resolveTactics, slotLineFor, TacticFlag, tacticFlags,
 } from '../data/tactics';
-import { otherTeam, possessingTeam, secondLastDefenderX, teamEnd, teamStart } from '../sim/core/query';
+import { otherTeam, possessingTeam, teamEnd, teamStart } from '../sim/core/query';
 
 // Per-phase tables are indexed by TeamPhase: BUILD_UP, ATTACK, DEFEND, TRANSITION_ATTACK, TRANSITION_DEFEND,
 // SET_PIECE. SET_PIECE is resolved to BUILD_UP/ATTACK (restart team) or DEFEND (other team) before lookup, so its
@@ -326,10 +326,18 @@ const outZ = new Float64Array(N);
 const REMOVE_LINE = [LINE_FWD, LINE_MID, LINE_DEF, LINE_MID, LINE_FWD, LINE_DEF, LINE_MID, LINE_DEF, LINE_MID, LINE_DEF] as const;
 const REMOVE_FLOOR = [1, 3, 4, 2, 0, 3, 1, 2, 0, 0] as const;
 
-function clamp(v: number, lo: number, hi: number): number { return v < lo ? lo : v > hi ? hi : v; }
-function absv(v: number): number { return v < 0 ? -v : v; }
-/** v if finite, else 0. */
+// No allocation per call: V8 boxes a non-integer number into a new heap object whenever it crosses a call that is
+// not inlined (argument or return value). Per-tick code therefore uses the Math.abs/min/max/sqrt intrinsics,
+// passes doubles through module scratch (num / ballIn) and calls helpers only with small-integer arguments and
+// results (formIdx, slot, phase, flags). Load-time code may use fin().
+/** v if finite, else 0 (load time only; computeShape inlines the same test). */
 function fin(v: number): number { return v - v === 0 ? v : 0; }
+/** Double scratch: [0] offside line of the opposition (team frame of the shape's team, see offsideLine). */
+const num = new Float64Array(1);
+/** Ball position handed to computeShape (pitch coordinates): x, z. */
+const ballIn = new Float64Array(2);
+/** Candidate box position for boxSpotClear (team frame): u, v. */
+const boxQ = new Float64Array(2);
 
 /** Active keeper slot of a team: team.keeperSlot when valid, else the first active isKeeper player, else -1. */
 function keeperSlotOf(s: SimState, team: number): number {
@@ -355,7 +363,7 @@ function bestVacancy(base: number, line: number): number {
     if (line !== LINE_GK && l !== line) continue;
     if (best < 0) { best = k; continue; }
     const lb = fLine[base + best]!;
-    if (l < lb || (l === lb && absv(fNz[base + k]!) < absv(fNz[base + best]!))) best = k;
+    if (l < lb || (l === lb && Math.abs(fNz[base + k]!) < Math.abs(fNz[base + best]!))) best = k;
   }
   return best;
 }
@@ -368,7 +376,7 @@ function bestDonor(base: number, line: number, k: number): number {
     if (occ[f] !== 1) continue;
     const a = asg[f]!;
     if (a < 0 || fLine[base + a] !== line) continue;
-    const dz = absv(fNz[base + a]! - vz), dx = absv(fNx[base + a]! - vx);
+    const dz = Math.abs(fNz[base + a]! - vz), dx = Math.abs(fNx[base + a]! - vx);
     if (best < 0 || dz < bestDz || (dz === bestDz && dx < bestDx)) { best = f; bestDz = dz; bestDx = dx; }
   }
   return best;
@@ -489,7 +497,7 @@ function applyExtraStriker(fi: number, defending: boolean, full: boolean): numbe
     if (pick < 0) { pick = f; continue; }
     const cp = fCentral[base + asg[pick]!]!, cf = fCentral[base + a]!;
     if (cf !== cp) { if (cf > cp) pick = f; continue; }
-    const zf = absv(enz[f]!), zp = absv(enz[pick]!);
+    const zf = Math.abs(enz[f]!), zp = Math.abs(enz[pick]!);
     if (zf < zp || (zf === zp && enx[f]! > enx[pick]!)) pick = f;
   }
   if (pick < 0) return -1;
@@ -508,25 +516,27 @@ function applyExtraStriker(fi: number, defending: boolean, full: boolean): numbe
   return pick;
 }
 
-/** Resolve the phase column: SET_PIECE -> restart team attacks/builds up, the other side defends. */
-function phaseIndex(s: SimState, team: number, bu: number): number {
+/** Resolve the phase column: SET_PIECE -> restart team attacks (builds up when `ownThird` = 1: ball in its own
+ *  third), the other side defends. */
+function phaseIndex(s: SimState, team: number, ownThird: number): number {
   let ph: number = s.teams[team]!.phase;
   if (ph === TeamPhase.SET_PIECE) {
-    ph = s.match.restart.team === team ? (bu < -HALF_LENGTH / 3 ? TeamPhase.BUILD_UP : TeamPhase.ATTACK) : TeamPhase.DEFEND;
+    ph = s.match.restart.team === team ? (ownThird === 1 ? TeamPhase.BUILD_UP : TeamPhase.ATTACK) : TeamPhase.DEFEND;
   }
   return ph >= TeamPhase.BUILD_UP && ph <= TeamPhase.TRANSITION_DEFEND && (ph | 0) === ph ? ph : TeamPhase.BUILD_UP;
 }
 
 /**
- * Compute every formIdx's home for `team` with the ball at (bx, bz) into outX/outZ (pitch coordinates).
- * Reads state only.
+ * Compute every formIdx's home for `team` with the ball at (ballIn[0], ballIn[1]) into outX/outZ (pitch
+ * coordinates). Reads state only.
  */
-function computeShape(s: SimState, team: number, bx: number, bz: number): void {
+function computeShape(s: SimState, team: number): void {
   const t = s.teams[team]!;
   const dir = t.dir < 0 ? -1 : 1;
   const fi = formationIndex(t.formation);
   const base = fi * N;
-  const bu = dir * fin(bx), bv = dir * fin(bz);
+  const bx = ballIn[0]!, bz = ballIn[1]!;
+  const bu = dir * (bx - bx === 0 ? bx : 0), bv = dir * (bz - bz === 0 ? bz : 0);
 
   // 1. Occupants and keeper.
   for (let k = 0; k < N; k++) { occ[k] = 0; asg[k] = -1; slotBy[k] = -1; isGk[k] = 0; }
@@ -561,24 +571,27 @@ function computeShape(s: SimState, team: number, bx: number, bz: number): void {
   if (!full) respread(fi);
 
   // 2. Phase, focus and the extra striker.
-  const ph = phaseIndex(s, team, bu);
+  const ph = phaseIndex(s, team, bu < -HALF_LENGTH / 3 ? 1 : 0);
   const defending = ph === TeamPhase.DEFEND || ph === TeamPhase.TRANSITION_DEFEND;
   const fo = t.focus >= 0 && t.focus <= 2 && (t.focus | 0) === t.focus ? t.focus : 0;
   const extra = t.extraStriker === 1 ? applyExtraStriker(fi, defending, full) : -1;
   // Focus + quick tactics as every module reads them (data/tactics): block push (team press only out of
   // possession) and width multiplier.
   resolveTactics(fo, tacticFlags(t), TP);
-  const fl = fin(defending ? TP.pushDefendNx : TP.pushAttackNx) * HALF_LENGTH;
-  const fw = fin(defending ? TP.widthDefend : TP.widthAttack);
+  const push = defending ? TP.pushDefendNx : TP.pushAttackNx;
+  const fl = (push - push === 0 ? push : 0) * HALF_LENGTH;
+  const tw = defending ? TP.widthDefend : TP.widthAttack;
+  const fw = tw - tw === 0 ? tw : 0;
 
   // 3. Vertical: back-line height, then per-slot depth.
   const nxBack = fNxBack[fi]!;
-  let lineU = clamp(nxBack * HALF_LENGTH + T.lineOffset[ph]! + fl + T.lineSlope[ph]! * bu, T.lineMin[ph]! + fl, T.lineMax[ph]! + fl);
-  const lineX = fin(t.lineX);
+  let lineU = Math.min(Math.max(nxBack * HALF_LENGTH + T.lineOffset[ph]! + fl + T.lineSlope[ph]! * bu, T.lineMin[ph]! + fl), T.lineMax[ph]! + fl);
+  const tlx = t.lineX;
+  const lineX = tlx - tlx === 0 ? tlx : 0;
   if (defending && s.match.phase === MatchPhase.IN_PLAY && lineX !== 0) {
-    lineU = clamp(dir * lineX, lineU - T.lineXTrust, lineU + T.lineXTrust);
+    lineU = Math.min(Math.max(dir * lineX, lineU - T.lineXTrust), lineU + T.lineXTrust);
   }
-  lineU = clamp(lineU, T.lineFloor, T.lineCeil);
+  lineU = Math.min(Math.max(lineU, T.lineFloor), T.lineCeil);
   const depth = T.depthScale[ph]! * T.focusDepth[fo]! * HALF_LENGTH;
   const width = T.widthScale[ph]! * fw * HALF_WIDTH;
   for (let f = 0; f < N; f++) {
@@ -597,14 +610,14 @@ function computeShape(s: SimState, team: number, bx: number, bz: number): void {
   }
 
   // 4. Lateral: slide toward the ball, narrow the far side, squeeze the ball side inside the touchline.
-  const shift = clamp(bv * T.slide[ph]!, -T.slideMax, T.slideMax);
+  const shift = Math.min(Math.max(bv * T.slide[ph]!, -T.slideMax), T.slideMax);
   const side = bv > 0 ? 1 : bv < 0 ? -1 : 0;
-  const a = absv(bv) >= T.narrowRange ? 1 : absv(bv) / T.narrowRange;
+  const a = Math.abs(bv) >= T.narrowRange ? 1 : Math.abs(bv) / T.narrowRange;
   const kFar = 1 - (1 - T.farNarrow[ph]!) * a;
   let kNear = 1 - (1 - T.nearNarrow[ph]!) * a;
   let maxNear = 0;
   for (let f = 0; f < N; f++) if (occ[f] === 1 && isGk[f] === 0 && hw[f]! * side > maxNear) maxNear = hw[f]! * side;
-  const room = HALF_WIDTH - T.sideMargin - absv(shift);
+  const room = HALF_WIDTH - T.sideMargin - Math.abs(shift);
   if (maxNear * kNear > room) kNear = room > 0 ? room / maxNear : 0;
   for (let f = 0; f < N; f++) {
     if (isGk[f] === 1) continue;
@@ -634,7 +647,7 @@ function computeShape(s: SimState, team: number, bx: number, bz: number): void {
 
   // 6. Get in the box when crossing: widest non-defender per flank (never the carrier) -> far post / spot.
   let boxFar = -1, boxNear = -1;
-  if (t.getInBox === 1 && side !== 0 && possessingTeam(s) === team && bu >= HALF_LENGTH - CROSS_ZONE_DEPTH && absv(bv) >= CROSS_ZONE_MIN_Z) {
+  if (t.getInBox === 1 && side !== 0 && possessingTeam(s) === team && bu >= HALF_LENGTH - CROSS_ZONE_DEPTH && Math.abs(bv) >= CROSS_ZONE_MIN_Z) {
     const owner = s.ball.owner;
     const carrierF = owner >= 0 ? s.players[owner]!.formIdx : -1;
     let bestR = -1, bestL = -1;
@@ -653,7 +666,8 @@ function computeShape(s: SimState, team: number, bx: number, bz: number): void {
   // 7. Clamps (ceilings and floors keep the compactness of step 5) and keeper home; final team-frame homes in hu/hv.
   let ceil = HALF_LENGTH - T.endMargin;
   if (s.config.offside === 1) {
-    const oppU = dir * secondLastDefenderX(s, otherTeam(team));
+    offsideLine(s, team);
+    const oppU = num[0]!;
     let lim = oppU > bu ? oppU : bu;
     if (lim < 0) lim = 0;
     lim -= T.offsideMargin;
@@ -665,24 +679,25 @@ function computeShape(s: SimState, team: number, bx: number, bz: number): void {
   const vMax = HALF_WIDTH - T.sideMargin;
   const gaU = -HALF_LENGTH + GOAL_AREA_DEPTH + T.goalAreaMargin;
   const gaV = GOAL_AREA_HALF_WIDTH + T.goalAreaMargin;
-  const prog = clamp((bu + HALF_LENGTH) / (2 * HALF_LENGTH), 0, 1);
+  const prog = Math.min(Math.max((bu + HALF_LENGTH) / (2 * HALF_LENGTH), 0), 1);
   const ku = -HALF_LENGTH + T.keeperDepthNear + (T.keeperDepthFar - T.keeperDepthNear) * prog;
-  const kv = clamp(bv * T.keeperFollow, -(GOAL_HALF_WIDTH - T.keeperPostMargin), GOAL_HALF_WIDTH - T.keeperPostMargin);
+  const kPost = GOAL_HALF_WIDTH - T.keeperPostMargin;
+  const kv = Math.min(Math.max(bv * T.keeperFollow, -kPost), kPost);
   for (let f = 0; f < N; f++) {
     let u: number, v: number;
     if (isGk[f] === 1) { u = ku; v = kv; } else {
       u = hu[f]!;
-      v = clamp(hv[f]!, -vMax, vMax);
+      v = Math.min(Math.max(hv[f]!, -vMax), vMax);
       if (u > ceil) u = ceil;
-      u = clamp(u, -HALF_LENGTH + T.endMargin, HALF_LENGTH - T.endMargin);
+      u = Math.min(Math.max(u, -HALF_LENGTH + T.endMargin), HALF_LENGTH - T.endMargin);
       if (kickOff) {
         if (u > -T.kickOffMargin) u = -T.kickOffMargin;
-        if (team !== kickTeam && absv(v) < circle) {
+        if (team !== kickTeam && Math.abs(v) < circle) {
           const cu = -Math.sqrt(circle * circle - v * v);
           if (u > cu) u = cu;
         }
       }
-      if (u < gaU && absv(v) < gaV) u = gaU;
+      if (u < gaU && Math.abs(v) < gaV) u = gaU;
     }
     hu[f] = u;
     hv[f] = v;
@@ -700,8 +715,28 @@ function computeShape(s: SimState, team: number, bx: number, bz: number): void {
   }
 }
 
-/** True if no active outfield home other than m's lies within T.boxSeparation of (u, v) (team frame). */
-function boxSpotClear(m: number, u: number, v: number): boolean {
+/**
+ * The opposition's second-last defender (keeper included) in the team frame of `team` -> num[0]: the same rule as
+ * sim/core/query secondLastDefenderX (kept here so no double crosses a call; see `num`).
+ */
+function offsideLine(s: SimState, team: number): void {
+  const opp = otherTeam(team);
+  const od = s.teams[opp]!.dir;
+  let first = 1e9, second = 1e9;
+  const end = teamEnd(opp);
+  for (let i = teamStart(opp); i < end; i++) {
+    const p = s.players[i]!;
+    if (p.active !== 1) continue;
+    const d = od * p.x;
+    if (d < first) { second = first; first = d; } else if (d < second) second = d;
+  }
+  if (second >= 1e9) second = first;
+  num[0] = (s.teams[team]!.dir < 0 ? -1 : 1) * od * second;
+}
+
+/** True if no active outfield home other than m's lies within T.boxSeparation of (boxQ[0], boxQ[1]) (team frame). */
+function boxSpotClear(m: number): boolean {
+  const u = boxQ[0]!, v = boxQ[1]!;
   const sep2 = T.boxSeparation * T.boxSeparation;
   for (let f = 0; f < N; f++) {
     if (f === m || occ[f] !== 1 || isGk[f] === 1) continue;
@@ -718,7 +753,8 @@ function boxSpotClear(m: number, u: number, v: number): boolean {
  */
 function separateBoxMover(m: number, side: number): void {
   const um = hu[m]!, vm = hv[m]!;
-  if (boxSpotClear(m, um, vm)) return;
+  boxQ[0] = um; boxQ[1] = vm;
+  if (boxSpotClear(m)) return;
   const sep = T.boxSeparation;
   const vLim = PENALTY_AREA_HALF_WIDTH - T.boxSideMargin;
   let best = vm, bestD = -1;
@@ -729,9 +765,11 @@ function separateBoxMover(m: number, side: number): void {
     const half = Math.sqrt(sep * sep - du * du) + T.boxSeparationSlack;
     for (let k = 0; k < 2; k++) {
       const v = k === 0 ? hv[c]! - half : hv[c]! + half;
-      if (v > vLim || v < -vLim || !boxSpotClear(m, um, v)) continue;
-      const d = absv(v - vm);
-      if (bestD < 0 || d < bestD || (d === bestD && (absv(v) < absv(best) || (absv(v) === absv(best) && v * side < 0)))) {
+      if (v > vLim || v < -vLim) continue;
+      boxQ[1] = v;
+      if (!boxSpotClear(m)) continue;
+      const d = Math.abs(v - vm);
+      if (bestD < 0 || d < bestD || (d === bestD && (Math.abs(v) < Math.abs(best) || (Math.abs(v) === Math.abs(best) && v * side < 0)))) {
         best = v;
         bestD = d;
       }
@@ -771,7 +809,8 @@ export function updateShape(s: SimState, team: number, ev: EventSink): void {
   if (t.shapeT > 1) {
     t.shapeT--;
   } else {
-    computeShape(s, team, s.ball.x, s.ball.z);
+    ballIn[0] = s.ball.x; ballIn[1] = s.ball.z;
+    computeShape(s, team);
     for (let f = 0; f < N; f++) { t.homeX[f] = outX[f]!; t.homeZ[f] = outZ[f]!; }
     t.shapeT = nextDelay(s.tick, team);
   }
@@ -790,7 +829,8 @@ export function invalidateShape(s: SimState, team: number): void {
  */
 export function homePositionAt(s: SimState, team: number, formIdx: number, bx: number, bz: number, out: { x: number; z: number }): void {
   if (!(formIdx >= 0 && formIdx < N) || (formIdx | 0) !== formIdx) { out.x = 0; out.z = 0; return; }
-  computeShape(s, team, bx, bz);
+  ballIn[0] = bx; ballIn[1] = bz;
+  computeShape(s, team);
   out.x = outX[formIdx]!;
   out.z = outZ[formIdx]!;
 }

@@ -463,6 +463,89 @@ describe('TAI-07 glitch: Players: two teammates chase or nobody does', () => {
     expect(aiChasers).toBeGreaterThan(1000);
   });
 
+  it('regression (deflected pass): an opponent\'s deflection ends the receiver claim; the teammate who gets there first chases', () => {
+    // Our pass from 5 to the far receiver 9 (kicked on tick 0): 9 claims the chase while the pass is intact.
+    const s = looseState({ ball: { x: -10, z: 0, vx: 14, vz: 0, ...passBy(5, 0, 9, 0) } });
+    place(s, 5, -11, 0);
+    place(s, 9, 40, 0);
+    place(s, 6, -4, 6);
+    place(s, 16, -2, 4);
+    for (let k = 0; k < 20; k++) { aiTick(s); expect(s.teams[0]!.chaser).toBe(9); }
+    expect(s.teams[0]!.chaserT).toBeGreaterThanOrEqual(T_AI.chaserMinTicks);
+    // Opponent 16 deflects it (recordTouch: passTarget and lastKick* survive, lastTouchTeam = 1); it dies near 6.
+    Object.assign(s.ball, { x: -2, z: 4, vx: -1, vz: 0.5, lastTouch: 16, lastTouchTeam: 1, lastTouchTick: s.tick });
+    expect(s.ball.passTarget).toBe(9);
+    expect(ballT(s, 6) + T_AI.chaserHysteresisTicks).toBeLessThanOrEqual(ballT(s, 9));
+    aiTick(s);
+    expect(s.teams[0]!.chaser).toBe(6); // the receiver held it >= chaserMinTicks: arrival time decides at once
+    expectOneChaser(s, 0);
+    expect(s.players[9]!.job).not.toBe(AiJob.CHASE_LOOSE);
+    for (let k = 0; k < 60; k++) { aiTick(s); expect(s.teams[0]!.chaser).toBe(6); expectOneChaser(s, 0); }
+    // A later touch by our own side (it brushes off 6) does not hand the chase back to the receiver.
+    Object.assign(s.ball, { lastTouch: 6, lastTouchTeam: 0, lastTouchTick: s.tick });
+    for (let k = 0; k < 30; k++) { aiTick(s); expect(s.teams[0]!.chaser).toBe(6); expectOneChaser(s, 0); }
+  });
+
+  it('regression (deflected pass): a deflection right after the kick hands over after chaserMinTicks (hysteresis)', () => {
+    const s = looseState({ ball: { x: -10, z: 0, vx: 14, vz: 0, ...passBy(5, 0, 9, 0) } });
+    place(s, 5, -11, 0);
+    place(s, 9, 40, 0);
+    place(s, 6, -4, 6);
+    for (let k = 0; k < 3; k++) aiTick(s);
+    expect(s.teams[0]!.chaser).toBe(9);
+    Object.assign(s.ball, { x: -2, z: 4, vx: -1, vz: 0.5, lastTouch: 16, lastTouchTeam: 1, lastTouchTick: s.tick });
+    let ticks = 0;
+    while (s.teams[0]!.chaser === 9 && ticks < 100) { aiTick(s); ticks++; expectOneChaser(s, 0); }
+    expect(s.teams[0]!.chaser).toBe(6);
+    expect(ticks).toBeLessThanOrEqual(T_AI.chaserMinTicks);
+    for (let k = 0; k < 30; k++) { aiTick(s); expect(s.teams[0]!.chaser).toBe(6); }
+  });
+
+  it('regression (fallen receiver): a receiver who is down is not the chaser; a teammate chases at once', () => {
+    // The checker's probe: passTarget 9 is FALLEN, teammate 6 is 5 m from the ball.
+    const s = looseState({ ball: { x: 0, z: 0, vx: 3, vz: 0, ...passBy(5, 0, 9, 0) } });
+    place(s, 5, -8, 0);
+    place(s, 9, 20, 0, { act: ActionKind.FALLEN, actT: 0, actDur: 70, moveMode: MoveMode.LOCKED });
+    place(s, 6, -3, 4);
+    expect(busyTicks(s.players[9]!)).toBeGreaterThan(T_AI.chaserHysteresisTicks);
+    aiTick(s);
+    expect(s.teams[0]!.chaser).toBe(6);
+    expect(s.players[6]!.job).toBe(AiJob.CHASE_LOOSE);
+    expectOneChaser(s, 0);
+    // He gets up (actT runs out) while the ball is still loose: the chase stays with 6 (no flip back to the receiver).
+    let upTicks = 0;
+    for (let k = 0; k < 120; k++) {
+      const r = s.players[9]!;
+      if (r.act === ActionKind.FALLEN && ++r.actT >= r.actDur) Object.assign(r, { act: ActionKind.NONE, actT: 0, actDur: 0, moveMode: MoveMode.STOP });
+      if (r.act === ActionKind.NONE) upTicks++;
+      aiTick(s);
+      expect(s.teams[0]!.chaser, `tick ${s.tick}`).toBe(6);
+      expectOneChaser(s, 0);
+    }
+    expect(upTicks).toBeGreaterThan(30);
+  });
+
+  it('regression (fallen receiver): a receiver who goes down mid-pass is replaced at once and does not reclaim it', () => {
+    const s = looseState({ ball: { x: -10, z: 0, vx: 14, vz: 0, ...passBy(5, 0, 9, 0) } });
+    place(s, 5, -11, 0);
+    place(s, 9, 25, 0);
+    place(s, 6, 1, 2); // near the ball's path, but the receiver claims it while the pass is intact
+    for (let k = 0; k < 4; k++) { aiTick(s); expect(s.teams[0]!.chaser).toBe(9); }
+    expect(s.teams[0]!.chaserT).toBeLessThan(T_AI.chaserMinTicks); // only incapacitation can move it this early
+    Object.assign(s.players[9]!, { act: ActionKind.FALLEN, actT: 0, actDur: 70, moveMode: MoveMode.LOCKED });
+    expect(ballT(s, 6) + T_AI.chaserHysteresisTicks).toBeLessThanOrEqual(ballT(s, 9));
+    aiTick(s);
+    expect(s.teams[0]!.chaser).toBe(6);
+    expectOneChaser(s, 0);
+    Object.assign(s.players[9]!, { act: ActionKind.NONE, actT: 0, actDur: 0, moveMode: MoveMode.STOP });
+    for (let k = 0; k < 40; k++) { aiTick(s); expect(s.teams[0]!.chaser).toBe(6); expectOneChaser(s, 0); }
+    // A new pass to him restores the claim (fresh kick on this tick, after the AI ran).
+    Object.assign(s.ball, { x: -1, z: 3, vx: 12, vz: -1, ...passBy(6, 0, 9, s.tick) });
+    aiTick(s);
+    expect(s.teams[0]!.chaser).toBe(9);
+    expectOneChaser(s, 0);
+  });
+
   it('other modules cannot add a second chaser: CHASE_LOOSE is only given to team.chaser', () => {
     const s = looseState({ ball: { x: 0, z: 0, vx: 4 } });
     place(s, 5, 3, 0); place(s, 6, 6, 1); place(s, 7, -3, 0);

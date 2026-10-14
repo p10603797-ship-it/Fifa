@@ -29,14 +29,20 @@
  *     airborne or loose (within autoWindowTicks of the latest touch) and a teammate will clearly reach it first;
  *     AUTO additionally for an opponent's ground pass and when the current defender is beaten by the carrier.
  *     "Clearly" = the candidate's arrival beats the current player's by max(autoMarginTicks, autoMarginFrac *
- *     current) (hysteresis); never away from a player about to reach the ball (aboutToReceiveTicks); never while a
- *     shot is in flight.
- *  5. ctrl.nextSwitch = what a MOD_L press would pick now (-1 outside the defence context).
+ *     (current - ticks the ball spends out of reach before he meets it)) (hysteresis: the relative part grows with
+ *     the time the ball is playable, not with a long flight's hang time); never away from a player about to reach
+ *     the ball (aboutToReceiveTicks); never while a shot is in flight. A long ball is judged as soon as it is struck:
+ *     the loose-ball look-ahead runs until the ball has been playable for looseHorizonTicks (up to airHorizonTicks
+ *     of flight out of reach), so a 3-6 s high ball is decided in the window right after the strike.
+ *  5. ctrl.nextSwitch = what a MOD_L press would pick now (-1 outside the defence context). Ties on arrival (common
+ *     on a long ball: several teammates can be under it before it comes down) go to the one who gets to his meeting
+ *     point soonest; the previous marker is kept while he is within markerTieTicks of that, so it never flickers.
  *
  * "Effective" arrival (eff, ticks): opponent carrier -> first sampled time t at which the player can stand on the
  * carrier's extrapolated path no later than the carrier (SIM-04 ticksToReach), minus goalSideBonusTicks when he is
- * goal-side; loose ball -> first sampled time he can reach the predicted ball below reachHeight; our possession ->
- * ticks to the ball. Busy players (stunned, in a tackle/fall/action) add their remaining action ticks.
+ * goal-side; loose ball -> first sampled time he can reach the predicted ball below reachHeight (the air phase is
+ * SIM-01 ballAirStep's integrator: drag, Magnus, spin decay; bounces and roll are a cheap SIM-02 copy); our
+ * possession -> ticks to the ball. Busy players (stunned, in a tackle/fall/action) add their remaining action ticks.
  *
  * switchLockT encoding: switchTo sets switchLockTicks (auto blocked until it reaches 0); a manual switch sets
  * switchLockTicks + manualHoldTicks. A remaining value above manualHoldTicks therefore means "a manual switch less
@@ -52,6 +58,7 @@ import { EventType, type EventSink } from '../../contracts/events';
 import { AXIS_SCALE, Btn, type InputFrame } from '../../contracts/input';
 import { MoveMode, type ControllerState, type PlayerState, type SimState } from '../../contracts/state';
 import { T_BALL, T_INPUT, T_PLAYER } from '../../contracts/tuning';
+import { DRAG_K, MAGNUS_K } from '../ball/flight';
 import { ticksToReach } from '../players/locomotion';
 
 // Imported double constants copied into module consts: hot loops then read plain locals (module-namespace getters
@@ -62,16 +69,28 @@ const HALF_L = HALF_LENGTH;
 const HALF_W = HALF_WIDTH;
 const BOARD_XS = BOARD_X;
 const BOARD_ZS = BOARD_Z;
+/** SIM-01 air model (ballAirStep): drag and Magnus coefficients actually used by the sim, gravity, spin decay. */
+const AIR_DRAG = DRAG_K;
+const AIR_MAGNUS = MAGNUS_K;
+const GRAVITY = T_BALL.gravity;
+const SPIN_DECAY_AIR = T_BALL.spinDecayAir;
 
 const LOCAL_TUNING = {
   /** Extra auto-switch hold after a MANUAL switch, on top of T_INPUT.switchLockTicks, ticks (>= switchLockTicks). */
   manualHoldTicks: 42,
   /** Spacing of carrier-path / loose-ball samples, ticks. */
   sampleStepTicks: 4,
+  /** Spacing of loose-ball samples more than looseHorizonTicks ahead (after a long ball comes down), ticks. */
+  sampleStepFarTicks: 8,
   /** Opponent carrier path look-ahead, ticks. */
   carrierHorizonTicks: 90,
-  /** Loose-ball look-ahead, ticks. */
+  /** Loose-ball look-ahead, counted in ticks the ball is playable (at or below reachHeight), ticks. */
   looseHorizonTicks: 120,
+  /**
+   * Most ticks the loose-ball look-ahead follows the ball out of reach (above reachHeight) on top of
+   * looseHorizonTicks, ticks. Covers the longest real flights (a 35 m/s clearance at 1 rad comes down after ~300).
+   */
+  airHorizonTicks: 360,
   /** Highest ball-centre height an outfield player can play (head plus a small jump), m. */
   reachHeight: 2.3,
   /** Carrier speed cap for path extrapolation, m/s. */
@@ -84,6 +103,11 @@ const LOCAL_TUNING = {
   autoMarginTicks: 12,
   /** Relative part of the auto-switch hysteresis (fraction of the current player's arrival). */
   autoMarginFrac: 0.25,
+  /**
+   * Next-switch marker / MOD_L among teammates tied on arrival: the previous marker is kept while he gets to his
+   * meeting point at most this much later than the best, ticks.
+   */
+  markerTieTicks: 6,
   /** Never auto-switch away from a player who reaches the loose ball within this many ticks. */
   aboutToReceiveTicks: 20,
   /**
@@ -105,8 +129,9 @@ const LOCAL_TUNING = {
   /**
    * Reachability prune (pure optimisation; changes no result while ticksToReach stays physically plausible): a
    * sample farther than a player could possibly run in the time is skipped without calling ticksToReach. Bound over
-   * time T (s), current speed v: min(v*T + accelMax*f*T^2/2, max(v, topSpeedMax)*f*T) + T_PLAYER.arriveStop +
-   * pruneSlack, f = pruneFactor (generous on purpose: SIM-04 estimates include turning, so they are slower).
+   * time T (s), current speed v, his own attrs.topSpeed / attrs.accel (as SIM-04 reads them; stamina only lowers
+   * them): min(v*T + accel*f*T^2/2, max(v, topSpeed)*f*T) + T_PLAYER.arriveStop + pruneSlack, f = pruneFactor
+   * (generous on purpose: SIM-04 estimates include turning and a slower high-speed acceleration, so they are slower).
    */
   pruneFactor: 1.25,
   pruneSlack: 0.5,
@@ -127,24 +152,43 @@ const MODE_LOOSE = 2;
 // ---------------------------------------------------------------- module scratch (transient within one call)
 
 const MAX_SAMPLES = 64;
+/** Ticks integrated in one step while a loose ball is far above reach (numerical detail, not gameplay tuning). */
+const AIR_LONG_STEP = 4;
 /** Carrier-path samples. */
 const CX = new Float64Array(MAX_SAMPLES);
 const CY = new Float64Array(MAX_SAMPLES);
 const CZ = new Float64Array(MAX_SAMPLES);
 const CT = new Float64Array(MAX_SAMPLES);
-/** Loose-ball samples. */
+/** Carrier samples are never out of reach. */
+const CU = new Float64Array(MAX_SAMPLES);
+/** Loose-ball samples (playable ones, plus the last simulated position). LU = ticks out of reach up to the sample. */
 const LX = new Float64Array(MAX_SAMPLES);
 const LY = new Float64Array(MAX_SAMPLES);
 const LZ = new Float64Array(MAX_SAMPLES);
 const LT = new Float64Array(MAX_SAMPLES);
+const LU = new Float64Array(MAX_SAMPLES);
+/**
+ * Memo of the last loose-ball path: its inputs (x, y, z, vx, vy, vz, sx, sy, sz) and sample count. The path is a pure
+ * function of these, so the same ball (other controllers this tick, a ball at rest) reuses LX..LU as they are.
+ */
+const LKEY = new Float64Array(9);
+let lKeyValid = false;
+let looseN = 0;
 /** Samples computeEff reads (the carrier or the loose set) and their count. */
 let SX = CX;
 let SY = CY;
 let SZ = CZ;
 let ST = CT;
+let SU = CU;
 let nSamples = 0;
 /** Effective arrival per slot for the side last passed to computeEff (BIG for inactive / other side). */
 const EFF = new Float64Array(NUM_SLOTS);
+/** Tie-break per slot: ticks to the point where he meets the ball / carrier (lower = there sooner, waiting). */
+const TIE = new Float64Array(NUM_SLOTS);
+/** Ticks the ball is out of reach before each slot's EFF (0 unless a loose ball is in the air). */
+const AIR = new Float64Array(NUM_SLOTS);
+/** [0] = time of the last sample computeEff used (its look-ahead end), ticks. A typed slot: no boxing per write. */
+const EFF_END = new Float64Array(1);
 /** Side EFF currently holds (-1 = unknown). */
 let effSide = -1;
 /** True only while one switchTick call runs: EFF may then be reused (positions do not change within the call). */
@@ -256,17 +300,50 @@ function buildCarrierSamples(s: SimState, carrier: number): void {
 }
 
 /**
- * Samples of a free ball's path. A deliberately cheap approximation of SIM-01/02 (gravity, quadratic drag, ground
- * bounce, rolling resistance, boards stop it): switching only needs who-gets-there-first, not centimetres.
+ * Samples of a free ball's path. The air phase is SIM-01 ballAirStep's explicit midpoint rule inlined on locals (the
+ * sim's drag, Magnus and spin decay; no object stores, so nothing is boxed): one step per tick, or AIR_LONG_STEP
+ * ticks at once while the ball is so high it cannot come within reach meanwhile. Ground bounce, rolling resistance
+ * and the boards are a cheap copy of SIM-02 (switching only needs who-gets-there-first, not centimetres). Only
+ * playable samples (ball centre at or below reachHeight) are kept: every sampleStepTicks (sampleStepFarTicks beyond
+ * looseHorizonTicks from now), plus the tick the ball comes back within reach; the last simulated position always
+ * ends the set (computeEff's fallback reads it). The path runs until the ball has been playable for
+ * looseHorizonTicks or out of reach for airHorizonTicks, so a long high ball is followed to where it comes down.
+ * Memoised on the ball's kinematics (see LKEY).
  */
 function buildLooseSamples(s: SimState): void {
   const b = s.ball;
-  let x = b.x, y = b.y, z = b.z, vx = b.vx, vy = b.vy, vz = b.vz;
+  // Same inputs as last time? (Finite doubles: a - b === 0 exactly when a === b; NaN never matches.)
+  const hit = lKeyValid && LKEY[0]! - b.x === 0 && LKEY[1]! - b.y === 0 && LKEY[2]! - b.z === 0 &&
+    LKEY[3]! - b.vx === 0 && LKEY[4]! - b.vy === 0 && LKEY[5]! - b.vz === 0 && LKEY[6]! - b.sx === 0 &&
+    LKEY[7]! - b.sy === 0 && LKEY[8]! - b.sz === 0;
+  if (!hit) {
+    LKEY[0] = b.x; LKEY[1] = b.y; LKEY[2] = b.z; LKEY[3] = b.vx; LKEY[4] = b.vy; LKEY[5] = b.vz;
+    LKEY[6] = b.sx; LKEY[7] = b.sy; LKEY[8] = b.sz;
+    lKeyValid = true;
+    simulateLoose();
+  }
+  nSamples = looseN;
+}
+
+/** The loose-ball path from the inputs in LKEY into LX..LU and looseN (see buildLooseSamples). */
+function simulateLoose(): void {
+  let x = LKEY[0]!, y = LKEY[1]!, z = LKEY[2]!, vx = LKEY[3]!, vy = LKEY[4]!, vz = LKEY[5]!;
+  let sx = LKEY[6]!, sy = LKEY[7]!, sz = LKEY[8]!;
   const R = BALL_R;
   const dt = DT_S;
+  const k = AIR_DRAG;
+  const m = AIR_MAGNUS;
+  const g = GRAVITY;
+  // Spin decay per step (second-order exp(-spinDecayAir * dt)) and at the half step, as SIM-01; the same for a
+  // long step of AIR_LONG_STEP ticks.
+  const kd = SPIN_DECAY_AIR * dt;
+  const fSpin1 = kd >= 1 ? 0 : 1 - kd + 0.5 * kd * kd;
+  const fSpinH1 = kd >= 1 ? 0 : 1 - 0.5 * kd + 0.125 * kd * kd;
+  const dtL = AIR_LONG_STEP * dt;
+  const kdL = SPIN_DECAY_AIR * dtL;
+  const fSpinL = kdL >= 1 ? 0 : 1 - kdL + 0.5 * kdL * kdL;
+  const fSpinHL = kdL >= 1 ? 0 : 1 - 0.5 * kdL + 0.125 * kdL * kdL;
   let rolling = y <= R + 1e-6 && vy <= 0;
-  const g = T_BALL.gravity;
-  const k = T_BALL.dragK;
   const rollVy = T_BALL.rollThresholdVy;
   const rest = T_BALL.restitution;
   const fric = 1 - T_BALL.bounceFriction;
@@ -275,58 +352,105 @@ function buildLooseSamples(s: SimState): void {
   const rollDamp = T_BALL.rollDamping;
   const bx = BOARD_XS;
   const bz = BOARD_ZS;
+  const reachH = LOCAL_TUNING.reachHeight;
   const step = LOCAL_TUNING.sampleStepTicks;
+  const stepFar = LOCAL_TUNING.sampleStepFarTicks;
   const horizon = LOCAL_TUNING.looseHorizonTicks;
-  LX[0] = x; LY[0] = y; LZ[0] = z; LT[0] = 0;
-  let n = 1;
-  for (let t = 1; t <= horizon && n < MAX_SAMPLES; t++) {
+  const airCap = LOCAL_TUNING.airHorizonTicks;
+  let n = 0;
+  let air = 0;
+  let wasOut = y > reachH;
+  if (!wasOut) {
+    LX[0] = x; LY[0] = y; LZ[0] = z; LT[0] = 0; LU[0] = 0;
+    n = 1;
+  }
+  let t = 0;
+  while (t - air < horizon && air < airCap && n < MAX_SAMPLES - 1) {
+    let adv = 1;
     if (!rolling) {
-      const sp = Math.sqrt(vx * vx + vy * vy + vz * vz);
-      const d = k * sp * dt;
-      vx -= d * vx;
-      vz -= d * vz;
-      vy -= g * dt + d * vy;
-      x += vx * dt;
-      y += vy * dt;
-      z += vz * dt;
+      let sp = Math.sqrt(vx * vx + vy * vy + vz * vz);
+      // Far above reach: one long step of AIR_LONG_STEP ticks (no sample is needed while the ball is out of reach,
+      // and the midpoint rule stays accurate). Taken only when |vy| T + aMax T^2 + 0.1 m (aMax = g + drag + Magnus,
+      // twice the constant-acceleration drop) still leaves the ball above reachHeight.
+      const aMax = g + k * sp * sp + m * Math.sqrt(sx * sx + sy * sy + sz * sz) * sp;
+      const vyAbs = vy < 0 ? -vy : vy;
+      if (y - reachH > vyAbs * dtL + aMax * dtL * dtL + 0.1) adv = AIR_LONG_STEP;
+      const dt1 = adv === 1 ? dt : dtL;
+      const h = 0.5 * dt1;
+      const fSpin = adv === 1 ? fSpin1 : fSpinL;
+      const fSpinH = adv === 1 ? fSpinH1 : fSpinHL;
+      let ax = -k * sp * vx + m * (sy * vz - sz * vy);
+      let ay = -g - k * sp * vy + m * (sz * vx - sx * vz);
+      let az = -k * sp * vz + m * (sx * vy - sy * vx);
+      const mx = vx + ax * h;
+      const my = vy + ay * h;
+      const mz = vz + az * h;
+      const msx = sx * fSpinH;
+      const msy = sy * fSpinH;
+      const msz = sz * fSpinH;
+      sp = Math.sqrt(mx * mx + my * my + mz * mz);
+      ax = -k * sp * mx + m * (msy * mz - msz * my);
+      ay = -g - k * sp * my + m * (msz * mx - msx * mz);
+      az = -k * sp * mz + m * (msx * my - msy * mx);
+      x += mx * dt1;
+      y += my * dt1;
+      z += mz * dt1;
+      vx += ax * dt1;
+      vy += ay * dt1;
+      vz += az * dt1;
+      sx *= fSpin;
+      sy *= fSpin;
+      sz *= fSpin;
       if (y <= R) {
         y = R;
-        if (-vy < rollVy) {
+        const vo = -vy * rest;
+        vx *= fric;
+        vz *= fric;
+        if (vo < rollVy) {
           vy = 0;
           rolling = true;
         } else {
-          vy = -vy * rest;
-          vx *= fric;
-          vz *= fric;
+          vy = vo;
         }
       }
     } else {
       const sp = Math.sqrt(vx * vx + vz * vz);
-      if (sp > restSpeed) {
-        const dec = (rollDecel + rollDamp * sp) * dt;
-        const ns = sp > dec ? sp - dec : 0;
-        vx *= ns / sp;
-        vz *= ns / sp;
-        x += vx * dt;
-        z += vz * dt;
-      } else {
-        vx = 0;
-        vz = 0;
+      if (sp > 0) {
+        let ns = sp - (rollDecel + rollDamp * sp) * dt;
+        if (ns < restSpeed) ns = 0;
+        const q = ns / sp;
+        const nx = vx * q;
+        const nz = vz * q;
+        x += 0.5 * (vx + nx) * dt;
+        z += 0.5 * (vz + nz) * dt;
+        vx = nx;
+        vz = nz;
       }
     }
+    t += adv;
     if (x > bx) { x = bx; vx = 0; } else if (x < -bx) { x = -bx; vx = 0; }
     if (z > bz) { z = bz; vz = 0; } else if (z < -bz) { z = -bz; vz = 0; }
-    if (t % step === 0) {
-      LX[n] = x; LY[n] = y; LZ[n] = z; LT[n] = t;
+    if (y > reachH) {
+      air += adv;
+      wasOut = true;
+      continue;
+    }
+    if (wasOut || t % (t <= horizon ? step : stepFar) === 0) {
+      LX[n] = x; LY[n] = y; LZ[n] = z; LT[n] = t; LU[n] = air;
       n++;
     }
+    wasOut = false;
   }
-  nSamples = n;
+  if (n === 0 || LT[n - 1]! < t) {
+    LX[n] = x; LY[n] = y; LZ[n] = z; LT[n] = t; LU[n] = air;
+    n++;
+  }
+  looseN = n;
 }
 
 /**
- * Fill EFF for every slot of `side` (BIG for inactive players and the other side) for the current situation and
- * return the mode. Pure with respect to the state (writes module scratch only).
+ * Fill EFF (and TIE, AIR) for every slot of `side` (BIG for inactive players and the other side) for the current
+ * situation and return the mode. Pure with respect to the state (writes module scratch only).
  */
 function computeEff(s: SimState, side: number): number {
   const b = s.ball;
@@ -338,22 +462,23 @@ function computeEff(s: SimState, side: number): number {
   }
   if (mode === MODE_CARRIER) {
     buildCarrierSamples(s, carrier);
-    SX = CX; SY = CY; SZ = CZ; ST = CT;
+    SX = CX; SY = CY; SZ = CZ; ST = CT; SU = CU;
   } else if (mode === MODE_LOOSE) {
     buildLooseSamples(s);
-    SX = LX; SY = LY; SZ = LZ; ST = LT;
+    SX = LX; SY = LY; SZ = LZ; ST = LT; SU = LU;
   } else {
     nSamples = 0;
   }
   effSide = side;
+  EFF_END[0] = nSamples > 0 ? ST[nSamples - 1]! : 0;
   const dir = s.teams[side]!.dir;
   const carrierDepth = carrier >= 0 ? dir * s.players[carrier]!.x : 0;
   const reachH = mode === MODE_LOOSE ? LOCAL_TUNING.reachHeight : BIG;
   const pf = LOCAL_TUNING.pruneFactor;
-  const topBound = T_PLAYER.topSpeedMax;
-  const accHalf = 0.5 * T_PLAYER.accelMax * pf;
+  const topMin = T_PLAYER.topSpeedMin;
+  const accMin = T_PLAYER.accelMin;
   const slack = T_PLAYER.arriveStop + LOCAL_TUNING.pruneSlack;
-  for (let i = 0; i < NUM_SLOTS; i++) EFF[i] = BIG;
+  for (let i = 0; i < NUM_SLOTS; i++) { EFF[i] = BIG; TIE[i] = BIG; AIR[i] = 0; }
   const first = teamFirstSlot(side);
   const end = first + PLAYERS_PER_TEAM;
   for (let i = first; i < end; i++) {
@@ -362,13 +487,20 @@ function computeEff(s: SimState, side: number): number {
     const busy = busyTicks(p);
     if (mode === MODE_BALL) {
       EFF[i] = ticksToReach(s, i, b.x, b.z) + busy;
+      TIE[i] = EFF[i]!;
       continue;
     }
     let eff = -1;
+    let tie = 0;
+    let air = 0;
     const px = p.x;
     const pz = p.z;
     const sp = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
-    const vCap = (sp > topBound ? sp : topBound) * pf;
+    // His own top speed and acceleration as SIM-04 reads them (stamina only lowers them), padded by pruneFactor.
+    const at = s.attrs[i]!;
+    const top = at.topSpeed > 0 ? at.topSpeed : topMin;
+    const vCap = (sp > top ? sp : top) * pf;
+    const accHalf = 0.5 * (at.accel > 0 ? at.accel : accMin) * pf;
     for (let k = 0; k < nSamples; k++) {
       if (SY[k]! > reachH) continue;
       const t = ST[k]! - busy;
@@ -380,14 +512,19 @@ function computeEff(s: SimState, side: number): number {
       const dx = SX[k]! - px;
       const dz = SZ[k]! - pz;
       if (dx * dx + dz * dz > reach * reach) continue; // cannot be there in time: skip the full estimate
-      if (ticksToReach(s, i, SX[k]!, SZ[k]!) <= t) { eff = ST[k]!; break; }
+      const ttr = ticksToReach(s, i, SX[k]!, SZ[k]!);
+      if (ttr <= t) { eff = ST[k]!; tie = ttr + busy; air = SU[k]!; break; }
     }
     if (eff < 0) {
       const L = nSamples - 1;
       eff = ST[L]! + ticksToReach(s, i, SX[L]!, SZ[L]!) + busy;
+      tie = eff;
+      air = SU[L]!;
     }
     if (mode === MODE_CARRIER && dir * p.x < carrierDepth - LOCAL_TUNING.goalSideMargin) eff -= LOCAL_TUNING.goalSideBonusTicks;
     EFF[i] = eff;
+    TIE[i] = tie;
+    AIR[i] = air;
   }
   return mode;
 }
@@ -398,17 +535,27 @@ function effFor(s: SimState, side: number): void {
   computeEff(s, side);
 }
 
-/** Lowest EFF among c's eligible candidates, excluding `exclude`; ties go to the lower slot. -1 if none. */
-function pickBest(s: SimState, c: number, exclude: number, allowKeeper: boolean): number {
+/**
+ * Lowest EFF among c's eligible candidates, excluding `exclude`; ties on EFF go to the lower TIE (there sooner),
+ * then the lower slot. `prefer` (or -1) is kept instead when he ties on EFF and is within markerTieTicks on TIE.
+ * -1 if none.
+ */
+function pickBest(s: SimState, c: number, exclude: number, allowKeeper: boolean, prefer: number): number {
   const side = s.ctrl[c]!.side;
   const first = teamFirstSlot(side);
   const end = first + PLAYERS_PER_TEAM;
   let best = -1;
   let bestEff = BIG * 2;
+  let bestTie = BIG * 2;
   for (let i = first; i < end; i++) {
     if (i === exclude || !eligible(s, c, i, allowKeeper)) continue;
     const e = EFF[i]!;
-    if (e < bestEff) { bestEff = e; best = i; }
+    const k = TIE[i]!;
+    if (e < bestEff || (e === bestEff && k < bestTie)) { bestEff = e; bestTie = k; best = i; }
+  }
+  if (best >= 0 && prefer !== best && prefer >= first && prefer < end && prefer !== exclude &&
+    EFF[prefer] === bestEff && TIE[prefer]! <= bestTie + LOCAL_TUNING.markerTieTicks && eligible(s, c, prefer, allowKeeper)) {
+    return prefer;
   }
   return best;
 }
@@ -500,7 +647,7 @@ function leaveKeeperTarget(s: SimState, c: number): number {
   if (b.owner === cur || b.heldBy === cur) return -1;
   effFor(s, ctl.side);
   if (b.owner < 0 && b.heldBy < 0 && EFF[cur]! <= LOCAL_TUNING.aboutToReceiveTicks) return -1;
-  return pickBest(s, c, cur, false);
+  return pickBest(s, c, cur, false, -1);
 }
 
 /** The player controller c must control right now by the ownership rules, or -1 (free choice). */
@@ -583,8 +730,8 @@ export function ensureControlledPlayer(s: SimState, c: number, ev: EventSink): v
     let pick = forcedTarget(s, c);
     if (pick < 0) {
       effFor(s, ctl.side);
-      pick = pickBest(s, c, -1, false);
-      if (pick < 0) pick = pickBest(s, c, -1, true);
+      pick = pickBest(s, c, -1, false, -1);
+      if (pick < 0) pick = pickBest(s, c, -1, true, -1);
     }
     if (pick >= 0) switchTo(s, c, pick, ev);
     if (ctl.slot !== pick || pick < 0 || s.players[pick]!.ctrl !== c) {
@@ -637,7 +784,7 @@ export function bestSwitchTarget(s: SimState, c: number, dirX: number, dirZ: num
   }
   if (!effReuse) effSide = -1; // a direct call always recomputes (the state may have changed since)
   effFor(s, ctl.side);
-  return pickBest(s, c, ctl.slot, false);
+  return pickBest(s, c, ctl.slot, false, ctl.nextSwitch);
 }
 
 /**
@@ -720,11 +867,11 @@ function autoSwitchTick(s: SimState, c: number, ev: EventSink): void {
     effFor(s, side);
     const effCur = EFF[cur]!;
     if (effCur <= LOCAL_TUNING.aboutToReceiveTicks) return; // never away from the player about to receive
-    const best = pickBest(s, c, cur, false);
+    const best = pickBest(s, c, cur, false, -1);
     if (best < 0) return;
     const eb = EFF[best]!;
-    if (eb > LOCAL_TUNING.looseHorizonTicks) return; // nobody of ours gets there in time
-    if (eb + autoMargin(effCur) < effCur) switchTo(s, c, best, ev);
+    if (eb > EFF_END[0]!) return; // nobody of ours gets there within the look-ahead: no guess
+    if (eb + autoMargin(effCur - AIR[cur]!) < effCur) switchTo(s, c, best, ev);
     return;
   }
   if (mode !== AutoSwitch.AUTO) return;
@@ -739,14 +886,18 @@ function autoSwitchTick(s: SimState, c: number, ev: EventSink): void {
     dx * dx + dz * dz > LOCAL_TUNING.beatenDist * LOCAL_TUNING.beatenDist;
   if (!beaten) return;
   effFor(s, side);
-  const best = pickBest(s, c, cur, false);
+  const best = pickBest(s, c, cur, false, -1);
   if (best < 0) return;
   const effCur = EFF[cur]!;
   if (EFF[best]! + autoMargin(effCur) < effCur) switchTo(s, c, best, ev);
 }
 
-function autoMargin(effCur: number): number {
-  const rel = LOCAL_TUNING.autoMarginFrac * effCur;
+/**
+ * Auto-switch hysteresis for a current player who meets the ball after `playable` ticks of it being playable
+ * (his EFF minus the ticks the ball spends out of everyone's reach before then).
+ */
+function autoMargin(playable: number): number {
+  const rel = LOCAL_TUNING.autoMarginFrac * playable;
   return rel > LOCAL_TUNING.autoMarginTicks ? rel : LOCAL_TUNING.autoMarginTicks;
 }
 
@@ -792,10 +943,17 @@ function switchTickInner(s: SimState, c: number, ev: EventSink, f: Readonly<Inpu
   ctl.nextSwitch = canManualSwitch(s, c) ? bestSwitchTarget(s, c, 0, 0) : -1;
 }
 
-/** Debug / tests: the effective arrival (ticks) EFF computed for `side`, slot by slot, and the situation mode. */
-export function debugSwitchEff(s: SimState, side: number, out: number[]): number {
+/**
+ * Debug / tests: the effective arrival (ticks) EFF computed for `side`, slot by slot, and the situation mode;
+ * optionally the tie-break (ticks to the meeting point) and the ticks the ball is out of reach before EFF.
+ */
+export function debugSwitchEff(s: SimState, side: number, out: number[], tie?: number[], air?: number[]): number {
   const mode = computeEff(s, side);
-  for (let i = 0; i < NUM_SLOTS; i++) out[i] = EFF[i]!;
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    out[i] = EFF[i]!;
+    if (tie) tie[i] = TIE[i]!;
+    if (air) air[i] = AIR[i]!;
+  }
   return mode;
 }
 export const SWITCH_MODE = { BALL: MODE_BALL, CARRIER: MODE_CARRIER, LOOSE: MODE_LOOSE } as const;

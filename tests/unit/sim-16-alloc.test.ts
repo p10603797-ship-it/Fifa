@@ -43,7 +43,7 @@ function budgetState(): SimState {
   return s;
 }
 
-/** Situation k: 0 opponent carrier (path sampling), 1 loose ground ball, 2 air ball. */
+/** Situation k: 0 opponent carrier (path sampling), 1 loose ground ball, 2 air ball, 3 long high ball (new each tick). */
 function budgetSituation(s: SimState, k: number): void {
   const b = s.ball;
   if (k === 0) {
@@ -53,9 +53,12 @@ function budgetSituation(s: SimState, k: number): void {
   } else if (k === 1) {
     b.owner = -1; b.heldBy = -1; b.x = 5; b.z = 3; b.y = 0.11; b.vx = -9; b.vz = 2; b.vy = 0; b.grounded = 1;
     b.lastTouchTeam = 1; b.passTarget = -1; b.shotBy = -1;
-  } else {
+  } else if (k === 2) {
     b.owner = -1; b.heldBy = -1; b.x = 30; b.z = -5; b.y = 1.2; b.vx = -20; b.vz = 3; b.vy = 9; b.grounded = 0;
     b.lastTouchTeam = 1; b.passTarget = -1; b.shotBy = -1;
+  } else {
+    b.owner = -1; b.heldBy = -1; b.x = 30 + (s.tick % 7) * 0.01; b.z = -5; b.y = 0.5; b.vx = -15; b.vz = 2; b.vy = 20;
+    b.sx = 0; b.sy = 1; b.sz = -4; b.grounded = 0; b.lastTouchTeam = 1; b.passTarget = -1; b.shotBy = -1;
   }
   b.lastTouchTick = s.tick;
 }
@@ -76,7 +79,7 @@ function budgetRun(s: SimState, n: number, k: number, ev = createEventBuffer(), 
 }
 
 describe('SIM-16 allocation', () => {
-  it('switchTick allocates nothing per tick (carrier, loose ball, air ball, manual presses)', () => {
+  it('switchTick allocates nothing per tick (carrier, loose ball, air ball, long high ball, manual presses)', () => {
     v8.setFlagsFromString('--expose-gc');
     const gc = vm.runInNewContext('gc') as () => void;
     const s = budgetState();
@@ -91,7 +94,7 @@ describe('SIM-16 allocation', () => {
     };
     const got: string[] = [];
     let worst = 0;
-    for (const k of [0, 1, 2]) {
+    for (const k of [0, 1, 2, 3]) {
       // The harness's own double stores into state fields can allocate in V8: subtract that baseline.
       const base = measure(k, false);
       const bytes = measure(k, true) - base;

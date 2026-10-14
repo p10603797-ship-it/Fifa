@@ -6,10 +6,13 @@
  */
 import { describe, expect, it } from 'vitest';
 import { NUM_SLOTS } from '../../src/contracts/constants';
-import { ControllerKind, MatchPhase } from '../../src/contracts/enums';
+import { AutoSwitch, ControllerKind, KickKind, MatchPhase } from '../../src/contracts/enums';
 import { EventType } from '../../src/contracts/events';
 import { Btn } from '../../src/contracts/input';
-import type { SimState } from '../../src/contracts/state';
+import { createBallState, type SimState } from '../../src/contracts/state';
+import { T_INPUT } from '../../src/contracts/tuning';
+import { ballStepTick } from '../../src/sim/ball/contact';
+import { SWITCH_TUNING } from '../../src/sim/control/switching';
 import { createInvariantChecker } from '../../src/sim/debug/invariants';
 import { findEvents, makeScenario, runTicks } from '../harness/scenario';
 
@@ -45,6 +48,42 @@ describe('SIM-16 in the step() pipeline', () => {
     expect(marker).toBeGreaterThanOrEqual(0);
     expect(sw.map((e) => [e.a, e.b])).toEqual([[9, marker]]);
     expect(s.ctrl[0]!.slot).toBe(marker);
+  });
+
+  it('gap "auto-switch never fires for long high balls": a 3 s+ opponent long ball hands control to the defender under it', () => {
+    // Opponent clearance from x = 20 at 26 m/s, 0.95 rad: find where the real ball comes down within reach.
+    const vx = -26 * Math.cos(0.95), vy = 26 * Math.sin(0.95);
+    const probe = createBallState();
+    Object.assign(probe, { x: 20, y: 0.5, z: 0, vx, vy, vz: 0, grounded: 0 });
+    let playT = -1, dropX = 0, dropZ = 0, above = false;
+    for (let t = 1; t < 600 && playT < 0; t++) {
+      ballStepTick(probe, null);
+      if (probe.y > SWITCH_TUNING.reachHeight) above = true;
+      else if (above) { playT = t; dropX = probe.x; dropZ = probe.z; }
+    }
+    expect(playT).toBeGreaterThanOrEqual(180);
+    for (const auto of [AutoSwitch.AIR_AND_LOOSE, AutoSwitch.AUTO, AutoSwitch.OFF]) {
+      const s = makeScenario({
+        phase: MatchPhase.IN_PLAY,
+        humans: [{ side: 0, slot: 9, autoSwitch: auto }],
+        players: [{ slot: 9, x: 35, z: 25 }, { slot: 3, x: dropX, z: dropZ }],
+        ball: {
+          x: 20, y: 0.5, z: 0, vx, vy, vz: 0, grounded: 0, owner: -1, heldBy: -1, passTarget: -1, shotBy: -1,
+          lastTouch: 19, lastTouchTeam: 1, lastTouchTick: 0, lastKickBy: 19, lastKickTeam: 1,
+          lastKickKind: KickKind.CLEARANCE, lastKickTick: 0,
+        },
+      });
+      const ev = runTicks(s, 90);
+      const sw = findEvents(ev, EventType.SWITCH, (e) => e.c === 0);
+      if (auto === AutoSwitch.OFF) {
+        expect(sw).toEqual([]);
+        continue;
+      }
+      expect(sw.map((e) => [e.a, e.b]), `auto=${auto}`).toEqual([[9, 3]]);
+      expect(sw[0]!.tick).toBeLessThanOrEqual(T_INPUT.switchLockTicks + 1); // right after the strike
+      expect(s.ball.y, 'still in flight after 1.5 s').toBeGreaterThan(SWITCH_TUNING.reachHeight);
+      expect(s.ctrl[0]!.slot).toBe(3);
+    }
   });
 
   it('the controller invariant holds through bot-v-bot and human play (ownership, auto, manual inputs)', () => {

@@ -3,7 +3,9 @@
  * hysteresis, cooldown, no oscillation), tier choice (startup test), tier adaptation (step down below 50 fps, AUTO
  * up/down), Low Power Mode detection, and the module wiring (request, work measurement, hooks, dispose).
  */
-import { PerspectiveCamera, Scene, type WebGLRenderer } from 'three';
+import {
+  BoxGeometry, Group, Mesh, MeshBasicMaterial, MeshLambertMaterial, PerspectiveCamera, Scene, type WebGLRenderer,
+} from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FrameInfo } from '../../src/contracts/app';
 import { QualityTier } from '../../src/contracts/enums';
@@ -12,7 +14,8 @@ import { createMatchConfig } from '../../src/contracts/state';
 import { T_PERF } from '../../src/contracts/tuning';
 import {
   QUALITY_TUNING as QT, TIER_PARAMS, autoTierState, createFrameSignal, createLowPowerDetector, createQuality,
-  createResController, createTierAdapter, fixedScaleOf, getTierParams, initialScale, lowPowerStep, onLowPowerSuspected,
+  createResController, createTierAdapter, fixedScaleOf, getTierParams, initialScale, lowPowerStep, markMaterialsForRecompile,
+  onLowPowerSuspected,
   pickTierFromSamples, pushFrameSample, resControllerStep, resQuiet, resScale, resetQualitySession, resolveTier,
   runStartupTest, sanitizeTier, scaleToSteps, signalHeadroom, signalSlow, tierAdapterStep,
   type FrameSignal, type QualityHooks, type ResController, type StartupProbe,
@@ -491,8 +494,18 @@ describe('GFX-02 startup test inside the module (AUTO)', () => {
     expect(autoTierState().failedMask).toBe(0);
     h.q.setMatch!(state, []);
     h.run(26_000, HZ60, 4); // full resolution after ~12 s, then 10 s of headroom
+    // Earned during play, applied on the next loading screen (no shader compile mid-match).
+    expect(h.q.tier).toBe(QualityTier.PERFORMANCE);
+    expect(h.q.snapshot().pendingTier).toBe(QualityTier.BALANCED);
+    const renders = h.renderer.renders, compiles = h.renderer.compiles;
+    h.q.clearMatch!();
+    h.q.setMatch!(state, []);
+    await h.q.warmUp!();
+    expect(h.renderer.renders).toBe(renders); // no second startup test
     expect(h.q.tier).toBe(QualityTier.BALANCED);
+    expect(h.renderer.compiles).toBe(compiles + 1);
     expect(h.tiers).toEqual([QualityTier.PERFORMANCE, QualityTier.BALANCED]);
+    expect(autoTierState().pendingUp).toBe(QualityTier.AUTO);
   });
 
   it('no test for an explicit tier, a hidden page or without a renderer; a failing render keeps BALANCED', async () => {
@@ -589,18 +602,69 @@ describe('GFX-02 tier adaptation', () => {
     expect(h.q.tier).toBe(QualityTier.PERFORMANCE);
   });
 
-  it('AUTO steps up after sustained headroom at full resolution, and back down (once) if that tier fails', () => {
-    const h = harness();
+  /** Next match: clearMatch, setMatch, the loading screen's warmUp. */
+  async function nextMatch(h: Harness): Promise<void> {
+    h.q.clearMatch!();
     h.q.setMatch!(state, []);
+    await h.q.warmUp!();
+  }
+
+  it('AUTO steps up after sustained headroom at full resolution (on the next loading screen), and back down (once) if that tier fails', async () => {
+    const h = harness();
+    h.renderer.cost = 8; // the startup test picks BALANCED
+    h.q.setMatch!(state, []);
+    await h.q.warmUp!();
+    expect(h.q.tier).toBe(QualityTier.BALANCED);
     h.run(60_000, HZ60, 5);
     expect(h.q.scale).toBe(1);
-    expect(h.q.tier).toBe(QualityTier.QUALITY);
-    expect(h.tiers).toEqual([QualityTier.QUALITY]);
-    h.run(5000, 30, 6); // QUALITY too heavy here
+    // Regression (mid-match compile hitch): the earned step up waits for the loading screen.
     expect(h.q.tier).toBe(QualityTier.BALANCED);
+    expect(autoTierState().pendingUp).toBe(QualityTier.QUALITY);
+    h.run(60_000, HZ60, 5);
+    expect(h.tiers).toEqual([]);
+    await nextMatch(h);
+    expect(h.q.tier).toBe(QualityTier.QUALITY);
+    expect(h.renderer.shadowMap.enabled).toBe(true);
+    expect(h.tiers).toEqual([QualityTier.QUALITY]);
+    h.run(5000, 30, 6); // QUALITY too heavy here: steps down at once, mid-match
+    expect(h.q.tier).toBe(QualityTier.BALANCED);
+    expect(h.renderer.shadowMap.enabled).toBe(false);
     h.run(120_000, HZ60, 5);
+    await nextMatch(h);
     expect(h.q.tier).toBe(QualityTier.BALANCED); // QUALITY failed: no flip-flop
+    expect(autoTierState().pendingUp).toBe(QualityTier.AUTO);
     expect(h.tiers).toEqual([QualityTier.QUALITY, QualityTier.BALANCED]);
+  });
+
+  it('a step down while an earned step up waits cancels it', async () => {
+    const h = harness();
+    h.renderer.cost = 8;
+    h.q.setMatch!(state, []);
+    await h.q.warmUp!();
+    h.run(60_000, HZ60, 5);
+    expect(autoTierState().pendingUp).toBe(QualityTier.QUALITY);
+    h.run(20_000, 25, 6); // 40 fps: the scale floors, then BALANCED steps down
+    expect(h.q.scale).toBe(0.6);
+    expect(h.q.tier).toBe(QualityTier.PERFORMANCE);
+    expect(autoTierState().pendingUp).toBe(QualityTier.AUTO);
+    expect(autoTierState().failedMask & (1 << QualityTier.BALANCED)).not.toBe(0);
+    await nextMatch(h);
+    expect(h.q.tier).toBe(QualityTier.PERFORMANCE);
+  });
+
+  it('an explicit tier ignores a waiting AUTO step up; back on AUTO it applies on the next loading screen', async () => {
+    const h = harness();
+    h.renderer.cost = 8;
+    h.q.setMatch!(state, []);
+    await h.q.warmUp!();
+    h.run(60_000, HZ60, 5);
+    expect(autoTierState().pendingUp).toBe(QualityTier.QUALITY);
+    expect(h.q.request(QualityTier.PERFORMANCE)).toBe(QualityTier.PERFORMANCE);
+    await nextMatch(h);
+    expect(h.q.tier).toBe(QualityTier.PERFORMANCE);
+    expect(h.q.request(QualityTier.AUTO)).toBe(QualityTier.BALANCED);
+    await nextMatch(h);
+    expect(h.q.tier).toBe(QualityTier.QUALITY);
   });
 
   it('tierAdapterStep in isolation: cooldown between tier changes and no change before enough samples', () => {
@@ -688,6 +752,29 @@ describe('GFX-02 Low Power Mode detector', () => {
     expect(shown.lowPower).toBe(0);
     expect(heard).not.toHaveBeenCalled();
     off();
+  });
+
+  it('regression: Low Power Mode does not cost AUTO its tier for the page; it climbs back once the mode is off', async () => {
+    const h = harness();
+    h.renderer.cost = 8; // the startup test picks BALANCED
+    h.q.setMatch!(state, []);
+    await h.q.warmUp!();
+    expect(h.q.tier).toBe(QualityTier.BALANCED);
+    h.run(15_000, LP, 5); // 30 fps cap: the scale floors, BALANCED steps down, then the detector fires
+    expect(h.q.scale).toBe(0.6);
+    expect(h.q.tier).toBe(QualityTier.PERFORMANCE);
+    expect(h.lowPower).toBe(1);
+    expect(autoTierState().failedMask).toBe(0); // the forced step down is forgiven
+    h.run(60_000, LP, 5); // still capped: nothing earned, no flip-flop
+    expect(autoTierState().pendingUp).toBe(QualityTier.AUTO);
+    h.run(60_000, HZ60, 4); // the player turned Low Power Mode off
+    expect(h.q.scale).toBe(1);
+    expect(autoTierState().pendingUp).toBe(QualityTier.BALANCED);
+    h.q.clearMatch!();
+    h.q.setMatch!(state, []);
+    await h.q.warmUp!();
+    expect(h.q.tier).toBe(QualityTier.BALANCED);
+    expect(h.tiers).toEqual([QualityTier.PERFORMANCE, QualityTier.BALANCED]);
   });
 
   it('lowPowerStep requires the settled flag and a work measurement', () => {
@@ -794,6 +881,39 @@ describe('GFX-02 module wiring', () => {
     h.q.resize!(); // same size (index.ts calls resize() after our own setScale)
     h.run(QT.resUpHoldMs + 100, HZ60, 5);
     expect(h.q.scale).toBe(0.85);
+  });
+
+  it('regression: turning the shadow map on or off rebuilds material programs (three.js ignores the flag alone)', () => {
+    const h = harness((s) => { s.graphics.tier = QualityTier.BALANCED; });
+    const lambert = new MeshLambertMaterial();
+    const basic = new MeshBasicMaterial();
+    const geo = new BoxGeometry();
+    const group = new Group();
+    group.add(new Mesh(geo, [basic, lambert]));
+    h.ctx.scene.add(new Mesh(geo, lambert), group);
+    const v0 = lambert.version, b0 = basic.version;
+    h.q.request(QualityTier.QUALITY); // off -> on
+    expect(h.renderer.shadowMap.enabled).toBe(true);
+    expect(lambert.version).toBeGreaterThan(v0);
+    expect(basic.version).toBeGreaterThan(b0);
+    const v1 = lambert.version;
+    h.q.request(QualityTier.QUALITY); // unchanged: no rebuild
+    expect(lambert.version).toBe(v1);
+    h.q.request(QualityTier.PERFORMANCE); // on -> off
+    expect(h.renderer.shadowMap.enabled).toBe(false);
+    expect(lambert.version).toBeGreaterThan(v1);
+    const v2 = lambert.version;
+    h.q.request(QualityTier.BALANCED); // off -> off: no rebuild
+    expect(lambert.version).toBe(v2);
+    expect(markMaterialsForRecompile(h.ctx.scene)).toBe(3);
+    // The mid-match step down from QUALITY takes the same path.
+    h.q.request(QualityTier.QUALITY);
+    h.q.setMatch!(state, []);
+    const v3 = lambert.version;
+    h.run(6000, 30, 6);
+    expect(h.q.tier).toBe(QualityTier.BALANCED);
+    expect(lambert.version).toBeGreaterThan(v3);
+    geo.dispose();
   });
 
   it('dispose restores the scene hook and leaves the scene usable', () => {

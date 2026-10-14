@@ -156,44 +156,117 @@ describe('TAI-06 counters after interceptions (pipeline)', () => {
 });
 
 describe('TAI-06 recovery runs (pipeline)', () => {
-  /** Team-A players that must recover: job-driven-capable outfielders with recover duty, caught upfield. */
-  const RECOVERERS = [5, 6, 7, 8]; // 4-4-2 midfield four, caught at u = 38-41 with the ball at u = 36 (STs stay up)
+  /** Team-A players with recover duty caught upfield: the 4-4-2 midfield four at u = 38-41, ball at u = 36. */
+  const RECOVERERS = [5, 6, 7, 8];
+  /** Margin for judging "caught upfield" after the tick's movement (jobs are assigned before locomotion), m. */
+  const MOVE_SLACK = 0.5;
+
+  interface RecoveryTrace {
+    /** Midfielders that held RECOVER at some tick (the recovery runners). */
+    recover: Set<number>;
+    /** Midfielders that held a job more urgent than RECOVER (PRESS, CHASE_LOOSE, ...) at some tick. */
+    urgent: Set<number>;
+    /** First tick each recovery runner was goal-side of the ball. */
+    goalSide: Map<number, number>;
+    /** Strikers that ever held RECOVER (must stay empty: they are outlets). */
+    strikersRecover: Set<number>;
+    /** Contract breaches: a player clearly caught upfield during TRANSITION_DEFEND without RECOVER or a more urgent job. */
+    missed: string[];
+  }
+
+  /**
+   * Per-tick check of the recovery contract while team `a` is in TRANSITION_DEFEND: every midfielder clearly caught
+   * upfield holds RECOVER unless a more urgent job owns him (assignJob never lowers priority: PRESS 10 > RECOVER 9, so
+   * TAI-05's presser keeps pressing). Records who ran and when each runner got goal-side.
+   */
+  function traceRecovery(a: number): { tr: RecoveryTrace; until: (st: SimState) => boolean } {
+    const tr: RecoveryTrace = { recover: new Set(), urgent: new Set(), goalSide: new Map(), strikersRecover: new Set(), missed: [] };
+    const until = (st: SimState): boolean => {
+      const ub = u(st, a, st.ball.x);
+      const inWindow = st.match.phase === MatchPhase.IN_PLAY && st.teams[a]!.phase === TeamPhase.TRANSITION_DEFEND;
+      for (const k of RECOVERERS) {
+        const p = st.players[a * 11 + k]!;
+        const up = u(st, a, p.x);
+        if (p.job === AiJob.RECOVER) tr.recover.add(k);
+        if (p.job > AiJob.RECOVER) tr.urgent.add(k);
+        if (inWindow && up > ub - LOCAL_TUNING.goalSideMargin + MOVE_SLACK && p.job < AiJob.RECOVER) {
+          tr.missed.push(`tick ${st.tick} idx ${k} at u ${up.toFixed(2)} (ball ${ub.toFixed(2)}) job ${AiJob[p.job]}`);
+        }
+        if (p.job === AiJob.RECOVER && !tr.goalSide.has(k)) tr.goalSide.set(k, -1); // ran; goal-side tick below
+        if (tr.goalSide.get(k) === -1 && up < ub - LOCAL_TUNING.goalSideMargin) tr.goalSide.set(k, st.tick);
+      }
+      for (const k of [9, 10]) if (st.players[a * 11 + k]!.job === AiJob.RECOVER) tr.strikersRecover.add(k);
+      return false;
+    };
+    return { tr, until };
+  }
+
+  /** Shared assertions: the contract held every tick, at most the presser was exempt, every runner ended goal-side. */
+  function expectRecovered(s: SimState, a: number, tr: RecoveryTrace, ticks: number): void {
+    expect(tr.missed, 'caught upfield without RECOVER or a more urgent job').toEqual([]);
+    // Everyone not on a recovery run was owned by a more urgent job; with the carrier held on the ball that can only be
+    // the one presser, so at least three of the four midfielders make recovery runs.
+    for (const k of RECOVERERS) {
+      if (!tr.recover.has(k)) expect(tr.urgent.has(k), `idx ${k} neither recovered nor had a more urgent job`).toBe(true);
+    }
+    expect(tr.recover.size, 'recovery runners').toBeGreaterThanOrEqual(RECOVERERS.length - 1);
+    const ub = u(s, a, s.ball.x);
+    for (const k of tr.recover) {
+      const t = tr.goalSide.get(k)!;
+      expect(t, `idx ${k} got goal-side`).toBeGreaterThan(0);
+      expect(t, `idx ${k} goal-side tick`).toBeLessThanOrEqual(ticks);
+      expect(u(s, a, s.players[a * 11 + k]!.x), `idx ${k} still goal-side at the end`)
+        .toBeLessThan(ub - LOCAL_TUNING.goalSideMargin);
+    }
+    // Strikers (low recover duty) are never sent on recovery runs: they stay outlets (TAI-01's shape still moves them).
+    expect([...tr.strikersRecover], 'strikers on RECOVER').toEqual([]);
+  }
 
   it.each([0, 1])('team %i loses the ball: caught-upfield players get goal-side of the ball within 3 s', (a) => {
     const d = 1 - a;
     const s = interception(a, TeamStyle.POSSESSION);
-    const carrier = d * 11 + 6;
-    const goalSide = new Map<number, number>();
-    const recoverJob = new Set<number>();
-    runTicks(s, 180, holdCarrier(carrier, 0), {
-      check: 'core',
-      until: (st) => {
-        const ub = u(st, a, st.ball.x);
-        for (const k of [...RECOVERERS, 9, 10]) {
-          const p = st.players[a * 11 + k]!;
-          if (p.job === AiJob.RECOVER) recoverJob.add(k);
-          if (!goalSide.has(k) && u(st, a, p.x) < ub - LOCAL_TUNING.goalSideMargin) goalSide.set(k, st.tick);
-        }
-        return false;
-      },
-    });
-    const ub = u(s, a, s.ball.x);
-    for (const k of RECOVERERS) {
-      const p = s.players[a * 11 + k]!;
-      expect(recoverJob.has(k), `idx ${k} got RECOVER`).toBe(true);
-      expect(goalSide.has(k), `idx ${k} got goal-side`).toBe(true);
-      expect(goalSide.get(k)!).toBeLessThanOrEqual(180);
-      expect(u(s, a, p.x), `idx ${k} still goal-side at 3 s`).toBeLessThan(ub - LOCAL_TUNING.goalSideMargin);
-    }
-    // Strikers (low recover duty) are never sent on recovery runs: they stay outlets (TAI-01's shape still moves them).
-    for (const k of [9, 10]) expect(recoverJob.has(k), `idx ${k}`).toBe(false);
+    const { tr, until } = traceRecovery(a);
+    runTicks(s, 180, holdCarrier(d * 11 + 6, 0), { check: 'core', until });
+    expectRecovered(s, a, tr, 180);
   });
 
   it('recovery keeps up with a carrier running at 3 m/s: every recoverer ends goal-side within 4 s', () => {
     const s = interception(0, TeamStyle.POSSESSION); // team 0 loses it; team 1 runs toward -x
-    runTicks(s, 240, holdCarrier(17, 3), { check: 'core' });
-    const ub = u(s, 0, s.ball.x);
-    for (const k of RECOVERERS) expect(u(s, 0, s.players[k]!.x), `idx ${k}`).toBeLessThan(ub - LOCAL_TUNING.goalSideMargin);
+    const { tr, until } = traceRecovery(0);
+    runTicks(s, 240, holdCarrier(17, 3), { check: 'core', until });
+    expectRecovered(s, 0, tr, 240);
+  });
+
+  it('a midfielder on a more urgent job (TAI-05 presser) keeps it; the other caught midfielders still recover', () => {
+    // Regression for the press/recover overlap: the CM nearest the ball is team.pressSlot (PRESS 10 outranks RECOVER 9),
+    // which must neither break the recovery runs of the others nor be overridden by them.
+    // (tests/unit/tai-06-phase.test.ts pins the same precedence on a hand-built state, independent of TAI-05.)
+    for (const a of [0, 1]) {
+      const s = interception(a, TeamStyle.POSSESSION);
+      const { tr, until } = traceRecovery(a);
+      const pressers = new Set<number>();
+      runTicks(s, 60, holdCarrier((1 - a) * 11 + 6, 0), {
+        until: (st) => {
+          until(st);
+          const ps = st.teams[a]!.pressSlot;
+          if (ps >= 0) {
+            pressers.add(ps - a * 11);
+            expect(st.players[ps]!.job, `pressSlot ${ps} job at tick ${st.tick}`).toBe(AiJob.PRESS);
+          }
+          return false;
+        },
+      });
+      expect(tr.missed).toEqual([]);
+      for (const k of RECOVERERS) {
+        if (tr.urgent.has(k)) continue; // owned by the press (or another more urgent job) whenever caught upfield
+        expect(tr.recover.has(k), `idx ${k} (never on a more urgent job) made a recovery run`).toBe(true);
+      }
+      // Whoever pressed among the four never ran a recovery run while pressing (checked per tick above), and the
+      // others ran: at most the pressers are missing from the recovery runners.
+      let pressingMid = 0;
+      for (const k of RECOVERERS) if (pressers.has(k)) pressingMid++;
+      expect(tr.recover.size).toBeGreaterThanOrEqual(RECOVERERS.length - pressingMid);
+    }
   });
 
   it('Players glitch "orbit or jitter": recovering players settle (no RECOVER flip-flop, no oscillation)', () => {

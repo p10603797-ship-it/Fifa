@@ -19,7 +19,8 @@
  *    neighbours spaced by their body-contact distance (SIM-05 bodyRadiusOf) + wallGap so bodies never overlap.
  *    restart.wall / wallCount / wallX / wallZ hold them. Taker: the best free-kick taker (curve + shotPower + longShots
  *    with a wall, shortPassing + longPassing + crossing otherwise) among active outfield players (the keeper only for a
- *    free kick in his own penalty area); down players avoided. Aim: the goal centre with a wall, else aimPassDist ahead.
+ *    free kick in his own penalty area); down players avoided. Aim: the goal centre with a wall or within aimGoalMaxDist,
+ *    else aimPassDist toward the goal.
  *  - Tick (RUL-01 calls it after RUL-11 restartTick): a member who becomes invalid (sent off, substituted into goal)
  *    re-picks the wall (keeping its sideways shift); at ready (restart.t = restartSetupTicks, hidden by the restart
  *    camera cut like RUL-11's legalisation) members snap onto their slots, afterwards they slide at most wallSlideStep
@@ -34,8 +35,9 @@
  *      SPRINT press = choose the taker: the next of the takerChoices best takers (cycling, wraps); the new taker and the
  *        old one swap places (the new one onto RUL-11's taker spot, in SET_PIECE; SIM-16 hands him the controller).
  *      Left stick (|stick| >= aimStickMin) aims by direction from the ball: a ray that meets the attacked goal line
- *        within GOAL_HALF_WIDTH + aimGoalSlack aims there (restart.aimX/aimZ on the goal line), otherwise the aim is the
- *        pitch point aimPassDist along it. The stick at rest keeps the aim.
+ *        within GOAL_HALF_WIDTH + aimGoalSlack aims there (restart.aimX/aimZ on the goal line; only from within
+ *        aimGoalMaxDist of the goal), otherwise the aim is the pitch point aimPassDist along it. The stick at rest keeps
+ *        the aim.
  *      Right stick (beyond T_INPUT.stickIdle) changes the curl (restart.aimCurve, -1..1; positive bends toward the
  *        kicker's right, the InputFrame.curve convention) by its component across the aim at curlRate per second, and
  *        the dip (restart.side, -1..1: positive = topspin / dips sooner, negative = floats) by its component along the
@@ -66,10 +68,14 @@
  *    Any other controller (a second human on the taking side) moves its free controlled player with the stick.
  *  - WALL_JUMP action (wallJumpHandler, ActionKind.WALL_JUMP): actA = WallMode (BRACE 0, JUMP 1, CHARGE 2, ARMED 3);
  *    actB = the current jump lift, m (render); actContact = take-off tick for a jump, else -1; actX/actZ = his wall slot
- *    (CHARGE: the ball spot he runs at). BRACE / JUMP / ARMED are MoveMode.LOCKED and still facing the ball; CHARGE is
- *    LOCKED with the velocity set every tick. ARMED waits (its budget extended) until the kick; BRACE lasts at most
- *    braceMaxTicks and ends as soon as the ball is past him (wallPassMargin), no longer approaching him, owned, held,
- *    in a net or touched by anyone but the taker / the wall, or his human pushes the stick beyond breakStick.
+ *    (CHARGE: the ball spot he runs at); actDirX = the tick the free kick was struck (-1 before). The action keeps
+ *    working in the IN_PLAY that follows the strike: RUL-01 clears restart.kind there, but the rest of the record
+ *    (wall, taker, taken) stays until the next restart is awarded, which clears the wall (wallRecord). BRACE / JUMP /
+ *    ARMED are MoveMode.LOCKED and still facing the ball; CHARGE is LOCKED with the velocity set every tick. ARMED
+ *    waits (its budget extended) until the kick; BRACE lasts at most braceMaxTicks and ends as soon as the ball is past
+ *    him (wallPassMargin), no longer approaching him, owned, held, in a net or touched by anyone but the taker / the
+ *    wall, or his human pushes the stick beyond breakStick. A jump that lands while the struck ball is still coming at
+ *    him turns into BRACE for the rest of that window.
  *    Blocking (each tick of a member's action once the kick is struck, before ballTick): the ball's path this tick (a
  *    copy stepped by SIM-02 ballStepTick, exactly the sim's) is swept against every member's body: a vertical cylinder
  *    of radius wallBlockRadius (neighbours' cylinders overlap: no ball-sized gaps) from his lift to lift + height
@@ -77,8 +83,8 @@
  *    to him reflected about the contact normal (horizontal; tilted up near the top of his head) with blockRestitution,
  *    the tangential part kept at 1 - blockFriction, spin x blockSpinKeep, through core/kick applyKick(KickKind.
  *    DEFLECTION) (KICK event; the shot in flight is cleared). Only while the ball is live from this free kick (last
- *    touched by the taker's kick or a wall deflection), faster than blockMinSpeed. A jumping wall blocks higher balls and
- *    lets low ones through under it; a standing wall stops anything up to head height.
+ *    touched by the taker's kick of the strike tick or a wall deflection since), faster than blockMinSpeed. A jumping
+ *    wall blocks higher balls and lets low ones through under it; a standing wall stops anything up to head height.
  *  - Default (RUL-11 calls it at the human timeout; also the CPU fallback): with a wall a FREE_KICK_SHOT over the wall
  *    to the inside of the post it covers (defaultPostInset), curling back in, power by distance; in the crossing zone a
  *    CROSS to the best header in the box (else the penalty-spot area); otherwise a pass to the best open teammate
@@ -93,8 +99,9 @@
  * bar mirror / last explicit power, 0..1); side = dip -1..1 (FREE_KICK only; SIM-11 may read it while restart.taker
  * strikes a FREE_KICK_SHOT: contract CR).
  * Per tick: O(5) wall upkeep, O(1) input, O(5) blocking (one ball step) during the ~0.75 s after the kick; taker /
- * wall choice O(11 x 11) only at setup / re-pick / SPRINT. Allocation-free (module scratch; the preview's scratch state is
- * cloned once).
+ * wall choice O(11 x 11) only at setup / re-pick / SPRINT. Allocation-free (module scratch; doubles cross hot calls in
+ * scratch, not as arguments, so V8 does not box them; no trig per tick). The preview's scratch state is cloned once,
+ * then refreshed with FND-03 copyState (whose generic copy boxes doubles: the preview's only allocation).
  *
  * Helper module: freekickHooks.ts (import-cycle-safe WALL_JUMP handler shell, re-exported first below).
  */
@@ -121,7 +128,7 @@ import {
   copyBallState, createLaunchSolution, curlSpinY, groundPassSpeed, launchSpin, predictBall, solveLaunchSpin,
 } from '../ball/flight';
 import { cloneState, copyState } from '../core/clone';
-import { datan, datan2, dcos, dsin } from '../core/dmath';
+import { datan2, dcos, dsin } from '../core/dmath';
 import { NULL_SINK } from '../core/events';
 import { applyKick, ballTouchedThisTick, releasePossession } from '../core/kick';
 import { teamHasHuman } from '../core/query';
@@ -215,6 +222,9 @@ export const LOCAL_TUNING = { // TUNING-CR
   aimStickMin: 0.5,
   /** The stick may aim this far outside a post on the goal line (curlers), m. */
   aimGoalSlack: 2.0,
+  /** The stick / default aim goes on the goal line only from within this distance of the goal centre, m (further
+   *  out: a pitch point). */
+  aimGoalMaxDist: 40,
   /** Pitch aim point this far along the stick, m; kept this far inside the lines, m. */
   aimPassDist: 20,
   aimPitchMargin: 1.0,
@@ -287,6 +297,14 @@ export const LOCAL_TUNING = { // TUNING-CR
 
 const LT = LOCAL_TUNING;
 
+/** Normal wall distance from the ball (its centre), m, and the sideways move per tick / its limit as rotations
+ *  around the ball at that distance (cos / sin computed once at load: no trig per tick). */
+const WALL_DIST = RESTART_DISTANCE + LT.wallDistExtra;
+const MOVE_COS = dcos((LT.wallMoveSpeed * DT) / WALL_DIST);
+const MOVE_SIN = dsin((LT.wallMoveSpeed * DT) / WALL_DIST);
+const MOVE_MAX_COS = dcos(LT.wallMoveMax / WALL_DIST);
+const MOVE_MAX_SIN = dsin(LT.wallMoveMax / WALL_DIST);
+
 /** WALL_JUMP sub-states (p.actA). */
 export const WallMode = { BRACE: 0, JUMP: 1, CHARGE: 2, ARMED: 3 } as const;
 
@@ -298,6 +316,8 @@ const REQ = createActionRequest();
 const PT = { x: 0, z: 0 };
 const PT2 = { x: 0, z: 0 };
 const LOOK = { x: 0, z: 0 };
+/** Aim direction handed to setAimDir. */
+const AIM_DIR = { x: 1, z: 0 };
 /** Wall slots of the current wall (computeSlots). */
 const SLOT_X = new Float64Array(MAX_WALL);
 const SLOT_Z = new Float64Array(MAX_WALL);
@@ -311,8 +331,9 @@ const RANK_N = new Int32Array(1);
 /** One-tick ball prediction for blocking, and the key of the ball it was computed for. */
 const NEXT = createBallState();
 const BLOCK_KEY = new Float64Array(7);
-/** Hit time of the latest swept test (hitTime), -1 = none. */
+/** Hit time of the latest swept test (hitTime), -1 = none; the test's inputs (see hitTime). */
 const HIT = new Float64Array(1);
+const SWEEP = new Float64Array(11);
 const LAUNCH = createKickLaunch();
 /** Preview scratch (previewFlight). */
 let SCR: SimState | null = null;
@@ -363,6 +384,18 @@ function fkPhase(s: SimState): boolean {
 /** An untaken free kick in the FREE_KICK phase. */
 function fkLive(s: SimState): boolean {
   return fkPhase(s) && s.match.restart.taken === 0;
+}
+
+/**
+ * The restart record still describes the current free kick's wall: during the free kick, or in the open play that
+ * follows its strike (RUL-01 clears restart.kind on IN_PLAY but keeps the rest of the record; every other restart
+ * clears the wall when it is awarded, so a wall with kind NONE and taken = 1 is the last free kick's).
+ */
+function wallRecord(s: SimState): boolean {
+  const r = s.match.restart;
+  if (!(r.wallCount > 0)) return false;
+  if (r.kind === RestartKind.FREE_KICK) return true;
+  return r.kind === RestartKind.NONE && r.taken === 1 && s.match.phase === MatchPhase.IN_PLAY;
 }
 
 function isShotKind(k: KickKind): boolean {
@@ -485,7 +518,7 @@ export function wallDefaultCentre(s: SimState, out: { x: number; z: number }): n
     out.z = az < LT.wallCentralZ || maxC <= 0 ? 0 : sn * maxC;
     return 2;
   }
-  const D = RESTART_DISTANCE + LT.wallDistExtra;
+  const D = WALL_DIST;
   let gdx = gx - bx, gdz = -bz;
   let gl = Math.sqrt(gdx * gdx + gdz * gdz);
   if (gl < 1e-6) { gdx = dir; gdz = 0; gl = 1; }
@@ -499,8 +532,9 @@ export function wallDefaultCentre(s: SimState, out: { x: number; z: number }): n
     ox /= ol; oz /= ol;
     const si = ox * ugz - oz * ugx >= 0 ? 1 : -1; // rotate from the outer edge toward the goal centre
     const halfW = (n - 1) * 0.5 * (2 * T_PLAYER.bodyRadius + LT.wallGap) + LT.wallBlockRadius;
-    const phi = datan(halfW / D);
-    const c = dcos(phi), sv = si * dsin(phi);
+    // Rotate by phi = atan(halfW / D): cos = D / h, sin = halfW / h (no trig per tick).
+    const h = Math.sqrt(D * D + halfW * halfW);
+    const c = D / h, sv = (si * halfW) / h;
     ux = ox * c - oz * sv;
     uz = ox * sv + oz * c;
   }
@@ -571,10 +605,10 @@ export function wallSlot(s: SimState, i: number, out: { x: number; z: number }):
   out.z = s.match.restart.z;
 }
 
-/** Index of `slot` in the current free-kick wall, -1 if not a member. */
+/** Index of `slot` in the current free-kick wall (also in the play right after its strike), -1 if not a member. */
 export function wallIndexOf(s: SimState, slot: number): number {
   const r = s.match.restart;
-  if (r.kind !== RestartKind.FREE_KICK || slot < 0) return -1;
+  if (slot < 0 || !wallRecord(s)) return -1;
   const n = r.wallCount > MAX_WALL ? MAX_WALL : r.wallCount;
   for (let i = 0; i < n; i++) if (r.wall[i] === slot) return i;
   return -1;
@@ -586,22 +620,50 @@ export function isWallMember(s: SimState, slot: number): boolean {
 }
 
 /**
- * The post side (world z sign, -1 / +1) the current wall covers, 0 for a central wall or none (GKP-06 stands on the
- * other side).
+ * The post side (world z sign, -1 / +1) the current wall covers, from its shadow on the goal line (seen from the ball,
+ * the end members' bodies wallBlockRadius wide): the near post of an angled free kick (|z| >= wallCentralZ) while the
+ * shadow contains it, else the one post the shadow contains. 0 for a central wall covering both posts or neither, or
+ * no wall (GKP-06 stands on the other side).
  */
 export function wallCoverSide(s: SimState): number {
   const r = s.match.restart;
-  if (r.kind !== RestartKind.FREE_KICK || !(r.wallCount > 0)) return 0;
-  const dir = attackDir(s, r.team);
-  if (isLineWall(s)) return r.wallZ > LT.wallCentralZ ? 1 : r.wallZ < -LT.wallCentralZ ? -1 : 0;
-  const dx = r.wallX - r.x, dz = r.wallZ - r.z;
-  if (!(dir * dx > 1e-6)) return 0;
-  const zHit = r.z + ((dir * HALF_LENGTH - r.x) * dz) / dx;
-  return zHit > LT.wallCentralZ ? 1 : zHit < -LT.wallCentralZ ? -1 : 0;
+  if (!wallRecord(s)) return 0;
+  const n = computeSlots(s);
+  if (n === 0) return 0;
+  const R = LT.wallBlockRadius;
+  let lo: number, hi: number;
+  if (isLineWall(s)) {
+    lo = SLOT_Z[0]! - R;
+    hi = SLOT_Z[n - 1]! + R;
+  } else {
+    const dir = attackDir(s, r.team);
+    const gx = dir * HALF_LENGTH;
+    wallLineDir(s);
+    const px = PT2.x, pz = PT2.z;
+    // Slot 0 is the -p end of the wall, slot n-1 the +p end (computeSlots).
+    const ax = SLOT_X[0]! - px * R - r.x, az = SLOT_Z[0]! - pz * R - r.z;
+    const bx = SLOT_X[n - 1]! + px * R - r.x, bz = SLOT_Z[n - 1]! + pz * R - r.z;
+    if (!(dir * ax > 1e-6) || !(dir * bx > 1e-6)) return 0;
+    const za = r.z + ((gx - r.x) * az) / ax, zb = r.z + ((gx - r.x) * bz) / bx;
+    lo = za < zb ? za : zb;
+    hi = za < zb ? zb : za;
+  }
+  const pos = lo <= GOAL_HALF_WIDTH && hi >= GOAL_HALF_WIDTH;
+  const neg = lo <= -GOAL_HALF_WIDTH && hi >= -GOAL_HALF_WIDTH;
+  // The near post of an angled free kick, when the wall still covers it (it is built to; the SIM-05 body spacing can
+  // make its shadow reach the far post too); else the one post it covers.
+  const near = r.z >= LT.wallCentralZ ? 1 : r.z <= -LT.wallCentralZ ? -1 : 0;
+  if ((near === 1 && pos) || (near === -1 && neg)) return near;
+  return pos && !neg ? 1 : neg && !pos ? -1 : 0;
 }
 
 /** Jump lift (m) of a wall member at tick actT of his jump: crouch, then a ballistic hop. */
 export function jumpLift(actT: number): number {
+  return actT >= 0 && actT < JUMP_TICKS ? JUMP_LIFT[actT | 0]! : 0;
+}
+
+/** Lift of the jump's ballistic hop at action tick t (0 outside the airborne ticks), m. */
+function hopLift(actT: number): number {
   const t = actT - LT.jumpCrouchTicks;
   if (!(t > 0) || t >= LT.jumpAirTicks) return 0;
   const g = T_BALL.gravity;
@@ -610,6 +672,11 @@ export function jumpLift(actT: number): number {
   return 0.5 * g * air * tau - 0.5 * g * tau * tau;
 }
 
+/** jumpLift by action tick, tabulated once at load (a table read per tick: no double crossing a call). */
+const JUMP_TICKS = LT.jumpCrouchTicks + LT.jumpAirTicks + LT.jumpLandTicks + 1;
+const JUMP_LIFT = new Float64Array(JUMP_TICKS);
+for (let t = 0; t < JUMP_TICKS; t++) JUMP_LIFT[t] = hopLift(t);
+
 /** Current lift (m) of `slot` when he is jumping in a wall, else 0 (render, keeper). */
 export function wallLift(s: SimState, slot: number): number {
   if (slot < 0 || slot >= NUM_SLOTS) return 0;
@@ -617,8 +684,11 @@ export function wallLift(s: SimState, slot: number): number {
   return p.act === ActionKind.WALL_JUMP && p.actA === WallMode.JUMP ? jumpLift(p.actT) : 0;
 }
 
+/** Wall member's height for blocking, m (attrs.height clamped; 1.8 m when not finite). blockCheck inlines it. */
 function memberHeight(s: SimState, slot: number): number {
-  return clamp(finiteOr(s.attrs[slot]!.height, 180) / 100, LT.heightMin, LT.heightMax);
+  const h = s.attrs[slot]!.height;
+  const hm = h - h === 0 ? h / 100 : 1.8;
+  return hm < LT.heightMin ? LT.heightMin : hm > LT.heightMax ? LT.heightMax : hm;
 }
 
 /** Member `w` may stand in the wall of the current free kick (active outfield player of the defending side). */
@@ -750,18 +820,24 @@ function moveWall(s: SimState, sgn: number): void {
     r.wallZ = clamp(clamp(r.wallZ + sgn * step, PT.z - LT.wallMoveMax, PT.z + LT.wallMoveMax), lo, hi);
     return;
   }
-  // Angle of the current centre from the default one, around the ball.
-  const ax = PT.x - r.x, az = PT.z - r.z;
+  // Rotate the current centre around the ball by one step (precomputed cos / sin: no trig per tick), at distance D.
+  const ax = PT.x - r.x, az = PT.z - r.z; // default centre offset (length D)
   const D = Math.sqrt(ax * ax + az * az);
   if (!(D > 1e-6)) return;
   let cx = r.wallX - r.x, cz = r.wallZ - r.z;
-  if (!(cx === cx && cz === cz)) { cx = ax; cz = az; }
-  let ang = datan2(ax * cz - az * cx, ax * cx + az * cz);
-  const maxAng = LT.wallMoveMax / D;
-  ang = clamp(ang + (sgn * step) / D, -maxAng, maxAng);
-  const c = dcos(ang), sv = dsin(ang);
-  r.wallX = r.x + ax * c - az * sv;
-  r.wallZ = r.z + ax * sv + az * c;
+  const cl = Math.sqrt(cx * cx + cz * cz);
+  if (cl > 1e-6) { cx *= D / cl; cz *= D / cl; } else { cx = ax; cz = az; } // (NaN -> the default)
+  const sv = sgn > 0 ? MOVE_SIN : -MOVE_SIN;
+  const nx = cx * MOVE_COS - cz * sv, nz = cx * sv + cz * MOVE_COS;
+  if (nx * ax + nz * az < D * D * MOVE_MAX_COS) {
+    // Beyond wallMoveMax (arc) from the default: onto the limit on that side.
+    const ms = ax * nz - az * nx >= 0 ? MOVE_MAX_SIN : -MOVE_MAX_SIN;
+    r.wallX = r.x + ax * MOVE_MAX_COS - az * ms;
+    r.wallZ = r.z + ax * ms + az * MOVE_MAX_COS;
+    return;
+  }
+  r.wallX = r.x + nx;
+  r.wallZ = r.z + nz;
 }
 
 // ---------------------------------------------------------------- taker
@@ -861,12 +937,18 @@ export function freeKickDip(s: SimState): number {
   return r.kind === RestartKind.FREE_KICK ? clamp(finiteOr(r.side, 0), -1, 1) : 0;
 }
 
-/** Aim along the unit direction (ux, uz) from the ball: the goal line when the ray meets the mouth, else a pitch point. */
-function setAimDir(s: SimState, ux: number, uz: number): void {
+/**
+ * Aim along the unit direction AIM_DIR from the ball: the goal line when the ray meets the mouth (ball within
+ * aimGoalMaxDist of the goal centre), else a pitch point aimPassDist along it. (The direction is passed in module
+ * scratch, not as arguments: doubles passed to a non-inlined call are boxed.)
+ */
+function setAimDir(s: SimState): void {
   const r = s.match.restart;
+  const ux = AIM_DIR.x, uz = AIM_DIR.z;
   const dir = attackDir(s, r.team);
   const gx = dir * HALF_LENGTH;
-  if (dir * ux > 1e-6) {
+  const gdx = gx - r.x;
+  if (dir * ux > 1e-6 && gdx * gdx + r.z * r.z <= LT.aimGoalMaxDist * LT.aimGoalMaxDist) {
     const zHit = r.z + ((gx - r.x) / ux) * uz;
     const lim = GOAL_HALF_WIDTH + LT.aimGoalSlack;
     if (zHit >= -lim && zHit <= lim) { r.aimX = gx; r.aimZ = zHit; return; }
@@ -876,16 +958,17 @@ function setAimDir(s: SimState, ux: number, uz: number): void {
   r.aimZ = clamp(r.z + uz * LT.aimPassDist, -mz, mz);
 }
 
-/** Default aim: the goal centre with a wall (or within wallMaxDist), else aimPassDist toward it. */
+/** Default aim: the goal centre with a wall (or within aimGoalMaxDist), else aimPassDist toward it. */
 function defaultAim(s: SimState): void {
   const r = s.match.restart;
   const dir = attackDir(s, r.team);
   const gx = dir * HALF_LENGTH;
   const dx = gx - r.x, dz = -r.z;
   const d = Math.sqrt(dx * dx + dz * dz);
-  if (r.wallCount > 0 || d <= LT.wallMaxDist) { r.aimX = gx; r.aimZ = 0; return; }
-  if (d < 1e-6) { setAimDir(s, dir, 0); return; }
-  setAimDir(s, dx / d, dz / d);
+  if (r.wallCount > 0 || d <= LT.aimGoalMaxDist) { r.aimX = gx; r.aimZ = 0; return; }
+  AIM_DIR.x = dx / d;
+  AIM_DIR.z = dz / d;
+  setAimDir(s);
 }
 
 /** Keep the aim finite, inside the pitch and off the ball (re-seeded when something else wrote it). */
@@ -917,7 +1000,9 @@ function aimFromStick(s: SimState, f: Readonly<InputFrame>): void {
   const m2 = mx * mx + mz * mz;
   if (!(m2 >= LT.aimStickMin * LT.aimStickMin)) return;
   const m = Math.sqrt(m2);
-  setAimDir(s, mx / m, mz / m);
+  AIM_DIR.x = mx / m;
+  AIM_DIR.z = mz / m;
+  setAimDir(s);
 }
 
 /** Right stick changes curl (across the aim) and dip (along it); frame.curve sets the curl directly. */
@@ -1315,6 +1400,8 @@ export function wallJump(s: SimState, ev: EventSink): number {
     p.actSlot = -1;
     p.actX = p.x;
     p.actZ = p.z;
+    p.actDirX = s.match.restart.taken === 1 ? s.ball.lastKickTick : -1;
+    p.actDirZ = 0;
     holdStill(s, p);
     ev.emit(EventType.WALL, w, WallMode.JUMP);
     jumped++;
@@ -1340,6 +1427,8 @@ export function wallArmCharge(s: SimState): number {
     p.actSlot = -1;
     p.actX = p.x;
     p.actZ = p.z;
+    p.actDirX = -1;
+    p.actDirZ = 0;
     holdStill(s, p);
     armed++;
   }
@@ -1385,6 +1474,8 @@ function beginBrace(s: SimState, slot: number): void {
   p.actSlot = -1;
   p.actX = p.x;
   p.actZ = p.z;
+  p.actDirX = s.ball.lastKickTick;
+  p.actDirZ = 0;
   holdStill(s, p);
 }
 
@@ -1399,6 +1490,8 @@ function beginCharge(s: SimState, slot: number, ev: EventSink): void {
   p.actSlot = -1;
   p.actX = r.x;
   p.actZ = r.z;
+  p.actDirX = s.ball.lastKickTick;
+  p.actDirZ = 0;
   ev.emit(EventType.WALL, slot, WallMode.CHARGE);
 }
 
@@ -1419,24 +1512,31 @@ function chargeMove(p: PlayerState): void {
   p.fz = uz;
 }
 
-/** The ball is live from this free kick: struck by the taker (untouched since) or deflected by the wall. */
-function wallBallLive(s: SimState): boolean {
+/**
+ * The ball is live from this free kick, struck at tick strike = p.actDirX of wall member p: the taker's kick of that tick
+ * (untouched since), or a wall deflection after it.
+ */
+function wallBallLive(s: SimState, p: Readonly<PlayerState>): boolean {
   const r = s.match.restart;
   const b = s.ball;
-  if (r.kind !== RestartKind.FREE_KICK || r.taken !== 1) return false;
+  const strike = p.actDirX;
+  if (r.taken !== 1 || !(strike >= 0) || !wallRecord(s)) return false;
   if (b.owner >= 0 || b.heldBy >= 0 || b.inNet !== 0) return false;
   const lt = b.lastTouch;
   if (lt < 0 || b.lastKickBy !== lt || b.lastTouchTick !== b.lastKickTick) return false;
-  if (lt === r.taker) return true;
-  return b.lastKickKind === KickKind.DEFLECTION && wallIndexOf(s, lt) >= 0;
+  if (lt === r.taker) return b.lastKickTick === strike;
+  return b.lastKickKind === KickKind.DEFLECTION && b.lastKickTick > strike && wallIndexOf(s, lt) >= 0;
 }
 
 /**
  * Swept test of the ball path (x0..x0 + dx over this tick) against a vertical cylinder at (cx, cz) of radius rr, for
- * ball-centre heights in [yLo, yHi]. HIT[0] = earliest contact fraction 0..1, or -1.
+ * ball-centre heights in [yLo, yHi]; inputs in SWEEP = [x0, y0, z0, dx, dy, dz, rr, cx, cz, yLo, yHi] (module scratch:
+ * doubles passed to a non-inlined call are boxed). HIT[0] = earliest contact fraction 0..1, or -1.
  */
-function hitTime(x0: number, y0: number, z0: number, dx: number, dy: number, dz: number, cx: number, cz: number,
-  rr: number, yLo: number, yHi: number): void {
+function hitTime(): void {
+  const S = SWEEP;
+  const x0 = S[0]!, y0 = S[1]!, z0 = S[2]!, dx = S[3]!, dy = S[4]!, dz = S[5]!, rr = S[6]!;
+  const cx = S[7]!, cz = S[8]!, yLo = S[9]!, yHi = S[10]!;
   HIT[0] = -1;
   const ox = x0 - cx, oz = z0 - cz;
   const a = dx * dx + dz * dz;
@@ -1533,9 +1633,12 @@ function deflect(s: SimState, w: number, t: number, ev: EventSink): number {
   return 1;
 }
 
-/** Wall blocking for this tick (once per tick and ball state; see header). Returns 1 if the ball was deflected. */
-function blockCheck(s: SimState, ev: EventSink): number {
-  if (ballTouchedThisTick(s) || !wallBallLive(s)) return 0;
+/**
+ * Wall blocking for this tick (once per tick and ball state; see header), run by wall member `p` (whose actDirX holds
+ * the free kick's strike tick). Returns 1 if the ball was deflected.
+ */
+function blockCheck(s: SimState, p: Readonly<PlayerState>, ev: EventSink): number {
+  if (ballTouchedThisTick(s) || !wallBallLive(s, p)) return 0;
   const b = s.ball;
   const sp2 = b.vx * b.vx + b.vy * b.vy + b.vz * b.vz;
   if (!(sp2 >= LT.blockMinSpeed * LT.blockMinSpeed)) return 0;
@@ -1549,16 +1652,22 @@ function blockCheck(s: SimState, ev: EventSink): number {
   const dx = NEXT.x - b.x, dy = NEXT.y - b.y, dz = NEXT.z - b.z;
   const r = s.match.restart;
   const n = r.wallCount > MAX_WALL ? MAX_WALL : r.wallCount;
-  const rr = LT.wallBlockRadius + BALL_RADIUS;
+  const S = SWEEP;
+  S[0] = b.x; S[1] = b.y; S[2] = b.z; S[3] = dx; S[4] = dy; S[5] = dz; S[6] = LT.wallBlockRadius + BALL_RADIUS;
   let bestT = 2;
   let best = -1;
   for (let i = 0; i < n; i++) {
     const w = r.wall[i]!;
     if (!memberOk(s, w)) continue;
-    const p = s.players[w]!;
-    if (p.act !== ActionKind.WALL_JUMP) continue;
-    const lift = p.actA === WallMode.JUMP ? jumpLift(p.actT) : 0;
-    hitTime(b.x, b.y, b.z, dx, dy, dz, p.x, p.z, rr, lift - BALL_RADIUS, lift + memberHeight(s, w) + BALL_RADIUS);
+    const q = s.players[w]!;
+    if (q.act !== ActionKind.WALL_JUMP) continue;
+    const at = q.actT;
+    const lift = q.actA === WallMode.JUMP && at >= 0 && at < JUMP_TICKS ? JUMP_LIFT[at | 0]! : 0;
+    const ha = s.attrs[w]!.height; // memberHeight, inline
+    let hm = ha - ha === 0 ? ha / 100 : 1.8;
+    hm = hm < LT.heightMin ? LT.heightMin : hm > LT.heightMax ? LT.heightMax : hm;
+    S[7] = q.x; S[8] = q.z; S[9] = lift - BALL_RADIUS; S[10] = lift + hm + BALL_RADIUS;
+    hitTime();
     const t = HIT[0]!;
     if (t >= 0 && t < bestT) { bestT = t; best = w; }
   }
@@ -1570,7 +1679,7 @@ function blockCheck(s: SimState, ev: EventSink): number {
 function braceDone(s: SimState, p: PlayerState): boolean {
   const r = s.match.restart;
   const b = s.ball;
-  if (!wallBallLive(s)) return true;
+  if (!wallBallLive(s, p)) return true;
   const ux0 = p.x - r.x, uz0 = p.z - r.z;
   const ul = Math.sqrt(ux0 * ux0 + uz0 * uz0);
   if (ul > 1e-6) {
@@ -1589,8 +1698,8 @@ function braceDone(s: SimState, p: PlayerState): boolean {
 function wallUpdate(s: SimState, slot: number, ev: EventSink): void {
   const p = s.players[slot]!;
   const r = s.match.restart;
-  if (p.active !== 1 || r.kind !== RestartKind.FREE_KICK || wallIndexOf(s, slot) < 0) {
-    p.actDur = p.actT; // the dispatcher ends the action after this update
+  if (p.active !== 1 || wallIndexOf(s, slot) < 0) {
+    p.actDur = p.actT; // the dispatcher ends the action after this update (the free kick and its play are over)
     return;
   }
   const mode = p.actA;
@@ -1603,7 +1712,7 @@ function wallUpdate(s: SimState, slot: number, ev: EventSink): void {
     if (r.taken === 1 && s.ball.lastKickBy === r.taker && s.tick - s.ball.lastKickTick <= 1) {
       beginCharge(s, slot, ev);
       chargeMove(p);
-      blockCheck(s, ev);
+      blockCheck(s, p, ev);
       return;
     }
     p.actDur = p.actT; // the free kick is gone
@@ -1611,10 +1720,21 @@ function wallUpdate(s: SimState, slot: number, ev: EventSink): void {
   }
   if (mode === WallMode.CHARGE) chargeMove(p);
   else holdStill(s, p);
-  p.actB = mode === WallMode.JUMP ? jumpLift(p.actT) : 0;
+  const at = p.actT;
+  p.actB = mode === WallMode.JUMP && at >= 0 && at < JUMP_TICKS ? JUMP_LIFT[at | 0]! : 0;
   if (r.taken === 1) {
-    blockCheck(s, ev);
+    blockCheck(s, p, ev);
     if (mode === WallMode.BRACE && braceDone(s, p)) p.actDur = p.actT;
+    else if (mode === WallMode.JUMP && p.actT + 1 >= p.actDur && p.act === ActionKind.WALL_JUMP && !braceDone(s, p)) {
+      // Landed before the ball got there: he stands braced for the rest of the brace window (never a hole in the wall).
+      const left = LT.braceMaxTicks - (s.tick - p.actDirX);
+      if (left > 0) {
+        p.actA = WallMode.BRACE;
+        p.actB = 0;
+        p.actContact = -1;
+        p.actDur = p.actT + left;
+      }
+    }
   } else if (mode === WallMode.BRACE || mode === WallMode.CHARGE || s.match.phase !== MatchPhase.FREE_KICK) {
     p.actDur = p.actT; // brace / charge exist only after the kick; an abandoned free kick ends the jump
   }
@@ -1641,6 +1761,7 @@ function onKickTaken(s: SimState, ev: EventSink): void {
     const p = s.players[w]!;
     if (p.act === ActionKind.NONE && p.stunT <= 0) beginBrace(s, w);
     else if (p.act === ActionKind.WALL_JUMP && p.actA === WallMode.ARMED) beginCharge(s, w, ev);
+    else if (p.act === ActionKind.WALL_JUMP) p.actDirX = s.tick; // jumping as it is struck
   }
 }
 

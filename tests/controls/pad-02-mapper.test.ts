@@ -318,6 +318,35 @@ describe('PAD-02 edges: no lost quick taps between ticks', () => {
     expect(out).toEqual([Btn.THROUGH, 0, Btn.THROUGH, 0]);
   });
 
+  it('button mashing: at most two unreported presses per button are kept, so nothing fires long after the mashing stops', () => {
+    const r = padRig();
+    r.frame();
+    // Four full taps inside one sample interval (faster than any human: 480 Hz polling) ...
+    for (let k = 0; k < 4; k++) {
+      r.press(PadButton.SOUTH);
+      r.frame(TICK / 8);
+      r.release(PadButton.SOUTH);
+      r.frame(TICK / 8);
+    }
+    const out = [r.sample(S)];
+    for (let k = 0; k < 5; k++) { r.frame(TICK); out.push(r.sample(S)); }
+    // ... show as two presses back to back, then nothing: the backlog is bounded (no late pass from mashing).
+    expect(out.map(btns)).toEqual([Btn.PASS, 0, Btn.PASS, 0, 0, 0]);
+    // Realistic mashing (a full tap every 4 ticks for 2 s at 120 Hz) loses no press and ends with the last tap.
+    const m = padRig();
+    m.frame();
+    const seen: number[] = [];
+    for (let t = 0; t < 130; t++) {
+      const tap = t < 120 && t % 4 === 0;
+      seen.push(btns(tick120(m, tap ? () => m.press(PadButton.SOUTH) : undefined, tap ? () => m.release(PadButton.SOUTH) : undefined)));
+    }
+    let presses = 0;
+    let last = -1;
+    for (let t = 0; t < seen.length; t++) if (seen[t] && !(t > 0 && seen[t - 1])) { presses++; last = t; }
+    expect(presses).toBe(30);
+    expect(last).toBe(116);
+  });
+
   it('a press seen only at a manager poll this source did not read is recovered (other poller, other timestamp)', () => {
     const r = padRig();
     r.frame();

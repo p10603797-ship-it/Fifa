@@ -26,6 +26,7 @@ import { hashState } from '../../src/sim/core/hash';
 import { createEventBuffer } from '../../src/sim/core/events';
 import { step } from '../../src/sim/step';
 import { LOCAL_TUNING } from '../../src/sim/control/resolveShared';
+import { zoneKind } from '../../src/sim/control/resolveActions';
 import { CALLS, FAKE, calls, resetFakes } from './sim-15-fakes';
 import { keepBall, run, scene, type Script } from './sim-15-setup';
 
@@ -131,6 +132,70 @@ describe('SIM-15 attack rows (owner with the ball at his feet)', () => {
     run(s, 30, seq([[T_INPUT.tapTicks + 2, { buttons: L1 | R1 }]]));
     expect(calls('triggerRun')).toHaveLength(0);
     expect(calls('callSupport')).toHaveLength(0);
+  });
+});
+
+// BRIEF section 9 PASS swipes in the crossing zone (TCH-07: swipe right = R1 + Cross, swipe left = L1 + R1 + Square).
+describe('SIM-15 crossing zone (geometry.inCrossingZone, team 0 attacks +x)', () => {
+  const ZONE = { x: 38, z: 25 };
+  it('§9 PASS swipe right in the crossing zone (R1 + Cross): low cross -> SIM-09 startLob LOW_CROSS', () => {
+    const s = scene(ZONE);
+    run(s, 8, seq([[3, { buttons: R1 | PASS }]]));
+    const c = calls('startLob');
+    expect(c.map((x) => x.kind)).toEqual([KickKind.LOW_CROSS]);
+    expect(c[0]!.flags & ReqFlag.DRIVEN).toBe(ReqFlag.DRIVEN);
+    expect(calls('startPass', false)).toHaveLength(0);
+  });
+  it('R1 + Cross just outside the zone (central, or short of the zone depth) stays a driven ground pass', () => {
+    for (const at of [{ x: 38, z: 5 }, { x: 20, z: 25 }]) {
+      resetFakes();
+      const s = scene(at);
+      run(s, 8, seq([[3, { buttons: R1 | PASS }]]));
+      expect(calls('startPass').map((x) => x.kind)).toEqual([KickKind.DRIVEN_PASS]);
+      expect(calls('startLob', false)).toHaveLength(0);
+    }
+  });
+  it('the zone follows the attacking direction: team 1 (attacks -x) crosses at the mirrored spot, not at ours', () => {
+    const s = scene();
+    expect(s.teams[1]!.dir).toBe(-1);
+    const q = s.players[20]!;
+    q.x = -38; q.z = -25;
+    expect(zoneKind(s, q, KickKind.DRIVEN_PASS, 2)).toBe(KickKind.LOW_CROSS);
+    q.x = 38; q.z = 25;
+    expect(zoneKind(s, q, KickKind.DRIVEN_PASS, 2)).toBe(KickKind.DRIVEN_PASS);
+    q.x = -38; q.z = -25;
+    expect(zoneKind(s, q, KickKind.DRIVEN_PASS, 3)).toBe(KickKind.DRIVEN_PASS); // L1 + R1: pass and go
+    expect(zoneKind(s, q, KickKind.GROUND_PASS, 0)).toBe(KickKind.GROUND_PASS);
+  });
+  it('L1 + R1 + Cross in the zone stays a driven pass and go (only the R1 + Cross cell is a cross)', () => {
+    const s = scene(ZONE);
+    run(s, 8, seq([[3, { buttons: L1 | R1 | PASS }]]));
+    const c = calls('startPass');
+    expect(c.map((x) => x.kind)).toEqual([KickKind.DRIVEN_PASS]);
+    expect(c[0]!.flags & ReqFlag.PASS_AND_GO).toBe(ReqFlag.PASS_AND_GO);
+  });
+  it('§10 Ground cross in the zone: Square, Square -> GROUND_CROSS', () => {
+    const s = scene(ZONE);
+    run(s, 14, seq([[2, { buttons: LOB }], [2, {}], [2, { buttons: LOB }]]));
+    expect(calls('startLob').map((x) => x.kind)).toEqual([KickKind.LOB_PASS, KickKind.GROUND_CROSS]);
+  });
+  it('§9 PASS swipe left / §10 L1 + R1 + Square in the zone: DRIVEN_LOB to SIM-09 (its zone rule makes the driven cross; see CR)', () => {
+    const s = scene(ZONE);
+    run(s, 8, seq([[3, { buttons: L1 | R1 | LOB }]]));
+    const c = calls('startLob');
+    expect(c.map((x) => x.kind)).toEqual([KickKind.DRIVEN_LOB]);
+    expect(c[0]!.flags & ReqFlag.DRIVEN).toBe(ReqFlag.DRIVEN);
+  });
+  it('first-time R1 + Cross on a pass arriving in the zone -> LOW_CROSS with FIRST_TIME', () => {
+    const s = scene({ ...ZONE, ball: 'none' });
+    const p = s.players[P]!;
+    const b = s.ball;
+    b.owner = -1; b.heldBy = -1; b.x = p.x - 6; b.z = p.z; b.y = 0.11; b.px = b.x; b.pz = b.z; b.py = b.y;
+    b.vx = 8; b.vz = 0; b.vy = 0; b.grounded = 1; b.passTarget = P; b.lastTouchTeam = 0; b.lastTouch = 7;
+    run(s, 40, (i) => (i <= 30 ? { buttons: R1 | PASS } : {}));
+    const c = calls('startLob');
+    expect(c.map((x) => x.kind)).toEqual([KickKind.LOW_CROSS]);
+    expect(c[0]!.flags & ReqFlag.FIRST_TIME).toBe(ReqFlag.FIRST_TIME);
   });
 });
 
@@ -255,7 +320,7 @@ describe('SIM-15 power bar', () => {
   it('a tapped kick keeps charging (power frozen) through the double-tap grace, then releases', () => {
     const s = scene();
     const charging: number[] = [];
-    run(s, 16, (i, st) => {
+    run(s, LOCAL_TUNING.tapGraceTicks + 2, (i, st) => {
       if (st.ball.owner === P && st.players[P]!.act === ActionKind.NONE) keepBall(st, P);
       charging.push(st.players[P]!.actCharging);
       return i <= 3 ? { buttons: PASS } : {};

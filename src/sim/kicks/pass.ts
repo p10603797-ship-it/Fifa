@@ -20,9 +20,9 @@
  *    (his own ball, or within LT.reachRadius horizontally and at most LT.reachHeight high). A loose ball still
  *    arriving (first-time kicks), or his own ball still above reach height, may delay the contact up to
  *    LT.contactGraceTicks. Then KICK_SOLVERS[actKick] fills the launch and core/kick.ts applyKick plays it (KICK
- *    event, possession / pass-target / restart bookkeeping). Anything else is a whiff. Either way actContact moves to the actual contact tick and actDur keeps the planned
- *    recovery after it (actDone = 1). Pass and go (ReqFlag.PASS_AND_GO on a pass): team.passGoSlot = passer,
- *    team.passGoT = LT.passGoTicks (TAI-03 makes the run).
+ *    event, possession / pass-target / restart bookkeeping). Anything else is a whiff. Either way actContact moves to
+ *    the actual contact tick and actDur keeps the planned recovery after it (actDone = 1). Pass and go
+ *    (ReqFlag.PASS_AND_GO on a pass): team.passGoSlot = passer, team.passGoT = LT.passGoTicks (TAI-03 makes the run).
  *  - recovery: MoveMode.LOCKED for LT.contactLockTicks from the contact (follow-through; SIM-04 applies its locked
  *    friction), then STOP for a tick (the resolver / AI write the intent again) and the stick cap ramps back to 1.
  *

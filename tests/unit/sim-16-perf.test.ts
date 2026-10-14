@@ -1,6 +1,7 @@
 /**
  * SIM-16 switching budget: per-tick cost of switchTick for two controllers in the expensive situations (opponent
- * carrier with path sampling, loose ground ball, air ball), with the real SIM-04 ticksToReach. Timed in a tsx child
+ * carrier with path sampling, loose ground ball, air ball, a long high ball followed for ~4 s of flight and a
+ * fresh one every tick, i.e. no memo reuse across ticks), with the real SIM-04 ticksToReach. Timed in a tsx child
  * process (plain ESM, like the shipped bundle; vitest's module transform adds getter overhead to every import) and
  * as the minimum over repetitions, so load from parallel test workers does not make it flaky. The allocation check
  * is in sim-16-alloc.test.ts.
@@ -34,7 +35,8 @@ const ev = createEventBuffer();
 function situation(k) {
   if (k === 0) { const p = s.players[19]; p.vx = -6; p.vz = 1; b.owner = 19; b.heldBy = -1; b.x = p.x; b.z = p.z; }
   else if (k === 1) { b.owner = -1; b.x = 5; b.z = 3; b.y = 0.11; b.vx = -9; b.vz = 2; b.vy = 0; b.grounded = 1; b.lastTouchTeam = 1; }
-  else { b.owner = -1; b.x = 30; b.z = -5; b.y = 1.2; b.vx = -20; b.vz = 3; b.vy = 9; b.grounded = 0; b.lastTouchTeam = 1; }
+  else if (k === 2) { b.owner = -1; b.x = 30; b.z = -5; b.y = 1.2; b.vx = -20; b.vz = 3; b.vy = 9; b.grounded = 0; b.lastTouchTeam = 1; }
+  else { b.owner = -1; b.x = 30 + (s.tick % 7) * 0.01; b.z = -5; b.y = 0.5; b.vx = -15; b.vz = 2; b.vy = 20; b.sx = 0; b.sy = 1; b.sz = -4; b.grounded = 0; b.lastTouchTeam = 1; }
   b.passTarget = -1; b.shotBy = -1; b.lastTouchTick = s.tick;
 }
 function run(n, k) {
@@ -48,7 +50,7 @@ function run(n, k) {
   }
 }
 const out = {};
-for (const k of [0, 1, 2]) {
+for (const k of [0, 1, 2, 3]) {
   run(4000, k);
   let best = 1e9;
   for (let r = 0; r < 7; r++) {

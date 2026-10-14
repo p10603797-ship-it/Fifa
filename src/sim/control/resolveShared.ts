@@ -8,7 +8,9 @@
  *  - bufAction / bufArg / bufExpire: one buffered input (newest wins). bufAction % 16 = BufCode; the rest of
  *    bufAction and bufArg are radix-packed integers (exact doubles, < 2^53), see pack* below.
  *  - powerBtn: Btn bit of the button charging the power bar (0 = none); power: 0..1 HUD mirror.
- *  - seqA: low 8 bits = SeqFlag bits; seqA >> 8 = charging slot + 1 (0 = none).
+ *  - seqA: bits 0..7 = SeqFlag bits; bits 8..12 = charging slot + 1 (0 = none); bits 13..27 = for PASS, LOB and
+ *    THROUGH (5 bits each, in that order) the controlled slot + 1 at that button's latest press (0 = none), so a
+ *    double tap never spans a change of controlled player (see isDoubleTap / recordPressSlots).
  *  - seqB: tick until which a timed second-defender call / gesture press stays active.
  *  - secondDef: called second defender (TAI-05 reads it); receiver: controlled receiver auto-collecting (-1 none).
  */
@@ -20,10 +22,12 @@ import { createActionRequest, ReqFlag, type ActionRequest } from '../../contract
 import { T_BALL, T_INPUT, T_PASS, T_PLAYER, T_SHOT } from '../../contracts/tuning';
 
 export const LOCAL_TUNING = {
-  /** A tapped kick (released before T_INPUT.tapTicks) keeps charging, power frozen, until this many ticks after its
-   *  press so a second tap can still convert it (PASS,PASS dinked; LOB,LOB ground cross; THROUGH,THROUGH dinked;
-   *  SHOOT then SHOOT low driven), ticks. */
-  tapGraceTicks: 12,
+  /** A tapped kick (released before T_INPUT.tapTicks) of the ball at the kicker's feet that a second press can still
+   *  convert (PASS,PASS dinked; LOB,LOB ground cross; THROUGH,THROUGH dinked; SHOOT then SHOOT low driven; a lob or
+   *  shot faked by PASS) keeps charging, power frozen, until this many ticks after its press. Derived from
+   *  T_INPUT.doubleTapTicks so the whole double-tap window converts (a second press at exactly doubleTapTicks is
+   *  resolved before the grace ends on that tick), ticks. */
+  tapGraceTicks: T_INPUT.doubleTapTicks,
   /** After releasing a held SHOOT, a second SHOOT press within this many ticks still makes a low driven shot. */
   lowDrivenGraceTicks: 4,
   /** A held button auto-releases its charge this many ticks after the bar is full (no stuck power bar), ticks. */
@@ -227,15 +231,59 @@ export function unpackGesture(ctl: ControllerState): void {
   GR.gdz = r - 128;
 }
 
+// ---------------------------------------------------------------- double taps
+
+/** seqA layout (see the header): bits 0..7 SeqFlag, 8..12 charging slot + 1, 13.. per-button press slot + 1. */
+const SEQ_CHARGE_SHIFT = 8;
+const SEQ_SLOT_BITS = 31;
+const SEQ_PRESS_SHIFT = 13;
+
+/** seqA field index of the press-slot record for tracked face button bi (PASS 0, LOB 1, THROUGH 2), or -1. */
+function pressField(bi: number): number {
+  if (bi === BI.PASS) return 0;
+  if (bi === BI.LOB) return 1;
+  if (bi === BI.THROUGH) return 2;
+  return -1;
+}
+
+/** Controlled slot recorded at the latest press of face button bi (-1 = none / not recorded for bi). */
+export function pressSlotOf(ctl: ControllerState, bi: number): number {
+  const j = pressField(bi);
+  if (j < 0) return -1;
+  return ((ctl.seqA >> (SEQ_PRESS_SHIFT + 5 * j)) & SEQ_SLOT_BITS) - 1;
+}
+
+/**
+ * Record ctl.slot as the controlled player of this tick's presses of PASS / LOB / THROUGH (call once per tick after
+ * the presses were resolved, in every phase). Read back by isDoubleTap on the next press of the same button.
+ */
+export function recordPressSlots(ctl: ControllerState, pressed: number): void {
+  if ((pressed & (Btn.PASS | Btn.LOB | Btn.THROUGH)) === 0) return;
+  const v = validSlot(ctl.slot) ? ctl.slot + 1 : 0;
+  let a = ctl.seqA;
+  for (let bi = 0; bi < 4; bi++) {
+    const j = pressField(bi);
+    if (j < 0 || (pressed & (1 << bi)) === 0) continue;
+    const sh = SEQ_PRESS_SHIFT + 5 * j;
+    a = (a & ~(SEQ_SLOT_BITS << sh)) | (v << sh);
+  }
+  ctl.seqA = a;
+}
+
 /**
  * True when this tick's press of tracked button bi is the second of a double tap: the previous press (pressTick before
- * this tick, PREV_PRESS) was a tap (released within T_INPUT.tapTicks) and is at most T_INPUT.doubleTapTicks old.
+ * this tick, PREV_PRESS) was a tap (released within T_INPUT.tapTicks), is at most T_INPUT.doubleTapTicks old and was
+ * made for the same controlled player (a press for a newly controlled player, e.g. the receiver after an
+ * auto-switch, is a fresh press). Only PASS, LOB and THROUGH have double taps (the second SHOOT is the low driven
+ * conversion, handled while the shot charges), so any other button returns false.
  */
 export function isDoubleTap(ctl: ControllerState, c: number, bi: number, tick: number): boolean {
+  if (pressField(bi) < 0) return false;
   const prev = PREV_PRESS[c * 8 + bi]!;
   if (!(prev >= 0) || tick - prev > T_INPUT.doubleTapTicks) return false;
   const rel = ctl.releaseTick[bi]!;
-  return rel >= prev && rel - prev < T_INPUT.tapTicks;
+  if (!(rel >= prev && rel - prev < T_INPUT.tapTicks)) return false;
+  return validSlot(ctl.slot) && pressSlotOf(ctl, bi) === ctl.slot;
 }
 
 export function setBuffer(ctl: ControllerState, code: number, arg: number, expire: number): void {
@@ -252,16 +300,18 @@ export function clearBuffer(ctl: ControllerState): void {
 
 // ---------------------------------------------------------------- charge bookkeeping
 
-export function chargeSlotOf(ctl: ControllerState): number { return (ctl.seqA >> 8) - 1; }
+export function chargeSlotOf(ctl: ControllerState): number {
+  return ((ctl.seqA >> SEQ_CHARGE_SHIFT) & SEQ_SLOT_BITS) - 1;
+}
 
 export function setCharge(ctl: ControllerState, bit: number, slot: number): void {
   ctl.powerBtn = bit;
-  ctl.seqA = (ctl.seqA & 255) | ((slot + 1) << 8);
+  ctl.seqA = (ctl.seqA & ~(SEQ_SLOT_BITS << SEQ_CHARGE_SHIFT)) | (((slot + 1) & SEQ_SLOT_BITS) << SEQ_CHARGE_SHIFT);
 }
 
 export function clearCharge(ctl: ControllerState): void {
   ctl.powerBtn = 0;
-  ctl.seqA = ctl.seqA & 255;
+  ctl.seqA = ctl.seqA & ~(SEQ_SLOT_BITS << SEQ_CHARGE_SHIFT);
 }
 
 /** Power-bar fill time for this controller (fast power bar setting), ticks. */

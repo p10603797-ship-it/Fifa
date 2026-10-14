@@ -26,6 +26,7 @@ import { startClearance, startTackle } from '../defend/tackle';
 import { startKeeperRush } from '../keeper/sweeper';
 import { canHandle, keeperPickUp, startKeeperRelease } from '../keeper/handling';
 import { ticksToReach } from '../players/locomotion';
+import { inCrossingZone } from '../pitch/geometry';
 import { triggerRun } from '../../ai/runs';
 import { callSupport } from '../../ai/support';
 import { canManualSwitch } from './switching';
@@ -123,6 +124,19 @@ export function attackKindFor(bi: number, mods: number, dbl: boolean): KickKind 
   }
 }
 
+/**
+ * Crossing-zone meaning of an attack kick (BRIEF section 9, PASS swipe right = MOD_R+PASS: "Driven ground pass; a low
+ * cross in the crossing zone"): MOD_R+PASS (without MOD_L) by a player inside geometry.inCrossingZone for his
+ * attacking direction is a LOW_CROSS (SIM-09 startLob) instead of a DRIVEN_PASS. Every other kind is returned as is
+ * (LOB_PASS -> CROSS and DRIVEN_LOB -> LOW_CROSS in the zone are SIM-09's own conversions). Updates kindFlags.
+ */
+export function zoneKind(s: SimState, p: Readonly<PlayerState>, kind: KickKind, mods: number): KickKind {
+  if (kind !== KickKind.DRIVEN_PASS || (mods & 1) !== 0) return kind;
+  if (!inCrossingZone(p.x, p.z, s.teams[p.team]!.dir)) return kind;
+  kindFlags = ReqFlag.DRIVEN;
+  return KickKind.LOW_CROSS;
+}
+
 /** Goalkeeper-with-the-ball table (section 10; touch maps onto the same bits). */
 export function keeperKindFor(bi: number, mods: number): KickKind {
   const R = (mods & 2) !== 0;
@@ -199,7 +213,7 @@ function looseSpecial(s: SimState, ctl: ControllerState, slot: number, bi: numbe
 
 function attackFace(s: SimState, ctl: ControllerState, slot: number, bi: number, ev: EventSink): number {
   const b = s.ball;
-  const kind = attackKindFor(bi, PR.mods, (PR.flags & PressFlag.DOUBLE) !== 0);
+  const kind = zoneKind(s, s.players[slot]!, attackKindFor(bi, PR.mods, (PR.flags & PressFlag.DOUBLE) !== 0), PR.mods);
   const flags = kindFlags;
   if (kind === KickKind.NONE) return Res.DROP;
   const pending = (PR.flags & PressFlag.PENDING) !== 0;
@@ -355,11 +369,22 @@ export function convertPresses(s: SimState, c: number, ctl: ControllerState, p: 
 function isKickAct(a: ActionKind): boolean { return a === ActionKind.KICK || a === ActionKind.SHOT; }
 
 /**
+ * A second press can still change this running foot kick: a shot (SHOOT again = low driven, PASS = fake), a kick with
+ * a double-tap version (PASS,PASS / LOB,LOB / THROUGH,THROUGH) or a lob / cross (PASS = fake pass).
+ */
+function convertible(p: Readonly<PlayerState>): boolean {
+  if (p.act === ActionKind.SHOT) return true;
+  return p.act === ActionKind.KICK && (doubledKind(p.actKick) !== KickKind.NONE || isLobKind(p.actKick));
+}
+
+/**
  * Power bar: while the initiating button is held, p.actPower = hold ticks / fill ticks (fast power bar setting),
- * capped at 1, auto-released LT.chargeAfterFullTicks after full. On release charging ends, except a tapped foot kick
- * keeps charging (power frozen) until LT.tapGraceTicks after its press, and a held shot LT.lowDrivenGraceTicks after
- * the release, so a second tap can still convert it (grace: open play only; set-piece kicks release at once). A
- * charge ended elsewhere (handler cap, interrupt) clears.
+ * capped at 1, auto-released LT.chargeAfterFullTicks after full. On release charging ends, except (open play only;
+ * set-piece kicks release at once) a tapped convertible kick of the ball at his feet keeps charging (power frozen)
+ * until LT.tapGraceTicks (= T_INPUT.doubleTapTicks) after its press, and a held shot LT.lowDrivenGraceTicks after the
+ * release, so a second press can still convert it. In open play a first-time foot kick (ball loose, arriving) stops
+ * charging on the first tick its wind-up is done with the ball in his reach, so the contact meets the ball instead of
+ * letting it roll past while the button is still held. A charge ended elsewhere (handler cap, interrupt) clears.
  */
 export function chargeTick(s: SimState, ctl: ControllerState, grace: boolean): void {
   const cb = ctl.powerBtn;
@@ -369,6 +394,16 @@ export function chargeTick(s: SimState, ctl: ControllerState, grace: boolean): v
   if (!validSlot(slot) || bi < 0 || bi >= 8) { clearCharge(ctl); return; }
   const p = s.players[slot]!;
   if (p.active !== 1 || p.act === ActionKind.NONE || p.actCharging !== 1) { clearCharge(ctl); return; }
+  const b = s.ball;
+  const atFeet = b.owner === slot && b.heldBy < 0;
+  if (grace && isKickAct(p.act) && b.owner < 0 && b.heldBy < 0 && p.actT + 1 >= p.actContact &&
+      b.y <= LT.firstTimeMaxHeight && ballEta(s, slot) === 0) {
+    // Open play, first-time: wind-up done (actT + 1 this tick) and the ball in reach -> strike with this power.
+    // (Set pieces: the dead ball sits in reach of the taker, whose bar fills as usual.)
+    p.actCharging = 0;
+    clearCharge(ctl);
+    return;
+  }
   const fill = fillTicks(ctl);
   if ((ctl.buttons & cb) !== 0) {
     const h = ctl.holdT[bi]!;
@@ -380,9 +415,9 @@ export function chargeTick(s: SimState, ctl: ControllerState, grace: boolean): v
   const pressT = ctl.pressTick[bi]!;
   const relT = ctl.releaseTick[bi]!;
   let end = relT;
-  if (grace && isKickAct(p.act)) {
+  if (grace && atFeet && convertible(p)) {
     if (relT - pressT < T_INPUT.tapTicks) end = pressT + LT.tapGraceTicks;
-    else if (cb === Btn.SHOOT) end = relT + LT.lowDrivenGraceTicks;
+    else if (cb === Btn.SHOOT && p.act === ActionKind.SHOT) end = relT + LT.lowDrivenGraceTicks;
   }
   if (s.tick >= end) { p.actCharging = 0; clearCharge(ctl); }
 }

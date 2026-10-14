@@ -30,9 +30,12 @@
  *
  * Wiring (TCH-07, index.ts): `createDefenceCluster(state, layout, undefined, { hints: () => t.hintMatchesLeft > 0 })`;
  * `createClusterController({ state, attack, defence })`; call `cluster.update(now)` in pollFrame (before overlay.sync)
- * and before mapper.sample (it advances the hold / hint timers of both sets and refreshes the slot view). The overlay
- * (TCH-09) reads cluster.ids / labels / pressed (version changes whenever one of them does). In mapper.sample, read
- * state.clearOn (or defence.slideClear) for SLIDE presses before writing the new clearOn.
+ * and before mapper.sample (it advances the hold / hint timers of both sets and refreshes the slot view), and
+ * `cluster.sync(now)` in the pointer manager's onChange before overlay.sync (the pressed slot shows in the same frame
+ * as the touch-down). The overlay (TCH-09) reads cluster.ids / labels / pressed (version changes whenever one of them
+ * does). In mapper.sample, set state.mode from clusterModeFor(ctx.state, ctx.side, ctx.human) and state.clearOn from
+ * clearanceOn(ctx.state, ctx.side, ctx.human), and read defence.slideClear for the SLIDE presses drained this sample
+ * (a SLIDE that went down as CLEAR is a clearance) before writing the new clearOn.
  * No allocation per pointer event or per update.
  */
 
@@ -201,7 +204,7 @@ export function slotButton(mode: ClusterMode, slot: ClusterSlot): TouchButtonId 
  */
 export function buttonLabel(id: TouchButtonId | -1, mode: ClusterMode, clear: boolean): string {
   if (id < 0 || id >= BUTTON_LABELS.length) return '';
-  if (mode === ClusterMode.KEEPER && isAttackButton(id)) return KEEPER_LABELS[SLOT_ATTACK_BUTTON.indexOf(id)]!;
+  if (mode === ClusterMode.KEEPER && isAttackButton(id)) return KEEPER_LABELS[SLOT_ATTACK_BUTTON.indexOf(id as TouchButtonId)]!;
   if (id === TouchButtonId.SLIDE && clear) return CLEAR_LABEL;
   return BUTTON_LABELS[id]!;
 }

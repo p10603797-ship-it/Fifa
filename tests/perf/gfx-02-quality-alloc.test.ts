@@ -3,7 +3,9 @@
  * adaptation, Low Power detector; the scene.onAfterRender work mark) allocates nothing. Measured in a child process
  * with V8's sampling heap profiler (64-byte interval, minor-GC'd objects included): every sampled allocation whose
  * allocating frame is in src/render/quality.ts counts. The frame series alternates fast, slow, 30 fps-capped and
- * in-band phases so scale changes, failed probes, tier steps and the Low Power detector all run while measured.
+ * in-band phases so scale changes, failed probes, the tier adapter's holds and the Low Power detector all run while
+ * measured. (The AUTO tier steps BALANCED -> PERFORMANCE once during the warm-up; a tier change is a rare event that
+ * makes every module re-apply its tier, so it is not part of the per-frame budget.)
  */
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -87,8 +89,15 @@ describe('GFX-02 zero allocation per frame', () => {
       const usPerFrame = Number(process.hrtime.bigint() - t0) / 50000 / 1000;
       console.log(JSON.stringify({ ...m, usPerFrame, scale: q.scale, tier: q.tier }));
     `;
+    // --no-concurrent-recompilation: hot functions are optimised on the main thread as soon as they are hot, so the
+    // measured window always runs the optimised steady state. With background compilation on a loaded machine the
+    // optimised code can arrive after the warm-up and the window then sees the interpreter boxing doubles (1-2 B /
+    // frame of noise, reproduced with --concurrent-recompilation-delay=200), which is JIT warm-up, not the code.
+    // Calibration: the clean module measures 0; one small object, array, closure or string per frame in update()
+    // measures 0.76-1.56 here (the profiler under-reports small objects), so 0.25 keeps a 3x margin.
     const r = spawnSync(process.execPath, [
-      '--expose-gc', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', code,
+      '--expose-gc', '--no-concurrent-recompilation', '--min-semi-space-size=256', '--max-semi-space-size=256',
+      '--import', 'tsx', '--input-type=module', '-e', code,
     ], { cwd: root, encoding: 'utf8', timeout: 240_000 });
     expect(r.status, r.stderr).toBe(0);
     const res = JSON.parse(r.stdout.trim().split('\n').pop()!) as {
@@ -96,7 +105,7 @@ describe('GFX-02 zero allocation per frame', () => {
     };
     console.log(`GFX-02 quality per frame: ${JSON.stringify(res)}`);
     expect(res.scaleChanges).toBeGreaterThan(5); // the measured run exercised the controller
-    expect(res.bytes).toBeLessThan(0.5);
+    expect(res.bytes).toBeLessThan(0.25);
     expect(res.usPerFrame).toBeLessThan(20);
     expect(res.scale).toBeGreaterThanOrEqual(0.6);
     expect(res.scale).toBeLessThanOrEqual(1);

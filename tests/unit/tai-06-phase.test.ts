@@ -8,7 +8,7 @@ import { AiJob, KickKind, MatchPhase, RestartKind, TacticalFocus, TeamPhase, Tea
 import { EventType, type EventSink } from '../../src/contracts/events';
 import type { SimState } from '../../src/contracts/state';
 import { T_AI } from '../../src/contracts/tuning';
-import { resetJobs } from '../../src/ai/jobs';
+import { assignJob, resetJobs } from '../../src/ai/jobs';
 import {
   assignTransition, attackWindowTicks, CLOCK_MAX, controlTeam, counterMargin, defendWindowTicks, LOCAL_TUNING,
   possessionStatus, updateTeamPhase,
@@ -549,6 +549,32 @@ describe('TAI-06 assignTransition jobs', () => {
     s.players[11 + 7]!.job = AiJob.MARK;
     assignTransition(s, 1, NULL_SINK);
     expect(s.players[11 + 7]!.job).toBe(AiJob.MARK);
+  });
+
+  it.each([0, 1])('team %i: a caught-upfield presser keeps PRESS (more urgent than RECOVER); the others still recover', (a) => {
+    // TAI-05 runs before assignTransition and gives the player nearest the ball PRESS (10 > RECOVER 9 in AiJob order).
+    const s = counterSetup(a, TeamStyle.POSSESSION);
+    tick(s);
+    resetJobs(s, a);
+    const presser = a * 11 + 5; // RM caught upfield level with the ball (u = 36)
+    const d = s.teams[a]!.dir;
+    const pp = s.players[presser]!;
+    expect(assignJob(s, presser, AiJob.PRESS, pp.x - d * 1.5, pp.z, s.attrs[presser]!.topSpeed * 0.8, a === 0 ? 17 : 6)).toBe(true);
+    const before = { x: s.players[presser]!.tgtX, z: s.players[presser]!.tgtZ, sp: s.players[presser]!.tgtSpeed };
+    assignTransition(s, a, NULL_SINK);
+    const p = s.players[presser]!;
+    expect(p.job).toBe(AiJob.PRESS);
+    expect([p.tgtX, p.tgtZ, p.tgtSpeed]).toEqual([before.x, before.z, before.sp]);
+    // The other caught-upfield wide midfielder still runs, to the same goal-side point as without the press.
+    const q = s.players[a * 11 + 8]!;
+    expect(q.job).toBe(AiJob.RECOVER);
+    expect(d * q.tgtX).toBeLessThanOrEqual(d * s.ball.x - LOCAL_TUNING.recoverDepth + 1e-9);
+    const ref = counterSetup(a, TeamStyle.POSSESSION);
+    tick(ref);
+    resetJobs(ref, a);
+    assignTransition(ref, a, NULL_SINK);
+    expect(ref.players[presser]!.job).toBe(AiJob.RECOVER); // without the press he would have recovered
+    expect([q.tgtX, q.tgtZ]).toEqual([ref.players[a * 11 + 8]!.tgtX, ref.players[a * 11 + 8]!.tgtZ]);
   });
 
   it('Players glitch "orbit or jitter": recovery target is stable across the goal-side boundary (no RECOVER/HOLD flip-flop)', () => {

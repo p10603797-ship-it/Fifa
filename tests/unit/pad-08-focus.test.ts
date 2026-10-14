@@ -403,6 +403,64 @@ describe('PAD-08 focus navigator: modal stack and recovery', () => {
     expect(t.cur()).toBe('def');
   });
 
+  it('Glitch "Tab moves the outline, Enter clicks another control": native focus moves take the ring along', () => {
+    const t = setup();
+    const a = t.btn(t.root, 'a', [0, 0, 100, 40]);
+    const b = t.btn(t.root, 'b', [0, 60, 100, 40]);
+    const modal = box(t.doc.body, 'div', {}, [300, 300, 300, 200]);
+    t.attach();
+    const baseMatches = Object.getPrototypeOf(a).matches as (sel: string) => boolean;
+    const focusIn = (el: FakeElement, focusVisible: boolean): void => {
+      el.matches = ((sel: string) => (sel === ':focus-visible' ? focusVisible : baseMatches.call(el, sel))) as typeof el.matches;
+      const ev = new Event('focusin');
+      Object.defineProperty(ev, 'target', { value: el });
+      t.doc.defaultView.dispatchEvent(ev);
+    };
+    // Tab (keyboard focus, :focus-visible): the ring follows and shows; CONFIRM clicks what has native focus.
+    focusIn(b, true);
+    expect(t.cur()).toBe('b');
+    expect(t.nav.ringVisible).toBe(true);
+    t.press(CONFIRM);
+    expect([a.clicks, b.clicks]).toEqual([0, 1]);
+    t.press(UP); // the ring was visible: this press moves
+    expect(t.cur()).toBe('a');
+    // A programmatic focus (not :focus-visible) moves the ring without showing it.
+    t.nav.hideRing();
+    focusIn(b, false);
+    expect(t.cur()).toBe('b');
+    expect(t.nav.ringVisible).toBe(false);
+    // Focus landing outside the top root (under a modal, or on a non-candidate) is ignored.
+    t.btn(modal, 'm', [300, 300, 100, 40]);
+    t.attach(modal);
+    expect(t.cur()).toBe('m');
+    focusIn(a, true);
+    expect(t.cur()).toBe('m');
+    const plain = box(modal, 'div', {}, [300, 360, 100, 40]);
+    focusIn(plain, true);
+    expect(t.cur()).toBe('m');
+    t.nav.dispose();
+    focusIn(t.btn(modal, 'late', [300, 420, 100, 40]), true);
+    expect(t.nav.current).toBeNull();
+  });
+
+  it('moving the ring onto a text field blurs the previous control (a window refocus cannot pull the ring back)', () => {
+    const t = setup();
+    const a = t.btn(t.root, 'a', [0, 0, 100, 40]);
+    const name = box(t.root, 'input', { 'data-focus': '', 'data-testid': 'name', type: 'text' }, [0, 60, 200, 40]);
+    name.type = 'text';
+    let blurred = 0;
+    (a as unknown as { blur(): void }).blur = () => { blurred++; t.doc.activeElement = null; };
+    t.attach();
+    expect(t.doc.activeElement).toBe(a);
+    reveal(t.nav);
+    t.press(DOWN);
+    expect(t.cur()).toBe('name');
+    expect(name.focusCalls).toBe(0); // no on-screen keyboard until CONFIRM
+    expect(blurred).toBe(1);
+    t.press(CONFIRM);
+    expect(name.focusCalls).toBe(1);
+  });
+
   it('dispose: ring and marks removed, actions ignored, no throw', () => {
     const t = setup({ onBack: vi.fn() });
     const a = t.btn(t.root, 'a', [0, 0, 100, 40]);

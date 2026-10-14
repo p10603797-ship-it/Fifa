@@ -9,13 +9,16 @@
  *   unmeasured warm-up draws (shader link, uploads), then up to LOCAL_TUNING.testDurationMs = 2 s of measured draws,
  *   each with a GPU readback, and picks PERFORMANCE / BALANCED / QUALITY from the median frame cost. Until it has run
  *   AUTO means BALANCED. Later matches reuse the result.
- * - Then it adapts: a tier that cannot hold 50 fps (smoothed interval > 20 ms for 2 s) steps down. QUALITY always
- *   may step down (also when the player chose it); AUTO also steps BALANCED -> PERFORMANCE once the resolution is at
- *   its floor, and AUTO steps up after 10 s of headroom at full resolution, never into a tier that already failed
- *   in this page session. An explicit PERFORMANCE or BALANCED is never changed.
+ * - Then it adapts: a tier that cannot hold 50 fps (smoothed interval > 20 ms for 2 s) steps down at once. QUALITY
+ *   always may step down (also when the player chose it); AUTO also steps BALANCED -> PERFORMANCE once the resolution
+ *   is at its floor. AUTO earns a step up with 10 s of headroom at full resolution, never into a tier that already
+ *   failed in this page session; the step up is applied on the next loading screen (warmUp, then compiled), because
+ *   a higher tier compiles shader variants and rebuilds detail, which would hitch play. An explicit PERFORMANCE or
+ *   BALANCED is never changed.
  * - Tier changes the module makes on its own go out through QualityHooks.setTier (index.ts broadcasts them to the
  *   modules' setQuality, see CR in the GFX-02 report); request() returns the resolved tier as before. ctx.tier and
- *   getTierParams() always hold the applied tier. The module also owns renderer.shadowMap.enabled (on at QUALITY).
+ *   getTierParams() always hold the applied tier. The module also owns renderer.shadowMap.enabled (on at QUALITY);
+ *   flipping it marks every scene material for a program rebuild (three.js does not notice the flag by itself).
  *
  * Dynamic resolution (settings.graphics.resolutionScale = 0)
  * - Two smoothed signals (time-based EMA, tau LOCAL_TUNING.smoothTauMs): the rAF interval (FrameInfo.dtMs) and the
@@ -38,13 +41,14 @@
  *
  * Low Power Mode (section 3): a steady ~33 ms interval (low jitter) while the frame work is idle and the resolution
  * is already as low as it goes, for 3 s, fires once: QualityHooks.lowPowerSuspected and onLowPowerSuspected()
- * listeners, unless settings.lowPowerHintShown is already set. The caller shows the hint and sets the flag.
+ * listeners, unless settings.lowPowerHintShown is already set. The caller shows the hint and sets the flag. It also
+ * forgets the AUTO tier failures (the cap made every tier look slow), so AUTO can climb back once the mode is off.
  *
  * Debug: window.__dotkickQuality() returns a QualitySnapshot (tier, scale, signals, startup test, params).
  * No allocation per frame: update() and the onAfterRender hook only touch preallocated state.
  */
 
-import { WebGLRenderTarget, type Object3D, type Scene, type WebGLRenderer } from 'three';
+import { WebGLRenderTarget, type Material, type Object3D, type Scene, type WebGLRenderer } from 'three';
 import { QualityTier } from '../contracts/enums';
 import { T_PERF } from '../contracts/tuning';
 import type { RenderContext, RenderFrame, RenderModule } from './types';
@@ -167,6 +171,33 @@ export const TIER_PARAMS: readonly Readonly<TierParams>[] = Object.freeze([
   }),
 ]);
 
+let markCount = 0;
+function markObjectMaterials(o: Object3D): void {
+  const m = (o as Object3D & { material?: Material | Material[] | null }).material;
+  if (!m) return;
+  if (Array.isArray(m)) {
+    for (let i = 0; i < m.length; i++) {
+      m[i]!.needsUpdate = true;
+      markCount++;
+    }
+  } else {
+    m.needsUpdate = true;
+    markCount++;
+  }
+}
+
+/**
+ * Mark every material under `root` for a program rebuild; returns how many were marked. three.js builds programs
+ * with or without shadow sampling from renderer.shadowMap.enabled, but it does not notice when that flag flips (only
+ * a change of the lights' castShadow does). So a tier change that turns the shadow map on or off calls this. Without
+ * it, materials keep sampling a shadow map that is no longer updated, or never sample the new one. Not per frame.
+ */
+export function markMaterialsForRecompile(root: Object3D): number {
+  markCount = 0;
+  root.traverse(markObjectMaterials);
+  return markCount;
+}
+
 /** A valid concrete tier, or AUTO for anything else (corrupt settings, out-of-range numbers). Pure. */
 export function sanitizeTier(t: number): QualityTier {
   return t === QualityTier.PERFORMANCE || t === QualityTier.BALANCED || t === QualityTier.QUALITY ? t : QualityTier.AUTO;
@@ -200,10 +231,19 @@ interface AutoSession {
   tier: QualityTier;
   /** Bit (1 << tier) per tier AUTO stepped down from: never re-entered automatically. */
   failedMask: number;
+  /**
+   * Higher tier AUTO earned during play (headroom at full resolution), applied on the next loading screen (warmUp)
+   * so its shader compiles never hitch a match. AUTO (0) = none.
+   */
+  pendingUp: QualityTier;
   test: StartupTestResult | null;
 }
 
-const autoSession: AutoSession = { tested: false, tier: QualityTier.BALANCED, failedMask: 0, test: null };
+const autoSession: AutoSession = {
+  tested: false, tier: QualityTier.BALANCED, failedMask: 0, pendingUp: QualityTier.AUTO, test: null,
+};
+/** tierAdapterStep mask that blocks every step up (a step up is already waiting for the loading screen). */
+const ALL_TIERS_MASK = (1 << QualityTier.PERFORMANCE) | (1 << QualityTier.BALANCED) | (1 << QualityTier.QUALITY);
 /** Tier applied by the live quality module (getTierParams() default). */
 let appliedTier: QualityTier = QualityTier.BALANCED;
 const lowPowerListeners: (() => void)[] = [];
@@ -213,6 +253,7 @@ export function resetQualitySession(): void {
   autoSession.tested = false;
   autoSession.tier = QualityTier.BALANCED;
   autoSession.failedMask = 0;
+  autoSession.pendingUp = QualityTier.AUTO;
   autoSession.test = null;
   appliedTier = QualityTier.BALANCED;
 }
@@ -530,8 +571,10 @@ export function tierQuiet(a: TierAdapter, ms: number): void {
 }
 
 /**
- * Advance the tier adaptation by the signal's last accepted sample (s.dt). `tier` is the applied tier, `requested` the settings tier,
- * `failedMask` the AUTO tiers that already failed. Returns the tier to apply (unchanged most of the time).
+ * Advance the tier adaptation by the signal's last accepted sample (s.dt). `tier` is the applied tier, `requested` the
+ * settings tier, `failedMask` the tiers AUTO must not step up into (bit 1 << tier: the ones that already failed; the
+ * module passes every bit while a step up waits for the loading screen). Returns the tier the adaptation wants
+ * (unchanged most of the time); the module applies a step down at once and defers a step up to the next warmUp.
  * - QUALITY (requested or AUTO) steps down when it cannot hold 50 fps for tierDownHoldMs.
  * - AUTO also steps BALANCED -> PERFORMANCE when the resolution cannot go lower.
  * - AUTO steps up after tierUpHoldMs of headroom at full resolution, never into a failed tier.
@@ -724,6 +767,8 @@ export interface QualitySnapshot {
   failedProbes: number;
   tierChanges: number;
   autoFailedMask: number;
+  /** Higher tier AUTO earned during play, applied on the next loading screen (AUTO = none). */
+  pendingTier: QualityTier;
   lowPowerSuspected: boolean;
   startupTest: StartupTestResult | null;
   testRunning: boolean;
@@ -804,7 +849,11 @@ export function createQuality(ctx: RenderContext, hooks: QualityHooks, opts: Qua
     ctx.tier = t;
     appliedTier = t;
     const r = ctx.renderer as WebGLRenderer | null;
-    if (r && r.shadowMap) r.shadowMap.enabled = TIER_PARAMS[t]!.shadowMap;
+    const on = TIER_PARAMS[t]!.shadowMap;
+    if (r && r.shadowMap && r.shadowMap.enabled !== on) {
+      r.shadowMap.enabled = on;
+      markMaterialsForRecompile(ctx.scene);
+    }
   }
 
   function applyScale(): void {
@@ -823,6 +872,7 @@ export function createQuality(ctx: RenderContext, hooks: QualityHooks, opts: Qua
     if (requested === QualityTier.AUTO) {
       if (failed) autoSession.failedMask |= 1 << tier;
       autoSession.tier = next;
+      autoSession.pendingUp = QualityTier.AUTO; // a step down or a new pick supersedes an earned step up
     }
     tier = next;
     applyTier(tier);
@@ -849,9 +899,19 @@ export function createQuality(ctx: RenderContext, hooks: QualityHooks, opts: Qua
   function ingest(): void {
     if (!ingestFrameSample(sig)) return;
     if (resControllerStep(res, sig) !== 0) applyScale();
-    const nt = tierAdapterStep(adapt, tier, requested, autoSession.failedMask, sig, resAtFloor(res), resAtCeiling(res));
-    if (nt !== tier) changeTier(nt, nt < tier);
-    if (lowPowerStep(lowPower, sig, resAtFloor(res))) fireLowPower();
+    const upMask = autoSession.pendingUp !== QualityTier.AUTO ? ALL_TIERS_MASK : autoSession.failedMask;
+    const nt = tierAdapterStep(adapt, tier, requested, upMask, sig, resAtFloor(res), resAtCeiling(res));
+    // Down at once (the match cannot hold 50 fps); up only on the next loading screen: a higher tier compiles shader
+    // variants and rebuilds crowd / net detail, which would hitch play.
+    if (nt < tier) changeTier(nt, true);
+    else if (nt > tier) autoSession.pendingUp = nt;
+    if (lowPowerStep(lowPower, sig, resAtFloor(res))) {
+      // A 30 fps cap makes every tier look too slow. The tiers AUTO stepped down from under it did not really fail:
+      // forget them, so turning Low Power Mode off lets AUTO earn them back (a step up still needs real headroom
+      // at full resolution, so a device that is truly this slow never flips).
+      autoSession.failedMask = 0;
+      fireLowPower();
+    }
   }
 
   // scene.onAfterRender marks the end of the frame's draw (chained with any handler already installed).
@@ -872,9 +932,81 @@ export function createQuality(ctx: RenderContext, hooks: QualityHooks, opts: Qua
 
   const snap: QualitySnapshot = {
     requested, tier, scale, fixedScale: res.fixed, intervalMs: 0, workMs: -1, jitterMs: 0, fps: 0, samples: 0,
-    scaleChanges: 0, failedProbes: 0, tierChanges: 0, autoFailedMask: 0, lowPowerSuspected: false, startupTest: null,
+    scaleChanges: 0, failedProbes: 0, tierChanges: 0, autoFailedMask: 0, pendingTier: QualityTier.AUTO,
+    lowPowerSuspected: false, startupTest: null,
     testRunning: false, shadowMapEnabled: false, params: TIER_PARAMS[tier]!,
   };
+
+  function compileScene(): void {
+    const r = ctx.renderer as WebGLRenderer | null;
+    if (!r || typeof r.compile !== 'function') return;
+    try {
+      r.compile(ctx.scene, ctx.camera); // programs for the new tier before the first frame
+    } catch {
+      /* compiled lazily on first use */
+    }
+  }
+
+  /** Loading screen: apply the higher tier AUTO earned during play (see AutoSession.pendingUp). */
+  function applyPendingUp(): void {
+    const up = autoSession.pendingUp;
+    if (up === QualityTier.AUTO) return;
+    autoSession.pendingUp = QualityTier.AUTO;
+    if (disposed || requested !== QualityTier.AUTO || up <= tier || (autoSession.failedMask & (1 << up)) !== 0) return;
+    changeTier(up, false);
+    compileScene();
+  }
+
+  /** The AUTO startup test (once per page; again on the next match when it was inconclusive). */
+  async function startupTest(): Promise<void> {
+    const r = ctx.renderer as WebGLRenderer | null;
+    if (!r || typeof r.render !== 'function' || typeof r.readRenderTargetPixels !== 'function') return;
+    if (hidden()) return;
+    testRunning = true;
+    abortTest = false;
+    frameOpen = false;
+    let rt: WebGLRenderTarget | null = null;
+    try {
+      const w = Math.max(1, Math.floor(r.domElement ? r.domElement.width : 1));
+      const h = Math.max(1, Math.floor(r.domElement ? r.domElement.height : 1));
+      rt = new WebGLRenderTarget(w, h, { depthBuffer: true, stencilBuffer: false });
+      const target = rt;
+      const pixel = new Uint8Array(4);
+      const result = await runStartupTest({
+        renderOnce() {
+          const prev = r.getRenderTarget();
+          r.setRenderTarget(target);
+          try {
+            r.render(ctx.scene, ctx.camera);
+            r.readRenderTargetPixels(target, 0, 0, 1, 1, pixel); // waits for the GPU
+          } finally {
+            r.setRenderTarget(prev);
+          }
+        },
+        now,
+        nextFrame,
+        aborted: () => abortTest || disposed || hidden(),
+      });
+      lastTest = result;
+      autoSession.test = result;
+      if (result.conclusive) {
+        autoSession.tested = true;
+        autoSession.tier = result.tier;
+        autoSession.failedMask = 0;
+        autoSession.pendingUp = QualityTier.AUTO;
+        if (!disposed && requested === QualityTier.AUTO && result.tier !== tier) {
+          changeTier(result.tier, false);
+          compileScene();
+        }
+      }
+    } catch {
+      // Render target creation failed: keep the current tier, try again on the next match.
+    } finally {
+      rt?.dispose();
+      testRunning = false;
+      frameOpen = false;
+    }
+  }
 
   const mod: QualityModule = {
     get tier() { return tier; },
@@ -924,57 +1056,9 @@ export function createQuality(ctx: RenderContext, hooks: QualityHooks, opts: Qua
     },
 
     async warmUp() {
-      if (disposed || testRunning || requested !== QualityTier.AUTO || autoSession.tested) return;
-      const r = ctx.renderer as WebGLRenderer | null;
-      if (!r || typeof r.render !== 'function' || typeof r.readRenderTargetPixels !== 'function') return;
-      if (hidden()) return;
-      testRunning = true;
-      abortTest = false;
-      frameOpen = false;
-      let rt: WebGLRenderTarget | null = null;
-      try {
-        const w = Math.max(1, Math.floor(r.domElement ? r.domElement.width : 1));
-        const h = Math.max(1, Math.floor(r.domElement ? r.domElement.height : 1));
-        rt = new WebGLRenderTarget(w, h, { depthBuffer: true, stencilBuffer: false });
-        const target = rt;
-        const pixel = new Uint8Array(4);
-        const result = await runStartupTest({
-          renderOnce() {
-            const prev = r.getRenderTarget();
-            r.setRenderTarget(target);
-            try {
-              r.render(ctx.scene, ctx.camera);
-              r.readRenderTargetPixels(target, 0, 0, 1, 1, pixel); // waits for the GPU
-            } finally {
-              r.setRenderTarget(prev);
-            }
-          },
-          now,
-          nextFrame,
-          aborted: () => abortTest || disposed || hidden(),
-        });
-        lastTest = result;
-        autoSession.test = result;
-        if (result.conclusive) {
-          autoSession.tested = true;
-          autoSession.tier = result.tier;
-          autoSession.failedMask = 0;
-          if (!disposed && requested === QualityTier.AUTO && result.tier !== tier) {
-            changeTier(result.tier, false);
-            try {
-              r.compile(ctx.scene, ctx.camera); // programs for the picked tier before the first frame
-            } catch {
-              /* compiled lazily on first use */
-            }
-          }
-        }
-      } catch {
-        // Render target creation failed: keep the current tier, try again on the next match.
-      } finally {
-        rt?.dispose();
-        testRunning = false;
-        frameOpen = false;
-      }
+      if (disposed || testRunning || requested !== QualityTier.AUTO) return;
+      if (!autoSession.tested) await startupTest();
+      applyPendingUp();
     },
 
     update(f: RenderFrame) {
@@ -1031,6 +1115,7 @@ export function createQuality(ctx: RenderContext, hooks: QualityHooks, opts: Qua
       snap.failedProbes = res.failedProbes;
       snap.tierChanges = adapt.changes;
       snap.autoFailedMask = autoSession.failedMask;
+      snap.pendingTier = autoSession.pendingUp;
       snap.lowPowerSuspected = lowPower.fired;
       snap.startupTest = lastTest;
       snap.testRunning = testRunning;

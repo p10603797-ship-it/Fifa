@@ -1,52 +1,99 @@
 /*
- * [UIX-01] Dot design system tokens. WAVE 0 minimal set (FND-04); UIX-01 refines and owns this file.
- * Two source colours: ink #07070D (background) and ember #FF6B35 (accent). Everything else is derived and kept
- * here as CSS variables. Player 1 = ember, player 2 = cyan.
+ * [UIX-01] Dot design system tokens: the one file that holds every design token as a CSS variable (brief section 12
+ * "Visual identity"), plus base element styles and the focus ring. Component styles live in components.css.
+ *
+ * Colour: two sources, ink #07070D (background) and ember #FF6B35 (accent, used sparingly: focus, selection and
+ * primary actions). Every other colour is derived from them by src/ui/palette.ts derivePalette() (OKLCH: surfaces
+ * lift the ink, text tiers are warm greys on the ember hue, player 2 cyan is the ember's complement, success /
+ * warning / error rotate the ember hue). tests/unit/uix-01-palette.test.ts keeps the values below equal to the
+ * recipe and checks WCAG AA (4.5:1) for every text tier on every surface. Edit the recipe, not the hex values.
+ *
+ * Type: Space Grotesk (UI) and JetBrains Mono with tabular figures (clock, scores, stats, any numbers); both are
+ * inlined by src/ui/fonts.ts (Latin subsets, OFL).
  */
 :root {
-  /* source colours */
+  /* ---- source colours (brief section 12) */
   --ink: #07070d;
   --ember: #ff6b35;
-  --cyan: #35d0ff;
+  /* player 2: ember hue + 180 deg */
+  --cyan: #3ed1f6;
 
-  /* surfaces (ink lifted toward white) */
+  /* ---- surfaces: ink lifted in OKLCH lightness (+0.03, +0.065, +0.10, +0.14) */
   --surface-0: var(--ink);
-  --surface-1: #0f0f17;
-  --surface-2: #161621;
-  --surface-3: #1f1f2c;
+  --surface-1: #0d0d14;
+  --surface-2: #14141c;
+  --surface-3: #1c1c25;
+  --surface-4: #26262f;
   --scrim: rgba(7, 7, 13, 0.78);
 
-  /* hairlines */
-  --hairline: rgba(244, 241, 236, 0.09);
-  --hairline-strong: rgba(244, 241, 236, 0.18);
+  /* ---- lines: hairlines are text-1 at low alpha; line-control is a solid >= 3:1 line for control outlines */
+  --hairline: rgba(247, 240, 238, 0.1);
+  --hairline-strong: rgba(247, 240, 238, 0.18);
+  --line-control: #71717a;
 
-  /* text tiers */
-  --text-1: #f4f1ec;
-  --text-2: rgba(244, 241, 236, 0.72);
-  --text-3: rgba(244, 241, 236, 0.46);
-  --text-on-ember: #12080a;
+  /* ---- text tiers (all >= 4.5:1 on every surface) */
+  --text-1: #f7f0ee;
+  --text-2: #cbc2bf;
+  --text-3: #9f9693;
+  --text-on-ember: #1c0a05;
 
-  /* accents and states */
+  /* ---- ember family */
+  --ember-strong: #ff9572;
+  --ember-deep: #db4900;
   --ember-soft: rgba(255, 107, 53, 0.16);
-  --ember-strong: #ff8a5c;
-  --cyan-soft: rgba(53, 208, 255, 0.16);
+  --ember-glow: rgba(255, 107, 53, 0.38);
+  /* large selected surfaces (cards, list rows) */
+  --ember-tint: rgba(255, 107, 53, 0.08);
+
+  /* ---- player 2 and states */
+  --cyan-strong: #88e4ff;
+  --cyan-soft: rgba(62, 209, 246, 0.16);
+  --cyan-tint: rgba(62, 209, 246, 0.08);
+  --success: #63da91;
+  --success-soft: rgba(99, 218, 145, 0.16);
+  --warning: #fbc547;
+  --warning-soft: rgba(251, 197, 71, 0.16);
+  --error: #fe626d;
+  --error-soft: rgba(254, 98, 109, 0.16);
+
+  /* ---- roles (aliases; prefer these names in screens) */
   --p1: var(--ember);
   --p2: var(--cyan);
-  --success: #3ddc97;
-  --warning: #ffc145;
-  --error: #ff4d5e;
+  --p1-soft: var(--ember-soft);
+  --p2-soft: var(--cyan-soft);
+  --bg: var(--ink);
+  --accent: var(--ember);
+  --selected: var(--ember);
+  /* names used by the touch overlay (src/input/touch/overlay.css) */
+  --dk-ink: var(--ink);
+  --dk-ember: var(--ember);
+  --dk-text: var(--text-1);
 
-  /* type */
+  /* ---- dot field (src/ui/dotfield.ts reads these at mount) */
+  --dot-color: var(--text-1);
+  --dot-accent: var(--ember);
+  /* grid pitch of the dot field, CSS px */
+  --dot-spacing: 26px;
+
+  /* ---- type */
   --font-ui: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-num: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-bold: 700;
+  --fw-num: 400;
+  --fw-num-bold: 600;
   --fs-xs: 13px;
   --fs-sm: 15px;
   --fs-md: 18px;
   --fs-lg: 24px;
   --fs-xl: 36px;
   --fs-hero: 64px;
+  --lh-tight: 1.1;
+  --lh: 1.4;
+  --tracking-caps: 0.12em;
 
-  /* spacing, radii, targets */
+  /* ---- spacing (generous), radii, lines */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -54,17 +101,127 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
+  --space-8: 64px;
   --radius-sm: 8px;
   --radius: 14px;
   --radius-lg: 22px;
-  /* minimum touch target (brief section 12: 60 pt) */
-  --target: 60px;
+  --radius-pill: 999px;
+  --line: 1px;
 
-  /* motion */
+  /* ---- touch targets (brief section 12: 60 pt or larger) */
+  --target: 60px;
+  --target-lg: 76px;
+
+  /* ---- elevation (dark UI: hairline + faint shadow) */
+  --shadow-1: 0 1px 0 rgba(247, 240, 238, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 1px 0 rgba(247, 240, 238, 0.06) inset, 0 18px 48px rgba(0, 0, 0, 0.55);
+
+  /* ---- motion: transform and opacity only */
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
   --dur-fast: 120ms;
   --dur: 200ms;
+  --dur-slow: 320ms;
+  /* how long a menu toast stays before fading out */
+  --toast-life: 2600ms;
 
-  /* focus ring */
+  /* ---- focus ring (shown by the FocusNavigator after controller / keyboard input) */
+  --focus-ring-color: var(--ember);
+  --focus-ring-width: 3px;
+  --focus-ring-offset: 3px;
   --focus-ring: 0 0 0 3px var(--ink), 0 0 0 5px var(--ember);
+  --focus-glow: 0 0 0 1px var(--ember), 0 0 28px var(--ember-glow);
+
+  /* ---- layers inside #ui */
+  --z-dotfield: -1;
+  --z-content: 1;
+  --z-modal: 50;
+  --z-toast: 60;
+
+  color-scheme: dark;
+}
+
+/* ============================================================ base elements */
+
+html,
+body {
+  background: var(--ink);
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.01em;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: manipulation;
+}
+
+::selection {
+  background: var(--ember-soft);
+  color: var(--text-1);
+}
+
+/* Numbers: JetBrains Mono, tabular figures (clock, scores, stats). */
+.num,
+[data-num] {
+  font-family: var(--font-num);
+  font-weight: var(--fw-num);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'zero' 0;
+}
+
+/* Small caps-style label (section heads, eyebrows). */
+.eyebrow {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* Thin, quiet scrollbars for the few scrolling panels. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline-strong) transparent;
+}
+
+/* ============================================================ focus ring */
+
+/*
+ * The FocusNavigator (src/input/focus.ts) marks the focused element with [data-focused] and shows the ring while
+ * <html> has [data-focus-visible] (after controller or keyboard input; a touch press hides it). This rule is more
+ * specific than the navigator's fallback outline, so the design-system ring wins: an ember outline with a soft glow.
+ */
+:root[data-focus-visible] [data-focused],
+:root.dk-focus-visible .dk-focused {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: var(--focus-glow);
+}
+
+/* Native focus rings never show: touch users never see a ring, controller users see the one above. */
+:focus {
+  outline: none;
 }

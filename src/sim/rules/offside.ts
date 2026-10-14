@@ -7,12 +7,13 @@
  * own half. Emits OFFSIDE.
  *
  * Implementation notes (RUL-08):
- *  - offsideTick runs first in rulesTick (clock phases only). Order per tick: (1) involvement of a flagged player
- *    (his touch this tick; a ChallengeRecord he made after the pass; the intended receiver within
- *    LOCAL_TUNING.receiverReach of a playable ball) -> OFFSIDE + free kick to the defending team at his position
- *    (RUL-11 awardRestart; it clears the flags); (2) resets: a touch by an unflagged teammate (a new phase of play),
- *    a deliberate play or possession by an opponent, the ball over a line; (3) a new snapshot when the ball was
- *    played this tick.
+ *  - offsideTick runs first in rulesTick (clock phases only). Order per tick: (0) the late snapshot of a safety-net
+ *    free kick from the previous tick (see below); (1) involvement of a flagged player (his touch this tick; a
+ *    ChallengeRecord he made after the pass; the intended receiver within LOCAL_TUNING.receiverReach of a playable
+ *    ball) -> OFFSIDE + free kick to the defending team at his position (RUL-11 awardRestart; it clears the flags);
+ *    (2) resets: a touch by an unflagged teammate (a new phase of play), a deliberate play or possession by an
+ *    opponent, the ball over a line; otherwise the save window may close (see below); (3) a new snapshot when the
+ *    ball was played this tick.
  *  - Snapshot moments: a pass / cross / through ball / shot / header / volley / clearance / keeper throw or kick /
  *    direct free-kick shot (PLAY_KIND), while the phase at that tick is IN_PLAY, or FREE_KICK with the free kick
  *    taken this tick. Dribble, skill and first touches, knock-ons, deflections, tackle pokes, saves and the
@@ -30,11 +31,22 @@
  *    the flags (any kind but taking possession). Everything else an opponent does with the ball resets offside.
  *    A save that is also a pass kind (a headed / kicked clearance off the line) keeps the attackers' snapshot and
  *    starts none for the defending team (one snapshot at a time; the attackers' offside is the one that matters).
+ *  - Save window: open while the flags come from an on-target shot nobody has met yet (ball.shotTick ===
+ *    offside.passTick, shotOnTarget). It closes, by moving offside.passTick to the current tick, at the first
+ *    contact that keeps the flags (save, block, deflection, parry, tip) and when the ball stops going toward the
+ *    goal without a contact (off the woodwork, or rolling to a stop: goalward speed <= saveMinGoalSpeed). After that
+ *    no contact is a save, so the next deliberate play by the defending team resets offside, also when it is the
+ *    player who made the first contact. passTick is therefore "the tick involvement is judged from" (only this
+ *    module reads it; challenges before it were already judged on their own tick).
+ *  - Safety-net free kick: RUL-11 forceRestartKick (restartTick or watchdogTick) kicks after this tick's offsideTick
+ *    and the phase is IN_PLAY by the next tick. Such a free kick (previous tick, phase entered from FREE_KICK one
+ *    tick ago, kicked by the restart taker, not yet judged) is judged on the next tick with the same one-tick
+ *    benefit window (the players and the ball have moved exactly one tick since the kick, as on the normal path).
  *  - Event: OFFSIDE a = offside slot, x/z = the restart spot (his position made legal by RUL-11), emitted after
  *    awardRestart has set up the free kick (so RESTART_AWARDED / WHISTLE come first in the tick's events).
  *  - Allocation-free; the per-tick cost is O(MAX_CHALLENGES) without a kick, O(22) on a kick tick.
  */
-import { DT, NUM_SLOTS, PLAYERS_PER_TEAM, teamFirstSlot } from '../../contracts/constants';
+import { DT, HALF_LENGTH, NUM_SLOTS, PLAYERS_PER_TEAM, teamFirstSlot } from '../../contracts/constants';
 import { ActionKind, CrossKind, KickKind, MatchPhase, RestartKind } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
 import type { SimState } from '../../contracts/state';
@@ -47,6 +59,11 @@ export const LOCAL_TUNING = { // TUNING-CR
   receiverReach: 2,
   /** ... and no higher than this, m (a ball he could still head; higher balls fly over him). */
   receiverMaxBallHeight: 2.6,
+  /**
+   * An on-target shot whose speed toward the centre of the goal drops to this or less without a contact (off the
+   * woodwork, or rolling to a stop) is no longer "going into the goal": the save window closes, m/s.
+   */
+  saveMinGoalSpeed: 0.5,
 } as const;
 
 /** Kick kinds that are a teammate "playing" the ball for offside: PLAY_KIND[kind] = 1. */
@@ -138,8 +155,11 @@ export function isOffsidePosition(s: SimState, slot: number): boolean {
   return dir * p.x > offsideLimitU(s, p.team, 0) + T_RULES.offsideMargin;
 }
 
-/** Take the snapshot for a ball played by `kicker` this tick. */
-function snapshot(s: SimState, kicker: number): void {
+/**
+ * Take the snapshot for a ball played by `kicker` at `kickTick` (this tick, or the previous one for a safety-net free
+ * kick; either way the scene has moved exactly one tick since the kick).
+ */
+function snapshot(s: SimState, kicker: number, kickTick: number): void {
   const o = s.match.offside;
   const team = s.players[kicker]!.team === 1 ? 1 : 0;
   const dir = s.teams[team]!.dir;
@@ -152,9 +172,14 @@ function snapshot(s: SimState, kicker: number): void {
     if (attackerU(s, i, dir, 1) > lim) flags |= 1 << i;
   }
   o.flags = flags;
-  o.passTick = s.tick;
+  o.passTick = kickTick;
   o.passTeam = team;
   o.passBy = kicker;
+}
+
+/** True when the last kick is of a kind offside is judged from. */
+function isPlayKind(k: number): boolean {
+  return k >= 0 && k < PLAY_KIND.length && PLAY_KIND[k] === 1;
 }
 
 /** True when the ball was played this tick by a kick that offside is judged from (phase checked by the caller). */
@@ -162,8 +187,49 @@ function playedThisTick(s: SimState): boolean {
   const b = s.ball;
   const k = b.lastKickBy;
   return b.lastKickTick === s.tick && validSlot(k) && b.lastTouch === k && b.lastTouchTick === s.tick &&
-    b.lastKickKind >= 0 && b.lastKickKind < PLAY_KIND.length && PLAY_KIND[b.lastKickKind] === 1 &&
-    s.players[k]!.active === 1;
+    isPlayKind(b.lastKickKind) && s.players[k]!.active === 1;
+}
+
+/**
+ * The kicker of a free kick taken on the previous tick by RUL-11's safety net (forceRestartKick runs after
+ * offsideTick, and the phase is IN_PLAY by now) that has not been judged yet, else -1. Call in IN_PLAY only.
+ */
+function unjudgedFreeKick(s: SimState): number {
+  const m = s.match;
+  const r = m.restart;
+  const b = s.ball;
+  const k = b.lastKickBy;
+  const t = s.tick - 1;
+  if (m.prevPhase !== MatchPhase.FREE_KICK || m.phaseT !== 1 || b.lastKickTick !== t || m.offside.passTick === t) return -1;
+  if (!validSlot(k) || k !== r.taker || r.taken !== 1 || !isPlayKind(b.lastKickKind)) return -1;
+  const p = s.players[k]!;
+  return p.active === 1 && p.team === r.team ? k : -1;
+}
+
+/**
+ * True while the flags come from an on-target shot that nobody has met yet: the next contact by the defending team
+ * is a save (flags kept). Closed by closeSaveWindow at the first such contact or when the shot stops going in.
+ */
+function saveWindowOpen(s: SimState): boolean {
+  const b = s.ball;
+  const o = s.match.offside;
+  return o.passTick >= 0 && b.shotTick === o.passTick && b.shotOnTarget === 1;
+}
+
+/** The shot has been met (or is no longer going in): from now on involvement is judged from this tick. */
+function closeSaveWindow(s: SimState): void {
+  s.match.offside.passTick = s.tick;
+}
+
+/** Ball speed toward the centre of the goal the passing team attacks, m/s (negative: away from it). */
+function goalwardSpeed(s: SimState): number {
+  const b = s.ball;
+  const team = s.match.offside.passTeam === 1 ? 1 : 0;
+  const dx = s.teams[team]!.dir * HALF_LENGTH - b.x;
+  const dz = -b.z;
+  const d = Math.sqrt(dx * dx + dz * dz);
+  if (d < 1e-6) return 0;
+  return (dx * b.vx + dz * b.vz) / d;
 }
 
 /** A flagged player who challenged an opponent after the pass (ChallengeRecord), or -1. */
@@ -197,10 +263,9 @@ function playedDeliberately(s: SimState, slot: number): boolean {
   if (b.lastKickTick !== s.tick || b.lastKickBy !== slot) return false; // a deflection / rebound off him
   const k = b.lastKickKind;
   if (k === KickKind.DEFLECTION || k === KickKind.GK_PARRY || k === KickKind.GK_TIP) return false;
-  // A save: the first contact after an on-target shot that set the flags.
-  if (o.passTick >= 0 && b.shotTick === o.passTick && b.shotOnTarget === 1 && !touchedBetween(s, o.passTick, s.tick)) {
-    return false;
-  }
+  // A save: the first contact after an on-target shot that set the flags (the window closes at any contact; the
+  // touch scan also covers a contact this module did not see on its own tick).
+  if (saveWindowOpen(s) && !touchedBetween(s, o.passTick, s.tick)) return false;
   return true;
 }
 
@@ -239,12 +304,14 @@ function checkInvolvement(s: SimState, ev: EventSink): number {
   // (2) a flagged player challenges an opponent for it
   const c = flaggedChallenger(s);
   if (c >= 0) return callOffside(s, c, ev);
-  // (3) this tick's touch: an unflagged teammate starts a new phase of play; an opponent's deliberate play resets
+  // (3) this tick's touch: an unflagged teammate starts a new phase of play; an opponent's deliberate play resets;
+  // an opponent's save / block / deflection / parry keeps the flags and closes the save window (the shot is met)
   if (touch >= 0) {
     if (s.players[touch]!.team === o.passTeam || playedDeliberately(s, touch)) {
       o.flags = 0;
       return 0;
     }
+    if (saveWindowOpen(s)) closeSaveWindow(s);
   }
   // (4) any opponent in possession
   const own = b.owner;
@@ -255,6 +322,8 @@ function checkInvolvement(s: SimState, ev: EventSink): number {
   // (5) the intended receiver arriving at the ball
   const rcv = b.passTarget;
   if (isFlagged(s, rcv) && receiverArrives(s, rcv)) return callOffside(s, rcv, ev);
+  // (6) an unmet on-target shot that stopped going in (woodwork, or rolling to a stop) can no longer be saved
+  if (touch < 0 && saveWindowOpen(s) && goalwardSpeed(s) <= LOCAL_TUNING.saveMinGoalSpeed) closeSaveWindow(s);
   return 0;
 }
 
@@ -267,6 +336,9 @@ export function offsideTick(s: SimState, ev: EventSink): void {
   }
   const phase = m.phase;
   if (phase === MatchPhase.IN_PLAY) {
+    // A safety-net free kick from the previous tick is judged now (before this tick's involvement).
+    const fk = s.ball.cross === CrossKind.NONE ? unjudgedFreeKick(s) : -1;
+    if (fk >= 0) snapshot(s, fk, s.tick - 1);
     if (o.flags !== 0 && checkInvolvement(s, ev) === 1) return;
   } else {
     // Dead ball or a restart without offside: nothing carries over.
@@ -279,5 +351,5 @@ export function offsideTick(s: SimState, ev: EventSink): void {
   }
   // Flags still set here mean this tick's touch (if any) was an opponent's save or deflection: the attackers'
   // snapshot stands and that contact starts no snapshot of its own.
-  if (o.flags === 0 && playedThisTick(s)) snapshot(s, s.ball.lastKickBy);
+  if (o.flags === 0 && playedThisTick(s)) snapshot(s, s.ball.lastKickBy, s.tick);
 }

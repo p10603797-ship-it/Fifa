@@ -19,7 +19,8 @@
  *  4. Phase: IN_PLAY -> play (resolveActions/Move/Gesture); restart phases -> SETPIECE_INPUT[restart.kind] for
  *     both sides' controllers; SHOOT_OUT -> RUL-07 shootoutInput; cut-scenes -> nothing (charges released). Outside
  *     play the controlled player's stale stick intent is stopped first so he never keeps running.
- *  5. ctrl.power / powerBtn mirror the power bar for the HUD.
+ *  5. The controlled slot at this tick's PASS / LOB / THROUGH presses is recorded (a double tap needs both presses
+ *     for the same player); ctrl.power / powerBtn mirror the power bar for the HUD.
  * Budget: O(controllers x 22) with small constants, allocation-free.
  */
 import { CPU_CONTROLLER_BASE, MAX_HUMANS, NUM_SLOTS, SQUAD_SIZE } from '../../contracts/constants';
@@ -40,7 +41,8 @@ import { moveTick } from './resolveMove';
 import { resolveGesture } from './resolveGesture';
 import {
   BTN_MASK, BufCode, Ctx, FACE_MASK, GR, LT, PREV_PRESS, PressFlag, Res, SeqFlag, chargeSlotOf, clearBuffer,
-  clearCharge, controlContext, isDoubleTap, packGesture, packPress, pressFlags, setBuffer, unpackGesture, validSlot, withPressFlag,
+  clearCharge, controlContext, isDoubleTap, packGesture, packPress, pressFlags, recordPressSlots, setBuffer, unpackGesture,
+  validSlot, withPressFlag,
 } from './resolveShared';
 
 /** Neutral frame for a missing human frame (never mutated). */
@@ -320,6 +322,7 @@ function resolveOne(s: SimState, c: number, ctl: ControllerState, src: Readonly<
       releaseCharge(s, ctl);
     }
   }
+  recordPressSlots(ctl, ctl.buttons & ~ctl.prevButtons);
   mirrorPower(s, ctl);
 }
 

@@ -16,10 +16,10 @@ import type { SimState } from '../../src/contracts/state';
 import { createKickLaunch } from '../../src/contracts/systems';
 import { T_RULES } from '../../src/contracts/tuning';
 import { createEventBuffer } from '../../src/sim/core/events';
-import { applyKick, takePossession } from '../../src/sim/core/kick';
+import { applyKick, recordTouch, takePossession } from '../../src/sim/core/kick';
 import { INVARIANT_NAMES, createInvariantChecker } from '../../src/sim/debug/invariants';
 import { isOffsidePosition } from '../../src/sim/rules/offside';
-import { awardRestart } from '../../src/sim/rules/restart';
+import { LOCAL_TUNING as RESTART_TUNING, awardRestart } from '../../src/sim/rules/restart';
 import { step } from '../../src/sim/step';
 import { makeScenario } from '../harness/scenario';
 
@@ -82,13 +82,13 @@ function scene(o: { lineU?: number; ballU?: number; strikerU?: number; strikerZ?
 }
 
 /** Launch from `slot` toward (tx, tz) at ground speed `speed` (m/s) with lift vy. */
-function launch(s: SimState, slot: number, kind: KickKind, target: number, tx: number, tz: number, speed: number, vy: number, ev: EventSink): void {
+function launch(s: SimState, slot: number, kind: KickKind, target: number, tx: number, tz: number, speed: number, vy: number, ev: EventSink, onTarget = 0): void {
   const b = s.ball;
   const dx = tx - b.x;
   const dz = tz - b.z;
   const d = Math.sqrt(dx * dx + dz * dz) || 1;
   L.vx = (dx / d) * speed; L.vy = vy; L.vz = (dz / d) * speed;
-  L.sx = 0; L.sy = 0; L.sz = 0; L.kind = kind; L.target = target; L.tx = tx; L.tz = tz; L.onTarget = 0;
+  L.sx = 0; L.sy = 0; L.sz = 0; L.kind = kind; L.target = target; L.tx = tx; L.tz = tz; L.onTarget = onTarget;
   applyKick(s, slot, L, 0.6, ev);
 }
 
@@ -124,23 +124,34 @@ function run(s: SimState, n: number, until?: (s: SimState, ev: readonly SimEvent
 
 const ofType = (ev: readonly SimEvent[], t: EventType): SimEvent[] => ev.filter((e) => e.type === t);
 
-/** Slot 7 of the kicking team stands next to the restart spot so RUL-11 picks him as the taker (not the receiver). */
+/**
+ * Slot 7 of the kicking team is made the obvious set-piece taker for every kind's policy (nearest to the spot, best
+ * crosser / free-kick taker, poor in the air so a corner keeps him out of the box). The tests do not depend on who
+ * the kind's Setup picks: only that the taker is a valid player of the team and not the intended receiver.
+ */
 const TAKER = 7;
 
-/** Award a restart on the real flow and run until it is ready to be taken (by TAKER). */
-function readyRestart(s: SimState, kind: RestartKind, team: number, x: number, z: number): void {
+/** Award a restart on the real flow and run until it is ready to be taken (never by `receiver`). */
+function readyRestart(s: SimState, kind: RestartKind, team: number, x: number, z: number, receiver: number): void {
   const tk = teamFirstSlot(team) + TAKER;
   const tp = s.players[tk]!;
   tp.x = x - Math.sign(x) * 1.2; tp.z = z - Math.sign(z) * 1.2; tp.vx = 0; tp.vz = 0;
+  const a = s.attrs[tk]!;
+  a.crossing = 99; a.curve = 99; a.shotPower = 99; a.longShots = 99; a.shortPassing = 99; a.longPassing = 99;
+  a.heading = 20; a.height = 165;
   const ev = createEventBuffer();
   ev.begin(s.tick);
   awardRestart(s, kind, team, x, z, ev);
   expect(s.match.restart.kind).toBe(kind);
   run(s, T_RULES.restartSetupTicks + 5, (st) => st.match.restart.ready === 1);
-  expect(s.match.restart.ready).toBe(1);
-  expect(s.match.restart.taken).toBe(0);
-  // The keeper takes goal kicks; otherwise the player next to the spot.
-  expect(s.match.restart.taker).toBe(kind === RestartKind.GOAL_KICK ? s.teams[team]!.keeperSlot : tk);
+  const r = s.match.restart;
+  expect(r.ready).toBe(1);
+  expect(r.taken).toBe(0);
+  expect(r.taker).toBeGreaterThanOrEqual(0);
+  expect(s.players[r.taker]!.team).toBe(team);
+  expect(s.players[r.taker]!.active).toBe(1);
+  expect(r.taker).not.toBe(receiver);
+  if (kind === RestartKind.GOAL_KICK) expect(r.taker).toBe(s.teams[team]!.keeperSlot);
 }
 
 /**
@@ -248,6 +259,56 @@ describe('RUL-08 in the real pipeline: open play', () => {
     expect(s.match.phase).toBe(MatchPhase.IN_PLAY);
   });
 
+  it('regression: a shot blocked by a defender who then clears it to the offside striker is not offside (pipeline)', () => {
+    // On-target shot along z = 0 with the striker in an offside position; defender `blocker` (u = 25, z = 0) blocks it
+    // (a touch: flags kept), the ball runs on slowly toward goal, and the same defender then clears it to the striker.
+    const sc = scene({ lineU: 30, ballU: 10, strikerU: 36 });
+    const { s, dir } = sc;
+    const blocker = PLAYERS_PER_TEAM + 5;
+    expect(s.players[blocker]!.x).toBeCloseTo(dir * 25, 9);
+    expect(s.players[blocker]!.z).toBeCloseTo(0, 9);
+    let shotTick = -1;
+    let blockTick = -1;
+    let clearTick = -1;
+    let flaggedAfterBlock = false;
+    let got = false;
+    setHook((st, ev) => {
+      const b = st.ball;
+      if (shotTick < 0) {
+        launch(st, sc.kicker, KickKind.SHOT_NORMAL, -1, dir * 52.5, 0, 20, 0.5, ev, 1);
+        shotTick = st.tick;
+        return;
+      }
+      if (blockTick < 0) {
+        const p = st.players[blocker]!;
+        if (Math.abs(b.x - p.x) < 1) {
+          recordTouch(st, blocker); // the block: a touch, no kick
+          b.vx = dir * 3; b.vz = 0; b.vy = 0; b.y = 0.11; // runs on slowly, still toward goal
+          blockTick = st.tick;
+        }
+        return;
+      }
+      if (clearTick < 0) {
+        if (st.tick < blockTick + 3) return;
+        flaggedAfterBlock = ((st.match.offside.flags >>> sc.striker) & 1) === 1;
+        const p = st.players[sc.striker]!;
+        launch(st, blocker, KickKind.CLEARANCE, -1, p.x, p.z, 14, 0, ev);
+        clearTick = st.tick;
+        return;
+      }
+      if (!got) got = receiveWhenClose(st, sc.striker, 1, ev);
+    });
+    const ev = run(s, 300, () => got);
+    expect(shotTick).toBeGreaterThan(0);
+    expect(blockTick).toBeGreaterThan(shotTick);
+    expect(flaggedAfterBlock).toBe(true); // the block did not reset offside
+    expect(got).toBe(true);
+    run(s, 3);
+    expect(ofType(ev, EventType.OFFSIDE)).toHaveLength(0);
+    expect(s.match.phase).toBe(MatchPhase.IN_PLAY);
+    expect(s.ball.owner).toBe(sc.striker);
+  });
+
   it('offside switched off: the striker in an offside position receives and play goes on', () => {
     const sc = scene({ lineU: 30, ballU: 10, strikerU: 36, offside: 0 });
     const { s } = sc;
@@ -275,7 +336,7 @@ describe('RUL-08 in the real pipeline: restarts', () => {
   it('glitch: offside given from a throw-in (pipeline)', () => {
     const sc = scene({ lineU: 30, ballU: 10, strikerU: 40, strikerZ: 20 });
     const { s } = sc;
-    readyRestart(s, RestartKind.THROW_IN, 0, 22, HALF_WIDTH);
+    readyRestart(s, RestartKind.THROW_IN, 0, 22, HALF_WIDTH, sc.striker);
     const info = takeAndDeliver(s, KickKind.THROW_IN, sc.striker, 40);
     const ev = run(s, 120);
     expect(info.kickTick).toBeGreaterThan(0);
@@ -288,7 +349,7 @@ describe('RUL-08 in the real pipeline: restarts', () => {
   it('glitch: offside given from a goal kick (pipeline)', () => {
     const sc = scene({ lineU: 10, ballU: -40, strikerU: 20, strikerZ: -4, restU: 5 });
     const { s } = sc;
-    readyRestart(s, RestartKind.GOAL_KICK, 0, -48, 4);
+    readyRestart(s, RestartKind.GOAL_KICK, 0, -48, 4, sc.striker);
     const info = takeAndDeliver(s, KickKind.GOAL_KICK, sc.striker, 60);
     const ev = run(s, 140);
     expect(info.kickTick).toBeGreaterThan(0);
@@ -303,7 +364,7 @@ describe('RUL-08 in the real pipeline: restarts', () => {
     const sc = scene({ lineU: 44, restU: 40, ballU: 10, strikerU: 52.3, strikerZ: 2 });
     const { s } = sc;
     // Ball placed inside the arc but off the lines, so the striker on the goal line is ahead of the ball.
-    readyRestart(s, RestartKind.CORNER, 0, 51.8, HALF_WIDTH - 0.5);
+    readyRestart(s, RestartKind.CORNER, 0, 51.8, HALF_WIDTH - 0.5, sc.striker);
     expect(s.match.restart.x).toBeCloseTo(51.8, 9);
     const info = takeAndDeliver(s, KickKind.CROSS, sc.striker, 50);
     const ev = run(s, 130);
@@ -317,7 +378,7 @@ describe('RUL-08 in the real pipeline: restarts', () => {
   it('offside applies from a free kick: flagged on reception, free kick back to the defenders', () => {
     const sc = scene({ lineU: 30, ballU: 10, strikerU: 38, strikerZ: 12 });
     const { s } = sc;
-    readyRestart(s, RestartKind.FREE_KICK, 0, 18, 0);
+    readyRestart(s, RestartKind.FREE_KICK, 0, 18, 0, sc.striker);
     const info = takeAndDeliver(s, KickKind.LOB_PASS, sc.striker, 50);
     const ev = run(s, 130, (st, e) => e.some((x) => x.type === EventType.OFFSIDE));
     expect(info.kickTick).toBeGreaterThan(0);
@@ -332,12 +393,66 @@ describe('RUL-08 in the real pipeline: restarts', () => {
     expect(phases).toContainEqual([MatchPhase.IN_PLAY, MatchPhase.FREE_KICK]);
   });
 
+  /** Free kick ready at u = 18 with the striker (nearest teammate, so the safety net passes to him) offside. */
+  function safetyNetScene(): Scene {
+    const sc = scene({ lineU: 30, ballU: 10, strikerU: 38, strikerZ: 12 });
+    put(sc.s, sc.kicker, sc.dir, -20, 5); // the passer of the open-play scene steps away
+    readyRestart(sc.s, RestartKind.FREE_KICK, 0, 18, 0, sc.striker);
+    expect(isOffsidePosition(sc.s, sc.striker)).toBe(true);
+    setHook((st, ev) => { receiveWhenClose(st, sc.striker, 1, ev); });
+    return sc;
+  }
+
+  function expectSafetyNetOffside(sc: Scene, ev: readonly SimEvent[]): void {
+    const kicks = ofType(ev, EventType.KICK);
+    expect(kicks.length).toBeGreaterThan(0);
+    expect(kicks[0]!.b).toBe(KickKind.GROUND_PASS); // RUL-11's plain safety-net kick
+    const off = ofType(ev, EventType.OFFSIDE);
+    expect(off).toHaveLength(1);
+    expect(off[0]!.a).toBe(sc.striker);
+    expect(sc.s.match.phase).toBe(MatchPhase.FREE_KICK);
+    expect(sc.s.match.restart.team).toBe(1);
+  }
+
+  it('a free kick taken by the RUL-11 safety net after the timeout (restartTick) is judged for offside (pipeline)', () => {
+    const sc = safetyNetScene();
+    // The taker never acts and the Default did not take it: the next tick's restartTick forces the kick.
+    sc.s.match.restart.timeoutT = -RESTART_TUNING.defaultGraceTicks + 1;
+    const ev = run(sc.s, 200, (st, e) => e.some((x) => x.type === EventType.OFFSIDE));
+    expect(ofType(ev, EventType.WATCHDOG).length).toBeGreaterThan(0);
+    expectSafetyNetOffside(sc, ev);
+  });
+
+  it('a free kick taken by the watchdog phase timeout (watchdogTick) is judged for offside (pipeline)', () => {
+    const sc = safetyNetScene();
+    const m = sc.s.match;
+    m.phaseT = T_RULES.phaseMaxTicks[MatchPhase.FREE_KICK]! - 1; // the next step reaches the phase maximum
+    const ev = run(sc.s, 200, (st, e) => e.some((x) => x.type === EventType.OFFSIDE));
+    expect(ofType(ev, EventType.WATCHDOG).length).toBeGreaterThan(0);
+    expectSafetyNetOffside(sc, ev);
+  });
+
+  it('a safety-net free kick to an onside striker is received without a flag (pipeline)', () => {
+    // Behind every defender after the free-kick set-up (wall at 9.15 m from the ball), ahead of the ball.
+    const sc = scene({ lineU: 30, ballU: 10, strikerU: 22, strikerZ: 12 });
+    put(sc.s, sc.kicker, sc.dir, -20, 5);
+    readyRestart(sc.s, RestartKind.FREE_KICK, 0, 18, 0, sc.striker);
+    expect(isOffsidePosition(sc.s, sc.striker)).toBe(false);
+    let got = false;
+    setHook((st, ev) => { if (!got) got = receiveWhenClose(st, sc.striker, 1, ev); });
+    sc.s.match.restart.timeoutT = -RESTART_TUNING.defaultGraceTicks + 1;
+    const ev = run(sc.s, 200, () => got);
+    expect(got).toBe(true);
+    expect(ofType(ev, EventType.OFFSIDE)).toHaveLength(0);
+    expect(sc.s.match.phase).toBe(MatchPhase.IN_PLAY);
+  });
+
   it('a throw-in to a teammate who then passes on judges the next pass normally', () => {
     const sc = scene({ lineU: 30, ballU: 10, strikerU: 40, strikerZ: 15 });
     const { s } = sc;
     const mate = teamFirstSlot(0) + 8;
     put(s, mate, sc.dir, 24, 28);
-    readyRestart(s, RestartKind.THROW_IN, 0, 22, HALF_WIDTH);
+    readyRestart(s, RestartKind.THROW_IN, 0, 22, HALF_WIDTH, mate);
     const info = takeAndDeliver(s, KickKind.THROW_IN, mate, 30);
     run(s, 60);
     expect(info.kickTick).toBeGreaterThan(0);

@@ -145,6 +145,21 @@ describe('SIM-15 restart, shoot-out and cut-scene routing', () => {
     expect(p.actCharging).toBe(0); // released at once: no double-tap grace at set pieces
     expect(s.ctrl[0]!.powerBtn).toBe(0);
   });
+  it('a set-piece kick of the dead ball (loose, in reach) keeps filling past its wind-up (the first-time cut is open play only)', () => {
+    const s = twoHumans(MatchPhase.CORNER);
+    const p = s.players[9]!;
+    const b = s.ball;
+    b.owner = -1; b.heldBy = -1; b.x = p.x + 0.4; b.z = p.z; b.y = 0.11; b.vx = 0; b.vz = 0; b.px = b.x; b.pz = b.z;
+    run(s, 1, (_i, st) => {
+      const q = st.players[9]!;
+      q.act = ActionKind.KICK; q.actT = 0; q.actDur = 60; q.actContact = 8; q.actDone = 0; q.actCharging = 1; q.actKick = KickKind.CROSS;
+      return { buttons: Btn.LOB };
+    });
+    run(s, 20, () => ({ buttons: Btn.LOB }));
+    expect(p.actT).toBeGreaterThan(p.actContact);
+    expect(p.actCharging).toBe(1);
+    expect(p.actPower).toBeCloseTo(21 / T_PASS.powerFillTicks, 9);
+  });
 });
 
 describe('SIM-15 edges for other modules', () => {

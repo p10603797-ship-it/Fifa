@@ -16,9 +16,11 @@ import {
 import { EventType, type SimEvent } from '../../src/contracts/events';
 import { AXIS_SCALE, Btn, clearInputFrame, createInputFrame, type InputFrame } from '../../src/contracts/input';
 import {
-  createMatchConfig, MoveMode, type BallState, type ControllerConfig, type SimState,
+  createBallState, createMatchConfig, MoveMode, type BallState, type ControllerConfig, type SimState,
 } from '../../src/contracts/state';
 import { T_INPUT } from '../../src/contracts/tuning';
+import { ballStepTick } from '../../src/sim/ball/contact';
+import { copyBallState } from '../../src/sim/ball/flight';
 import { cloneState } from '../../src/sim/core/clone';
 import { createEventBuffer } from '../../src/sim/core/events';
 import { hashState } from '../../src/sim/core/hash';
@@ -682,6 +684,215 @@ describe('SIM-16 auto-switch settings', () => {
     s.ball.lastTouchTick = s.tick; // touched again
     tick(s);
     expect(s.ctrl[0]!.slot).toBe(8);
+  });
+});
+
+describe('SIM-16 long air balls (flights of 3 s or more)', () => {
+  const REACH = SWITCH_TUNING.reachHeight;
+  const SCRATCH = createBallState();
+
+  /**
+   * Opponent long ball struck now from (x0, z0) toward -x at `speed` m/s and `elev` rad (no spin), last touched by
+   * team 1. Returns the first tick (from now) at which the real SIM-02 ball descends to reachHeight, and where.
+   */
+  function longBall(s: SimState, x0: number, speed: number, elev: number, z0 = 0): { playT: number; x: number; z: number } {
+    const b = s.ball;
+    b.owner = -1; b.heldBy = -1; b.x = x0; b.y = BALL_RADIUS; b.z = z0;
+    b.vx = -speed * Math.cos(elev); b.vy = speed * Math.sin(elev); b.vz = 0; b.sx = 0; b.sy = 0; b.sz = 0; b.grounded = 0;
+    b.passTarget = -1; b.shotBy = -1; b.lastTouch = 19; b.lastTouchTeam = 1; b.lastTouchTick = s.tick;
+    b.lastKickBy = 19; b.lastKickTeam = 1; b.lastKickKind = KickKind.CLEARANCE; b.lastKickTick = s.tick;
+    copyBallState(SCRATCH, b);
+    let above = false;
+    for (let t = 1; t < 600; t++) {
+      ballStepTick(SCRATCH, null);
+      if (SCRATCH.y > REACH) above = true;
+      else if (above) return { playT: t, x: SCRATCH.x, z: SCRATCH.z };
+    }
+    throw new Error('the long ball never comes down');
+  }
+
+  /** Park every team-0 outfield player except `keep` far upfield (x = 48), out of the long ball's way. */
+  function clearUpfield(s: SimState, ...keep: number[]): void {
+    for (let i = 1; i < 11; i++) if (!keep.includes(i)) place(s, i, 48, -30 + i * 5);
+  }
+
+  it('gap "auto-switch never fires for long high balls": the teammate under the drop gets control during the flight (AIR_AND_LOOSE, AUTO); OFF never', () => {
+    // The checker's cases: high lobs 22 m/s and 26 m/s at 0.95 rad, a long clearance 30 m/s at 0.7 rad.
+    for (const [speed, elev] of [[22, 0.95], [26, 0.95], [30, 0.7]] as const) {
+      for (const auto of [AutoSwitch.OFF, AutoSwitch.AIR_AND_LOOSE, AutoSwitch.AUTO]) {
+        const s = setup([{ side: 0, slot: 9, auto }]);
+        place(s, 9, 35, 25); // far upfield
+        const drop = longBall(s, 20, speed, elev);
+        expect(drop.playT, `${speed}/${elev}: a flight of 3 s or more`).toBeGreaterThanOrEqual(180);
+        place(s, 3, drop.x, drop.z); // our defender stands at the landing spot
+        // The look-ahead follows the whole flight: he meets the ball as it comes down (the sim's own flight).
+        const effs = new Array<number>(NUM_SLOTS).fill(0);
+        debugSwitchEff(s, 0, effs);
+        expect(Math.abs(effs[3]! - drop.playT), `${speed}/${elev}`).toBeLessThanOrEqual(2);
+        const sw: { tick: number; to: number }[] = [];
+        const t0 = s.tick;
+        for (let t = 1; t <= drop.playT + 30; t++) {
+          ballStepTick(s.ball, null);
+          for (const e of switchesOf(tick(s), 0)) sw.push({ tick: s.tick - t0, to: e.b });
+        }
+        const tag = `${speed}/${elev} auto=${auto}`;
+        if (auto === AutoSwitch.OFF) {
+          expect(sw, tag).toEqual([]);
+          expect(s.ctrl[0]!.slot).toBe(9);
+          continue;
+        }
+        expect(sw.length, tag).toBe(1);
+        expect(sw[0]!.to, tag).toBe(3);
+        // Decided right after the strike, seconds before the ball comes down (not after it lands), and kept.
+        expect(sw[0]!.tick, tag).toBeLessThanOrEqual(LOCK);
+        expect(s.ctrl[0]!.slot, tag).toBe(3);
+      }
+    }
+  });
+
+  it('the teammate nearest the drop gets a long ball even when he only reaches it after it lands', () => {
+    let checked = 0;
+    for (let dz = 18; dz <= 34 && checked === 0; dz++) {
+      const s = setup([{ side: 0, slot: 9, auto: AutoSwitch.AIR_AND_LOOSE }]);
+      place(s, 9, 35, 25);
+      const drop = longBall(s, 20, 26, 0.95); // drops near x = -25, z = 0
+      clearUpfield(s, 9);
+      place(s, 4, drop.x - 6, drop.z - dz);
+      const out = new Array<number>(NUM_SLOTS).fill(0);
+      const air = new Array<number>(NUM_SLOTS).fill(0);
+      debugSwitchEff(s, 0, out, undefined, air);
+      if (!(out[4]! > drop.playT + 20 && out[4]! < 1000)) continue;
+      expect(air[4]!).toBeGreaterThan(150); // most of his wait is the ball's hang time
+      for (let t = 0; t < 30; t++) { ballStepTick(s.ball, null); tick(s); }
+      expect(s.ctrl[0]!.slot, `dz=${dz}`).toBe(4);
+      checked++;
+    }
+    expect(checked).toBe(1);
+  });
+
+  it('a ball that stays out of reach beyond the look-ahead does not switch (no guess from a mid-flight point)', () => {
+    const s = setup([{ side: 0, slot: 9, auto: AutoSwitch.AUTO }]);
+    place(s, 9, 35, 25);
+    place(s, 4, -20, 0);
+    const b = s.ball;
+    loose(s, 20, 0, -4, 0, { y: 3, vy: 42, grounded: 0, lastTouchTeam: 1 }); // up ~50 m: out of reach for > 6 s
+    expect(b.y).toBeGreaterThan(REACH);
+    const out = new Array<number>(NUM_SLOTS).fill(0);
+    expect(debugSwitchEff(s, 0, out)).toBe(SWITCH_MODE.LOOSE);
+    for (let i = 1; i < 11; i++) {
+      expect(Number.isFinite(out[i]!)).toBe(true);
+      expect(out[i]!).toBeGreaterThan(SWITCH_TUNING.looseHorizonTicks + SWITCH_TUNING.airHorizonTicks);
+    }
+    for (let t = 0; t < 60; t++) { ballStepTick(s.ball, null); tick(s); }
+    expect(s.ctrl[0]!.slot).toBe(9);
+  });
+
+  it('air-ball hysteresis counts from when the ball becomes playable, not from the strike', () => {
+    // Two teammates meet the long ball as it comes down again after its first (high) bounce, 9 clearly later than
+    // 3. A relative margin counted from the strike (25 % of ~350 ticks) would keep 9; counted from when the ball is
+    // playable it is clear.
+    const M = SWITCH_TUNING.autoMarginTicks;
+    const F = SWITCH_TUNING.autoMarginFrac;
+    let checked = 0;
+    let kept = 0;
+    for (let d3 = 18; d3 <= 34; d3 += 2) {
+      for (let d9 = d3 + 2; d9 <= d3 + 16; d9 += 2) {
+        const s = setup([{ side: 0, slot: 9, auto: AutoSwitch.AIR_AND_LOOSE }]);
+        const drop = longBall(s, 20, 22, 0.95);
+        clearUpfield(s);
+        place(s, 3, drop.x - 4, drop.z + d3);
+        place(s, 9, drop.x - 4, drop.z + d9);
+        const out = new Array<number>(NUM_SLOTS).fill(0);
+        const air = new Array<number>(NUM_SLOTS).fill(0);
+        debugSwitchEff(s, 0, out, undefined, air);
+        const e3 = out[3]!, e9 = out[9]!, late = e9 - e3;
+        if (!(e3 > drop.playT + 20 && e9 < 1000)) continue; // both meet it after the first bounce
+        const oldMargin = Math.max(M, F * e9);
+        const newMargin = Math.max(M, F * (e9 - air[9]!));
+        ballStepTick(s.ball, null);
+        tick(s);
+        if (late > newMargin + 2 && late < oldMargin - 2) {
+          expect(s.ctrl[0]!.slot, `d3=${d3} d9=${d9} e3=${e3} e9=${e9}`).toBe(3);
+          checked++;
+        }
+        if (late < M - 2) {
+          expect(s.ctrl[0]!.slot, `d3=${d3} d9=${d9}: not clearly first`).toBe(9);
+          kept++;
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+    expect(kept).toBeGreaterThan(0);
+  });
+
+  it('MOD_L and the marker on a long ball pick the teammate who is under the drop soonest, not the lowest slot', () => {
+    const s = setup([{ side: 0, slot: 9, auto: AutoSwitch.OFF }]);
+    place(s, 9, 35, 25);
+    const drop = longBall(s, 20, 22, 0.95);
+    // Both 2 and 6 can be there before the ball comes down; 6 is already under it.
+    place(s, 2, drop.x - 12, drop.z + 6);
+    place(s, 6, drop.x + 0.5, drop.z);
+    const out = new Array<number>(NUM_SLOTS).fill(0);
+    const tie = new Array<number>(NUM_SLOTS).fill(0);
+    debugSwitchEff(s, 0, out, tie);
+    expect(out[2]).toBe(out[6]); // tied on arrival at the ball (it is still in the air when either gets there)
+    expect(tie[6]!).toBeLessThan(tie[2]!);
+    ballStepTick(s.ball, null);
+    tick(s);
+    expect(s.ctrl[0]!.nextSwitch).toBe(6);
+    expect(bestSwitchTarget(s, 0, 0, 0)).toBe(6);
+    tick(s, L1);
+    expect(s.ctrl[0]!.slot).toBe(6);
+  });
+
+  it('the marker never flickers between two teammates about as near the drop', () => {
+    const s = setup([{ side: 0, slot: 9, auto: AutoSwitch.OFF }]);
+    place(s, 9, 35, 25);
+    const drop = longBall(s, 20, 22, 0.95);
+    Object.assign(s.attrs[6]!, s.attrs[5]!); // equally quick, so only the distance decides who is sooner
+    s.players[6]!.stamina = s.players[5]!.stamina;
+    const out = new Array<number>(NUM_SLOTS).fill(0);
+    const tie = new Array<number>(NUM_SLOTS).fill(0);
+    const marks = new Set<number>();
+    let flips = 0;
+    for (let t = 0; t < 40; t++) {
+      // Who is nearer to the drop alternates every tick by 0.2 m (either side of the ball's line).
+      const j = t % 2 === 0 ? 0.1 : -0.1;
+      place(s, 5, drop.x, drop.z - 4 + j);
+      place(s, 6, drop.x, drop.z + 4 + j);
+      debugSwitchEff(s, 0, out, tie);
+      expect(out[5]).toBe(out[6]);
+      const nearer = tie[5]! < tie[6]! ? 5 : tie[6]! < tie[5]! ? 6 : -1;
+      if (nearer !== (t % 2 === 0 ? 5 : 6)) flips++;
+      expect(Math.abs(tie[5]! - tie[6]!)).toBeLessThanOrEqual(SWITCH_TUNING.markerTieTicks);
+      ballStepTick(s.ball, null);
+      tick(s);
+      marks.add(s.ctrl[0]!.nextSwitch);
+    }
+    expect(flips).toBe(0); // the tie-break really alternates ...
+    expect([...marks].length).toBe(1); // ... and the marker stays put
+    expect([5, 6]).toContain([...marks][0]);
+  });
+
+  it('a manual switch during a long ball is never undone by auto-switching later in the flight', () => {
+    for (const auto of [AutoSwitch.AIR_AND_LOOSE, AutoSwitch.AUTO]) {
+      const s = setup([{ side: 0, slot: 9, auto }]);
+      place(s, 9, 35, 25);
+      const drop = longBall(s, 20, 26, 0.95);
+      place(s, 3, drop.x, drop.z);
+      place(s, 8, drop.x + 25, drop.z - 10);
+      ballStepTick(s.ball, null);
+      tick(s);
+      expect(s.ctrl[0]!.slot).toBe(3); // auto: the defender under the drop
+      for (let t = 0; t < LOCK; t++) { ballStepTick(s.ball, null); tick(s); }
+      ballStepTick(s.ball, null);
+      tick(s, flick(127, -50)); // the user picks 8 instead (toward +x, -z from 3)
+      expect(s.ctrl[0]!.slot).toBe(8);
+      let n = 0;
+      for (let t = 0; t < drop.playT; t++) { ballStepTick(s.ball, null); n += switchesOf(tick(s), 0).length; }
+      expect(n, `auto=${auto}`).toBe(0);
+      expect(s.ctrl[0]!.slot).toBe(8);
+    }
   });
 });
 

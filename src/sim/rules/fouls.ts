@@ -19,12 +19,13 @@
  *    shoulder) * direction (behind > side > front) * closing speed, halved for a reckless challenge that played the
  *    ball first.
  *    A foul is then: FOUL_RED with chance slideFromBehindRed (half that for a hard tackle) for serious foul play
- *    (slide / hard tackle from behind, no ball, closing speed >= recklessSpeed * seriousSpeedMul; else FOUL_YELLOW);
- *    FOUL_RED for denying an obvious goal-scoring chance (DOGSO: the victim had the ball near him within
- *    dogsoMaxGoalDist of the goal mouth and no other outfield defender covers the line to goal; downgraded to a
- *    yellow inside the penalty area when the challenge was an attempt to play the ball, i.e. not a push/pull);
- *    FOUL_YELLOW for a reckless challenge (from behind above recklessSpeed, a slide from behind, or any challenge
- *    above recklessSpeed * allOutSpeedMul); FOUL otherwise.
+ *    (slide / hard tackle from behind, no ball, closing speed >= recklessSpeed * seriousSpeedMul; a second draw);
+ *    otherwise (no serious foul play, or its red roll failed) FOUL_RED for denying an obvious goal-scoring chance
+ *    (DOGSO: the victim had the ball near him within dogsoMaxGoalDist of the goal mouth and no other outfield
+ *    defender covers the line to goal; downgraded to a yellow inside the penalty area when the challenge was an
+ *    attempt to play the ball, i.e. not a push/pull), so a violent DOGSO foul is never carded lighter than a gentle
+ *    one; FOUL_YELLOW for a reckless challenge (from behind above recklessSpeed, a slide from behind, or any challenge
+ *    above recklessSpeed * allOutSpeedMul; serious foul play whose red roll failed is always reckless); FOUL otherwise.
  *  - A foul: FOUL event (a offender, b victim, c outcome, d 1 if in the penalty area, x/z the spot) at the victim's
  *    position. Penalty when the victim is inside the offender's own penalty area. Then either advantage or an
  *    immediate whistle: victim knocked down (SIM-14 knockDown FALLEN, before the award so he finishes his fall), any
@@ -283,14 +284,16 @@ export function classifyChallenge(s: SimState, rec: Readonly<ChallengeRecord>): 
   const reckless = isReckless(rec);
   if (rec.ballFirst === 1 && !reckless) return ChallengeOutcome.CLEAN;
   if (!rollFoul(s, rec)) return ChallengeOutcome.CLEAN;
+  // Serious foul play whose red roll fails is still at least a yellow, and still DOGSO-checked: a violent foul that
+  // denies an obvious goal-scoring chance must never get a lighter card than a gentle one in the same spot.
   const red = rollRed(s, rec);
-  if (red !== 0) return red === 2 ? ChallengeOutcome.FOUL_RED : ChallengeOutcome.FOUL_YELLOW;
+  if (red === 2) return ChallengeOutcome.FOUL_RED;
   if (isDogso(s, rec)) {
     const v = s.players[rec.victim]!;
     const attempt = rec.kind !== ChallengeKind.PUSH_PULL;
     return attempt && isPenaltyOffence(s, rec.tackler, v.x, v.z) ? ChallengeOutcome.FOUL_YELLOW : ChallengeOutcome.FOUL_RED;
   }
-  return reckless ? ChallengeOutcome.FOUL_YELLOW : ChallengeOutcome.FOUL;
+  return reckless || red === 1 ? ChallengeOutcome.FOUL_YELLOW : ChallengeOutcome.FOUL;
 }
 
 // ================================================================ cards

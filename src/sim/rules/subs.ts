@@ -16,13 +16,16 @@
  *    exception is a keeper sent off: sendOff then brings the bench keeper on for an outfield player itself.
  *  - subsTick applies the queue in order at any stoppage (restart phase or cut-scene; never IN_PLAY, SHOOT_OUT or
  *    POST_MATCH), re-validating each entry (invalid entries are dropped). An entry whose out player is the restart
- *    taker in the middle of taking it (any action other than the SET_PIECE wait) is deferred; it stays queued and is
- *    applied at a later stoppage tick. Applying: ball released if he had it, action ended (interrupted), roster
+ *    taker in the middle of taking it is deferred; it stays queued and is applied at a later stoppage tick. Waiting
+ *    (applied at once) = no action, the SET_PIECE wait, or a THROW_IN not yet committed (RUL-02 sub-states APPROACH,
+ *    HOLD, CHARGE: the thrower is in ActionKind.THROW_IN for the whole phase); busy = any kick action, a committed
+ *    throw (WINDUP or released), or down. Applying: action ended (interrupted) and ball released if he had it (a
+ *    throw-in taker's action ends first so RUL-02 puts the ball he holds back on the line), roster
  *    out -> SUBBED_OFF and in -> PLAYING, rosterIdx, copyAttrs (src/sim/init.ts), stamina 1, no yellow card, motion
  *    and stun cleared, role GK / isKeeper / keeperSlot when a keeper comes on, control released through SIM-16
  *    releasePlayer (which re-picks at once), subsUsed++, SUBSTITUTION (a = team, b = slot, c = in roster index,
  *    d = out roster index).
- *  - sendOff: ball released, action ended, active = 0, parked off the pitch (LOCAL_TUNING park spot, near-side
+ *  - sendOff: ball released, action ended (same order as above), active = 0, parked off the pitch (LOCAL_TUNING park spot, near-side
  *    touchline beyond the boards, one spot per slot), motion cleared, roster SENT_OFF, onPitch--, team / ball /
  *    controller references to him cleared (chaser, press/cover, support/run/pass-and-go calls, pass target, receiver,
  *    second defender), queued subs for him dropped. A keeper sent off is replaced: the bench keeper (if a substitution
@@ -51,6 +54,9 @@ import { endAction } from '../actions/dispatch';
 import { releasePlayer } from '../control/switching';
 import { releasePossession } from '../core/kick';
 import { copyAttrs } from '../init';
+// ThrowState is only read at tick time (never while modules evaluate), so the import cycle subs -> throwin ->
+// restart -> machine -> subs is harmless; throwin.ts is already in this module's graph through actions/dispatch.
+import { ThrowState } from './throwin';
 
 /** TUNING-CR (RUL-10): proposed additions to T_RULES (units in comments). */
 export const LOCAL_TUNING = { // TUNING-CR
@@ -168,13 +174,26 @@ function clearQueueFrom(s: SimState, team: number, keep: number): void {
   t.subCount = keep;
 }
 
-/** The restart taker is in the middle of taking the restart (kick / throw started): his substitution waits. */
+/**
+ * The restart taker is still waiting to take it: no action, the SET_PIECE wait, or a THROW_IN not yet committed
+ * (RUL-02 keeps the thrower in ActionKind.THROW_IN for the whole phase; APPROACH / HOLD / CHARGE are its waiting
+ * sub-states, and its end handler puts a held ball back on the line).
+ */
+function takerWaiting(p: Readonly<PlayerState>): boolean {
+  if (p.act === ActionKind.NONE || p.act === ActionKind.SET_PIECE) return true;
+  if (p.act !== ActionKind.THROW_IN || p.actDone !== 0) return false;
+  return p.actA === ThrowState.APPROACH || p.actA === ThrowState.HOLD || p.actA === ThrowState.CHARGE;
+}
+
+/**
+ * The restart taker is in the middle of taking the restart (kick started, throw committed: WINDUP or released; or
+ * he is down): his substitution waits.
+ */
 function takerBusy(s: SimState, slot: number): boolean {
   const m = s.match;
   const r = m.restart;
   if (!isRestartPhase(m.phase) || r.taken === 1 || r.taker !== slot) return false;
-  const act = s.players[slot]!.act;
-  return act !== ActionKind.NONE && act !== ActionKind.SET_PIECE;
+  return !takerWaiting(s.players[slot]!);
 }
 
 /** Ball no longer with `slot` (possession and hands). */
@@ -185,6 +204,18 @@ function takeBallFrom(s: SimState, slot: number, ev: EventSink): void {
     ev.emit(EventType.KEEPER_HANDS, slot, 0);
     b.heldBy = -1;
   }
+}
+
+/**
+ * `slot` leaves whatever he was doing and gives up the ball. A throw-in taker's action ends first so RUL-02 puts the
+ * ball he holds back on the line (otherwise it would be left hanging at head height); everyone else gives the ball up
+ * first (keeper hands: KEEPER_HANDS), then the action ends (interrupted).
+ */
+function stopPlayer(s: SimState, slot: number, ev: EventSink): void {
+  const p = s.players[slot]!;
+  if (p.act === ActionKind.THROW_IN) endAction(s, slot, 1);
+  takeBallFrom(s, slot, ev);
+  if (p.act !== ActionKind.NONE) endAction(s, slot, 1);
 }
 
 /** Motion, intent, stun and AI-job state of a player who just came on or went off. */
@@ -220,8 +251,7 @@ function substitute(s: SimState, slot: number, inRoster: number, keeperSpawn: bo
   const team = p.team;
   const t = s.teams[team]!;
   const outRoster = p.rosterIdx;
-  takeBallFrom(s, slot, ev);
-  if (p.act !== ActionKind.NONE) endAction(s, slot, 1);
+  stopPlayer(s, slot, ev);
   if (isIndex(outRoster, t.roster.length)) t.roster[outRoster] = RosterStatus.SUBBED_OFF;
   t.roster[inRoster] = RosterStatus.PLAYING;
   p.rosterIdx = inRoster;
@@ -400,8 +430,7 @@ function makeKeeper(s: SimState, slot: number, ev: EventSink): void {
   const r = m.restart;
   // A keeper may not take a throw-in: free him (RUL-11 re-picks the taker).
   if (isRestartPhase(m.phase) && r.taken === 0 && r.taker === slot && r.kind === RestartKind.THROW_IN) {
-    takeBallFrom(s, slot, ev);
-    if (p.act !== ActionKind.NONE) endAction(s, slot, 1);
+    stopPlayer(s, slot, ev);
   }
   p.isKeeper = 1;
   p.role = Role.GK;
@@ -433,8 +462,7 @@ export function sendOff(s: SimState, slot: number, ev: EventSink): void {
   const team = p.team;
   const t = s.teams[team]!;
   const wasKeeper = p.isKeeper === 1 || t.keeperSlot === slot;
-  takeBallFrom(s, slot, ev);
-  if (p.act !== ActionKind.NONE) endAction(s, slot, 1);
+  stopPlayer(s, slot, ev);
   p.active = 0;
   p.isKeeper = 0;
   park(p);

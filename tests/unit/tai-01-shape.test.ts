@@ -20,6 +20,7 @@ import {
 import { homePosition, homePositionAt, invalidateShape, updateShape } from '../../src/ai/shape';
 import { NULL_SINK } from '../../src/sim/core/events';
 import { hashState } from '../../src/sim/core/hash';
+import { secondLastDefenderX } from '../../src/sim/core/query';
 import { makeScenario } from '../harness/scenario';
 
 const FORMS: FormationId[] = FORMATIONS.map((_, i) => i as FormationId);
@@ -765,14 +766,21 @@ describe('TAI-01 quick tactics', () => {
               const ref = homes(s, 0, bu, side * bz);
               const of = outfield(s, 0);
               const tag = `${offside}/${extra}/${side}/(${bu},${bz})`;
+              // Onside ceiling (offside on): level with the ball or the second-last defender, minus the 0.7 m margin.
+              const ceil = offside === 1 ? Math.max(s.teams[0]!.dir * secondLastDefenderX(s, 1), bu) - 0.7 : Infinity;
               expect(off).toEqual(h);
               expect(minPairDist(h, of), tag).toBeGreaterThanOrEqual(4 - 1e-9);
-              // Only the box players move, sideways at most within the box, and the line depths stay onside.
+              // Only the box players move: into the box as deep as onside allows (with the ball on the box edge
+              // they wait level with it, just outside), laterally within the box, never offside.
+              let moved = 0;
               for (const f of of) {
                 if (h[f]!.u === ref[f]!.u && h[f]!.v === ref[f]!.v) continue;
-                expect(inBox(h[f]!), `${tag} f${f}`).toBe(true);
+                moved++;
+                expect(inBox(h[f]!) || h[f]!.u >= ceil - EPS, `${tag} f${f}`).toBe(true);
+                expect(h[f]!.u, `${tag} f${f}`).toBeLessThanOrEqual(ceil + EPS);
                 expect(Math.abs(h[f]!.v)).toBeLessThanOrEqual(PENALTY_AREA_HALF_WIDTH - 1 + EPS);
               }
+              expect(moved, tag).toBeGreaterThanOrEqual(1);
               checked++;
             }
           }
@@ -998,6 +1006,42 @@ describe('TAI-01 clamps', () => {
     }
   });
 
+  it('the onside ceiling is sim/core/query secondLastDefenderX (both teams, both directions, sent-off opponents ignored)', () => {
+    let binding = 0;
+    for (const form of FORMS) {
+      for (const swap of [false, true]) {
+        const s = scen({ form, phase: TeamPhase.ATTACK, focus: TacticalFocus.ATTACKING, offside: 1 });
+        // Scattered opponents (deterministic), one of them sent off far up the pitch.
+        for (let i = 0; i < 22; i++) {
+          s.players[i]!.x = ((i * 37) % 61) - 30 + 0.25;
+          s.players[i]!.z = ((i * 23) % 41) - 20 + 0.5;
+        }
+        sendOff(s, 15);
+        s.players[15]!.x = 51; // inactive: must not count for the offside line
+        sendOff(s, 4);
+        s.players[4]!.x = -51;
+        if (swap) mirrorAll(s);
+        for (let team = 0; team < 2; team++) {
+          const dir = s.teams[team]!.dir;
+          const lineU = dir * secondLastDefenderX(s, 1 - team);
+          for (const bu of [-12.5, 3.25, 20.5]) {
+            const tag = `${form}/${swap}/${team}/${bu}`;
+            const of = outfield(s, team);
+            s.config.offside = 0;
+            const free = homes(s, team, bu, 7.5);
+            s.config.offside = 1;
+            const h = homes(s, team, bu, 7.5);
+            const ceil = Math.max(lineU, bu, 0) - 0.7;
+            // The clamp is the last step: every home is its offside-off value capped at the ceiling.
+            for (const f of of) expect(h[f]!.u, `${tag} f${f}`).toBeCloseTo(Math.min(free[f]!.u, ceil), 9);
+            if (Math.max(...of.map((f) => free[f]!.u)) > ceil + 1) binding++;
+          }
+        }
+      }
+    }
+    expect(binding).toBeGreaterThan(10); // the ceiling really cuts in for many of the cases
+  });
+
   it('KICK_OFF: everybody in his own half, the defending side outside the centre circle', () => {
     for (const form of FORMS) {
       for (const kicking of [0, 1]) {
@@ -1190,12 +1234,17 @@ describe('TAI-01 budget', () => {
       const cfg = createMatchConfig();
       cfg.humans = [{ kind: 0, side: -1, assist: 0, autoSwitch: 0, fastPower: 0 }, { kind: 0, side: -1, assist: 0, autoSwitch: 0, fastPower: 0 }];
       cfg.homeFormation = 3;
+      cfg.offside = 1;
       const s = initMatch(cfg);
-      s.match.phase = 2; s.teams[0].extraStriker = 1; s.teams[0].getInBox = 1; s.ball.owner = 5;
+      s.match.phase = 2; s.teams[0].extraStriker = 1; s.teams[0].getInBox = 1; s.teams[1].teamPress = 1; s.ball.owner = 5;
+      s.teams[1].lineX = 10.37;
       s.players[6].active = 0;
+      for (const p of s.players) { p.x += 0.123; p.z += 0.0371; } // non-integer numbers, as in a real match
       const o = { x: 0, z: 0 };
-      const loop = (n) => { for (let i = 0; i < n; i++) { s.tick++; s.ball.x = (i % 100) - 50; s.ball.z = (i % 60) - 30;
-        s.teams[0].phase = i % 6; updateShape(s, 0, NULL_SINK); updateShape(s, 1, NULL_SINK); homePositionAt(s, 0, i % 11, 40, 25, o); } };
+      // Non-integer ball coordinates: V8 boxes such numbers whenever they cross a call that is not inlined.
+      const loop = (n) => { for (let i = 0; i < n; i++) { s.tick++; s.ball.x = ((i * 7) % 100) - 50.25; s.ball.z = ((i * 3) % 60) - 30.125;
+        s.teams[0].phase = i % 6; s.teams[1].phase = (i >> 1) % 6; updateShape(s, 0, NULL_SINK); updateShape(s, 1, NULL_SINK);
+        homePositionAt(s, 0, i % 11, 40.5, 25.25, o); homePositionAt(s, 1, i % 11, -44.5, 27.75, o); } };
       loop(200000); // warm-up: optimisation and feedback allocate once
       let best = Infinity;
       for (let k = 0; k < 3; k++) {

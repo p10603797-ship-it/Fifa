@@ -10,7 +10,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  BOARD_Z, HALF_LENGTH, HALF_WIDTH, MAX_SUBS, MIN_PLAYERS, NUM_SLOTS, PLAYERS_PER_TEAM, WORLD_MAX_X, WORLD_MAX_Z,
+  BALL_RADIUS, BOARD_Z, HALF_LENGTH, HALF_WIDTH, MAX_SUBS, MIN_PLAYERS, NUM_SLOTS, PLAYERS_PER_TEAM, WORLD_MAX_X, WORLD_MAX_Z,
   teamFirstSlot,
 } from '../../src/contracts/constants';
 import type { Club } from '../../src/contracts/data';
@@ -26,6 +26,9 @@ import { hashState } from '../../src/sim/core/hash';
 import { createInvariantChecker } from '../../src/sim/debug/invariants';
 import { copyAttrs } from '../../src/sim/init';
 import { rulesTick } from '../../src/sim/rules/machine';
+import { awardRestart } from '../../src/sim/rules/restart';
+import { ThrowState } from '../../src/sim/rules/throwin';
+import { T_RULES } from '../../src/contracts/tuning';
 import {
   LOCAL_TUNING, canRequestSub, checkForfeit, isSubStoppage, requestSub, sendOff, subsLeft, subsTick,
 } from '../../src/sim/rules/subs';
@@ -483,6 +486,193 @@ describe('RUL-10 applying a substitution', () => {
     expect([s.teams[0]!.subsUsed, s.teams[0]!.roster[a]]).toEqual([1, RosterStatus.BENCH]);
     expect(s.players[5]!.active).toBe(0);
   });
+});
+
+// ================================================================ the throw-in taker
+
+/**
+ * Gap (checker): a substitution queued for the throw-in taker was held past that throw-in, because RUL-02 keeps the
+ * thrower in ActionKind.THROW_IN for the whole phase (APPROACH / HOLD / CHARGE are its waiting sub-states). Only a
+ * committed throw (WINDUP, or released) defers it now.
+ */
+describe('RUL-10 substituting the throw-in taker', () => {
+  const NEAR = 1; // throw-ins on the +z touchline
+
+  /** A real throw-in for `team` at x on the near touchline (awardRestart), stepped `ticks` through the pipeline. */
+  function throwIn(team: number, ticks: number, humans = 0): SimState {
+    const s = makeScenario({ phase: MatchPhase.IN_PLAY, humans });
+    const b = s.ball;
+    b.x = -8; b.y = BALL_RADIUS; b.z = NEAR * (HALF_WIDTH - 3); b.px = b.x; b.py = b.y; b.pz = b.z;
+    b.vx = 0; b.vy = 0; b.vz = 0; b.owner = -1; b.heldBy = -1;
+    EV.begin(s.tick);
+    awardRestart(s, RestartKind.THROW_IN, team, -8, NEAR * HALF_WIDTH, EV);
+    expect(s.match.phase).toBe(MatchPhase.THROW_IN);
+    const frames = [createInputFrame(), createInputFrame()];
+    for (let i = 0; i < ticks; i++) step(s, frames, EV);
+    expect(s.match.phase).toBe(MatchPhase.THROW_IN);
+    return s;
+  }
+
+  /** Ball lying on the touchline at the throw-in spot, nobody holding it. */
+  function expectBallOnLine(s: SimState): void {
+    const b = s.ball;
+    const r = s.match.restart;
+    expect([b.owner, b.heldBy]).toEqual([-1, -1]);
+    expect([b.x, b.y, b.z]).toEqual([r.x, BALL_RADIUS, NEAR * HALF_WIDTH]);
+    expect([b.vx, b.vy, b.vz]).toEqual([0, 0, 0]);
+  }
+
+  /** Step until the throw-in is taken (phase leaves THROW_IN); invariants every tick. Returns the THROW_IN kicks. */
+  function playThrow(s: SimState, max: number): SimEvent[] {
+    const frames = [createInputFrame(), createInputFrame()];
+    const inv = createInvariantChecker('core');
+    const kicks: SimEvent[] = [];
+    for (let i = 0; i < max && s.match.phase === MatchPhase.THROW_IN; i++) {
+      step(s, frames, EV);
+      expect(inv.check(s, EV)).toEqual([]);
+      for (const e of EV.toArray()) if (e.type === EventType.KICK && e.b === KickKind.THROW_IN) kicks.push(e);
+    }
+    return kicks;
+  }
+
+  it('waiting in APPROACH (walking to the line): the substitution applies at once; the substitute takes the throw', () => {
+    const s = throwIn(0, 1);
+    const r = s.match.restart;
+    const t = r.taker;
+    const p = s.players[t]!;
+    expect([p.act, p.actA, s.ball.owner]).toEqual([ActionKind.THROW_IN, ThrowState.APPROACH, -1]);
+    const inR = benchOutfield(s, 0)[0]!;
+    expect(requestSub(s, 0, t, inR)).toBe(1);
+    const ev = doSubsTick(s);
+    expect(findEvents(ev, EventType.SUBSTITUTION).map((e) => [e.a, e.b, e.c])).toEqual([[0, t, inR]]);
+    expect([p.rosterIdx, p.act, r.taker, s.teams[0]!.subCount, s.teams[0]!.subsUsed]).toEqual([inR, ActionKind.NONE, t, 0, 1]);
+    expectBallOnLine(s);
+    expect(staticFailures(s)).toEqual([]);
+    const kicks = playThrow(s, 600);
+    expect(kicks.map((e) => e.a)).toEqual([t]);
+    expect(s.players[t]!.rosterIdx).toBe(inR);
+    expect(s.match.phase).toBe(MatchPhase.IN_PLAY);
+  });
+
+  it('waiting in HOLD (ball in his hands): applied at once, the held ball goes back on the line, the substitute throws', () => {
+    const s = throwIn(0, T_RULES.restartSetupTicks + 2);
+    const r = s.match.restart;
+    const t = r.taker;
+    const p = s.players[t]!;
+    expect([r.ready, p.act, p.actA, s.ball.owner]).toEqual([1, ActionKind.THROW_IN, ThrowState.HOLD, t]);
+    expect(s.ball.y).toBeGreaterThan(1.5); // above his head
+    const inR = benchOutfield(s, 0)[1]!;
+    expect(requestSub(s, 0, t, inR)).toBe(1);
+    const ev = doSubsTick(s);
+    expect(findEvents(ev, EventType.SUBSTITUTION).map((e) => [e.b, e.c])).toEqual([[t, inR]]);
+    expect([p.rosterIdx, p.act, r.taker, r.taken]).toEqual([inR, ActionKind.NONE, t, 0]);
+    expectBallOnLine(s);
+    expect(staticFailures(s)).toEqual([]);
+    const kicks = playThrow(s, 600);
+    expect(kicks.map((e) => e.a)).toEqual([t]);
+    expect(s.players[t]!.rosterIdx).toBe(inR);
+  });
+
+  it('waiting in CHARGE (long-throw power filling): applied at once, the ball goes back on the line', () => {
+    const s = throwIn(1, T_RULES.restartSetupTicks + 2);
+    const t = s.match.restart.taker;
+    const p = s.players[t]!;
+    expect([p.actA, s.ball.owner]).toEqual([ThrowState.HOLD, t]);
+    p.actA = ThrowState.CHARGE; p.actCharging = 1; p.actPower = 0.4; // LOB held
+    const inR = benchOutfield(s, 1)[0]!;
+    expect(requestSub(s, 1, t, inR)).toBe(1);
+    expect(findEvents(doSubsTick(s), EventType.SUBSTITUTION).map((e) => e.b)).toEqual([t]);
+    expect([p.rosterIdx, p.act, p.actCharging]).toEqual([inR, ActionKind.NONE, 0]);
+    expectBallOnLine(s);
+  });
+
+  it('a committed throw (WINDUP, or already released) defers the substitution; waiting again applies it', () => {
+    const s = throwIn(0, T_RULES.restartSetupTicks + 2);
+    const t = s.match.restart.taker;
+    const p = s.players[t]!;
+    const inR = benchOutfield(s, 0)[0]!;
+    expect(requestSub(s, 0, t, inR)).toBe(1);
+    p.actA = ThrowState.WINDUP; p.actDone = 0;
+    expect(findEvents(doSubsTick(s), EventType.SUBSTITUTION)).toHaveLength(0);
+    expect([p.rosterIdx, p.act, s.teams[0]!.subCount, s.teams[0]!.subOut[0]]).toEqual([t, ActionKind.THROW_IN, 1, t]);
+    p.actA = ThrowState.HOLD; p.actDone = 1; // released (defensive: any done throw counts as committed)
+    expect(findEvents(doSubsTick(s), EventType.SUBSTITUTION)).toHaveLength(0);
+    expect(s.teams[0]!.subCount).toBe(1);
+    p.actDone = 0; // waiting again: applied now
+    expect(findEvents(doSubsTick(s), EventType.SUBSTITUTION).map((e) => e.b)).toEqual([t]);
+    expect([p.rosterIdx, s.teams[0]!.subCount]).toEqual([inR, 0]);
+  });
+
+  it('the throw-in taker sent off while holding the ball: the ball goes back on the line, a teammate throws', () => {
+    const s = throwIn(0, T_RULES.restartSetupTicks + 2);
+    const t = s.match.restart.taker;
+    expect(s.ball.owner).toBe(t);
+    doSendOff(s, t);
+    expect(s.players[t]!.active).toBe(0);
+    expectBallOnLine(s);
+    const kicks = playThrow(s, 600);
+    expect(kicks).toHaveLength(1);
+    expect(kicks[0]!.a).not.toBe(t);
+    expect(s.players[kicks[0]!.a]!.team).toBe(0);
+  });
+
+  /**
+   * The checker's probe through the real step(): the ball rolls over the touchline, and on the first THROW_IN tick
+   * the taker's substitution is requested. It must apply within that throw-in (not at a later stoppage), and the
+   * substitute takes it. humans = 0 (CPU v CPU) and 2 (the throwing side has a human: the 12 s timeout throws).
+   */
+  for (const humans of [0, 2]) {
+    it(`pipeline (humans=${humans}): a substitution queued for the taker on the first THROW_IN tick applies at that throw-in`, () => {
+      const s = makeScenario({ phase: MatchPhase.IN_PLAY, humans, ball: { x: 0, y: 0.11, z: 0 } });
+      const frames = [createInputFrame(), createInputFrame()];
+      const inv = createInvariantChecker('core');
+      let team = -1;
+      let taker = -1;
+      let inR = -1;
+      let reqTick = -1;
+      const subs: { tick: number; phase: MatchPhase; slot: number }[] = [];
+      const kicks: { slot: number; roster: number }[] = [];
+      let watchdog = 0;
+      for (let i = 0; i < 1200; i++) {
+        clearInputFrame(frames[0]!);
+        clearInputFrame(frames[1]!);
+        if (i === 0) {
+          // The loose ball rolls over the near touchline.
+          const b = s.ball;
+          b.owner = -1; b.heldBy = -1;
+          b.x = 0; b.z = HALF_WIDTH - 0.5; b.y = 0.11; b.px = b.x; b.pz = b.z; b.py = b.y;
+          b.vx = 0; b.vy = 0; b.vz = 12; b.grounded = 1;
+        }
+        step(s, frames, EV);
+        expect(inv.check(s, EV)).toEqual([]);
+        for (const e of EV.toArray()) {
+          if (e.type === EventType.SUBSTITUTION) subs.push({ tick: s.tick, phase: s.match.phase, slot: e.b });
+          if (e.type === EventType.KICK && e.b === KickKind.THROW_IN) kicks.push({ slot: e.a, roster: s.players[e.a]!.rosterIdx });
+          if (e.type === EventType.WATCHDOG && reqTick >= 0) watchdog++;
+        }
+        if (reqTick < 0 && s.match.phase === MatchPhase.THROW_IN) {
+          const r = s.match.restart;
+          team = r.team; taker = r.taker;
+          expect(taker).toBeGreaterThanOrEqual(0);
+          expect(s.players[taker]!.act).toBe(ActionKind.THROW_IN); // the thrower is in his THROW_IN action already
+          inR = benchOutfield(s, team)[0]!;
+          expect(requestSub(s, team, taker, inR)).toBe(1);
+          reqTick = s.tick;
+        }
+        if (reqTick >= 0 && s.match.phase !== MatchPhase.THROW_IN) break;
+      }
+      expect(reqTick).toBeGreaterThan(0);
+      // Applied on the very next tick, inside the same THROW_IN phase.
+      expect(subs).toEqual([{ tick: reqTick + 1, phase: MatchPhase.THROW_IN, slot: taker }]);
+      expect([s.players[taker]!.rosterIdx, s.teams[team]!.subsUsed, s.teams[team]!.subCount]).toEqual([inR, 1, 0]);
+      // The throw-in was then taken (by the substitute in the same slot), and play went on.
+      expect(kicks).toEqual([{ slot: taker, roster: inR }]);
+      expect(s.match.phase).not.toBe(MatchPhase.THROW_IN);
+      expect(watchdog).toBe(0); // a normal throw (CPU or the human timeout default), never a forced restart
+      const tp = s.players[taker]!;
+      expect(tp.act !== ActionKind.THROW_IN || tp.actA === ThrowState.RECOVER).toBe(true); // stepping back in, or free
+    });
+  }
 });
 
 // ================================================================ sending off

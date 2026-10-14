@@ -10,7 +10,8 @@
  *  1. Possession loss (always, even after another contact this tick): the owner is inactive, stunned (stunT > 0), in
  *     a non-ball action (tackles, STUMBLE / FALLEN / GET_UP, dives, punches, rushes, celebrations, wall jumps: see
  *     BALL_ACT), or the ball is more than T_DRIBBLE.loseRadius from him (horizontal) -> releasePossession. A ball in a
- *     keeper's hands (heldBy) is GKP-05's: nothing is done to it.
+ *     keeper's hands (heldBy) is GKP-05's: nothing is done to it (defensively, a holder who is not the owner is given
+ *     possession through takePossession).
  *  2. Owner control (skipped when another stage already touched the ball this tick: one contact per tick). The
  *     owner's reach is controlRadius + his speed x reachLookahead (a running player meets a ball up to a stride ahead;
  *     standing: controlRadius), and the ball must be low (controlHeight).
@@ -55,7 +56,8 @@
  *    curving run -> a regular touch.
  * A standing owner leaves a ball at rest at his feet alone (settleSpeed); a rolling one gets a stopping touch.
  *  - Direction u and planned speed: from the movement intent (DIRECT stick: jog * |stick| or a sprint; ARRIVE: toward
- *    the target), else his velocity, else his facing. Strafe / jockey caps and the SHIELD speed cap mirror SIM-04.
+ *    the target), else his velocity, else his facing. Strafe / jockey caps and the SHIELD speed cap follow SIM-04 (its
+ *    LOCAL_TUNING and staminaFactor are imported, so the two models cannot drift apart).
  *  - Lead (how far ahead of the feet the ball runs at the peak of the touch): touchAheadClose when standing, strafing /
  *    jockey-dribbling, shielding, turning or stopping; touchAheadClose..touchAheadJog up to jog speed; touchAheadJog..
  *    touchAheadSprint from jog to top speed (sprint touches are heavier). Opponents near the owner (pressureNear..
@@ -94,6 +96,7 @@ import { T_BALL, T_DRIBBLE, T_PLAYER } from '../../contracts/tuning';
 import { ballTouchedThisTick, recordTouch, releasePossession, takePossession } from '../core/kick';
 import { rngRange } from '../core/rng';
 import { isShielding, shieldBallSpot, shieldBlocks } from './bodies';
+import { LOCAL_TUNING as LOCO, staminaFactor } from './locomotion';
 
 /** TUNING-CR (SIM-06): proposed additions to T_DRIBBLE (units in the comments). */
 export const LOCAL_TUNING = { // TUNING-CR
@@ -116,14 +119,6 @@ export const LOCAL_TUNING = { // TUNING-CR
   settleSpeed: 0.4,
   /** DIRECT stick magnitude below which the intent counts as released, 0..1. */
   stickDead: 0.05,
-  /** Stick magnitude at which a sprint reaches top speed, 0..1 (mirrors SIM-04 sprintStickFull). */
-  sprintStickFull: 0.6,
-  /** Acceleration multiplier above jog speed (mirrors SIM-04 highSpeedAccelMul). */
-  highSpeedAccelMul: 0.6,
-  /** ARRIVE braking as a fraction of T_PLAYER.decel (mirrors SIM-04 arriveDecelFrac). */
-  arriveBrakeFrac: 0.45,
-  /** Strafe / jockey-dribble speed cap: fraction of jog (of top with sprint) (mirrors SIM-04 jockeyForwardFraction). */
-  jockeySpeedCap: 0.8,
   /** Sharp turn: cos of the angle between the wanted direction and the ball's travel at and below which the owner
    *  takes an extra small touch. */
   turnCos: 0.6,
@@ -186,6 +181,11 @@ export const LOCAL_TUNING = { // TUNING-CR
 } as const;
 
 const L = LOCAL_TUNING;
+/** SIM-04 movement tuning the dribble model follows (sprint stick, high-speed acceleration, ARRIVE braking, jockey cap). */
+const SPRINT_STICK_FULL = LOCO.sprintStickFull;
+const HIGH_SPEED_ACCEL_MUL = LOCO.highSpeedAccelMul;
+const ARRIVE_BRAKE_FRAC = LOCO.arriveDecelFrac;
+const JOCKEY_FORWARD_FRAC = LOCO.jockeyForwardFraction;
 const CR2 = T_DRIBBLE.controlRadius * T_DRIBBLE.controlRadius;
 const LOSE2 = T_DRIBBLE.loseRadius * T_DRIBBLE.loseRadius;
 const CTRL_H = T_DRIBBLE.controlHeight;
@@ -257,9 +257,7 @@ export function canTouchBall(s: SimState, slot: number): boolean {
 function intentOf(s: SimState, slot: number): void {
   const p = s.players[slot]!;
   const a = s.attrs[slot]!;
-  const st = Number.isFinite(p.stamina) ? p.stamina : 1;
-  const thr = T_PLAYER.staminaLowThreshold;
-  const sfac = st < thr ? T_PLAYER.staminaFloorMul + (1 - T_PLAYER.staminaFloorMul) * (st > 0 ? st / thr : 0) : 1;
+  const sfac = staminaFactor(p);
   const top = (a.topSpeed > 0 ? a.topSpeed : T_PLAYER.topSpeedMin) * sfac;
   const jog = top * T_PLAYER.jogFraction;
   const acc = (a.accel > 0 ? a.accel : T_PLAYER.accelMin) * sfac;
@@ -271,7 +269,7 @@ function intentOf(s: SimState, slot: number): void {
     if (mag > L.stickDead) {
       ux = ix / mag; uz = iz / mag; dirOk = 1;
       const m = mag < 1 ? mag : 1;
-      if (p.wantSprint === 1) { const f = m / L.sprintStickFull; vt = top * (f < 1 ? f : 1); } else vt = jog * m;
+      if (p.wantSprint === 1) { const f = m / SPRINT_STICK_FULL; vt = top * (f < 1 ? f : 1); } else vt = jog * m;
     }
   } else if (p.moveMode === MoveMode.ARRIVE) {
     const dx = (Number.isFinite(p.tgtX) ? p.tgtX : p.x) - p.x;
@@ -280,7 +278,7 @@ function intentOf(s: SimState, slot: number): void {
     if (d > T_PLAYER.arriveStop) {
       ux = dx / d; uz = dz / d; dirOk = 1;
       const cap = Number.isFinite(p.tgtSpeed) && p.tgtSpeed > 0 ? p.tgtSpeed : 0;
-      const brake = Math.sqrt(2 * L.arriveBrakeFrac * T_PLAYER.decel * (d - T_PLAYER.arriveStop));
+      const brake = Math.sqrt(2 * ARRIVE_BRAKE_FRAC * T_PLAYER.decel * (d - T_PLAYER.arriveStop));
       vt = cap < top ? cap : top;
       if (brake < vt) vt = brake;
     }
@@ -288,8 +286,19 @@ function intentOf(s: SimState, slot: number): void {
   if (p.act === ActionKind.SHIELD) {
     const cap = jog * T_PLAYER.shieldSpeedFraction;
     if (vt > cap) vt = cap;
-  } else if (p.lookAt === 1) {
-    const cap = (p.wantSprint === 1 ? top : jog) * L.jockeySpeedCap;
+  } else if (p.lookAt === 1 && vt > 0) {
+    // SIM-04's strafe cap: by the move direction relative to the look direction (sideways / backward slowest).
+    let lx = p.fx, lz = p.fz;
+    const fl = Math.sqrt(lx * lx + lz * lz);
+    if (fl > 1e-9) { lx /= fl; lz /= fl; } else { lx = 0; lz = 0; }
+    const ox = Number.isFinite(p.lookX) ? p.lookX - p.x : 0;
+    const oz = Number.isFinite(p.lookZ) ? p.lookZ - p.z : 0;
+    const ol = Math.sqrt(ox * ox + oz * oz);
+    if (ol > 0.01) { lx = ox / ol; lz = oz / ol; }
+    const c = ux * lx + uz * lz;
+    const fr = c > 0 ? T_PLAYER.jockeySpeedFraction + (JOCKEY_FORWARD_FRAC - T_PLAYER.jockeySpeedFraction) * c
+      : T_PLAYER.jockeySpeedFraction;
+    const cap = (p.wantSprint === 1 ? top : jog) * fr;
     if (vt > cap) vt = cap;
   }
   if (dirOk === 0 || vt < L.standSpeed) {
@@ -344,7 +353,7 @@ function peakReaches(early: number): number {
   const ra = T_BALL.rollDecel, rc = T_BALL.rollDamping, rest = T_BALL.restSpeed;
   const dec = T_PLAYER.decel;
   const d0 = F[F_D0]!, vt = F[F_VT]!, acc = F[F_ACC]!, jog = F[F_JOG]!, tgt = F[F_TGT]!, back = F[F_BACK]!;
-  const accHi = acc * L.highSpeedAccelMul;
+  const accHi = acc * HIGH_SPEED_ACCEL_MUL;
   let vb = F[F_UBT]!, vp = F[F_V0]!, xb = 0, xp = 0;
   let rising = vb >= vp ? 1 : 0;
   let best = rising === 1 ? d0 : -1e9;
@@ -710,8 +719,9 @@ export function dribbleTick(s: SimState, ev: EventSink): void {
   const b = s.ball;
   if (s.match.phase === MatchPhase.IN_PLAY) {
     if (b.heldBy >= 0) {
-      // In a keeper's hands (GKP-05). Defensive: the holder is the owner.
-      if (b.owner !== b.heldBy) { b.owner = b.heldBy; b.ownerT = 0; }
+      // In a keeper's hands (GKP-05, which takes possession itself). Defensive: the holder is the owner, through
+      // takePossession so the POSSESSION event and the touch bookkeeping stay right.
+      if (b.owner !== b.heldBy && b.heldBy < NUM_SLOTS) takePossession(s, b.heldBy, ev);
     } else {
       if (b.owner >= 0) ownerTick(s, ev);
       if (b.owner < 0) looseTick(s, ev);
