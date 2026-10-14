@@ -547,7 +547,9 @@ function chooseTarget(s: SimState, taker: number): void {
         const o = s.players[q]!;
         const dx = o.x - b.x, dz = o.z - b.z;
         const d2 = dx * dx + dz * dz;
-        if (d2 < T.minThrowDist * T.minThrowDist || d2 > T.longMaxDist * T.longMaxDist) q = -1;
+        // [QF-1] A short throw (PASS) only goes to a receiver in short range (SEL.maxD = shortMaxDist): SIM-08 may
+        // prefer a more open teammate 25 m away, which is a long throw (the stick at a team-mate 11 m away threw 25 m).
+        if (d2 < T.minThrowDist * T.minThrowDist || d2 > SEL.maxD * SEL.maxD) q = -1;
       }
     }
     if (q < 0) q = bestReceiver(s, taker);

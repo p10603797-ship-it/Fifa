@@ -241,7 +241,10 @@ describe('RUL-01 goals', () => {
   });
 
   it('a pending advantage is played on at a goal: ADVANTAGE(0) and the pending card is shown to the offender', () => {
+    // [QF-1] The advantage must still be running when the goal goes in: inPlay() puts the match at tick 5000, so an
+    // advantage started at tick 1 was long past advantageTicks and RUL-09 brought it back before the goal.
     const s = inPlay({ match: { advantage: { active: 1, team: 0, offender: 14, victim: 9, x: 30, z: 0, startTick: 1, card: CardKind.YELLOW, penalty: 0 } } });
+    s.match.advantage.startTick = s.tick - 1;
     injectAt(s.tick + 2, { kind: CrossKind.GOAL, x: 52.8, z: 0, end: 1, lastTouch: 9 });
     const ev = runTicks(s, 3);
     expect(s.match.advantage.active).toBe(0);

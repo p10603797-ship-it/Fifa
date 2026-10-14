@@ -580,20 +580,30 @@ function movePlayer(s: SimState, slot: number): void {
       if (sp < LT.moveEps) {
         HEAD.x = ux;
         HEAD.z = uz;
+      } else if (sp < LT.pivotSpeed && vx * ux + vz * uz < 0) {
+        // [QF-1] Slow and the wanted direction is behind the way he moves (a body contact pushed him back, he overran
+        // a close target): brake along the current heading, then set off the right way once standing. Turning the
+        // velocity round at the turn rate instead swung a slow player sideways: two players sent to the same spot
+        // orbited each other for ever (glitch "Players orbit or jitter around a target").
+        HEAD.x = vx / sp;
+        HEAD.z = vz / sp;
+        keep = 0;
       } else {
         ARG[0] = vx / sp; ARG[1] = vz / sp; ARG[2] = ux; ARG[3] = uz; ARG[4] = w * DT;
         turnToward(HEAD);
         keep = 0.5 * (1 + HEAD.x * ux + HEAD.z * uz);
       }
       if (!lookFacing) {
-        ARG[0] = fx; ARG[1] = fz; ARG[2] = HEAD.x; ARG[3] = HEAD.z; ARG[4] = w * LT.facingTurnMul * DT;
+        // Face the way he moves (braking out of a slow reversal: the way he wants to go).
+        const hx = keep > 0 ? HEAD.x : ux, hz = keep > 0 ? HEAD.z : uz;
+        ARG[0] = fx; ARG[1] = fz; ARG[2] = hx; ARG[3] = hz; ARG[4] = w * LT.facingTurnMul * DT;
         turnToward(FACE);
-        const kf = 0.5 * (1 + FACE.x * HEAD.x + FACE.z * HEAD.z);
+        const kf = 0.5 * (1 + FACE.x * hx + FACE.z * hz);
         if (kf < keep) keep = kf;
       }
-      // Slow moves shuffle without pivoting first.
+      // Slow moves shuffle without pivoting first (a slow reversal brakes: keep 0 above).
       const pv = dsp / LT.pivotSpeed;
-      keep = 1 + (keep - 1) * (pv < 1 ? pv : 1);
+      if (keep > 0) keep = 1 + (keep - 1) * (pv < 1 ? pv : 1);
       ts = dsp * keep;
     } else {
       if (sp > 0) { HEAD.x = vx / sp; HEAD.z = vz / sp; } else { HEAD.x = fx; HEAD.z = fz; }

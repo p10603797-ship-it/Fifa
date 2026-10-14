@@ -101,6 +101,11 @@ describe('RUL-01 every legal transition is reachable through rulesTick', () => {
     until(so, MatchPhase.SHOOT_OUT);
     until(so, MatchPhase.POST_MATCH);
     expect(so.match.winner).toBe(0);
+    // [QF-1] PRE_MATCH -> IN_PLAY (config.startPhase IN_PLAY: practice, D-013): straight into play, ball on the spot.
+    const ip = scenario({ config: { startPhase: MatchPhase.IN_PLAY, mode: ModeId.PRACTICE } });
+    until(ip, MatchPhase.IN_PLAY);
+    expect(ip.match.prevPhase).toBe(MatchPhase.PRE_MATCH);
+    expect([ip.ball.x, ip.ball.z, ip.match.restart.kind]).toEqual([0, 0, RestartKind.NONE]);
   });
 
   it('restarts from play and back: THROW_IN, GOAL_KICK, CORNER via line crossings; FREE_KICK, PENALTY via fouls', () => {

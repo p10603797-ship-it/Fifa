@@ -69,11 +69,12 @@ const LOCAL_TUNING = {
   /** Packets needed before time sync acts. */
   advantageMinSamples: 30,
   /**
-   * Hold the sim when running at least this many ticks ahead of the other side. 0.5 (was 1.0, QF-6): the delay formula
-   * budgets one tick of frame quantization, not a lead; a side sitting just under one tick ahead on a tight link
-   * (bandwidth-capped, or a start offset of a few seconds) stalled on every other tick for the whole match.
+   * Hold the sim when running at least this many ticks ahead of the other side. 0.75 (was 1.0, QF-6): the delay
+   * formula budgets one tick of frame quantization, not a lead; a side sitting just under one tick ahead on a tight
+   * link (bandwidth-capped, or a start offset of a few seconds) stalled on every other tick for the whole match. Lower
+   * (0.5) made both sides of a very jittery link hold back and forth.
    */
-  holdThresholdTicks: 0.5,
+  holdThresholdTicks: 0.75,
   /** Minimum time between two holds, ms (the other side's estimate needs a round trip to follow). */
   holdCooldownMs: 2000,
   /** Longest single hold, ticks shed. */

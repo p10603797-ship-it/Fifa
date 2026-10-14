@@ -11,3 +11,4 @@ blob-report
 tmp/
 reports/raw/
 dist-e2e
+reports/suite-wave2.json

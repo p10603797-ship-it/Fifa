@@ -3,7 +3,7 @@
  * frame. Time sync is meant to hold it back once, but (1) it never polled while the last frame had ended in a stall,
  * which is exactly what running ahead looks like, and (2) it only acted from a full tick ahead, while the delay formula
  * budgets no lead at all. A guest that started 2.5 s late (a slower load) on a tight link stalled on every other tick
- * for the whole match (1,336 stalls in 50 s). Now: short stalls still let it poll, and it holds from half a tick ahead.
+ * for the whole match (1,336 stalls in 50 s). Now: short stalls still let it poll, and it holds from 0.75 ticks ahead.
  */
 import { describe, expect, it } from 'vitest';
 import { createTimeSync } from '../../src/net/adaptive';
@@ -22,13 +22,13 @@ describe('QF-6 time sync', () => {
     }
   }, 120_000);
 
-  it('holds from half a tick ahead (a lead the delay formula has no room for)', () => {
+  it('holds from 0.75 ticks ahead (a lead the delay formula has no room for)', () => {
     const ts = createTimeSync();
-    for (let i = 0; i < 40; i++) ts.onPacket(101 + i, 100 + i, 0.4); // raw 1, the other side reports 0.4: 0.3 ahead
+    for (let i = 0; i < 40; i++) ts.onPacket(101 + i, 100 + i, -0.2); // raw 1, the other side reports -0.2: 0.6 ahead
     expect(ts.poll(10_000)).toBe(0);
     const lead = createTimeSync();
-    for (let i = 0; i < 40; i++) lead.onPacket(101 + i, 100 + i, -0.4); // 0.7 ahead
-    expect(lead.advantage).toBeCloseTo(0.7, 1);
+    for (let i = 0; i < 40; i++) lead.onPacket(101 + i, 100 + i, -0.8); // 0.9 ahead (was ignored below 1.0)
+    expect(lead.advantage).toBeCloseTo(0.9, 1);
     expect(lead.poll(10_000)).toBe(1);
   });
 });
