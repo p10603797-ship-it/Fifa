@@ -246,7 +246,9 @@ describe('RUL-01 clock', () => {
     expect(findEvents(events, EventType.PERIOD_END)).toHaveLength(0);
     expect(s.match.period).toBe(Period.FIRST_HALF);
     expect(s.match.periodT).toBe(0);
-    expect([MatchPhase.KICK_OFF, MatchPhase.IN_PLAY]).toContain(s.match.phase);
+    // [INT-A] Any open-play / restart / goal-sequence phase is fine (the bots now score often enough that the run can
+    // stop mid-celebration); what matters is that the match never reached a break or its end.
+    expect([MatchPhase.HALF_TIME, MatchPhase.FULL_TIME, MatchPhase.EXTRA_TIME, MatchPhase.SHOOT_OUT, MatchPhase.POST_MATCH]).not.toContain(s.match.phase);
     expect(isTimeUp(s)).toBe(false);
     // A goal in practice goes back to a kick-off.
     s.match.phase = MatchPhase.REPLAY;

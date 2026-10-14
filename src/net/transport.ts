@@ -21,14 +21,21 @@
  *     closed channel -> 'disconnected'. A host then waits for the guest to rejoin (state 'connecting', same room id,
  *     re-registering with the broker after brokerRetryMs if the broker dropped it); a guest is 'closed' and may call
  *     reconnect() to dial the same room again.
+ *  5. Rejoins (QF-6): a guest that dials again under the same peer id replaces the host's old link (its side saw the
+ *     old link die first; the host emits 'disconnected' for the old one, then 'connected'). Another peer replaces an
+ *     established link only when that link has been silent for replaceSilentMs (a guest page that reloaded comes back
+ *     under a new id). Every failure of a guest's reconnect() attempt ('$full', ICE, handshake, channel errors) leaves
+ *     the transport 'closed' and retryable; only open() failures are fatal ('failed').
+ *  6. expectBusy(ms) sends '$busy' { ms }: both sides suspend the silence timeout for up to ms (match warm-up blocks
+ *     the main thread); expectBusy(0) / '$busy' { ms: 0 } ends the grace.
  *
  * Tests inject `createPeer` (a fake Peer / DataConnection pair, no network) and `timers` (a manual clock).
  */
 import { createRttMeter, type RttMeter } from './adaptive';
 import type { NetConfig } from './config';
 import {
-  createControlCodec, createEmitter, CTRL_FULL, CTRL_HELLO, decodeInputPacket, encodeInputPacket, NET_PROTOCOL_VERSION,
-  netError, type ControlCodec,
+  createControlCodec, createEmitter, CTRL_BUSY, CTRL_FULL, CTRL_HELLO, decodeInputPacket, encodeInputPacket, MAX_BUSY_MS,
+  NET_PROTOCOL_VERSION, netError, type ControlCodec,
 } from './packet';
 import type {
   ControlMessage, InputPacket, NetErrorReason, NetRole, NetTransport, TransportEvent, TransportState,
@@ -175,6 +182,9 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
   let pingTimer: unknown = null;
   let retryTimer: unknown = null;
   let lastHeard = 0;
+  /** The silence timeout is suspended until then: this side is busy (expectBusy) / the other side said '$busy'. */
+  let localGraceUntil = -Infinity;
+  let remoteGraceUntil = -Infinity;
   let closed = false;
 
   const inputs = createEmitter<InputPacket>();
@@ -220,6 +230,26 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     teardown();
   }
 
+  /**
+   * A dial attempt failed. During a guest's reconnect() (open() succeeded before) the attempt is dropped and the
+   * transport stays 'closed' and retryable, so a rejoin can try again; during open() it is fatal (fail()).
+   */
+  function failAttempt(reason: NetErrorReason, detail?: string): void {
+    if (closed || state === 'failed') return;
+    if (role === 'guest' && openWait === null && state !== 'open') {
+      if (link) dropLink(link);
+      state = 'closed';
+      events.emit(detail === undefined ? { type: 'error', reason } : { type: 'error', reason, detail });
+      settle(netError(reason));
+      return;
+    }
+    fail(reason, detail);
+  }
+
+  function silentFor(now: number): number {
+    return now < localGraceUntil || now < remoteGraceUntil ? 0 : now - lastHeard;
+  }
+
   function dropLink(l: Link): void {
     // Detach first: closing a channel fires 'close' synchronously, which must not re-enter linkLost for this link.
     l.dead = true;
@@ -256,7 +286,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     dropLink(l);
     if (closed || state === 'failed') return;
     if (!wasEstablished) {
-      if (role === 'guest') fail('blocked', 'channel closed before the handshake');
+      if (role === 'guest') failAttempt('blocked', 'channel closed before the handshake');
       return;
     }
     pingTimer = clear(pingTimer);
@@ -283,7 +313,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
       const l = link;
       if (!l || !l.established || state !== 'open') return;
       const now = timers.now();
-      if (now - lastHeard > config.silenceTimeoutMs) {
+      if (silentFor(now) > config.silenceTimeoutMs) {
         linkLost(l);
         return;
       }
@@ -309,10 +339,14 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
       return;
     }
     if (msg.type === CTRL_FULL) {
-      if (role === 'guest' && !l.established) fail('room-full');
+      if (role === 'guest' && !l.established) failAttempt('room-full');
       return;
     }
     if (!l.established) return;
+    if (msg.type === CTRL_BUSY) {
+      remoteGraceUntil = graceEnd(msg.ms);
+      return;
+    }
     if (meter.handle(msg, timers.now())) return;
     if (msg.type.charCodeAt(0) === 36 /* $ */) return;
     reliable.emit(msg);
@@ -338,7 +372,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     l.timer = timers.setTimeout(() => {
       l.timer = null;
       if (l.dead || l.established) return;
-      if (role === 'guest') fail('version-mismatch', 'no handshake');
+      if (role === 'guest') failAttempt('version-mismatch', 'no handshake');
       else dropLink(l);
     }, config.handshakeTimeoutMs);
     sendHello(l);
@@ -360,8 +394,9 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     });
     conn.on('close', () => linkLost(l));
     conn.on('error', (err: PeerErrorLike) => {
+      if (l.dead) return;
       if (l.established) linkLost(l);
-      else if (role === 'guest') fail(mapPeerError(err?.type, 'dial'), err?.message);
+      else if (role === 'guest') failAttempt(mapPeerError(err?.type, 'dial'), err?.message);
       else dropLink(l);
     });
     if (conn.open) {
@@ -379,7 +414,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     l.timer = timers.setTimeout(() => {
       l.timer = null;
       if (l.dead || l.controlOpen && l.inputsOpen) return;
-      if (role === 'guest') fail('blocked', 'data channels did not open');
+      if (role === 'guest') failAttempt('blocked', 'data channels did not open');
       else {
         events.emit({ type: 'error', reason: 'blocked', detail: 'a guest could not connect' });
         dropLink(l);
@@ -388,8 +423,25 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     return l;
   }
 
+  /** Give up a link the host still holds because its guest came back on a new connection. */
+  function replaceLink(l: Link): void {
+    if (l.established) linkLost(l); // 'disconnected' for the old link; the new one reports 'connected'
+    else dropLink(l);
+  }
+
   /** Host: a guest dialled one of its channels. */
   function onConnection(conn: DataConnectionLike): void {
+    if (closed || !peer) return;
+    const cur = link && !link.dead ? link : null;
+    if (cur && cur.peerId === conn.peer) {
+      // The same guest dialled again: its side saw the old link die before ours did (or an earlier attempt of it is
+      // still half open). Attaching the new channels to the old link would skip the handshake and fail the rejoin.
+      const taken = conn.label === 'control' ? cur.control !== null : cur.inputs !== null;
+      if (cur.established || taken) replaceLink(cur);
+    } else if (cur && cur.established && silentFor(timers.now()) >= config.replaceSilentMs) {
+      // Another peer dials while our guest has gone quiet: most likely that guest's page reloaded (new peer id).
+      replaceLink(cur);
+    }
     if (closed || !peer) return;
     if (link && !link.dead && link.peerId !== conn.peer) {
       // Someone else already holds the room: tell them and hang up.
@@ -412,13 +464,14 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
   /** Guest: dial both channels of the host. */
   function dial(): void {
     if (!peer || closed) return;
+    if (link) dropLink(link); // a previous attempt must not fail this one with its timers
     const l = newLink(targetId);
     link = l;
     try {
       attach(l, peer.connect(targetId, { label: 'control', reliable: true, serialization: 'raw' }));
       attach(l, peer.connect(targetId, { label: 'inputs', reliable: false, serialization: 'raw' }));
     } catch (err) {
-      fail('blocked', err instanceof Error ? err.message : String(err));
+      failAttempt('blocked', err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -435,9 +488,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
         return;
       }
       if (role === 'guest' && reconnectWait && !openWait) {
-        state = 'closed';
-        events.emit({ type: 'error', reason, detail: err?.message });
-        settle(netError(reason));
+        failAttempt(reason, err?.message);
         return;
       }
       fail(reason, err?.message);
@@ -445,6 +496,16 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     }
     // Open (or a host waiting for a rejoin): broker trouble does not end a peer-to-peer match.
     if (reason === 'broker-unreachable') scheduleBrokerRetry();
+  }
+
+  function clampBusy(ms: unknown): number {
+    return typeof ms === 'number' && Number.isFinite(ms) ? Math.max(0, Math.min(MAX_BUSY_MS, ms)) : 0;
+  }
+
+  /** End time of a silence grace of `ms` from now (-Infinity for 0: no grace). */
+  function graceEnd(ms: unknown): number {
+    const m = clampBusy(ms);
+    return m > 0 ? timers.now() + m : -Infinity;
   }
 
   function scheduleBrokerRetry(): void {
@@ -556,6 +617,15 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     sendReliable(message) {
       if (state !== 'open' || !link || !link.established) return;
       sendControl(link, message);
+    },
+    expectBusy(ms) {
+      if (closed) return;
+      const m = clampBusy(ms);
+      const now = timers.now();
+      // Our own grace ends: count our silence check from now (the other side's queued messages were just processed).
+      if (m <= 0 && localGraceUntil > now) lastHeard = Math.max(lastHeard, now);
+      localGraceUntil = graceEnd(m);
+      if (state === 'open' && link && link.established) sendControl(link, { type: CTRL_BUSY, ms: m });
     },
     onInputs: (fn) => inputs.on(fn),
     onReliable: (fn) => reliable.on(fn),

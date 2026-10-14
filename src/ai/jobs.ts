@@ -37,9 +37,16 @@ export function resetJobs(s: SimState, team: number): void {
     p.jobSlot = -1;
     p.tgtX = p.homeX;
     p.tgtZ = p.homeZ;
-    p.tgtSpeed = holdShapeSpeed(s.attrs[i]!.topSpeed, p.homeX - p.x, p.homeZ - p.z);
+    // holdShapeSpeed, inline (a helper call returning a double boxes it per player per tick in V8).
+    const dx = p.homeX - p.x, dz = p.homeZ - p.z;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    const k = d <= LOCAL_TUNING.holdNearDist ? 0 : d >= LOCAL_TUNING.holdFarDist ? 1 : (d - LOCAL_TUNING.holdNearDist) * HOLD_INV;
+    p.tgtSpeed = s.attrs[i]!.topSpeed * (LOCAL_TUNING.holdJogFraction + HOLD_SPAN * k);
   }
 }
+
+const HOLD_INV = 1 / (LOCAL_TUNING.holdFarDist - LOCAL_TUNING.holdNearDist);
+const HOLD_SPAN = LOCAL_TUNING.holdFarFraction - LOCAL_TUNING.holdJogFraction;
 
 /**
  * HOLD_SHAPE speed cap (m/s): a jog near the home spot, rising to LOCAL_TUNING.holdFarFraction of top speed when far

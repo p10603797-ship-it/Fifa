@@ -16,7 +16,8 @@
  *    focus: <input type="range" | "number"> steps down / up (input + change events); checkbox, role="switch" or
  *    [aria-pressed] / [aria-checked] go off on LEFT and on on RIGHT (by click()); an element containing
  *    [data-adjust="dec"] / [data-adjust="inc"] buttons clicks them; anything else receives a bubbling
- *    FOCUS_ADJUST_EVENT ('focusadjust') CustomEvent with detail { delta: -1 | 1 }.
+ *    FOCUS_ADJUST_EVENT ('focusadjust') CustomEvent with detail { delta: -1 | 1 }. When there is nothing to change
+ *    that way (a toggle already off on LEFT / on on RIGHT, a disabled stepper arrow) the direction moves the focus.
  *  - CONFIRM clicks the focused element (a text field is focused instead, which opens the on-screen keyboard).
  *  - TAB_PREV / TAB_NEXT switch tabs of the [data-tabs] container holding the focus (else the first visible one in
  *    the top root): tabs are its [role="tab"] / [data-tab] elements (else its focusable elements); the selected one is
@@ -230,7 +231,12 @@ function fire(el: HTMLElement, type: string): void {
   if (Ctor) el.dispatchEvent(new Ctor(type, { bubbles: true }));
 }
 
-/** Adjust a focused [data-focus-adjust] control by delta (-1 / +1). Returns true when something was done. */
+/**
+ * Adjust a focused [data-focus-adjust] control by delta (-1 / +1). Returns true when the direction was used (the value
+ * changed, a slider sat at its end, or a custom control got the event); false when a binary control (checkbox, switch,
+ * pressed / checked) is already in that state or its stepper arrow is disabled: the direction then moves the focus
+ * (QF-3: a right-column toggle in a two-column screen no longer traps LEFT).
+ */
 function adjustElement(el: HTMLElement, delta: number): boolean {
   const tag = el.tagName.toUpperCase();
   if (tag === 'INPUT') {
@@ -250,7 +256,8 @@ function adjustElement(el: HTMLElement, delta: number): boolean {
       return true;
     }
     if (type === 'checkbox') {
-      if (input.checked !== delta > 0) input.click();
+      if (input.checked === delta > 0) return false;
+      input.click();
       return true;
     }
   }
@@ -259,13 +266,16 @@ function adjustElement(el: HTMLElement, delta: number): boolean {
   const pressed = el.getAttribute('aria-pressed');
   if (role === 'switch' || checked !== null || pressed !== null) {
     const on = (checked ?? pressed) === 'true';
-    if (on !== delta > 0) el.click();
+    if (on === delta > 0) return false;
+    el.click();
     return true;
   }
   const stepper = el.querySelector<HTMLElement>(delta > 0 ? '[data-adjust="inc"]' : '[data-adjust="dec"]');
   if (stepper) {
-    // Steppers are usually [data-focus-skip] (the selector takes focus, not its arrows): only a disabled one is skipped.
-    if ((stepper as HTMLButtonElement).disabled !== true && stepper.getAttribute('aria-disabled') !== 'true') stepper.click();
+    // Steppers are usually [data-focus-skip] (the selector takes focus, not its arrows): a disabled one (the end of
+    // the list) lets the direction move the focus instead.
+    if ((stepper as HTMLButtonElement).disabled === true || stepper.getAttribute('aria-disabled') === 'true') return false;
+    stepper.click();
     return true;
   }
   const view = el.ownerDocument?.defaultView as (Window & typeof globalThis) | null | undefined;
@@ -295,6 +305,13 @@ export interface DotkickFocusNavigator extends FocusNavigator {
   refresh(): void;
   /** Replace opts.onBack. */
   setBackHandler(fn: (() => void) | null): void;
+  /**
+   * A held direction's auto-repeat (menu input, PAD-08): like handle(), except that it never moves the focus off an
+   * adjustable control the hold is acting on (a toggle already switched, a slider at its end) and never starts
+   * adjusting a control the same hold moved onto (QF-3: a held LEFT that switched a right-column toggle off no longer
+   * runs on into the left column and steps its slider). A held UP / DOWN still walks the list.
+   */
+  handleRepeat(action: MenuAction): void;
   /** Remove listeners and the ring. */
   dispose(): void;
 }
@@ -311,6 +328,9 @@ export function createFocusNavigator(opts: FocusNavigatorOptions = {}): DotkickF
   let observer: MutationObserver | null = null;
   let observed: HTMLElement | null = null;
   let disposed = false;
+  /** Direction of the last fresh press, and whether it adjusted the focused control (handleRepeat). */
+  let holdDir = -1;
+  let holdAdjusting = false;
 
   if (doc && doc.head && !doc.getElementById(STYLE_ID)) {
     const st = doc.createElement('style');
@@ -529,6 +549,49 @@ export function createFocusNavigator(opts: FocusNavigatorOptions = {}): DotkickF
   win?.addEventListener('pointerdown', onPointer, true);
   win?.addEventListener('focusin', onFocusIn, true);
 
+  /**
+   * A direction: reveal the ring first, else adjust a [data-focus-adjust] control (LEFT / RIGHT) or move the focus. A
+   * fresh press whose adjust changes nothing (a toggle already in that state, a disabled stepper arrow) moves the focus
+   * instead. A repeat of the same held direction keeps doing what its press did: it adjusts only a control that press
+   * adjusted (a held slider ramps), stops on any other adjustable control (never falls through, never starts adjusting
+   * one it moved onto), and otherwise keeps moving.
+   */
+  function direction(action: MenuAction, repeat: boolean): void {
+    const hadRing = ring;
+    setRing(true);
+    const fresh = ensureCurrent();
+    const cur = current;
+    if (!cur || !hadRing || fresh) {
+      if (cur) reveal(cur);
+      holdDir = action;
+      holdAdjusting = false;
+      return; // the first press only reveals the ring (or lands on the new focus)
+    }
+    const delta = adjustDelta(action);
+    const adjustable = delta !== 0 && cur.hasAttribute('data-focus-adjust');
+    if (repeat && action === holdDir) {
+      if (!adjustable) {
+        navigate(action);
+      } else if (holdAdjusting && adjustElement(cur, delta)) {
+        opts.onMove?.(cur);
+        if (!current || !current.isConnected) ensureCurrent();
+      }
+      return;
+    }
+    holdDir = action;
+    holdAdjusting = false;
+    if (adjustable) {
+      if (adjustElement(cur, delta)) {
+        holdAdjusting = true;
+        opts.onMove?.(cur);
+        if (!current || !current.isConnected) ensureCurrent();
+        return;
+      }
+      // Nothing to change that way (a toggle already in that state, the end of a list): move instead.
+    }
+    navigate(action);
+  }
+
   const api: DotkickFocusNavigator = {
     get current() { return current; },
     get ringVisible() { return ring; },
@@ -571,26 +634,19 @@ export function createFocusNavigator(opts: FocusNavigatorOptions = {}): DotkickF
         if (i >= 0) subs.splice(i, 1);
       };
     },
+    handleRepeat(action: MenuAction) {
+      if (disposed) return;
+      const ls = subs.slice();
+      for (let i = ls.length - 1; i >= 0; i--) if (ls[i]!(action) === true) return;
+      if (isDirection(action)) direction(action, true);
+      else api.handle(action);
+    },
     handle(action: MenuAction) {
       if (disposed) return;
       const ls = subs.slice();
       for (let i = ls.length - 1; i >= 0; i--) if (ls[i]!(action) === true) return;
       if (isDirection(action)) {
-        const hadRing = ring;
-        setRing(true);
-        const fresh = ensureCurrent();
-        const cur = current;
-        if (!cur || !hadRing || fresh) {
-          if (cur) reveal(cur);
-          return; // the first press only reveals the ring (or lands on the new focus)
-        }
-        const delta = adjustDelta(action);
-        if (delta !== 0 && cur.hasAttribute('data-focus-adjust')) {
-          if (adjustElement(cur, delta)) opts.onMove?.(cur);
-          if (!current || !current.isConnected) ensureCurrent();
-          return;
-        }
-        navigate(action);
+        direction(action, false);
       } else if (action === MenuAction.CONFIRM) {
         setRing(true);
         ensureCurrent();
@@ -616,6 +672,7 @@ export function createFocusNavigator(opts: FocusNavigatorOptions = {}): DotkickF
     dispose() {
       if (disposed) return;
       disposed = true;
+      holdDir = -1;
       win?.removeEventListener('pointerdown', onPointer, true);
       win?.removeEventListener('focusin', onFocusIn, true);
       observer?.disconnect();

@@ -20,6 +20,8 @@
  *    edges of the safe area) or outside the safe area; anywhere else in its zone is fine (inStickZone). A fixed stick
  *    claims only touches within LOCAL_TUNING.fixedCatchMul radii of its origin; the rest of the half stays free for
  *    pitch gestures.
+ *  - A touch that ends as a tap (never moved anyone) is reported to opts.onTap (the touch source turns it into a pitch
+ *    tap at set pieces, QF-3 FIX-06).
  *  - One pointer drives the stick. Further pointers that land in the zone while it is held are claimed and ignored:
  *    they never steal the stick and never become pitch gestures inside the stick zone.
  * Wiring (TCH-07, index.ts): pass `config: () => cfg` and keep `cfg` up to date with computeStickConfig() on every
@@ -196,6 +198,12 @@ export interface StickOptions {
    * a touch keeps the values it started with until it lifts. Without it: floating, `zone` alone picks the half.
    */
   config?: () => Readonly<StickConfig>;
+  /**
+   * A touch on the stick ended as a tap (at most T_TOUCHUI.tapMaxMs long, at most T_TOUCHUI.tapMaxPt of travel: it
+   * never moved anyone). (dx, dy, downMs) = touch-down, (ux, uy, upMs) = lift. The touch source forwards it to the
+   * pitch gestures at set pieces, where "tap a teammate / a spot" must work anywhere on the pitch (QF-3 FIX-06).
+   */
+  onTap?(dx: number, dy: number, downMs: number, ux: number, uy: number, upMs: number): void;
 }
 
 export interface StickControl extends TouchControl {
@@ -291,9 +299,14 @@ export function createStick(opts: StickOptions): StickControl {
       if (id !== pid) return;
       if (Number.isFinite(x) && Number.isFinite(y)) track(x, y);
       const maxT = T_TOUCHUI.tapMaxPt;
-      tapPending = !strafeTouch && tMs >= downT && tMs - downT <= T_TOUCHUI.tapMaxMs && travel2 <= maxT * maxT;
+      const tap = tMs >= downT && tMs - downT <= T_TOUCHUI.tapMaxMs && travel2 <= maxT * maxT;
+      tapPending = !strafeTouch && tap;
       tapT = downT; tapX = downX; tapY = downY;
       reset();
+      if (tap && opts.onTap) {
+        const fin = Number.isFinite(x) && Number.isFinite(y);
+        opts.onTap(downX, downY, downT, fin ? x : downX, fin ? y : downY, tMs);
+      }
     },
     cancel(id) {
       if (id !== pid) return;

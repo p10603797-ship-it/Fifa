@@ -6,12 +6,15 @@
  * other 20 players. Reports stalls, max stall, desyncs, resyncs, delay switches and whether the final hashes and
  * the two frame streams are equal. Never touches the network.
  *
+ * Like the app, a lobby phase (lobbyMs, default 3 s of pings) comes first and picks the start delay from the measured
+ * round trip; pass `delay` (and lobbyMs: 0) for a cold start at a fixed delay.
+ *
  *   const r = await runNetsim({ config: netsimConfig({ seed: 7, halfMinutes: 2 }),
  *     link: { latencyMs: 80, jitterMs: 20, loss: 0.05, reliableLoss: 0.05, seed: 7 } });
  *   r.hashesEqual, r.framesEqual, r.host.desyncs, r.guest.maxStallAfterWarmupMs
  *
  * CLI (definition of done 5: a full match at 80 ms each way, 20 ms jitter and 5 % loss with no desync):
- *   npx tsx tools/netsim.ts --halves 2 --latency 80 --jitter 20 --loss 0.05 --seed 7 [--json] [--desync-tick 600]
+ *   npx tsx tools/netsim.ts --halves 2 --latency 80 --jitter 20 --loss 0.05 --seed 7 [--json] [--desync-tick 600] [--lobby 3000]
  * Exit code 1 when the run is not clean (hashes or frames differ, unrepaired desync, unfinished).
  */
 import './lib/env';
@@ -24,7 +27,7 @@ import { Btn, createInputFrame, type InputFrame, type InputSampleContext, type I
 import { createMatchConfig, type MatchConfig, type SimState } from '../src/contracts/state';
 import { CUTSCENE_PHASES } from '../src/contracts/transitions';
 import { T_NET } from '../src/contracts/tuning';
-import type { DelaySwitch } from '../src/net/adaptive';
+import { computeTargetDelay, type DelaySwitch } from '../src/net/adaptive';
 import { createLockstepProvider, type LockstepProvider } from '../src/net/lockstep';
 import {
   createManualClock, createMemoryTransportPair, type MemoryLinkConditions, type MemoryLinkStats,
@@ -46,8 +49,16 @@ export interface NetsimOptions {
   /** Both peers play this config (humans[0] = host, humans[1] = guest; see netsimConfig). */
   config: MatchConfig;
   link?: NetsimLink;
-  /** Initial input delay (default T_NET.delayInitial). */
+  /**
+   * Initial input delay. Default: what the lobby picks (computeTargetDelay from the round trip measured during the
+   * lobby phase, see lobbyMs), or T_NET.delayInitial when nothing was measured.
+   */
   delay?: number;
+  /**
+   * The link pings for this long before the match starts, like the lobby does in the app (the start delay and the
+   * lockstep's round-trip estimate come from it), ms. Default 3000; 0 starts cold.
+   */
+  lobbyMs?: number;
   /** Adaptive delay (default true). */
   adaptive?: boolean;
   /** Frame-advantage time sync in the providers (default true). */
@@ -266,7 +277,6 @@ export async function runNetsim(opts: NetsimOptions): Promise<NetsimReport> {
   const pair = createMemoryTransportPair({ ...link, now: clock.now, schedule: clock.schedule });
   const warmup = opts.warmupTicks ?? 300;
   const inputSeed = (opts.inputSeed ?? opts.config.seed) >>> 0;
-  const delay = opts.delay ?? T_NET.delayInitial;
   const frameMs = opts.frameMs ?? [TICK_MS, TICK_MS];
   const latency = link.latencyMs ?? 0;
   const maxTicks = opts.maxTicks ?? Infinity;
@@ -287,6 +297,10 @@ export async function runNetsim(opts: NetsimOptions): Promise<NetsimReport> {
     await Promise.resolve();
   }
   if (!opened) throw new Error(`netsim: link did not open (${String(openError)})`);
+  // The lobby: both sides are connected for a while before anyone taps Ready (pings measure the round trip).
+  const lobbyMs = Math.max(0, opts.lobbyMs ?? 3000);
+  for (let ms = 0; ms < lobbyMs; ms += 50) clock.advance(50);
+  const delay = opts.delay ?? (pair.host.rtt > 0 ? computeTargetDelay(pair.host.rtt, pair.host.jitter) : T_NET.delayInitial);
 
   const t0 = clock.now();
   const peers: Peer[] = [0, 1].map((idx) => {
@@ -436,7 +450,7 @@ async function main(): Promise<void> {
   const { flags } = parseArgs(process.argv.slice(2), {
     halves: 'number', latency: 'number', jitter: 'number', loss: 'number', dup: 'number', reorder: 'number',
     bandwidth: 'number', seed: 'number', delay: 'number', fixed: 'boolean', 'max-ticks': 'number', 'desync-tick': 'number',
-    json: 'boolean', 'no-catch-up': 'boolean', offset: 'number',
+    json: 'boolean', 'no-catch-up': 'boolean', offset: 'number', lobby: 'number',
   });
   const num = (k: string, d: number): number => (typeof flags[k] === 'number' ? (flags[k] as number) : d);
   const seed = num('seed', 1);
@@ -448,7 +462,8 @@ async function main(): Promise<void> {
       latencyMs: num('latency', 80), jitterMs: num('jitter', 20), loss, reliableLoss: loss, duplicate: num('dup', 0),
       reorder: num('reorder', 0), bandwidthBytesPerSec: num('bandwidth', 0), seed,
     },
-    delay: num('delay', T_NET.delayInitial),
+    delay: typeof flags.delay === 'number' ? (flags.delay as number) : undefined,
+    lobbyMs: num('lobby', 3000),
     adaptive: flags.fixed !== true,
     maxTicks: typeof flags['max-ticks'] === 'number' ? (flags['max-ticks'] as number) : undefined,
     injectDesync: desyncTick >= 0 ? { peer: 1, tick: desyncTick } : undefined,

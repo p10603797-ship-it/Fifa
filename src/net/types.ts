@@ -18,7 +18,7 @@
  *  - lockstep.ts       the TickInputProvider for online play (uses all of the above).
  *
  * Control message `type` namespaces (keep them apart so several modules can share one channel):
- *  - '$...'    transport-internal ('$hello', '$full', '$ping', '$pong', '$frag'); never delivered to onReliable.
+ *  - '$...'    transport-internal ('$hello', '$full', '$ping', '$pong', '$busy', '$frag'); never delivered to onReliable.
  *  - 'ls:...'  lockstep, adaptive delay and desync guard ('ls:delay', 'ls:target', 'ls:hash', 'ls:snap', 'ls:snap-ok').
  *  - 'lobby:...' NET-03 lobby, 'session:...' NET-06 session (pause, resume, rejoin, finish).
  * Every subscriber sees every non-'$' message and must ignore types it does not own.
@@ -128,4 +128,10 @@ export interface NetTransport {
   onEvent(fn: (event: TransportEvent) => void): () => void;
   /** Close both channels and the peer; idempotent. The other side gets 'disconnected'. */
   close(): void;
+  /**
+   * Optional: this side is about to block for up to `ms` (match warm-up): both sides suspend the silence timeout until
+   * then ('$busy' on the control channel). expectBusy(0) ends the grace early (loaded). Transports without a silence
+   * timeout may omit it.
+   */
+  expectBusy?(ms: number): void;
 }

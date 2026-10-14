@@ -31,12 +31,21 @@
  * Command.HAND_TO_CPU in his frame (D-019, sim/control/handoff.ts) and the match continues locally; endMatch() quits.
  * Repeated failed resyncs (or one that never completes) end the match ('desync').
  *
+ * Waiting forever (QF-6): a stall with the link up (the friend's game is held by a system pause, portrait, a page stuck
+ * loading) also ends in 'opponent-gone' (reason 'unresponsive') after the rejoin window (T_NET.rejoinWaitMs once the
+ * friend's sim has started, startWaitMs while it may still be loading); it clears by itself when frames flow again.
+ * A remote pause or its cap that cannot be lifted here (this page is hidden or blocked) is retried every frame and
+ * turns into a system pause, so the returning player is never stuck in the friend's pause. Each side announces the
+ * match warm-up to the transport (expectBusy) so a long load is not read as a disconnect. A side that reaches full time
+ * while the link is down keeps re-dialling until the rejoin window ends (the friend may still need its last frames)
+ * and returns its lobby to the room after that; quitting the full-time screen tells opts.onFinish (quit = true).
+ *
  * Rematch: every match gets a new session and provider. Messages of the lockstep ('ls:') carry a match tag and input
  * packets from another match are dropped by tick range, so a late packet of the last match never reaches the new one.
  * At full time the provider keeps pumping until the other side holds every frame (provider.drained, ~2 s at most).
  */
 import { ANY_DEVICE, createCommandQueue, createLocalInputProvider, mergeInputFrame } from '../app/localInput';
-import type { AppContext, MatchHooks, MatchSetup, MatchSummary, TickInputProvider } from '../contracts/app';
+import type { AppContext, MatchHooks, MatchSetup, MatchSummary, SessionControl, TickInputProvider } from '../contracts/app';
 import { MAX_HUMANS } from '../contracts/constants';
 import { Command, ControllerKind } from '../contracts/enums';
 import {
@@ -46,6 +55,7 @@ import {
 import type { MatchConfig, ReadonlySimState, SimState } from '../contracts/state';
 import { T_NET } from '../contracts/tuning';
 import { copyState } from '../sim/core/clone';
+import { hashHex, hashState } from '../sim/core/hash';
 import { deserializeState } from '../sim/core/serialize';
 import { computeTargetDelay, NET_DELAY_MAX } from './adaptive';
 import { encodeSnapshotSync } from './desync';
@@ -74,12 +84,20 @@ const LOCAL_TUNING = {
   failedResyncWindowTicks: 600,
   /** Failed resyncs that end the match. */
   maxFailedResyncs: 3,
-  /** A resync still unfinished after this long ends the match, ms. */
-  resyncTimeoutMs: 15_000,
+  /**
+   * A resync still unfinished after this many ticks of play ends the match (15 s at 60 Hz). Counted in ticks, not
+   * time: while the friend's game is held (system pause, hidden) neither side advances and the snapshot cannot be
+   * applied yet, which is the unresponsive watchdog's business, not a failed resync.
+   */
+  resyncTimeoutTicks: 900,
   /** Accept input packets up to this many ticks past our last taken tick (older matches' packets are far beyond). */
   packetTickSlack: 2 * NET_DELAY_MAX + 24,
   /** Delay before closing the room after a mid-match quit, so 'session:quit' reaches the peer first, ms. */
   quitLeaveMs: 400,
+  /** A stall before the friend's sim has started (it may still be loading the match) ends in 'unresponsive' after, ms. */
+  startWaitMs: 45_000,
+  /** Silence grace announced to the transport for the match warm-up (both sides), ms. */
+  loadBusyMs: 30_000,
 } as const; // TUNING-CR
 
 export const SESSION_PAUSE = 'session:pause';
@@ -87,6 +105,8 @@ export const SESSION_RESUME = 'session:resume';
 export const SESSION_SYNC = 'session:sync';
 export const SESSION_QUIT = 'session:quit';
 export const SESSION_END = 'session:end';
+/** { tick, h, mt }: the hash of this side's final (POST_MATCH) state, compared at full time. */
+export const SESSION_FINAL = 'session:final';
 
 export const STALL_INDICATOR_MS: number = LOCAL_TUNING.stallIndicatorMs;
 export const DRAIN_MS: number = LOCAL_TUNING.drainMs;
@@ -109,7 +129,8 @@ export type OnlineStatusKind =
   /** Over early (quit, End match, unrecoverable desync). */
   | 'ended';
 
-export type OnlineEndReason = 'disconnected' | 'quit' | 'desync' | 'local' | null;
+/** 'unresponsive': the link is up but the friend's game stopped sending inputs for the whole rejoin window. */
+export type OnlineEndReason = 'disconnected' | 'quit' | 'desync' | 'local' | 'unresponsive' | null;
 
 export interface OnlineStatus {
   kind: OnlineStatusKind;
@@ -138,6 +159,11 @@ export interface OnlineStats {
   hashesCompared: number;
   failedResyncs: number;
   rejoins: number;
+  /**
+   * Full-time check: the hashes of both final states ('pending' until both are known). The 30-tick hash exchange never
+   * sees the last ticks (the app stops ticking at POST_MATCH), so a divergence there would otherwise go unnoticed.
+   */
+  finalCheck: 'pending' | 'ok' | 'mismatch';
 }
 
 /** The TickInputProvider of an online match (lockstep, then local play after Finish against CPU). */
@@ -199,7 +225,10 @@ export interface OnlineSessionOptions {
   /** Lockstep options passed through (tests). */
   adaptive?: boolean;
   timeSync?: boolean;
-  /** Also called with the summary when the match reaches full time or is quit. */
+  /**
+   * Also called with the summary when the match reaches full time or is quit, and once more (quit = true) when the app
+   * session is quit from the full-time screen (Quit or Rematch: the online screen leaves the room unless it comes back).
+   */
   onFinish?: (summary: MatchSummary | null, quit: boolean) => void;
   /** Diagnostics.log compatible (default ctx.diagnostics.log). */
   log?: (kind: string, message: string, data?: unknown) => void;
@@ -352,9 +381,23 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
   let lastKind: OnlineStatusKind = 'starting';
   let failedResyncs = 0;
   let seenDesyncs = 0;
-  let resyncSince = -1;
+  let resyncSinceTick = -1;
   let rejoins = 0;
-  let lastNow = timers.now();
+  /** Since when (app loop time) no tick was taken while this side wanted to tick, and the tick it is stuck on. */
+  let progressAt = -1;
+  let progressTick = -1;
+  /** The friend's pause ended but this session refused to lift it (page hidden / blocked): retry every frame. */
+  let liftRemotePause = false;
+  /** lastTaken when the friend was declared unresponsive (it is back once a later tick is taken). */
+  let unresponsiveAt = -1;
+  /** Full time was reached while the link was down: return the lobby to the room once it is back (or given up). */
+  let matchEndPending = false;
+  let finishSummary: MatchSummary | null = null;
+  let quitNotified = false;
+  let loadAnnounced = false;
+  let finalLocal: { tick: number; h: number } | null = null;
+  let finalRemote: { tick: number; h: number } | null = null;
+  let finalCheck: 'pending' | 'ok' | 'mismatch' = 'pending';
   const status: OnlineStatus = {
     kind: 'starting', waitingMs: 0, pausedBy: -1, pauseLeftMs: 0, rejoinLeftMs: 0, reason: null, opponent: opponentName(),
   };
@@ -500,6 +543,7 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
     } else {
       withInternal(() => sess.resume(remote));
       if (!sess.paused) notice('Pause time is up');
+      else if (sess.pausedBy === remote) liftRemotePause = true; // hidden / blocked here: lift it when possible
     }
     refresh();
   }
@@ -541,6 +585,26 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
     if (sess.paused && sess.pausedBy === remote) {
       withInternal(() => sess.resume(remote));
       if (pauseOwner === remote) clearPauseCap();
+      // The app session refuses to resume while the page is hidden or blocked: without a retry this side would stay in
+      // the friend's pause for good (only the pauser may resume it), and the friend would wait for us forever.
+      if (sess.paused && sess.pausedBy === remote) liftRemotePause = true;
+    }
+  }
+
+  /** Retry lifting the friend's ended pause; it becomes a system pause so the returning player resumes when ready. */
+  function retryLiftRemotePause(): void {
+    const sess = ctx.session;
+    if (!sess.active || !sess.paused || sess.pausedBy !== remote) {
+      liftRemotePause = false;
+      return;
+    }
+    withInternal(() => {
+      if (sess.resume(remote)) sess.pause(-1);
+    });
+    if (!(sess.paused && sess.pausedBy === remote)) {
+      liftRemotePause = false;
+      log('net', 'the friend\'s pause ended while this page was away: now a system pause');
+      refresh();
     }
   }
 
@@ -551,7 +615,8 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
       if (byHuman !== local) return false; // the other human's pauses only arrive over the network
       if (!pausing) return true; // the app session already lets only the pauser resume
       if (connLost || gone) {
-        notice('Pausing is not possible while the connection is down');
+        notice(goneReason === 'unresponsive' ? `Pausing is not possible while ${opponentName()} is not responding`
+          : 'Pausing is not possible while the connection is down');
         return false;
       }
       if (used[local]! >= pausesPer) {
@@ -590,6 +655,12 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
     },
     onQuit() {
       if (internalQuit) return;
+      if (finished && !quitNotified) {
+        // Leaving the full-time screen (Quit or Rematch): the online screen decides whether the room stays.
+        quitNotified = true;
+        callOnFinish(finishSummary, true);
+        return;
+      }
       if (finished || ended) return;
       // Quit from the pause menu mid-match: tell the peer (it may finish against the CPU), then close the room.
       ended = true;
@@ -624,7 +695,7 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
   }
 
   function redial(): void {
-    if (!connLost || disposed || mode !== 'lockstep' || ended || finished) return;
+    if (!connLost || disposed || mode !== 'lockstep' || ended) return; // also after full time: the friend may need our last frames
     redialTimer = clearTimer(redialTimer);
     transport.reconnect().then(
       () => undefined, // the 'connected' event does the rest
@@ -639,22 +710,71 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
 
   function onRejoinTimeout(): void {
     rejoinTimer = null;
-    if (!connLost || disposed || ended || finished) return;
+    if (!connLost || disposed || ended) return;
+    if (finished) {
+      connLost = false;
+      redialTimer = clearTimer(redialTimer);
+      endPendingMatch();
+      return;
+    }
     gone = true;
     goneReason = 'disconnected';
     notice(`${opponentName()} did not come back`);
     refresh();
   }
 
+  function endPendingMatch(): void {
+    if (!matchEndPending) return;
+    matchEndPending = false;
+    lobby.matchEnded();
+  }
+
   function onLinkUp(): void {
-    if (mode !== 'lockstep' || finished || ended || disposed) return;
+    if (mode !== 'lockstep' || ended || disposed) return;
     // Tell the other side our pause state; the link counts as restored when theirs arrives (a guest whose page
-    // reloaded says hello instead and gets a rejoin start).
-    send({ type: SESSION_SYNC, paused: ctx.session.paused && ctx.session.pausedBy === local, used: used[local], tick: lastTaken });
+    // reloaded says hello instead and gets a rejoin start). Also after full time: the friend may still be playing
+    // its last ticks and waits for this message to leave its rejoin window.
+    const paused = !finished && ctx.session.paused && ctx.session.pausedBy === local;
+    send({ type: SESSION_SYNC, paused, used: used[local], tick: lastTaken });
+    sendFinal(); // (again) after a drop at full time
+  }
+
+  function sendFinal(): void {
+    if (finalLocal) send({ type: SESSION_FINAL, tick: finalLocal.tick, h: finalLocal.h, mt: view.tag });
+  }
+
+  function onRemoteFinal(m: ControlMessage): void {
+    if (m.mt !== view.tag || typeof m.tick !== 'number' || typeof m.h !== 'number') return;
+    finalRemote = { tick: m.tick, h: m.h >>> 0 };
+    compareFinal();
+  }
+
+  /** Both final states known: they must be identical (same tick, same hash). */
+  function compareFinal(): void {
+    if (!finalLocal || !finalRemote || finalCheck !== 'pending') return;
+    if (finalLocal.tick === finalRemote.tick && finalLocal.h === finalRemote.h) {
+      finalCheck = 'ok';
+      return;
+    }
+    finalCheck = 'mismatch';
+    const st = ctx.session.getState();
+    const from = Math.max(firstTick, Math.min(finalLocal.tick, finalRemote.tick) - 30);
+    log('net', `desync at full time (seed ${config.seed}): local tick ${finalLocal.tick} ${hashHex(finalLocal.h)} != remote tick ` +
+      `${finalRemote.tick} ${hashHex(finalRemote.h)}`, {
+      seed: config.seed, local: finalLocal, remote: finalRemote, score: st ? [st.teams[0]!.goals, st.teams[1]!.goals] : null,
+      inputs: inner ? inner.describeInputs(from, finalLocal.tick) : null,
+    });
+    notice('The two games did not agree at the final whistle (a sync error); a report was saved');
   }
 
   function onSync(m: ControlMessage): void {
-    if (mode !== 'lockstep' || finished || ended) return;
+    if (mode !== 'lockstep' || ended) return;
+    if (finished) {
+      restoreLink();
+      endPendingMatch();
+      refresh();
+      return;
+    }
     const wasLost = connLost || gone;
     restoreLink();
     used[remote] = Math.max(used[remote]!, intIn(m.used, 0, pausesPer, 0));
@@ -685,6 +805,9 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
     }
     const st = ctx.session.getState() as SimState | null;
     if (!st || !inner) return;
+    // The old page's pause died with it (the new page starts unpaused): never keep waiting on it.
+    remotePausePending = false;
+    if (ctx.session.paused && ctx.session.pausedBy === remote) applyRemoteResume();
     const t = st.tick;
     const delay = transport.rtt > 0 ? computeTargetDelay(transport.rtt, transport.jitter) : start!.delay;
     inner.dispose();
@@ -743,6 +866,9 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
           break;
         case SESSION_QUIT:
           onOpponentLeft('quit');
+          break;
+        case SESSION_FINAL:
+          onRemoteFinal(m);
           break;
         case SESSION_END:
           if (m.reason === 'desync') endMatch('desync', false);
@@ -827,9 +953,9 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
       seenDesyncs = g.desyncs;
     }
     if (g.resyncing) {
-      if (resyncSince < 0) resyncSince = lastNow;
-      else if (lastNow - resyncSince > LOCAL_TUNING.resyncTimeoutMs && !connLost && !ctx.session.paused) failedResyncs = LOCAL_TUNING.maxFailedResyncs;
-    } else resyncSince = -1;
+      if (resyncSinceTick < 0) resyncSinceTick = lastTaken;
+      else if (lastTaken - resyncSinceTick > LOCAL_TUNING.resyncTimeoutTicks) failedResyncs = LOCAL_TUNING.maxFailedResyncs;
+    } else resyncSinceTick = -1;
     if (failedResyncs >= LOCAL_TUNING.maxFailedResyncs) {
       log('net', `ending the match: ${failedResyncs} failed resyncs`, g.reports);
       endMatch('desync', true);
@@ -875,7 +1001,6 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
       view.lastTaken = lastTaken;
     },
     pump(nowMs) {
-      lastNow = nowMs;
       if (providerDisposed) return;
       if (mode === 'lockstep' && inner) inner.pump(nowMs);
       else if (mode === 'solo') {
@@ -889,7 +1014,13 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
           }
         }
       }
+      if (!loadAnnounced) {
+        loadAnnounced = true;
+        transport.expectBusy?.(0); // loaded: our warm-up is over (the friend's own grace stays until it says so)
+      }
+      if (liftRemotePause) retryLiftRemotePause();
       checkResyncs();
+      checkUnresponsive(nowMs);
       refresh();
       frameEvents.emit(status);
     },
@@ -961,22 +1092,92 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
   }
 
   // ---------------------------------------------------------------- setup
+  function callOnFinish(summary: MatchSummary | null, quit: boolean): void {
+    if (!opts.onFinish) return;
+    try {
+      opts.onFinish(summary, quit);
+    } catch (err) {
+      log('error', `online onFinish: ${String(err)}`);
+    }
+  }
+
   function onFinish(summary: MatchSummary | null, quit: boolean): void {
     if (!quit) {
       finished = true;
+      finishSummary = summary;
       clearPauseCap();
-      rejoinTimer = clearTimer(rejoinTimer);
-      redialTimer = clearTimer(redialTimer);
-      if (mode === 'lockstep' && !gone && !connLost) lobby.matchEnded();
-      refresh();
-    }
-    if (opts.onFinish) {
-      try {
-        opts.onFinish(summary, quit);
-      } catch (err) {
-        log('error', `online onFinish: ${String(err)}`);
+      liftRemotePause = false;
+      progressAt = -1;
+      if (gone) {
+        gone = false;
+        goneReason = null;
       }
+      if (mode === 'lockstep') {
+        const fs = ctx.session.getState();
+        if (fs) {
+          finalLocal = { tick: fs.tick, h: hashState(fs as SimState) };
+          sendFinal();
+          compareFinal();
+        }
+        if (connLost && rejoinTimer !== null) {
+          // The link is down: keep re-dialling for the rest of the window (the friend may need our last frames), then
+          // hand the lobby back (matchEnded() at restore or at the end of the window). Leaving it in 'playing' for
+          // good made a rematch impossible.
+          matchEndPending = true;
+        } else {
+          connLost = false;
+          rejoinTimer = clearTimer(rejoinTimer);
+          redialTimer = clearTimer(redialTimer);
+          lobby.matchEnded();
+        }
+      }
+      refresh();
+    } else {
+      quitNotified = true;
     }
+    callOnFinish(summary, quit);
+  }
+
+  /**
+   * Both sides waiting forever: the link is up but no frames come (the friend's game is held by a system pause, a
+   * portrait lock or a page stuck loading). After the rejoin window the friend counts as gone ('unresponsive'); the
+   * state clears by itself when frames flow again.
+   */
+  function checkUnresponsive(now: number): void {
+    if (!inner || mode !== 'lockstep' || finished || ended || connLost) {
+      progressAt = -1;
+      return;
+    }
+    if (gone) {
+      // A tick past the one we got stuck on means the friend generated new frames: it is playing again.
+      if (goneReason === 'unresponsive' && lastTaken > unresponsiveAt) {
+        gone = false;
+        goneReason = null;
+        progressAt = -1;
+        log('net', `${opponentName()} responds again at tick ${lastTaken}`);
+        notice(`${opponentName()} is back`);
+      }
+      return;
+    }
+    const sess = ctx.session as SessionControl & { ticking?: boolean };
+    const ticking = typeof sess.ticking === 'boolean' ? sess.ticking : sess.active && !sess.paused;
+    // Measured as "no tick taken while this side wants to tick" (a side that runs slightly ahead may end most frames
+    // waiting for the next frame and still make progress: that is not a stall).
+    if (!ticking || progressAt < 0 || lastTaken !== progressTick) {
+      progressAt = now;
+      progressTick = lastTaken;
+      return;
+    }
+    const friendStarted = lastTaken >= firstTick + NET_DELAY_MAX;
+    const limit = friendStarted ? rejoinWaitMs : Math.max(rejoinWaitMs, LOCAL_TUNING.startWaitMs);
+    if (now - progressAt < limit) return;
+    log('net', `no input from ${opponentName()} for ${Math.round(now - progressAt)} ms at tick ${lastTaken} with the link up`);
+    gone = true;
+    goneReason = 'unresponsive';
+    unresponsiveAt = lastTaken;
+    progressAt = -1;
+    remotePausePending = false;
+    notice(`${opponentName()} is not responding`);
   }
 
   const modeData = {
@@ -1009,7 +1210,7 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
       return {
         lastTaken, delay: inner ? inner.delay : 0, stalls: st?.stalls ?? 0, maxStallMs: st?.maxStallMs ?? 0,
         desyncs: g?.desyncs ?? 0, resyncs: g?.resyncs ?? 0, verified: g?.verified ?? 0, hashesCompared: g?.hashesCompared ?? 0,
-        failedResyncs, rejoins,
+        failedResyncs, rejoins, finalCheck,
       };
     },
     setup() {
@@ -1025,6 +1226,8 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
       return built;
     },
     start() {
+      // The warm-up after this may block the main thread for seconds: do not let either side read it as a disconnect.
+      transport.expectBusy?.(LOCAL_TUNING.loadBusyMs);
       ctx.session.start(session.setup());
       if (initialRemotePause) {
         initialRemotePause = false;
@@ -1045,9 +1248,15 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
         inner.dispose(); // its sources are borrowed views: the local devices stay alive
         inner = null;
       }
-      if (ctx.session.paused && ctx.session.pausedBy === remote) withInternal(() => ctx.session.resume(remote));
+      if (ctx.session.paused && ctx.session.pausedBy === remote) {
+        withInternal(() => ctx.session.resume(remote));
+        if (ctx.session.paused && ctx.session.pausedBy === remote) liftRemotePause = true;
+      }
       log('net', `finishing against the CPU from tick ${lastTaken + 1} (human ${remote} -> CPU)`);
-      lobby.leave(); // the room closes: nobody can rejoin a match that is no longer in lockstep
+      // The room closes (nobody can rejoin a match that is no longer in lockstep); tell a friend who may still be
+      // there first, so it gets its own Finish against CPU / End match at once instead of a 20 s rejoin wait.
+      send({ type: SESSION_QUIT });
+      leaveRoomSoon(LOCAL_TUNING.quitLeaveMs);
       refresh();
       return true;
     },

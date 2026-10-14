@@ -12,9 +12,12 @@
  *   logged here: createDiagnostics attaches itself as the store's logger when the store supports setLogger, and the
  *   store replays the lines it buffered before that.
  * - Never writes to the console in production builds (e2e requires zero console output); dev builds mirror errors.
+ * - [QF-5] The report ends its sections with a "Credits and licences" line (platform/licences.ts: the libraries and
+ *   fonts that ship, read from the notices comment postbuild puts in index.html).
  */
 import type { Diagnostics, SettingsStore } from '../contracts/app';
 import { GAME_NAME, GAME_VERSION, SIM_VERSION } from '../contracts/constants';
+import { creditsSummary } from './licences';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -192,6 +195,8 @@ export function createDiagnostics(settings: SettingsStore, opts: DiagnosticsOpti
       lines.push(`Storage: ${typeof store.describe === 'function' ? safe(() => store.describe!()) : settings.persistent ? 'persistent' : 'memory only'}`);
       lines.push(`Settings: ${safe(() => JSON.stringify(settings.get()))}`);
       for (const s of sections.slice()) lines.push(`${s.name}: ${safe(s.fn)}`);
+      // [QF-5] Third-party notices (PLT-06 CR 2): the libraries and fonts that ship, with their licences.
+      lines.push(`Credits and licences: ${safe(() => creditsSummary())}`);
       lines.push(`Errors: ${counts[3]}  warnings: ${counts[2]}  lines: ${total}`);
       if (lastError !== null) lines.push(`Last error: ${lastError}`);
       lines.push(`Log (${count} of ${total}):`);

@@ -59,12 +59,14 @@ export const LOCAL_TUNING = {
   /** The receiver auto-collecting a pass meets the ball's track at most this far ahead, s. */
   receiveLookAheadSec: 2,
   /** [INT-A] Receiver of a pass rolling away from him (faster than meetOvershootMinSpeed m/s): the meeting target is
-   *  pushed meetOvershootSec x ball speed (at most meetOvershootMax m) on along its path, and he runs at least
-   *  meetPaceMul x the ball's speed. m/s, s, m, x. */
+   *  pushed meetOvershootSec x ball speed (at least meetOvershootMin: beyond his braking distance; at most
+   *  meetOvershootMax m) on along its path. m/s, s, m, m. */
   meetOvershootMinSpeed: 1,
   meetOvershootSec: 0.6,
-  meetOvershootMax: 4,
-  meetPaceMul: 1.15,
+  meetOvershootMin: 3.5,
+  meetOvershootMax: 5,
+  /** ... and while more than meetCatchDist m behind it he runs at top speed (sprinting), m. */
+  meetCatchDist: 1.2,
   /** Sampling step along the ball track for the receiver's meeting point, s. */
   meetStepSec: 0.125,
   /** Contain (PASS held in defence): shadow distance goal-side of the carrier, m. */

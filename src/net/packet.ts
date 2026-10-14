@@ -5,7 +5,10 @@
  *  - NET_PROTOCOL_VERSION: compared in the '$hello' handshake (different builds refuse to play: 'version-mismatch').
  *  - packSenderFrame / unpackSenderFrame: one human's InputFrame <-> FRAME_INTS int16 values, encoded exactly like
  *    packFrames (src/sim/core/serialize.ts) encodes one human (bitfields as uint16, other fields clamped to int16).
- *  - encodeInputPacket / decodeInputPacket: InputPacket <-> bytes (24-byte header + little-endian int16 frames).
+ *  - encodeInputPacket / decodeInputPacket: InputPacket <-> bytes (24-byte header + sparse frames: per frame a 3-byte
+ *    mask of its non-zero values followed by those values as little-endian int16, or a 3-byte "same as the previous
+ *    frame" marker). Most of a frame is zero and a held stick repeats, so a 10-frame packet is ~60-120 bytes instead
+ *    of 404 (QF-6: 24 kB/s each way at 80 ms made links under that unplayable; now ~4-7 kB/s).
  *    The decoder never throws: malformed data returns null and is ignored.
  *  - createControlCodec: ControlMessage <-> JSON strings, fragmenting messages longer than CONTROL_FRAGMENT_CHARS
  *    ('~id:i:n:' prefix) so any size travels on data channels with a small message limit.
@@ -18,7 +21,7 @@ import { PACKED_FRAME_INTS, packFrames, unpackFrames } from '../sim/core/seriali
 import type { ControlMessage, InputPacket, NetErrorReason } from './types';
 
 /** Protocol identity exchanged in the handshake: game build, sim version and net protocol revision. */
-export const NET_PROTOCOL_VERSION = `${GAME_VERSION}/sim${SIM_VERSION}/net1`;
+export const NET_PROTOCOL_VERSION = `${GAME_VERSION}/sim${SIM_VERSION}/net2`;
 
 /** int16 values per frame of one human on the wire. */
 export const FRAME_INTS = INPUT_FIELDS.length;
@@ -26,8 +29,13 @@ export const FRAME_INTS = INPUT_FIELDS.length;
 export const MAX_PACKET_FRAMES = 64;
 /** Bytes before the frame data: magic, firstTick, count, ack, tick, adv * 16 (6 x int32, little-endian). */
 export const PACKET_HEADER_BYTES = 24;
-/** 'DKN2'. */
-export const PACKET_MAGIC = 0x444b4e32;
+/** 'DKN3' (sparse frames). */
+export const PACKET_MAGIC = 0x444b4e33;
+/** Per-frame mask flag: this frame equals the previous one in the packet (no values follow). */
+const FRAME_REPEAT = 1 << 23;
+/** Bits a mask may use for values (one per frame field; the 3-byte mask holds 23 of them besides FRAME_REPEAT). */
+const FRAME_VALUE_BITS = (1 << INPUT_FIELDS.length) - 1;
+if (INPUT_FIELDS.length > 23) throw new Error('packet.ts: the sparse frame mask holds at most 23 fields');
 /** Fixed-point scale of InputPacket.adv on the wire. */
 export const PACKET_ADV_SCALE = 16;
 /** Control strings longer than this are split into fragments (keeps every data-channel message < 16 KB in UTF-8). */
@@ -40,6 +48,10 @@ export const CTRL_HELLO = '$hello';
 export const CTRL_FULL = '$full';
 export const CTRL_PING = '$ping';
 export const CTRL_PONG = '$pong';
+/** { ms }: the sender will be busy (silent) for up to ms; 0 = done. */
+export const CTRL_BUSY = '$busy';
+/** Longest silence grace a '$busy' may ask for, ms. */
+export const MAX_BUSY_MS = 60_000;
 
 // ---------------------------------------------------------------- frames
 
@@ -72,14 +84,30 @@ export function unpackSenderFrame(src: Int16Array, offset: number, out: InputFra
 
 // ---------------------------------------------------------------- input packets
 
+/** True when frame i of `d` equals frame i - 1. */
+function sameAsPrevious(d: Int16Array, i: number): boolean {
+  if (i === 0) return false;
+  const a = i * FRAME_INTS;
+  const b = a - FRAME_INTS;
+  for (let k = 0; k < FRAME_INTS; k++) if (d[a + k] !== d[b + k]) return false;
+  return true;
+}
+
 /** InputPacket -> bytes (a fresh ArrayBuffer: data channels may queue it). Reads count * FRAME_INTS values. */
 export function encodeInputPacket(p: InputPacket): ArrayBuffer {
   const count = p.count | 0;
   if (count < 1 || count > MAX_PACKET_FRAMES || p.data.length < count * FRAME_INTS) {
     throw new RangeError(`encodeInputPacket: bad count ${p.count}`);
   }
-  const n = count * FRAME_INTS;
-  const buf = new ArrayBuffer(PACKET_HEADER_BYTES + n * 2);
+  const d = p.data;
+  let size = PACKET_HEADER_BYTES;
+  for (let i = 0; i < count; i++) {
+    size += 3;
+    if (sameAsPrevious(d, i)) continue;
+    const o = i * FRAME_INTS;
+    for (let k = 0; k < FRAME_INTS; k++) if (d[o + k] !== 0) size += 2;
+  }
+  const buf = new ArrayBuffer(size);
   const v = new DataView(buf);
   v.setUint32(0, PACKET_MAGIC, true);
   v.setInt32(4, p.firstTick | 0, true);
@@ -88,7 +116,23 @@ export function encodeInputPacket(p: InputPacket): ArrayBuffer {
   v.setInt32(16, p.tick | 0, true);
   const adv = Math.round(p.adv * PACKET_ADV_SCALE);
   v.setInt32(20, Number.isFinite(adv) ? Math.max(-0x7fffffff, Math.min(0x7fffffff, adv)) : 0, true);
-  for (let i = 0; i < n; i++) v.setInt16(PACKET_HEADER_BYTES + i * 2, p.data[i]!, true);
+  let at = PACKET_HEADER_BYTES;
+  for (let i = 0; i < count; i++) {
+    const o = i * FRAME_INTS;
+    let mask = 0;
+    if (sameAsPrevious(d, i)) mask = FRAME_REPEAT;
+    else for (let k = 0; k < FRAME_INTS; k++) if (d[o + k] !== 0) mask |= 1 << k;
+    v.setUint8(at, mask & 0xff);
+    v.setUint8(at + 1, (mask >>> 8) & 0xff);
+    v.setUint8(at + 2, (mask >>> 16) & 0xff);
+    at += 3;
+    if (mask === FRAME_REPEAT) continue;
+    for (let k = 0; k < FRAME_INTS; k++) {
+      if ((mask & (1 << k)) === 0) continue;
+      v.setInt16(at, d[o + k]!, true);
+      at += 2;
+    }
+  }
   return buf;
 }
 
@@ -105,16 +149,34 @@ export function decodeInputPacket(raw: unknown): InputPacket | null {
   const tick = v.getInt32(16, true);
   const adv = v.getInt32(20, true) / PACKET_ADV_SCALE;
   if (count < 1 || count > MAX_PACKET_FRAMES || firstTick < 0 || ack < -1 || tick < -1) return null;
-  const n = count * FRAME_INTS;
-  if (v.byteLength !== PACKET_HEADER_BYTES + n * 2) return null;
-  const data = new Int16Array(n);
-  for (let i = 0; i < n; i++) data[i] = v.getInt16(PACKET_HEADER_BYTES + i * 2, true);
+  const len = v.byteLength;
+  const data = new Int16Array(count * FRAME_INTS);
+  let at = PACKET_HEADER_BYTES;
+  for (let i = 0; i < count; i++) {
+    if (at + 3 > len) return null;
+    const mask = v.getUint8(at) | (v.getUint8(at + 1) << 8) | (v.getUint8(at + 2) << 16);
+    at += 3;
+    const o = i * FRAME_INTS;
+    if (mask === FRAME_REPEAT) {
+      if (i === 0) return null;
+      for (let k = 0; k < FRAME_INTS; k++) data[o + k] = data[o - FRAME_INTS + k]!;
+      continue;
+    }
+    if ((mask & ~FRAME_VALUE_BITS) !== 0) return null;
+    for (let k = 0; k < FRAME_INTS; k++) {
+      if ((mask & (1 << k)) === 0) continue;
+      if (at + 2 > len) return null;
+      data[o + k] = v.getInt16(at, true);
+      at += 2;
+    }
+  }
+  if (at !== len) return null;
   return { firstTick, count, ack, tick, adv, data };
 }
 
-/** Wire size of a packet, bytes. */
+/** Largest wire size of a packet of `count` frames (every value non-zero), bytes. */
 export function inputPacketBytes(count: number): number {
-  return PACKET_HEADER_BYTES + count * FRAME_INTS * 2;
+  return PACKET_HEADER_BYTES + count * (3 + FRAME_INTS * 2);
 }
 
 // ---------------------------------------------------------------- control messages

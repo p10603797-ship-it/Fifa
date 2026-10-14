@@ -17,7 +17,10 @@
  *  - 'lobby:hello'  { nick, game, sim, net, token? }  both sides once the transport opens. GAME_VERSION, SIM_VERSION
  *                   and NET_PROTOCOL_VERSION must match ('version-mismatch' otherwise; the transport handshake checks
  *                   the protocol string first). No hello within helloTimeoutMs -> 'disconnected'.
- *  - 'lobby:state'  { club, ready, prefs }   each side's own pick, ready flag and controller preferences.
+ *  - 'lobby:state'  { club, ready, prefs, n }  each side's own pick, ready flag and controller preferences; n = starts
+ *                   this side has seen (it is back in the lobby after match n). A state of the current match number that
+ *                   arrives while this side still plays the last ticks of that match is kept and applied by matchEnded()
+ *                   (otherwise a friend who readied up first would look "not ready" here for good).
  *  - 'lobby:config' { config }               host -> guest: the settings template (half length, rules, night...).
  *  - 'lobby:start'  { config, delay, token, n, nick, rejoin? }  host -> guest when both are ready: the final MatchConfig with
  *                   its seed and the start input delay (computeTargetDelay from the measured round trip). Both sides
@@ -310,6 +313,8 @@ export function createLobby(opts: LobbyOptions): Lobby {
   let codeAttempts = 1;
   let fullRetries = 0;
   let closed = false;
+  /** The friend's post-match state that arrived while this side was still playing (applied by matchEnded). */
+  let earlyState: ControlMessage | null = null;
 
   const changes = createEmitter<void>();
   const errors = createEmitter<LobbyError>();
@@ -350,7 +355,7 @@ export function createLobby(opts: LobbyOptions): Lobby {
   }
 
   function sendState(): void {
-    send({ type: LOBBY_STATE, club: self.club, ready: self.ready, prefs: self.prefs });
+    send({ type: LOBBY_STATE, club: self.club, ready: self.ready, prefs: self.prefs, n: starts });
   }
 
   function sendHello(): void {
@@ -381,8 +386,11 @@ export function createLobby(opts: LobbyOptions): Lobby {
     const nickname = cleanNickname(m.nick, isHost ? 'Guest' : 'Host');
     clearHello();
     if (phase === 'playing') {
-      // Host: a guest said hello mid-match -> it reloaded; the session (NET-06) decides. Guest: ignore.
+      // Host: a guest said hello mid-match -> it reloaded; the session (NET-06) decides. Guest: the host's lobby is
+      // back in the room after its full time and lost the link meanwhile; answer so it sees us again (we are still
+      // finishing our last ticks: matchEnded() brings us to the lobby).
       if (isHost) notices.emit({ kind: 'rejoin-request', nickname, token: typeof m.token === 'string' ? m.token.slice(0, 64) : '' });
+      else sendHello();
       return;
     }
     if (!helloSent) sendHello();
@@ -396,12 +404,21 @@ export function createLobby(opts: LobbyOptions): Lobby {
     changed();
   }
 
-  function onState(m: ControlMessage): void {
-    if (!peer || phase === 'playing') return;
+  function applyState(p: LobbyPeer, m: ControlMessage): void {
     const maxClub = clubs ? clubs.length - 1 : 0xffff;
-    peer.club = intIn(m.club, -1, maxClub, -1);
-    peer.ready = m.ready === true;
-    peer.prefs = prefsOf(m.prefs, DEFAULT_PREFS);
+    p.club = intIn(m.club, -1, maxClub, -1);
+    p.ready = m.ready === true;
+    p.prefs = prefsOf(m.prefs, DEFAULT_PREFS);
+  }
+
+  function onState(m: ControlMessage): void {
+    if (!peer) return;
+    if (phase === 'playing') {
+      // The friend finished this match first and is back in the lobby (picks, maybe ready): keep it for matchEnded().
+      if (starts > 0 && intIn(m.n, 0, 1_000_000, -1) >= starts) earlyState = m;
+      return;
+    }
+    applyState(peer, m);
     changed();
     maybeStart();
   }
@@ -448,6 +465,7 @@ export function createLobby(opts: LobbyOptions): Lobby {
   function emitStart(s: LobbyStart): void {
     started = s;
     phase = 'playing';
+    earlyState = null;
     const ws = waiters;
     waiters = [];
     for (const w of ws) w.resolve(s);
@@ -670,9 +688,15 @@ export function createLobby(opts: LobbyOptions): Lobby {
       if (closed || phase !== 'playing') return;
       self.ready = false;
       if (peer) peer.ready = false;
+      const early = earlyState;
+      earlyState = null;
       if (transport.state === 'open' && peer) {
         phase = 'lobby';
+        if (early) applyState(peer, early);
         sendState();
+        changed();
+        maybeStart();
+        return;
       } else if (isHost) {
         peer = null;
         phase = 'waiting';

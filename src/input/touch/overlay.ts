@@ -64,6 +64,14 @@ const LOCAL_TUNING = {
   radarW: 230,
   radarH: 152,
   radarBottom: 16,
+  /** Swipe-hint size estimate (11 px semi-bold caps): px per character, fixed extra width (padding, border, arrow,
+   *  gap), height (arrow + gap + label), and the offset from the button edge (overlay.css translate). */
+  hintCharPx: 7,
+  hintExtraW: 30,
+  hintH: 34,
+  hintOffset: 8,
+  /** Keep hints this far inside the viewport / safe area, px. */
+  hintMargin: 4,
 } as const; // TUNING-CR (HUD-anchored layout, not gameplay): T_TOUCHUI.overlay = { ... }
 
 /** The LOCAL_TUNING block (read-only; tests, the controls editor and the lead's TUNING-CR review). */
@@ -93,6 +101,42 @@ export function hudRegions(w: number, h: number, safe: Readonly<SafeInsets>, out
   lane.x = w / 2 - T.laneHalfW; lane.y = st; lane.w = T.laneHalfW * 2; lane.h = T.laneH;
   radar.x = w / 2 - T.radarW / 2; radar.y = h - sb - T.radarBottom - T.radarH; radar.w = T.radarW; radar.h = T.radarH;
   return r;
+}
+
+/**
+ * Shift (px, into out.x / out.y) that keeps the swipe hint of direction `dir` (SwipeDir UP..RIGHT) with text `label`
+ * around a button at (cx, cy) radius r inside a w x h viewport and its safe area (QF-3: the BIG button's right and
+ * down hints went off screen). The hint keeps its side of the button; it only slides inward (over the button edge when
+ * there is no room beyond it). Width / height are estimated from the label (OVERLAY_TUNING hint*). w or h 0 = unknown:
+ * no shift. Pure.
+ */
+export function hintShift(
+  dir: SwipeDir, label: string, cx: number, cy: number, r: number, w: number, h: number, safe: Readonly<SafeInsets>,
+  out: { x: number; y: number },
+): { x: number; y: number } {
+  out.x = 0;
+  out.y = 0;
+  if (!(w > 0 && h > 0) || label === '' || !Number.isFinite(cx) || !Number.isFinite(cy)) return out;
+  const T = LOCAL_TUNING;
+  const hw = label.length * T.hintCharPx + T.hintExtraW;
+  const hh = T.hintH;
+  const lo = fin(safe.left) + T.hintMargin, hi = w - fin(safe.right) - T.hintMargin;
+  const top = fin(safe.top) + T.hintMargin, bot = h - fin(safe.bottom) - T.hintMargin;
+  let x0: number, x1: number, y0: number, y1: number;
+  switch (dir) {
+    case SwipeDir.UP: x0 = cx - hw / 2; x1 = cx + hw / 2; y1 = cy - r - T.hintOffset; y0 = y1 - hh; break;
+    case SwipeDir.DOWN: x0 = cx - hw / 2; x1 = cx + hw / 2; y0 = cy + r + T.hintOffset; y1 = y0 + hh; break;
+    case SwipeDir.LEFT: x1 = cx - r - T.hintOffset; x0 = x1 - hw; y0 = cy - hh / 2; y1 = cy + hh / 2; break;
+    case SwipeDir.RIGHT: x0 = cx + r + T.hintOffset; x1 = x0 + hw; y0 = cy - hh / 2; y1 = cy + hh / 2; break;
+    default: return out;
+  }
+  if (x1 > hi) out.x = hi - x1;
+  else if (x0 < lo) out.x = lo - x0;
+  if (y1 > bot) out.y = bot - y1;
+  else if (y0 < top) out.y = top - y0;
+  out.x = Math.round(out.x);
+  out.y = Math.round(out.y);
+  return out;
 }
 
 /** Distance from (cx, cy) to the nearest point of a rectangle (0 inside). Pure. */
@@ -193,8 +237,11 @@ export interface TouchOverlay {
   readonly el: HTMLElement;
   /** Reflect the intent state (pressed buttons, stick). Cheap when nothing changed. */
   sync(): void;
-  /** Position the buttons for a new layout. */
-  layout(l: ClusterLayout): void;
+  /**
+   * Position the buttons for a new layout. With the viewport (w x h CSS px, safe-area insets) the swipe hints are
+   * kept on screen (hintShift); without it they keep their default places.
+   */
+  layout(l: ClusterLayout, w?: number, h?: number, safe?: Readonly<SafeInsets>): void;
   setOpacity(o: number): void;
   setVisible(v: boolean): void;
   dispose(): void;
@@ -226,9 +273,14 @@ interface SlotView {
   hintId: number;
   hintMode: number;
   hintDirs: number;
+  /** Geometry as of the last layout (for the hint shift). */
+  cx: number;
+  cy: number;
+  r: number;
 }
 
 const DIR_CLASS = ['', 'up', 'down', 'left', 'right'];
+const NO_INSETS: Readonly<SafeInsets> = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
 const NO_POS = -1e9;
 
 function defaultNow(): number {
@@ -306,6 +358,7 @@ export function createTouchOverlay(root: HTMLElement, state: TouchIntentState, s
     slots.push({
       el: b, label, caption, ring, arcA, arcB, hints, hintText,
       id: -2, text: '\u0000', cap: '\u0000', pressed: false, hidden: false, ringOn: false, ringStep: -1, hintId: -2, hintMode: -1, hintDirs: 0,
+      cx: NaN, cy: NaN, r: 0,
     });
   }
 
@@ -325,6 +378,10 @@ export function createTouchOverlay(root: HTMLElement, state: TouchIntentState, s
   let baseX = NaN, baseY = NaN, knobX = NaN, knobY = NaN;
   let pausePressed = false;
   const ang = { a: 0, b: 0 };
+  /** Viewport of the last layout (0 = unknown) and the hint shift scratch. */
+  let viewW = 0, viewH = 0;
+  let viewSafe: Readonly<SafeInsets> = NO_INSETS;
+  const SHIFT = { x: 0, y: 0 };
 
   function setClass(e: HTMLElement, cls: string, on: boolean): void {
     e.classList.toggle(cls, on);
@@ -470,6 +527,12 @@ export function createTouchOverlay(root: HTMLElement, state: TouchIntentState, s
             v.hintText[d]!.textContent = t;
             writes++;
           }
+          // Keep the hint on screen (it only slides inward); written with the text, so once per press meaning.
+          hintShift(d, t, v.cx, v.cy, v.r, viewW, viewH, viewSafe, SHIFT);
+          const he = v.hints[d]!;
+          he.style.setProperty('--dk-hx', `${SHIFT.x}px`);
+          he.style.setProperty('--dk-hy', `${SHIFT.y}px`);
+          writes += 2;
         }
       }
       if (dirs !== v.hintDirs) {
@@ -566,10 +629,16 @@ export function createTouchOverlay(root: HTMLElement, state: TouchIntentState, s
       syncStick();
       syncPreview();
     },
-    layout(l: ClusterLayout) {
+    layout(l: ClusterLayout, w?: number, h?: number, safe?: Readonly<SafeInsets>) {
+      viewW = typeof w === 'number' && Number.isFinite(w) ? w : 0;
+      viewH = typeof h === 'number' && Number.isFinite(h) ? h : 0;
+      viewSafe = safe ?? NO_INSETS;
       for (let s = 0; s < 4; s++) {
         const g = l.slots[s]!;
-        place(slots[s]!.el, g.cx, g.cy, g.r);
+        const v = slots[s]!;
+        place(v.el, g.cx, g.cy, g.r);
+        v.cx = g.cx; v.cy = g.cy; v.r = g.r;
+        v.hintId = -2; // re-place the hints on the next show
       }
       place(pause, l.pause.cx, l.pause.cy, l.pause.r);
       baseX = NaN; knobX = NaN; // a fixed stick may have moved with the relayout

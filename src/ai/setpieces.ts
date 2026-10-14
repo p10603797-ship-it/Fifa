@@ -204,7 +204,7 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** Long kicks (goal kicks, deep free kicks): target man gkLongMin-gkLongMax m away; power = clamp(d /
    *  longPowerRange, longPowerMin, 1). */
   gkLongMin: 25,
-  gkLongMax: 75,
+  gkLongMax: 40, // [INT-A] was 75: a 70 m goal kick (led further) bounced on into the far box untouched for 8 s (watchdog)
   longPowerRange: 70,
   longPowerMin: 0.45,
   /** Ground pass power: the speed that arrives at shortArrive m/s (SIM-01 groundPassSpeed) on the T_PASS ground range,

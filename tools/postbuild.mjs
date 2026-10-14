@@ -13,6 +13,10 @@
  *    (update flow). Idempotent: running it twice gives the same files.
  * 4. Sizes: raw, gzip and brotli of index.html and of the whole dist; fails when index.html is over the 4 MB gzip
  *    budget (brief section 3: download 4 MB or less compressed).
+ * 5. [QF-5] Third-party notices: one HTML comment right after the doctype with the name, version, licence and licence
+ *    text of every bundled library and both fonts (NOTICE_PACKAGES, read from node_modules; a missing one fails).
+ *    The build id also goes into index.html as <meta name="dotkick-build"> (hashed with its value blanked, so the id
+ *    is stable): the page compares it with a waiting service worker's build and never offers itself as an update.
  *
  *   node tools/postbuild.mjs [distDir] [--json]
  *
@@ -31,6 +35,99 @@ export const FONT_BUDGET_BYTES = 200 * 1024;
 export const EXTRA_FILES = ['manifest.webmanifest', 'sw.js'];
 export const EXTRA_DIRS = ['icons'];
 export const SW_BUILD_RE = /^(const BUILD = )'([^'\n]*)'(; \/\/ dotkick-build)/m;
+
+/**
+ * [QF-5] Third-party notices shipped inside dist/index.html (PLT-06 CR 2, SGN-05): every library bundled into the
+ * game and both fonts, with the licence text read from node_modules at build time. One HTML comment right after the
+ * doctype; the Credits and licences view (src/platform/licences.ts) reads it back at runtime.
+ */
+export const NOTICE_PACKAGES = [
+  { pkg: 'three', file: 'LICENSE', use: '3D rendering' },
+  { pkg: 'peerjs', file: 'LICENSE', use: 'online 1v1 (WebRTC data channels)' },
+  { pkg: 'webrtc-adapter', file: 'LICENSE.md', use: 'bundled with PeerJS' },
+  { pkg: 'sdp', file: 'LICENSE', use: 'bundled with PeerJS (webrtc-adapter)' },
+  { pkg: 'peerjs-js-binarypack', file: 'LICENSE', use: 'bundled with PeerJS' },
+  { pkg: '@msgpack/msgpack', file: 'LICENSE', use: 'bundled with PeerJS' },
+  { pkg: 'eventemitter3', file: 'LICENSE', use: 'bundled with PeerJS' },
+  { pkg: '@fontsource/space-grotesk', file: 'LICENSE', use: 'Space Grotesk font (menus and HUD)' },
+  { pkg: '@fontsource/jetbrains-mono', file: 'LICENSE', use: 'JetBrains Mono font (numbers)' },
+];
+/** First line of the notices comment (also how the runtime view and the idempotency check find it). */
+export const NOTICES_MARK = 'dotkick-notices';
+const NOTICES_RE = /<!-- dotkick-notices[\s\S]*?-->\n?/;
+/** Build id meta in index.html: the page compares it with a waiting service worker's build (pwa.ts). */
+export const BUILD_META_NAME = 'dotkick-build';
+const BUILD_META_RE = /<meta name="dotkick-build" content="[^"]*" \/>/;
+
+/** Text that is safe inside an HTML comment: no "--" (so never "-->", "--!>" or "<!--"). Pure. */
+export function commentSafe(text) {
+  let t = String(text).replace(/\r\n?/g, '\n');
+  while (t.includes('--')) t = t.replace(/--/g, '- -');
+  return t.replace(/<!-/g, '< !-').replace(/-$/, '- ');
+}
+
+/**
+ * Read name, version, licence id and licence text of every NOTICE_PACKAGES entry from `nodeModules`. Returns
+ * { entries, errors } (a missing package or licence file is an error: a release must never ship without notices).
+ */
+export function readNotices(nodeModules = join(root, 'node_modules')) {
+  const entries = [];
+  const errors = [];
+  for (const n of NOTICE_PACKAGES) {
+    try {
+      const pj = JSON.parse(readFileSync(join(nodeModules, n.pkg, 'package.json'), 'utf8'));
+      const text = readFileSync(join(nodeModules, n.pkg, n.file), 'utf8').trim();
+      if (!text) throw new Error('empty licence file');
+      entries.push({ name: pj.name ?? n.pkg, version: String(pj.version ?? '?'), license: String(pj.license ?? '?'), use: n.use, text });
+    } catch (err) {
+      errors.push(`licence notice for ${n.pkg} unavailable: ${String(err && err.message ? err.message : err)}`);
+    }
+  }
+  return { entries, errors };
+}
+
+/** The notices comment for `entries` (ends with a newline). Pure. */
+export function noticesComment(entries) {
+  const parts = [
+    'DotKick is an original game. It includes the following third-party software and fonts, used under their licences.',
+    '',
+  ];
+  for (const e of entries) {
+    parts.push(`=== ${e.name} ${e.version} (${e.license}) - ${e.use} ===`);
+    parts.push(e.text);
+    parts.push('');
+  }
+  return `<!-- ${NOTICES_MARK}\n${commentSafe(parts.join('\n'))}-->\n`;
+}
+
+/** Put (or refresh) the notices comment right after the doctype. Returns { html, changed }. Pure. */
+export function injectNotices(html, comment) {
+  const without = html.replace(NOTICES_RE, '');
+  const m = /^\s*<!doctype html>[^\S\n]*\n?/i.exec(without);
+  const at = m ? m[0].length : 0;
+  const prefix = without.slice(0, at);
+  const out = `${prefix}${m && !prefix.endsWith('\n') ? '\n' : ''}${comment}${without.slice(at)}`;
+  return { html: out, changed: out !== html };
+}
+
+/** The html without the build meta (the build id hashes this, so injecting the id keeps it stable). Pure. */
+export function htmlForBuildId(html) {
+  return html.replace(/\n?[ \t]*<meta name="dotkick-build" content="[^"]*" \/>/, '');
+}
+
+/** Put (or refresh) `<meta name="dotkick-build" content="<build>" />` in the head. Returns { html, changed }. Pure. */
+export function injectBuildMeta(html, build) {
+  const tag = `<meta name="${BUILD_META_NAME}" content="${build}" />`;
+  let out;
+  if (BUILD_META_RE.test(html)) out = html.replace(BUILD_META_RE, tag);
+  else {
+    const charset = /<meta charset="[^"]*"\s*\/?>/i.exec(html);
+    if (charset) out = `${html.slice(0, charset.index + charset[0].length)}\n    ${tag}${html.slice(charset.index + charset[0].length)}`;
+    else if (/<head[^>]*>/i.test(html)) out = html.replace(/<head[^>]*>/i, (h) => `${h}\n    ${tag}`);
+    else return { html, changed: false };
+  }
+  return { html: out, changed: out !== html };
+}
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -76,7 +173,9 @@ export function analyzeHtml(html) {
     .replace(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi, (_m, attrs, body) => {
       styles.push(body);
       return `<style${attrs}></style>`;
-    });
+    })
+    // HTML comments (the licence notices quote e-mail addresses in <...>) are not tags.
+    .replace(/<!--[\s\S]*?-->/g, '');
 
   for (const s of scripts) {
     const src = attr(`<script${s.attrs}>`, 'src');
@@ -181,7 +280,8 @@ function copyDir(src, dst) {
 
 /**
  * Run every check on `dist`. Returns a report object; does not exit. `publicDir` is where missing extras come from;
- * `gzipBudget` overrides the 4 MB budget (tests).
+ * `gzipBudget` overrides the 4 MB budget (tests); `nodeModules` (or ready `notices`, { entries, errors }) is where the
+ * licence notices come from.
  */
 export function runPostbuild(dist, opts = {}) {
   const publicDir = opts.publicDir ?? join(root, 'public');
@@ -193,8 +293,18 @@ export function runPostbuild(dist, opts = {}) {
   if (!existsSync(indexPath)) {
     return { ok: false, errors: [`${indexPath} does not exist (did vite build run?)`], warnings, notes, sizes: null };
   }
-  const htmlBuf = readFileSync(indexPath);
-  const html = htmlBuf.toString('utf8');
+  let html = readFileSync(indexPath, 'utf8');
+  // Third-party notices right after the doctype (refreshed, never duplicated).
+  const notices = opts.notices ?? readNotices(opts.nodeModules);
+  errors.push(...notices.errors);
+  let htmlChanged = false;
+  if (notices.entries.length > 0) {
+    const n = injectNotices(html, noticesComment(notices.entries));
+    if (n.changed) {
+      html = n.html;
+      htmlChanged = true;
+    }
+  }
   const a = analyzeHtml(html);
   errors.push(...a.errors);
   warnings.push(...a.warnings);
@@ -232,12 +342,19 @@ export function runPostbuild(dist, opts = {}) {
     }
   }
 
-  // Service worker build id.
-  let build = null;
+  // Build id (package version + a hash of index.html without the id itself): in index.html as a meta tag (the page
+  // tells a waiting worker of its own build from a newer one) and in the service worker's BUILD line.
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const build = buildId(pkg.version ?? '0.0.0', htmlForBuildId(html));
+  const meta = injectBuildMeta(html, build);
+  if (meta.changed) {
+    html = meta.html;
+    htmlChanged = true;
+  }
+  if (htmlChanged) writeFileSync(indexPath, html);
+  const htmlBuf = Buffer.from(html, 'utf8');
   const swPath = join(dist, 'sw.js');
   if (existsSync(swPath)) {
-    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    build = buildId(pkg.version ?? '0.0.0', htmlBuf);
     const r = injectBuildVersion(readFileSync(swPath, 'utf8'), build);
     if (!r.found) errors.push("sw.js has no `const BUILD = '...'; // dotkick-build` line: cannot version the cache");
     else if (r.changed) writeFileSync(swPath, r.text);

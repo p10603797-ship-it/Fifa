@@ -63,7 +63,7 @@ export const LOCAL_TUNING = {
   wLane: 1.5,
   wSpace: 0.4,
   wBand: 1.0,
-  wProg: 0.08,
+  wProg: 0.25, // [INT-A] was 0.08: supporters offer forward options ahead of the ball, not square / behind it
   wMove: 0.12,
   wHome: 0.08,
   wCrowd: 1.2,

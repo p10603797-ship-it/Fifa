@@ -67,7 +67,7 @@ import { ActionKind, AssistLevel, ControllerKind, CrossKind, KickKind, MatchPhas
 import { EventType, type EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type BallState, type SimState } from '../../contracts/state';
 import { createKickLaunch, type ActionRequest, type KickLaunch } from '../../contracts/systems';
-import { T_BALL, T_PASS, T_PLAYER, T_SHOT, T_TACKLE, T_TOUCH } from '../../contracts/tuning';
+import { T_BALL, T_PASS, T_PLAYER, T_SHOT, T_TACKLE } from '../../contracts/tuning';
 import { ballStepTick } from '../ball/contact';
 import { ballAirStep, copyBallState, createLaunchSolution, solveLaunchSpin } from '../ball/flight';
 import { clamp01, datan2, dcos, dsin, lerp, PI } from '../core/dmath';
@@ -207,14 +207,14 @@ const LOCAL_TUNING = {
   aiClearPower: 0.85,
   aiShotPower: 0.75,
   // ---- launch: header shot
-  headerShotMin: 14,
-  headerShotMax: 20,
+  headerShotMin: 13.5,
+  headerShotMax: 19,
   /** Share of power (rest: heading) in the header shot speed. */
   shotPowerW: 0.6,
   /** Incoming ball speed redirected into a header shot, fraction. */
   headerRedirect: 0.08,
   headerShotFloor: 10,
-  headerShotCap: 22,
+  headerShotCap: 19.8,
   // ---- launch: volley shot
   volleyShotMin: 21,
   volleyShotMax: 29,

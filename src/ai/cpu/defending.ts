@@ -152,7 +152,7 @@ export const LOCAL_TUNING = {
   /** Standing tackle: ball within standReach + this of the defender now, m. */
   tackleApproach: 0.4,
   /** Rash lunge at a carrier with the ball at his feet: chance per rashBucketTicks = decisionNoise x this. */
-  rashLungeChance: 0.25,
+  rashLungeChance: 0.5,
   rashBucketTicks: 30,
   /** Slide: ball between standReach and slideReach x slideReachFrac of the defender, m (fraction). */
   slideReachFrac: 0.85,

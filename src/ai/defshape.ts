@@ -82,6 +82,10 @@ const LOCAL_TUNING = {
   /** ... + this, m [INT-A: the block defended ~24 m goal-side of the ball, a low block that left no space to play
    *  into and smothered every shot; a mid-block line leaves room in behind for through balls]. */
   lineOffset: 7,
+  /** ... fading in with the ball's u from lineOffsetFadeFrom (none: the ball near our box, the line drops onto it)
+   *  to lineOffsetFadeTo (full), m (team frame). */
+  lineOffsetFadeFrom: -30,
+  lineOffsetFadeTo: -12,
   /** Highest line, m (team frame; + the tactic offset when it is positive). */
   lineCeil: 2,
   /** Lowest line with the ball far (= 6-yard box edge) / near our goal, m from the own goal line. */
@@ -456,7 +460,8 @@ function lineInputs(s: SimState, team: number, dir: number): void {
   EVAL.ceil = LT.lineCeil + (lineOff > 0 ? lineOff : 0);
   EVAL.floor = -HALF_LENGTH + LT.floorNear + (LT.floorFar - LT.floorNear) * ramp(LT.ballNearDist, LT.ballFarDist, bu + HALF_LENGTH);
   const ballBase = loose === 1 && vu > 0 ? bu + vu * LT.stepLookahead : bu;
-  EVAL.base = F_BACK_U[formationIndex(s.teams[team]!.formation)]! + LT.lineOffset + LT.lineSlope * ballBase + lineOff;
+  EVAL.base = F_BACK_U[formationIndex(s.teams[team]!.formation)]! + LT.lineOffset * ramp(LT.lineOffsetFadeFrom, LT.lineOffsetFadeTo, ballBase) +
+    LT.lineSlope * ballBase + lineOff;
 }
 
 /** Step up on a backward / square ball or a carrier dribbling back (stage 2). */

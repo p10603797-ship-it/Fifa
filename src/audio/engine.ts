@@ -16,7 +16,9 @@
  * - Modules (crowd AUD-02, sfx AUD-03, whistles AUD-04, eventMap + ui AUD-05) are created once on unlock with an
  *   AudioCtx that also carries services (services.ts): capped one-shot voice pools per bus and the buffer bank.
  *   The bank renders the modules' buffers in chunks from update() within a small per-frame budget (larger in
- *   menus, where frames are idle); the menu sounds render at once so the unlocking tap's START can play.
+ *   menus, where frames are idle); the menu sounds render at once so the unlocking tap's START can play. warmUp()
+ *   finishes whatever is left [QF-5]: the session calls it while the match loads, so a match that starts right after
+ *   the unlock never renders buffers during play (no hitch) and its first kick or whistle is never silent.
  *   Sim events go to the event map (AUD-05), the one module that turns them into sfx / whistle / crowd cues.
  * - playUi while the context is still starting (inside the unlock gesture) is held and played once it runs, if
  *   that is within LOCAL_TUNING.pendingUiMs.
@@ -30,6 +32,11 @@
  *   as activation) stay armed until the context reports 'running'. A context that says 'running' but whose clock
  *   stopped (an iOS zombie after an interruption) is detected in update() and restarted on the next gesture.
  * - A context the OS resumes while the page is hidden is suspended again (no crowd in the background).
+ * - [QF-5] An unlocked context found 'suspended' while sound is wanted (a suspend that landed after the page came back,
+ *   the end of an interruption) is asked to resume without waiting for a gesture, at once and then every
+ *   LOCAL_TUNING.resumeRetrySec from update(): browsers let a context that already ran resume, and a controller-only
+ *   player never makes a DOM gesture. 'interrupted' still waits for the OS (or a tap). A stalled ('running', clock
+ *   frozen) unlocked context is restarted without a gesture up to LOCAL_TUNING.zombieAutoTries times per stall.
  * - A module that throws (factory, onEvents, update, lifecycle hooks) is isolated: the others and the game go on.
  * - Without Web Audio (Node tests, very old browsers) every call is a no-op.
  */
@@ -38,7 +45,7 @@ import type { EventBuffer } from '../contracts/events';
 import type { AudioSettings } from '../contracts/settings';
 import type { ReadonlySimState } from '../contracts/state';
 import { createBufferBank } from './bank';
-import { createCrowd } from './crowd';
+import { createCrowd, setLocalPerspective } from './crowd';
 import { createEventMap } from './eventMap';
 import type { AudioCtxWithServices, AudioModuleName, AudioServices } from './services';
 import { createSfx, type SfxModule } from './sfx';
@@ -75,6 +82,12 @@ const LOCAL_TUNING = {
   limiterRelease: 0.15,
   /** A menu sound asked for while the context is still starting (the unlock tap) plays once it runs within, ms. */
   pendingUiMs: 400,
+  /** [QF-5] An unlocked context found 'suspended' while sound is wanted is asked to resume again this often, s. */
+  resumeRetrySec: 1,
+  /** [QF-5] Restarts of a stalled ('running', clock frozen) context tried without a gesture before waiting for one. */
+  zombieAutoTries: 3,
+  /** [QF-5] ...each this long after the stall was detected with no tap to restart it, s. */
+  zombieAutoDelaySec: 1.5,
 } as const; // TUNING-CR
 
 export const AUDIO_ENGINE_TUNING = LOCAL_TUNING;
@@ -119,6 +132,16 @@ export interface AudioEngineImpl extends AudioEngine {
   readonly services: AudioServices | null;
   /** Snapshot for diagnostics and tests (allocates; not for per-frame use). */
   info(): AudioEngineInfo;
+  /**
+   * [QF-5] Finish every pending pre-render now (the session calls it while a match loads): no buffer is rendered during
+   * play and no sound of the first seconds is missing. Synchronous; a no-op before unlock or when nothing is left.
+   */
+  warmUp(): void;
+  /**
+   * Online 1v1: the side the local player's crowd backs (0 / 1), -1 for the default (the humans' side, else home).
+   * The session sets it at match load and clears it at teardown. Takes effect at the next matchStart.
+   */
+  setPerspective(side: number): void;
   /**
    * Broadcast camera x for stereo panning (INT-B: the app passes the renderer's camera x every frame; NaN = estimate
    * from the ball). Kept across unlock: the sfx module gets it as soon as it exists. Allocation-free.
@@ -278,6 +301,10 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
   let stalled = false;
   let stallSec = 0;
   let lastAudioTime = -1;
+  /** Time since the last no-gesture resume attempt of a suspended, unlocked context, s. */
+  let retrySec = 0;
+  /** No-gesture restarts of a stalled context since its clock last moved. */
+  let zombieTries = 0;
   let unsubscribe: (() => void) | null = null;
   /** Menu sound requested before the context ran (the splash tap unlocks and plays START at once), and when. */
   let pendingUi = -1;
@@ -400,16 +427,7 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
     }
     if (stalled && ctx.state === 'running') {
       // Zombie context (says running, clock stopped): restart it inside the gesture.
-      stalled = false;
-      stallSec = 0;
-      lastAudioTime = -1;
-      outputDown();
-      try {
-        void ctx.suspend().catch(noop);
-        void ctx.resume().catch(noop);
-      } catch {
-        /* the next gesture tries again */
-      }
+      restartZombie(ctx);
       return;
     }
     if (ctx.state === 'running') {
@@ -441,6 +459,10 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
       outputDown();
       // iOS reports 'interrupted' (non-standard) after calls/Siri; any non-running state while wanted needs a gesture.
       if (wanted && ctx.state !== 'closed') armGesture();
+      // [QF-5] A context that already ran (unlocked) may resume without a gesture once the OS lets it go ('suspended'
+      // after an interruption, a suspend that landed after the page came back): ask at once, and update() keeps
+      // asking, so a controller-only player (no DOM gesture ever) is never left in silence.
+      if (wanted && unlocked && ctx.state === 'suspended') void requestResume(ctx);
     }
   };
 
@@ -552,15 +574,42 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
   /** Watch for a 'running' context whose clock stopped (iOS after an interruption): needs a gesture restart. */
   function watchClock(ctx: AudioContext, dt: number): void {
     const t = ctx.currentTime;
-    if (lastAudioTime < 0 || t > lastAudioTime) {
+    if (lastAudioTime < 0) {
       lastAudioTime = t;
       stallSec = 0;
+      return;
+    }
+    if (t > lastAudioTime) {
+      lastAudioTime = t;
+      stallSec = 0;
+      zombieTries = 0; // the clock really moves: a later stall gets fresh tries
       return;
     }
     stallSec += dt;
     if (!stalled && stallSec >= LOCAL_TUNING.stallSec) {
       stalled = true;
       armGesture();
+    }
+    // [QF-5] No tap came: a context that already ran may restart without a gesture. A few tries (a controller-only
+    // player never taps), then it is left to the armed gesture.
+    if (stalled && unlocked && wanted && zombieTries < LOCAL_TUNING.zombieAutoTries &&
+      stallSec >= LOCAL_TUNING.stallSec + LOCAL_TUNING.zombieAutoDelaySec) {
+      zombieTries++;
+      restartZombie(ctx);
+    }
+  }
+
+  /** Restart a zombie context (suspend + resume); the clock watch starts over. */
+  function restartZombie(ctx: AudioContext): void {
+    stalled = false;
+    stallSec = 0;
+    lastAudioTime = -1;
+    outputDown();
+    try {
+      void ctx.suspend().catch(noop);
+      void ctx.resume().catch(noop);
+    } catch {
+      /* the next gesture tries again */
     }
   }
 
@@ -619,8 +668,16 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
       if (ctx.state !== 'running') {
         stallSec = 0;
         lastAudioTime = -1;
+        if (wanted && unlocked && ctx.state === 'suspended') {
+          retrySec += dt;
+          if (retrySec >= LOCAL_TUNING.resumeRetrySec) {
+            retrySec = 0;
+            void requestResume(ctx);
+          }
+        }
         return;
       }
+      retrySec = 0;
       if (!wanted) return;
       if (!outUp) markRunning(ctx); // a missed statechange must never leave the output silent
       watchClock(ctx, dt);
@@ -643,6 +700,21 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
         // Still starting (resume() pending inside the unlock gesture): play it as soon as it runs, if soon.
         pendingUi = kind;
         pendingUiAt = clock();
+      }
+    },
+    setPerspective(side) {
+      try {
+        setLocalPerspective(side);
+      } catch (err) {
+        moduleFailed(0, err, 'setPerspective');
+      }
+    },
+    warmUp() {
+      if (!services || services.bank.pending === 0) return;
+      try {
+        services.bank.flush();
+      } catch (err) {
+        moduleFailed(AUDIO_MODULE_NAMES.length, err, 'bank flush');
       }
     },
     matchStart(state) {
@@ -669,7 +741,17 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
       if (ac && ac.state === 'running') {
         stopVoices(0.005);
         outputDown();
-        void ac.suspend().catch(noop);
+        // [QF-5] A real browser applies suspend() later: when the page came back (resume()) before it landed, the
+        // context ends up suspended with nothing asking it to run again. Re-request it once the suspend settles.
+        const ctx = ac;
+        const after = (): void => {
+          if (ctx === ac && wanted && ctx.state !== 'running' && ctx.state !== 'closed') void requestResume(ctx);
+        };
+        try {
+          void ctx.suspend().then(after, after);
+        } catch {
+          /* ignore */
+        }
       } else {
         outputDown();
       }

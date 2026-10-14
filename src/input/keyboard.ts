@@ -285,6 +285,12 @@ export interface KeyboardInputSource extends InputSource {
   readonly rightStick: RightStickTracker;
   /** The D-pad sequence recogniser the D-pad keys feed (HUD hint). */
   readonly sequences: PadSequences;
+  /**
+   * Clock time (opts.now) of the latest game key press (not auto-repeat, not typed into a text field, not a browser
+   * shortcut), -1 before the first. The device registry hides the touch controls while the keyboard drives the same
+   * human (section 9 "Touch controls hide when a controller is driving that side", QF-3 FIX-07).
+   */
+  readonly lastInputMs: number;
   pollFrame(nowMs: number): void;
 }
 
@@ -331,6 +337,7 @@ export function createKeyboardSource(opts: KeyboardSourceOptions): KeyboardInput
   /** Skill key pressed since the last sample (latest wins). */
   let pendingSkill: SkillMove = SkillMove.NONE;
   let lastPollMs = -1;
+  let lastInputMs = -1;
   let disposed = false;
   const stick = { x: 0, y: 0 };
   const rstick = { x: 0, y: 0 };
@@ -394,6 +401,7 @@ export function createKeyboardSource(opts: KeyboardSourceOptions): KeyboardInput
       if (!repeat) {
         dpadKeys |= 1 << di;
         if (dpadQLen < dpadQueue.length) dpadQueue[dpadQLen++] = DPAD_VALUES[di]!;
+        lastInputMs = now();
       }
       e.preventDefault?.();
       return;
@@ -407,6 +415,7 @@ export function createKeyboardSource(opts: KeyboardSourceOptions): KeyboardInput
       if (!repeat) {
         rsKeys |= 1 << ri;
         rsTaps |= 1 << ri;
+        lastInputMs = now();
       }
       e.preventDefault?.();
       return;
@@ -437,7 +446,10 @@ export function createKeyboardSource(opts: KeyboardSourceOptions): KeyboardInput
       handled = true;
     }
 
-    if (handled) e.preventDefault?.();
+    if (handled) {
+      e.preventDefault?.();
+      if (!repeat) lastInputMs = now();
+    }
     if (!repeat && KEY_PAUSE.includes(code)) opts.onPause();
   };
 
@@ -521,6 +533,7 @@ export function createKeyboardSource(opts: KeyboardSourceOptions): KeyboardInput
     get held() { return heldBits & ~suppress; },
     get rsDirs() { return orValues(rsKeys, RS_VALUES); },
     get dpad() { return orValues(dpadKeys, DPAD_VALUES); },
+    get lastInputMs() { return lastInputMs; },
     pollFrame(nowMs: number) {
       if (disposed) return;
       poll(nowMs);

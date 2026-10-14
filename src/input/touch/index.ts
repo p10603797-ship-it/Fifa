@@ -6,7 +6,8 @@
  *
  * Pointer routing priority: PAUSE, attack buttons, defence buttons (only the live set claims), set-piece swipe, stick
  * zone (TCH-02 inStickZone: its half, safe area, system-gesture margins; a fixed stick only near its ring), pitch
- * gestures (everything else). A finger stays with the control that claimed it until it lifts.
+ * gestures (everything else). A finger stays with the control that claimed it until it lifts. At set pieces
+ * (ClusterMode.SET_PIECE) a tap in the stick zone is replayed into the pitch gestures as a pitch tap (QF-3 FIX-06).
  *
  * Timing: pollFrame(now) (every animation frame) and sample() (every tick) advance the buttons' hold / hint timers
  * (cluster.update), the held-back pitch taps (gestures.update) and the set-piece flight preview (setPiece.update,
@@ -25,13 +26,14 @@
  */
 
 import type { PlatformInfo, SettingsStore } from '../../contracts/app';
+import { MatchPhase } from '../../contracts/enums';
 import type { CameraProjector, InputFrame, InputSampleContext, InputSource } from '../../contracts/input';
 import type { TouchSettings } from '../../contracts/settings';
 import type { ReadonlySimState } from '../../contracts/state';
 import {
-  createTouchIntentState, TouchButtonId, type TouchControl, type TouchIntentState,
+  ClusterMode, createTouchIntentState, TouchButtonId, type TouchControl, type TouchIntentState,
 } from '../../contracts/touch';
-import { computeClusterLayout, createAttackCluster, createClusterLayout, type ClusterLayout } from './attack';
+import { computeClusterLayout, createAttackCluster, createClusterLayout, keepClearOfPause, type ClusterLayout } from './attack';
 import { createTouchButton } from './button';
 import { createClusterController, createDefenceCluster, type ClusterController } from './cluster';
 import { createPitchGestures } from './gestures';
@@ -69,6 +71,9 @@ export interface TouchInputSource extends InputSource {
   relayout(): void;
 }
 
+/** Pointer id of a stick tap replayed into the pitch gestures (negative: never a browser pointer id). */
+const STICK_TAP_ID = -1e9;
+
 function defaultNow(): number {
   return typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
 }
@@ -86,6 +91,7 @@ export function createTouchInput(opts: TouchInputOptions): TouchInputSource {
     const t = touch();
     const safe = opts.platform.safeArea();
     computeClusterLayout(win.innerWidth, win.innerHeight, safe, { spacing: t.spacing, mirror: t.mirror, placements: t.layout }, layout);
+    keepClearOfPause(layout, win.innerHeight, safe, t.spacing);
     computeStickConfig(win.innerWidth, win.innerHeight, safe, t, stickCfg);
   };
   computeLayout();
@@ -125,8 +131,27 @@ export function createTouchInput(opts: TouchInputOptions): TouchInputSource {
     return p.pitchToScreen(s.ball.x, s.ball.y, s.ball.z, out);
   };
   const setPiece = createSetPieceSwipe({ state, ballScreen, getState: () => opts.getState(), getProjector: () => opts.getProjector() });
-  const stick = createStick({ state, zone: () => true, config: () => stickCfg });
-  const gestures = createPitchGestures({ state, zone: () => true, ballScreen, settings: () => touch() });
+  const gestures = createPitchGestures({
+    state, zone: () => true, ballScreen, settings: () => touch(),
+    // Penalties and shoot-out kicks read TAP and DOUBLE_TAP alike: taps go out at the lift (keeper dives, chips).
+    doubleTapUsed: () => {
+      const s = opts.getState();
+      const ph = s ? s.match.phase : MatchPhase.IN_PLAY;
+      return ph !== MatchPhase.PENALTY && ph !== MatchPhase.SHOOT_OUT;
+    },
+  });
+  // [QF-3 FIX-06] Set pieces (section 9: "tap a teammate or a spot in the box", "tap a teammate" at throw-ins and goal
+  // kicks, "tap the way the keeper should dive"): a tap that lands in the stick zone never moved anyone, so it is
+  // replayed into the pitch gestures as a pitch tap. Without this, every target on the stick's half of the screen
+  // (all teammates at a goal kick toward the left) could not be tapped. Open play keeps stick taps (strafe double tap).
+  const stick = createStick({
+    state, zone: () => true, config: () => stickCfg,
+    onTap: (dx, dy, downMs, ux, uy, upMs) => {
+      if (state.mode !== ClusterMode.SET_PIECE) return;
+      gestures.down(STICK_TAP_ID, dx, dy, downMs);
+      gestures.up(STICK_TAP_ID, ux, uy, upMs);
+    },
+  });
   const controls: TouchControl[] = [pauseCtl, ...cluster.controls, setPiece, stick, gestures];
 
   const mapper = createTouchMapper(state, {
@@ -139,6 +164,9 @@ export function createTouchInput(opts: TouchInputOptions): TouchInputSource {
     el: overlay.el,
     controls,
     now,
+    // The overlay's own window / document (the globals in the browser; a test page in Node).
+    win,
+    doc: opts.root.ownerDocument,
     onChange: () => {
       cluster.sync(now());
       overlay.sync();
@@ -154,7 +182,7 @@ export function createTouchInput(opts: TouchInputOptions): TouchInputSource {
     computeLayout();
     cluster.relayout(layout);
     pauseBtn.geom.cx = layout.pause.cx; pauseBtn.geom.cy = layout.pause.cy; pauseBtn.geom.r = layout.pause.r;
-    overlay.layout(layout);
+    overlay.layout(layout, win.innerWidth, win.innerHeight, opts.platform.safeArea());
   };
   relayout();
   overlay.setOpacity(touch().opacity);

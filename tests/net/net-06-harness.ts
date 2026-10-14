@@ -76,6 +76,8 @@ function fakeDevices(): DeviceRegistry {
 /** A host transport whose guest link can be replaced (a guest page that reloads dials the room again). */
 export interface SwitchableHost {
   host: NetTransport;
+  /** Every expectBusy(ms) the host side announced (the in-memory link itself has no silence timeout). */
+  readonly busy: number[];
   readonly pair: MemoryTransportPair;
   /** The guest page reloads: the old link dies, a new guest endpoint can dial the same room. Returns it. */
   reload(): NetTransport;
@@ -92,6 +94,7 @@ export function createSwitchableHost(makePair: () => MemoryTransportPair): Switc
     subs = [p.host.onInputs((x) => inputs.emit(x)), p.host.onReliable((m) => reliable.emit(m)), p.host.onEvent((e) => events.emit(e))];
   };
   bind(pair);
+  const busy: number[] = [];
   const host: NetTransport = {
     get state() { return pair.host.state; },
     get role() { return pair.host.role; },
@@ -105,9 +108,13 @@ export function createSwitchableHost(makePair: () => MemoryTransportPair): Switc
     onReliable: (fn) => reliable.on(fn),
     onEvent: (fn) => events.on(fn),
     close: () => pair.host.close(),
+    expectBusy: (ms) => {
+      busy.push(ms);
+    },
   };
   return {
     host,
+    busy,
     get pair() { return pair; },
     reload() {
       const old = pair;

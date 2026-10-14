@@ -53,7 +53,8 @@
  * receiverAssist(s, team, ev) — IN_PLAY, after the other off-ball modules (RECEIVE beats every open-play job):
  *  - The intended receiver r = ball.passTarget of a pass by this team still on its way (ball loose and not in hands,
  *    lastKickTeam and lastTouchTeam = team, so a deflection by an opponent ends the assist) who is job-driven (active
- *    outfielder with p.ctrl = -1) gets RECEIVE at the best interception point at top speed: he moves to collect the
+ *    outfielder with p.ctrl = -1) and still the team's TAI-07 chaser (or there is none) gets RECEIVE at the best
+ *    interception point at top speed: he moves to collect the
  *    ball instead of waiting for it. A controlled receiver (the human or CPU brain switched to him: SIM-16 does that
  *    at once with auto-switch on) is SIM-15's (moveTick meets the ball while the stick is idle, the stick steers
  *    him), so the assist stops the moment a controller takes him. Possession (takePossession clears passTarget) or a
@@ -513,6 +514,11 @@ function assistedReceiver(s: SimState, team: number): number {
   if (r < first || r >= first + N || (r | 0) !== r) return -1;
   if (s.match.phase !== MatchPhase.IN_PLAY || b.owner !== -1 || b.heldBy !== -1) return -1;
   if (b.lastKickTeam !== team || b.lastTouchTeam !== team) return -1;
+  // [INT-A, TAI-07 CR] Only while he is the team's loose-ball chaser: once TAI-07 hands the chase to a teammate
+  // (the receiver lost the claim, or a controlled player near the ball took it) he must not run for it as well,
+  // or two teammates go for the same ball.
+  const ch = s.teams[team]!.chaser;
+  if (ch >= 0 && ch !== r) return -1;
   return isJobDriven(s, r) ? r : -1;
 }
 

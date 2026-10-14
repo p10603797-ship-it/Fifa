@@ -98,6 +98,13 @@ export function shareLinkRoom(href?: string): string | null {
   return roomCodeFromUrl(url);
 }
 
+/** Why the friend is gone, in plain words (the pill and the Finish against CPU / End match card). Pure. */
+export function goneTitle(s: Readonly<OnlineStatus>): string {
+  if (s.reason === 'quit') return `${s.opponent} left the match`;
+  if (s.reason === 'unresponsive') return `${s.opponent} is not responding`;
+  return `${s.opponent} did not come back`;
+}
+
 /** Short status line for the match pill / HUD indicator ('' = hidden). Pure. */
 export function statusLine(s: Readonly<OnlineStatus>, localHuman: number): string {
   const secs = (ms: number): number => Math.max(0, Math.ceil(ms / 1000));
@@ -111,7 +118,7 @@ export function statusLine(s: Readonly<OnlineStatus>, localHuman: number): strin
       if (s.pausedBy === localHuman) return `You paused · ${secs(s.pauseLeftMs)} s left`;
       return `${s.opponent} paused · resumes in ${secs(s.pauseLeftMs)} s`;
     case 'opponent-gone':
-      return s.reason === 'quit' ? `${s.opponent} left the match` : `${s.opponent} did not come back`;
+      return goneTitle(s);
     case 'solo':
       return 'Finishing against the CPU';
     default:
@@ -197,6 +204,8 @@ export interface OnlineDebugView {
   status(): string | null;
   stats(): OnlineSession['stats'] | null;
   session(): OnlineSession | null;
+  /** The room's lobby (tests shorten the host's settings through it). */
+  lobby(): Lobby | null;
 }
 
 declare global {
@@ -398,18 +407,21 @@ function startMatch(r: Room): void {
   const ctx = r.ctx;
   r.os?.dispose();
   r.overlay?.dispose();
-  const os = createOnlineSession(ctx, r.lobby, {
+  const os: OnlineSession = createOnlineSession(ctx, r.lobby, {
     onFinish: (_summary, quit) => {
       if (!quit || room !== r) return;
       if (r.closed) {
         finalizeRoom(r); // a match finished against the CPU (or ended) after the room had closed
         return;
       }
-      // Full time, then Quit (main menu) or Change teams (back here): leave the room unless this screen comes back.
+      // Full time, then Quit (main menu) or Rematch (back here): leave the room unless this screen comes back. Wait for
+      // the provider's drain first (a friend a few ticks behind still needs our last frames). A finished match leaves
+      // even while its lobby still waits for the link (lobby 'playing'); a mid-match quit closes the room itself.
       r.screenMounted = false;
-      setTimeout(() => {
-        if (room === r && !r.screenMounted && r.lobby.phase !== 'playing') leaveRoom();
-      }, 0);
+      const finishedMatch = os.status.kind === 'finished';
+      void os.whenDrained().then(() => {
+        if (room === r && !r.screenMounted && (r.lobby.phase !== 'playing' || finishedMatch)) leaveRoom();
+      });
     },
   });
   r.os = os;
@@ -434,6 +446,7 @@ function exposeDebug(): void {
     status: () => room?.os?.status.kind ?? null,
     stats: () => room?.os?.stats ?? null,
     session: () => room?.os ?? null,
+    lobby: () => room?.lobby ?? null,
   };
 }
 
@@ -459,11 +472,12 @@ function createMatchOverlay(ctx: AppContext, os: OnlineSession): MatchOverlay {
   };
   const showGone = (s: Readonly<OnlineStatus>): void => {
     if (modal?.open) return;
-    const title = s.reason === 'quit' ? `${s.opponent} left the match` : `${s.opponent} did not come back`;
     modal = openModal(ctx, {
       host: root,
-      title,
-      body: 'Finish the match against the CPU, or end it here.',
+      title: goneTitle(s),
+      body: s.reason === 'unresponsive'
+        ? 'Their game stopped sending moves. If they come back, play goes on by itself. Or finish the match against the CPU, or end it here.'
+        : 'Finish the match against the CPU, or end it here.',
       dismissible: false,
       testId: 'net-gone',
       actions: [

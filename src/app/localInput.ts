@@ -15,6 +15,10 @@
  * explicit name wins over another human's wildcard; a device dropped from an explicit binding is never picked up by a
  * wildcard later in the match (a pad handed away never starts driving the other side). rebind(human, []) drops every
  * source of that human (CPU hand-off).
+ *
+ * [QF-5] A source that throws (pollFrame or sample) is isolated: its contribution that tick is neutral, the error is
+ * reported once per source, and every other source (the other human's pad, touch) keeps being polled and sampled, so
+ * one broken device never freezes the match or starves the other player's input.
  */
 import type { DeviceRegistry, HumanBinding, TickInputProvider } from '../contracts/app';
 import { MAX_HUMANS } from '../contracts/constants';
@@ -153,6 +157,13 @@ export function createLocalInputProvider(
   const scratch = createInputFrame();
   const queue = createCommandQueue();
   let disposed = false;
+  /** Sources that threw already (reported once each). */
+  const failed = new Set<InputSource>();
+  const sourceFailed = (src: InputSource, err: unknown, where: string): void => {
+    if (failed.has(src)) return;
+    failed.add(src);
+    report(err, where);
+  };
   const sampleCtx: MutableSampleContext = { tick: 0, human: 0, side: -1, state: null as unknown as SimState, projector: null };
 
   const report = (err: unknown, where: string): void => {
@@ -188,6 +199,7 @@ export function createLocalInputProvider(
     const h = ownerOf.get(deviceId) ?? -1;
     byDevice.delete(deviceId);
     ownerOf.delete(deviceId);
+    failed.delete(src);
     if (h >= 0) {
       const list = perHuman[h]!;
       const i = list.indexOf(src);
@@ -267,8 +279,14 @@ export function createLocalInputProvider(
         const ctrl = state.ctrl[h];
         sampleCtx.side = ctrl ? ctrl.side : -1;
         for (let i = 0; i < list.length; i++) {
+          const src = list[i]!;
           clearInputFrame(scratch);
-          list[i]!.sample(scratch, sampleCtx as InputSampleContext);
+          try {
+            src.sample(scratch, sampleCtx as InputSampleContext);
+          } catch (err) {
+            sourceFailed(src, err, 'source.sample');
+            continue; // neutral this tick; the other sources still count
+          }
           mergeInputFrame(out, scratch);
         }
       }
@@ -279,7 +297,12 @@ export function createLocalInputProvider(
         const list = perHuman[h]!;
         for (let i = 0; i < list.length; i++) {
           const s = list[i]!;
-          if (s.pollFrame) s.pollFrame(nowMs);
+          if (!s.pollFrame) continue;
+          try {
+            s.pollFrame(nowMs);
+          } catch (err) {
+            sourceFailed(s, err, 'source.pollFrame');
+          }
         }
       }
     },

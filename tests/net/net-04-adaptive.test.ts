@@ -158,6 +158,7 @@ describe('NET-04 delay agreement', () => {
   it('both peers switch delay at the same tick when the link gets worse mid-match (netsim)', async () => {
     const r = await runNetsim({
       config: netsimConfig({ seed: 21 }),
+      lobbyMs: 0, // cold start at the default delay: it must come down on the LAN-like link first
       maxTicks: 1500,
       link: { latencyMs: 5, jitterMs: 2, seed: 21 },
       linkChanges: [{ atMs: 8000, conditions: { latencyMs: 80, jitterMs: 20 } }],
@@ -218,6 +219,7 @@ describe('NET-04 redundancy', () => {
   it('redundancy recovers 5% loss without stalls at 80 ms each way and 20 ms jitter', async () => {
     const r = await runNetsim({
       config: netsimConfig({ seed: 33 }),
+      lobbyMs: 0,
       maxTicks: 1800,
       delay: 8,
       adaptive: false,
@@ -269,6 +271,7 @@ describe('NET-04 time sync', () => {
     // catches up) on almost every frame for the rest of the match.
     const run = (timeSync: boolean) => runNetsim({
       config: netsimConfig({ seed: 8 }),
+      lobbyMs: 0,
       maxTicks: 2400,
       delay: 8,
       adaptive: false,

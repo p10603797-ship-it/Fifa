@@ -18,7 +18,7 @@
  *  2. Decision (first tick after the reaction delay, then every T_AI.carrierEvalInterval ticks while dribbling,
  *     shielding or holding; a kick or skill plan is committed until it has been executed or has failed). Every option
  *     gets a utility in goal-probability units against a possession-value model: PV(progress) = pvBase + pvSpan *
- *     ((progress + 1) / 2)^3 for having the ball at a spot, and lossCost(progress) (the opponents' PV(-progress), x style safety)
+ *     ((progress + 1) / 2)^3 (less toward the touchlines) for having the ball at a spot, and lossCost = the opponents' PV(-progress) x style safety
  *     for losing it there:
  *       - pass / through ball / cross (TAI-09 scorePassOptions: completion c, progress, danger):
  *         c * max(PV(target), danger * dangerValueMul) - (1 - c) * lossCost(min(here, target)); a through ball's
@@ -111,7 +111,7 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   /** A pass within settleTicks of gaining the ball (ball.ownerT) loses up to settlePenalty unless pressed (pressure
    *  >= settlePressure), ticks / goal probability / 0..1. */
   settleTicks: 45,
-  settlePenalty: 0.01,
+  settlePenalty: 0.005,
   settlePressure: 0.5,
   /** Counter-attack (team phase TRANSITION_ATTACK): bonus per metre of progress at style counter 0.5, x the pass's
    *  completion, goal probability [INT-A: was 0.0008 regardless of completion — a 40 m lofted through ball with a 3%
@@ -131,9 +131,9 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   longShotThreshMax: 1.0,
   longShotThreshMin: 0.7,
   /** ... x (1 + this x metres beyond longShotDist) [INT-A], 1/m ... */
-  longShotThreshPerM: 0.1,
+  longShotThreshPerM: 0.06,
   /** ... and no shot from beyond shotMaxDist (+ shotMaxLongShotExtra x style longShot) of the goal centre [INT-A], m. */
-  shotMaxDist: 33,
+  shotMaxDist: 35,
   shotMaxLongShotExtra: 4,
   /** Shot power 0..1 at <= shotNearDist m / >= shotFarDist m from the goal centre (linear between). */
   shotPowerNear: 0.65,
@@ -161,12 +161,14 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   dribbleStep: 6,
   /** Chance of losing the ball dribbling at full pressure (x 1.2 - 0.4 x dribbling / 99). */
   dribbleLossMax: 0.35,
+  /** Share of the shot value (shotXgMul x xG at the carry's end) a dribble is credited with in the attacking half [INT-A]. */
+  driveShotShare: 0.8,
   /** Score assumed when bestDribble gives no direction. */
   fallbackDribbleScore: 0.4,
   /** Fallback dribble: an opponent within this distance ahead turns the run aside by fallbackTurn (cos/sin of 45 deg), m. */
   fallbackAvoidDist: 6,
   /** Keeper with the ball at his feet: dribble utility penalty, goal probability. */
-  keeperDribblePenalty: 0.02,
+  keeperDribblePenalty: 0.01,
   /** Sprint only with no opponent within this distance in the cone ahead (cos >= sprintConeCos), m ... */
   sprintSpaceDist: 7,
   sprintConeCos: 0.5,
@@ -211,9 +213,11 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
    *  a carrier never stalls behind a shield (glitch "CPU: shields forever"). ticks / evaluations. */
   shieldMaxTicks: 150,
   shieldRestEvals: 6,
+  /** A shield of at least this many ticks that gives way to another plan rests the same way [INT-A], ticks. */
+  shieldRestMinTicks: 60,
   /** Shielding only holds the ball: the kept possession value is discounted by this (it is realised only by a later
    *  pass or turn) [INT-A: undiscounted, shield / skill / dribble cycles in the final third beat every shot]. */
-  shieldHoldMul: 0.85,
+  shieldHoldMul: 0.93,
   // ---- clearance
   /** Clear only in the own third (progress below this) with an opponent within clearPressDist m. */
   clearProgress: -1 / 3,
@@ -233,10 +237,12 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   pressFar: 6,
   predictSlack: 1,
   // ---- decisions
-  /** Decision noise sd = T_LEVEL.decisionNoise x this, goal probability. */
+  /** Decision noise sd = T_LEVEL.decisionNoise x this, goal probability [INT-A: switchMargin, settlePenalty and
+   *  keeperDribblePenalty halved with the value model's rescale (midfield PV 0.0275 -> 0.014); the noise is kept, so
+   *  low levels err relatively more]. */
   noiseScale: 0.02,
   /** Bonus the current dribble / shield plan keeps when deciding again (no dithering), goal probability. */
-  switchMargin: 0.006,
+  switchMargin: 0.003,
   /** Evaluations after a failed start during which that plan is not chosen again. */
   failEvals: 2,
   // ---- execution
@@ -268,6 +274,9 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
 } as const;
 
 const LT = LOCAL_TUNING;
+/** posValue width factor constants: 1 / (pvLatFull - pvLatFree) and 1 - pvLatMin. */
+const PV_LAT_INV = 1 / (LT.pvLatFull - LT.pvLatFree);
+const PV_LAT_DROP = 1 - LT.pvLatMin;
 
 // ---------------------------------------------------------------- constants and scratch
 
@@ -328,18 +337,16 @@ function markStarted(b: CpuBrainState): void { b.p1 |= 1 << 6; }
 
 /** Possession value at progress (-1 own goal line .. +1 opposition goal line), goal probability. */
 function posValue(prog: number, z: number): number {
-  const t = clamp01((prog + 1) * 0.5);
   // [INT-A] Width: toward the touchlines the spot is worth less, the more so the further up the pitch (a carrier at
   // the corner flag is not 0.08 goals from scoring; with x alone he kept the ball there rather than cross or cut back).
-  const az = z < 0 ? -z : z;
-  const w = az <= LT.pvLatFree ? 1 : 1 - (1 - LT.pvLatMin) * clamp01((az - LT.pvLatFree) / (LT.pvLatFull - LT.pvLatFree));
-  return LT.pvBase + LT.pvSpan * t * t * t * (1 - t * (1 - w));
+  // Kept tiny so V8 inlines it (no boxed doubles per option).
+  const t = clamp01((prog + 1) * 0.5);
+  const lat = clamp01(((z < 0 ? -z : z) - LT.pvLatFree) * PV_LAT_INV);
+  return LT.pvBase + LT.pvSpan * t * t * t * (1 - t * PV_LAT_DROP * lat);
 }
 
-/** Cost of losing the ball at (progress, z) (x style safety): the opponents' possession value there, goal probability. */
-function lossCost(prog: number, z: number): number {
-  return posValue(-prog, z) * C.safetyMul;
-}
+// Cost of losing the ball at (progress, z) (x style safety) = the opponents' possession value there:
+// posValue(-progress, z) * C.safetyMul, written inline at each use (a helper returning it boxed a double per option).
 
 function styleMul(w: number): number { return LT.styleMulMin + (LT.styleMulMax - LT.styleMulMin) * clamp01(w); }
 
@@ -526,7 +533,7 @@ function passOptionsInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<Sty
     const dv = clamp01(o.danger) * LT.dangerValueMul;
     if (dv > vT) vT = dv;
     const lossProg = tprog < C.prog ? tprog : C.prog;
-    const raw = c * vT - (1 - c) * lossCost(lossProg, tprog < C.prog ? oz : p.z);
+    const raw = c * vT - (1 - c) * posValue(-lossProg, tprog < C.prog ? oz : p.z) * C.safetyMul;
     let gain = raw - C.vHere;
     if (gain > 0) {
       const dx = ox - p.x, dz = oz - p.z;
@@ -605,7 +612,15 @@ function dribbleOptionInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<S
   const step = LT.dribbleStep * (0.3 + 0.7 * sc);
   const nprog = (C.dir * (p.x + dx * step)) / HALF_LENGTH;
   const keep = clamp01(1 - LT.dribbleLossMax * C.pressure * (1.2 - (0.4 * s.attrs[p.slot]!.dribbling) / 99));
-  const raw = keep * posValue(nprog, p.z + dz * step) - (1 - keep) * lossCost(C.prog, p.z);
+  const nz = p.z + dz * step;
+  let vN = posValue(nprog, nz);
+  if (C.prog > 0 && p.isKeeper === 0) {
+    // [INT-A] Drive at goal: in the attacking half the spot a carry reaches is worth at least the shot it opens
+    // there (same weighting as the shot option), so a carrier 30 m out runs at the box instead of passing sideways.
+    const xgN = clamp01(fin(estimateXg(s, p.slot, p.x + dx * step, nz))) * LT.shotXgMul * LT.driveShotShare;
+    if (xgN > vN) vN = xgN;
+  }
+  const raw = keep * vN - (1 - keep) * posValue(-C.prog, p.z) * C.safetyMul;
   let gain = raw - C.vHere;
   if (gain > 0) gain *= styleMul(sw.dribble);
   let u = C.vHere + gain;
@@ -627,7 +642,7 @@ function skillOptionInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<Sty
   let succ = LT.skillBase + LT.skillPerStar * stars + (LT.skillDribbling * a.dribbling) / 99;
   if (succ > LT.skillMaxSuccess) succ = LT.skillMaxSuccess;
   const nprog = C.prog + LT.skillGain / HALF_LENGTH;
-  const raw = succ * posValue(nprog, p.z) - (1 - succ) * lossCost(C.prog, p.z);
+  const raw = succ * posValue(nprog, p.z) - (1 - succ) * posValue(-C.prog, p.z) * C.safetyMul;
   let gain = raw - C.vHere;
   if (gain > 0) gain *= styleMul(sw.dribble);
   noise(s);
@@ -640,7 +655,7 @@ function shieldOptionInto(s: SimState, p: Readonly<PlayerState>, cur: CpuPlan, a
   if (C.nearD > LT.shieldDist) return;
   const str = clamp01(s.attrs[p.slot]!.strength / 99);
   const loss = clamp01((LT.shieldLossWeak + (LT.shieldLossStrong - LT.shieldLossWeak) * str) * (1 + age / LT.shieldAgeRef));
-  let u = (1 - loss) * C.vHere * LT.shieldHoldMul - loss * lossCost(C.prog, p.z);
+  let u = (1 - loss) * C.vHere * LT.shieldHoldMul - loss * posValue(-C.prog, p.z) * C.safetyMul;
   if (cur === CpuPlan.SHIELD) u += LT.switchMargin;
   noise(s);
   u += NZ[0]!;
@@ -680,6 +695,11 @@ function decide(s: SimState, team: number, brain: CpuBrainState, p: Readonly<Pla
   // The failure memory lasts failEvals decisions.
   const left = evals > 0 ? evals - 1 : 0;
   setP1(brain, stepOf(brain), modeOf(brain), startedOf(brain), left > 0 ? failMaskOf(brain) : 0, left);
+  const chosen = BEST.plan as CpuPlan; // (cast: the option scorers above wrote it; TS narrowed it to the reset value)
+  if (cur === CpuPlan.SHIELD && chosen !== CpuPlan.SHIELD && shieldAge >= LT.shieldRestMinTicks && failEvalsOf(brain) < LT.shieldRestEvals) {
+    // [INT-A] A long shield that ends on its own rests too, so the carrier does not cycle shield / dribble / shield.
+    setP1(brain, stepOf(brain), modeOf(brain), startedOf(brain), failMaskOf(brain) | (1 << CpuPlan.SHIELD), LT.shieldRestEvals);
+  }
   commit(s, team, brain, p, lv);
 }
 

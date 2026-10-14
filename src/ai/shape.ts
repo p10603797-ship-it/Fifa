@@ -63,15 +63,21 @@ import { otherTeam, possessingTeam, teamEnd, teamStart } from '../sim/core/query
 const LOCAL_TUNING = {
   /** Back-line height: u = dataBack + lineOffset + lineSlope * ballU, clamped to [lineMin, lineMax]. dataBack is
    *  the formation's deepest outfield slot (its neutral back line). m, m/m, m (team frame), m (team frame). */
-  lineOffset: [8, 20, 7, 16, 3, 7],
+  lineOffset: [8, 14, 0, 14, -3, 0],
+  /** [INT-A] Extra height of the back line out of possession, m (per phase), fading in with the ball's u from
+   *  defendLiftFrom (none: ball near our box) to defendLiftTo (full): a mid-block instead of a low block that left
+   *  every attack facing ten men inside 25 m (mirrors TAI-04 defshape lineOffset). */
+  defendLift: [0, 0, 7, 0, 6, 7],
+  defendLiftFrom: -30,
+  defendLiftTo: -12,
   lineSlope: [0.55, 0.6, 0.55, 0.55, 0.55, 0.55],
   lineMin: [-40, -36, -46.5, -36, -46.5, -44],
-  lineMax: [2, 20, 9, 16, 3, 9],
+  lineMax: [2, 16, 9, 14, 3, 9],
   /** Absolute back-line limits after focus and TAI-04 lineX, m (floor = own goal-area edge + 0.5 m). */
   lineFloor: -46.5,
-  lineCeil: 22,
+  lineCeil: 18,
   /** Vertical stretch of formation depths relative to the deepest outfield slot (1 = data depths). */
-  depthScale: [1.35, 1.8, 1.1, 1.6, 0.95, 1],
+  depthScale: [1.25, 1.3, 0.9, 1.4, 0.95, 1],
   /** Back-line depth stagger kept in defending phases (0 = perfectly flat, 1 = data stagger). */
   defFlatten: 0.3,
   /** Lateral stretch of the formation width (1 = data width). */
@@ -88,7 +94,7 @@ const LOCAL_TUNING = {
   wingBackPush: [4, 6, -6, 6, -6, 0],
   wideMidPush: [0, 2, -2, 3, -2, 0],
   wingerPush: [2, 7, -2, 8, -2, 0],
-  forwardPush: [2, 6, 6, 8, 0, 0],
+  forwardPush: [2, 6, 3, 8, 0, 0],
   /** Tactical focus (DEFAULT, DEFENDING, ATTACKING): multiplier on the formation depths. The focus block push
    *  and width multipliers are DAT-04's (data/tactics resolveTactics), shared with every other module. */
   focusDepth: [1, 0.9, 1.08],
@@ -98,7 +104,7 @@ const LOCAL_TUNING = {
   lineGapFraction: 0.97,
   /** ... x this per phase [INT-A: a team in possession stretches (about 40 m from the back line to the forwards);
    *  one capped at 14 m gaps in possession had nobody between or beyond the opponents' lines]. */
-  lineGapScale: [1.6, 2, 1, 2, 1, 1],
+  lineGapScale: [1.35, 1.5, 1, 1.5, 1, 1],
   /** Formation slots of one line whose nx differ by at most this form one sub-line (normalised units). */
   subLineTolerance: 0.12,
   /** Span kept by a sub-line with k of n members: spreadMin + (1 - spreadMin) * (k - 1) / (n - 1). */
@@ -133,6 +139,20 @@ const LOCAL_TUNING = {
 
 const T = LOCAL_TUNING;
 const N = PLAYERS_PER_TEAM;
+
+/**
+ * [INT-A] Max gap between consecutive outfield home depths for a team phase (T_AI.lineSpacingMax x lineGapFraction x
+ * lineGapScale): compact out of possession, stretched in possession. SET_PIECE resolves to an open-play phase in the
+ * shape, so it reports the largest gap any phase allows.
+ */
+export function lineGapMax(phase: TeamPhase): number {
+  let k: number;
+  if (phase === TeamPhase.SET_PIECE) {
+    k = 0;
+    for (let i = 0; i < T.lineGapScale.length; i++) if (T.lineGapScale[i]! > k) k = T.lineGapScale[i]!;
+  } else k = T.lineGapScale[phase] ?? 1;
+  return T_AI.lineSpacingMax * T.lineGapFraction * k;
+}
 
 const LINE_GK = -1;
 const LINE_DEF = 0;
@@ -588,7 +608,8 @@ function computeShape(s: SimState, team: number): void {
 
   // 3. Vertical: back-line height, then per-slot depth.
   const nxBack = fNxBack[fi]!;
-  let lineU = Math.min(Math.max(nxBack * HALF_LENGTH + T.lineOffset[ph]! + fl + T.lineSlope[ph]! * bu, T.lineMin[ph]! + fl), T.lineMax[ph]! + fl);
+  const lift = T.defendLift[ph]! * Math.min(Math.max((bu - T.defendLiftFrom) / (T.defendLiftTo - T.defendLiftFrom), 0), 1);
+  let lineU = Math.min(Math.max(nxBack * HALF_LENGTH + T.lineOffset[ph]! + lift + fl + T.lineSlope[ph]! * bu, T.lineMin[ph]! + fl), T.lineMax[ph]! + fl);
   const tlx = t.lineX;
   const lineX = tlx - tlx === 0 ? tlx : 0;
   if (defending && s.match.phase === MatchPhase.IN_PLAY && lineX !== 0) {

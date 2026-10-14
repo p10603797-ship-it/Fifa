@@ -457,8 +457,11 @@ describe('SIM-14 in a bot match', () => {
     const run = (): { hash: number; started: number; tackles: number } => {
       const s = makeScenario({ seed: 2, config: { halfMinutes: 2 } });
       let started = 0;
-      const ev = runTicks(s, 3000, (t, st) => {
-        if (t % 7 !== 0) return;
+      const t0 = s.tick;
+      // [INT-A] 60 quiet ticks at the end: a tackle forced in the last few ticks used to be cut off by the end of the
+      // run before its contact window closed (no TACKLE event yet), failing the count by chance.
+      const ev = runTicks(s, 3060, (t, st) => {
+        if (t % 7 !== 0 || t - t0 >= 3000) return;
         const b = st.ball;
         for (let i = 0; i < 22; i++) {
           const p = st.players[i]!;

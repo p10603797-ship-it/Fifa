@@ -42,10 +42,15 @@ function scenario(c: Setup, bu: number, bz: number, ku: number, kz: number): { s
   return { s, dir, k };
 }
 
-/** Pin the ball at a pitch point with a given velocity (applied before every tick). */
+/**
+ * Pin the ball at a pitch point with a given velocity (applied before every tick). [INT-A] A pinned ball is nobody's
+ * pass: passTarget is cleared, or a CPU defender's back pass during the settle phase sends the keeper to meet it
+ * (GKP-01 receivePass) along a path the pin never lets it follow.
+ */
 function pin(s: SimState, x: number, z: number, vx: number, vz: number): void {
   const b = s.ball;
   b.x = x; b.z = z; b.y = 0.11; b.vx = vx; b.vz = vz; b.vy = 0; b.px = x; b.pz = z; b.py = 0.11; b.grounded = 1;
+  b.passTarget = -1;
 }
 
 function facingDot(s: SimState, k: number): number {

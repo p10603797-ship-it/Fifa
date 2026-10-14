@@ -137,6 +137,12 @@ function checkLegal(s: SimState, slot: number, x: number, z: number): string | n
   }
 }
 
+/** Both slots hold WALL spots (a free-kick wall: RUL-05 lines them up shoulder to shoulder). */
+function isWallPair(sp: readonly Spot[], i: number, j: number): boolean {
+  const a = sp.find((q) => q.slot === i), b = sp.find((q) => q.slot === j);
+  return a !== undefined && b !== undefined && a.role === SpotRole.WALL && b.role === SpotRole.WALL;
+}
+
 /** Legal spots for every candidate of both teams (explicit rules + RUL-11's own check), inside the pitch, spaced. */
 function expectLegalLayout(s: SimState, label: string): Spot[] {
   const sp = placeOnSpots(s);
@@ -154,6 +160,8 @@ function expectLegalLayout(s: SimState, label: string): Spot[] {
       const a = s.players[i]!, b = s.players[j]!;
       if (a.active !== 1 || b.active !== 1) continue;
       if (!sp.some((q) => q.slot === i || q.slot === j)) continue;
+      // [INT-A] Wall members stand shoulder to shoulder (RUL-05 spacing, now live instead of the Wave 1 stub).
+      if (isWallPair(sp, i, j)) continue;
       const d = dist(a.x, a.z, b.x, b.z);
       if (d < LOCAL_TUNING.minSpacing - 0.05) problems.push(`slots ${i} and ${j} only ${d.toFixed(2)} m apart`);
     }
@@ -286,6 +294,7 @@ describe('TAI-13 positions: legal for every restart kind and both teams', () => 
       for (let i = 0; i < sp.length; i++) {
         for (let j = 0; j < pts.length; j++) {
           if (j === i) continue;
+          if (j < sp.length && sp[i]!.role === SpotRole.WALL && sp[j]!.role === SpotRole.WALL) continue; // [INT-A] wall
           expect(dist(pts[i]![0]!, pts[i]![1]!, pts[j]![0]!, pts[j]![1]!), `${label} ${sp[i]!.slot}`).toBeGreaterThanOrEqual(LOCAL_TUNING.minSpacing - 0.05);
         }
       }

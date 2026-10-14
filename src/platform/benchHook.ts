@@ -15,6 +15,10 @@
  * the 99th percentile of the per-frame worst tick against the 4 ms budget, never counting the 2 slowest frames: one
  * GC, JIT or scheduling hitch decides a single maximum, so the max ("worst") is judged only in the full verdict (a
  * real device run), like the fps budgets. Frames with a tick over budget are counted and reported.
+ *
+ * [QF-5] Only play is measured: frames while the match is paused (rotate card, a system alert, the pause menu) and the
+ * gap of a hidden page (rAF stops, the first frame back spans the whole absence) are not samples, and the window is
+ * extended by that time, so a notification or a rotation during the run never turns into a 30-second "longest frame".
  */
 import type { AppContext, MatchSetup } from '../contracts/app';
 import { GAME_VERSION } from '../contracts/constants';
@@ -403,10 +407,19 @@ export function startBench(ctx: AppContext, opts: BenchOptions = {}): BenchHandl
   let stageStart = t0;
   let last = 0;
   let error: string | undefined;
+  /** Time not measured (paused match, hidden page) inside the measurement window, ms. */
+  let pausedMs = 0;
+  /** The page was hidden since the last frame: the next frame interval spans the absence. */
+  let wasHidden = false;
+  const onVisibility = (): void => {
+    if (document.visibilityState === 'hidden') wasHidden = true;
+  };
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility);
 
   const finish = (why?: string): void => {
     if (stage === 'done') return;
     stage = 'done';
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
     if (why) error = why;
     const ls = loopStats();
     if (ls && samples.frames > 0) {
@@ -455,6 +468,15 @@ export function startBench(ctx: AppContext, opts: BenchOptions = {}): BenchHandl
     } else {
       const dt = now - last;
       last = now;
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      if (ctx.session.paused || hidden || wasHidden) {
+        // Not play: no sample, and the window waits for play to come back.
+        wasHidden = hidden;
+        pausedMs += dt;
+        loopStats()?.reset();
+        requestAnimationFrame(onFrame);
+        return;
+      }
       if (samples.frames < cap) frameMs[samples.frames++] = dt;
       const ls = loopStats();
       if (ls) drainLoopStats(ls, timing);
@@ -469,8 +491,9 @@ export function startBench(ctx: AppContext, opts: BenchOptions = {}): BenchHandl
         samples.qualityTier = rs.qualityTier;
       }
       const ended = !ctx.session.active || (state !== null && state.match.phase === MatchPhase.POST_MATCH);
-      if (now - stageStart >= seconds * 1000 || ended) {
-        finish(ended && now - stageStart < seconds * 1000 ? 'match ended before the measurement window' : undefined);
+      const played = now - stageStart - pausedMs;
+      if (played >= seconds * 1000 || ended) {
+        finish(ended && played < seconds * 1000 ? 'match ended before the measurement window' : undefined);
         return;
       }
     }

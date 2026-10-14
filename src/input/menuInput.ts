@@ -18,7 +18,9 @@
  * Home and Share are never read.
  *
  * Timing: a direction fires on its press, again after MENU_REPEAT_DELAY_MS while held, then every
- * MENU_REPEAT_INTERVAL_MS (the same count at 60 and 120 Hz; the schedule never drifts with the frame rate). The left
+ * MENU_REPEAT_INTERVAL_MS (the same count at 60 and 120 Hz; the schedule never drifts with the frame rate). Repeats
+ * reach the navigator through its handleRepeat (focus.ts) when it has one, so a held direction never runs past the
+ * control it acts on (QF-3 QA-30). The left
  * stick counts as a direction past MENU_STICK_THRESHOLD on its dominant axis and lets go below MENU_STICK_RELEASE
  * (hysteresis: a stick resting near the threshold cannot chatter; a diagonal never fires two directions).
  *
@@ -118,16 +120,16 @@ export function createRepeatState(): RepeatState {
  * press edge and each repeat. `edgeBits` marks fresh presses since the last step (a second tap that lands before
  * the machine saw the first release still fires, and restarts the delay).
  */
-export function stepRepeat(st: RepeatState, heldBits: number, nowMs: number, fire: (a: MenuAction) => void, edgeBits = 0): void {
+export function stepRepeat(st: RepeatState, heldBits: number, nowMs: number, fire: (a: MenuAction, repeat?: boolean) => void, edgeBits = 0): void {
   for (let i = 0; i < 4; i++) {
     const held = (heldBits & (1 << i)) !== 0;
     const edge = (edgeBits & (1 << i)) !== 0;
     if (!held && !edge) { st.next[i] = -1; continue; }
     if (st.next[i] === -1 || edge) {
-      fire(DIRS[i]!);
+      fire(DIRS[i]!, false);
       st.next[i] = held ? nowMs + MENU_REPEAT_DELAY_MS : -1;
     } else if (nowMs >= st.next[i]! - LOCAL_TUNING.repeatSlackMs) {
-      fire(DIRS[i]!);
+      fire(DIRS[i]!, true);
       st.next[i] = Math.max(st.next[i]! + MENU_REPEAT_INTERVAL_MS, nowMs - MENU_REPEAT_INTERVAL_MS);
     }
   }
@@ -263,8 +265,12 @@ export function createMenuInput(opts: MenuInputOptions): MenuInput {
   target?.addEventListener('blur', onBlur);
   doc?.addEventListener('visibilitychange', onVisibility);
 
-  const fire = (a: MenuAction): void => {
+  /** Repeats go to the navigator's handleRepeat when it has one (focus.ts: a held direction never runs past the control
+   *  it acts on, QF-3 QA-30); other navigators get them as plain actions. */
+  const repeatTo = opts.focus as FocusNavigator & { handleRepeat?(a: MenuAction): void };
+  const fire = (a: MenuAction, repeat?: boolean): void => {
     if (a === MenuAction.START) opts.onPause();
+    else if (repeat === true && typeof repeatTo.handleRepeat === 'function') repeatTo.handleRepeat(a);
     else opts.focus.handle(a);
   };
 

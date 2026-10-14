@@ -18,7 +18,8 @@
  *         [sL, sR] (lateral / forward of each post) and the keeper covers [sk - rK / tk, sk + rK / tk] (tk, sk his
  *         forward distance and slope); rK = keeperStandReach + dive speed (T_GK, gkDiving) x (ball time d /
  *         shotSpeedRef - reaction (T_GK, gkReflexes)), capped at keeperReachCap. open = latShare x the share of the
- *         coverage he loses against standing on the bisector at the same depth (beyond latDead);
+ *         mouth he leaves open beyond what an average keeper leaves on the bisector, beyond latDead [INT-A] (formerly
+ *         the share of his own coverage lost, which rated a quicker keeper with a wider reach as more open);
  *       - off his line: distance from the goal centre beyond GKP-01's normal depth for d (T_GK.depthNear..depthFar over
  *         depthNearDist..depthFarDist) + offDead -> offShare x smoothstep over offSpan m, x smoothstep(chipMinDist,
  *         chipFullDist, shooter-to-keeper distance) (room to chip / round him);
@@ -422,8 +423,17 @@ function xgKernel(s: SimState, slot: number): void {
       const sk = (kx * wx + kz * wz) / tk;
       const lo = sk - rs > sL ? sk - rs : sL, hi = sk + rs < sR ? sk + rs : sR;
       const ovA = hi > lo ? hi - lo : 0;
-      const ovC = 2 * rs < width ? 2 * rs : width;
-      const lost = ovC > 1e-9 ? 1 - ovA / ovC : 1;
+      // [INT-A] Misposition against the clean chance's reference: the share of the mouth he leaves uncovered beyond
+      // what an average keeper (attributes at the middle of T_GK's ranges) leaves standing on the bisector. (The old
+      // share of his OWN coverage lost made a quicker keeper with a wider reach count as more open.)
+      const reactRef = (T_GK.reactWorst + T_GK.reactBest) * 0.5 / TICK_HZ;
+      const tbRef = d / LT.shotSpeedRef - reactRef;
+      let rkRef = LT.keeperStandReach + (tbRef > 0 ? (T_GK.diveSpeedWorst + T_GK.diveSpeedBest) * 0.5 * tbRef : 0);
+      if (rkRef > LT.keeperReachCap) rkRef = LT.keeperReachCap;
+      const ovRef = 2 * rkRef / tk < width ? 2 * rkRef / tk : width;
+      const uncov = width > 1e-9 ? 1 - ovA / width : 0;
+      const uncovRef = width > 1e-9 ? 1 - ovRef / width : 0;
+      const lost = uncov > uncovRef && uncovRef < 1 ? (uncov - uncovRef) / (1 - uncovRef) : 0;
       open = lost > LT.latDead ? (LT.latShare * (lost - LT.latDead)) / (1 - LT.latDead) : 0;
       // Off his line (depth beyond GKP-01's normal depth for this distance), with room to chip / round him.
       const kd = Math.sqrt(kBest);

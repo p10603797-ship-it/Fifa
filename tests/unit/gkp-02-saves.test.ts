@@ -11,6 +11,7 @@ import { BALL_RADIUS, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_LENGTH } from '../../sr
 import { ActionKind, CrossKind, KickKind, MatchPhase, SaveKind } from '../../src/contracts/enums';
 import { EventType } from '../../src/contracts/events';
 import { MoveMode, type SimState } from '../../src/contracts/state';
+import { T_GK } from '../../src/contracts/tuning';
 import { actionsTick, endAction, isFree } from '../../src/sim/actions/dispatch';
 import { ballStepTick } from '../../src/sim/ball/contact';
 import { createEventBuffer } from '../../src/sim/core/events';
@@ -104,9 +105,9 @@ describe('GKP-02 saves: reaction delay', () => {
       if (b.r.outcome === 'save') slow++;
     }
     const k = keeperScenario({ reflexes: 99 }).attrs[KEEPER]!;
-    expect(keeperReactTicks(k)).toBe(6);
+    expect(keeperReactTicks(k)).toBe(T_GK.reactBest); // [INT-A] read from tuning (retuned 6 / 20 -> 8 / 22)
     k.gkReflexes = 1;
-    expect(keeperReactTicks(k)).toBe(20);
+    expect(keeperReactTicks(k)).toBe(T_GK.reactWorst);
     expect(fast).toBeGreaterThan(slow + 10);
   });
 

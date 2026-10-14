@@ -62,8 +62,8 @@ describe('NET-02 packet codec', () => {
     for (let i = 0; i < 3; i++) packSenderFrame(busyFrame(i), data, i * FRAME_INTS);
     const p: InputPacket = { firstTick: 1234, count: 3, ack: 1229, tick: 1226, adv: -1.5625, data };
     const bytes = encodeInputPacket(p);
-    expect(bytes.byteLength).toBe(inputPacketBytes(3));
-    expect(bytes.byteLength).toBe(PACKET_HEADER_BYTES + 3 * FRAME_INTS * 2);
+    expect(bytes.byteLength).toBe(inputPacketBytes(3)); // every value non-zero: the sparse format's largest size
+    expect(bytes.byteLength).toBe(PACKET_HEADER_BYTES + 3 * (3 + FRAME_INTS * 2));
     const q = decodeInputPacket(bytes)!;
     expect(q).not.toBeNull();
     expect([q.firstTick, q.count, q.ack, q.tick, q.adv]).toEqual([1234, 3, 1229, 1226, -1.5625]);

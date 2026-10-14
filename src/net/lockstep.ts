@@ -185,6 +185,9 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
   const redundancy = Math.max(1, opts.redundancy ?? NET_REDUNDANCY);
   const useAdaptive = opts.adaptive !== false;
   const adaptive = createAdaptiveDelay({ initial: opts.delay ?? NET_DELAY_START });
+  // Continue from the round trip the transport has measured (the lobby ran for a while): starting from nothing let the
+  // first pings raise the delay to 7-8 ticks for the first seconds of every match (QF-6).
+  if (tr.rtt > 0) adaptive.seed(tr.rtt, tr.jitter);
   const fixedDelay = Math.max(1, Math.round(opts.delay ?? NET_DELAY_START));
   const startDelay = useAdaptive ? adaptive.delayFor(firstTick) : fixedDelay;
   const log = opts.log;

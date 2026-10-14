@@ -442,7 +442,9 @@ export function createMemoryTransportPair(opts: MemoryLinkOptions = {}): MemoryT
         if (wasOpen) {
           const other = side === 'host' ? guestEp : hostEp;
           const myEpoch = epoch;
-          enqueue(now() + cond.latencyMs, () => {
+          // A graceful close travels behind the reliable messages sent before it (SCTP delivers queued data first).
+          const due = Math.max(now() + cond.latencyMs, out.lastReliableDue);
+          enqueue(due, () => {
             if (myEpoch === epoch) {
               epoch++;
               other.linkDown();

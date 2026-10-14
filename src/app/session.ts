@@ -1,11 +1,14 @@
 /**
  * Match session (contracts/app.ts SessionControl) plus the hooks the app shell and loop need. [FND-04]
  *
- * start(setup): 'loading' screen -> initMatch -> renderer.setMatch -> await renderer.warmUp() -> hud.setMatch ->
- * audio.matchStart -> 'match'. Input comes from setup.inputProvider or a local provider over the bound devices.
+ * start(setup): 'loading' screen -> initMatch -> renderer.setMatch -> audio.warmUp() (when the engine has it: the
+ * remaining sound pre-render, QF-5) -> await renderer.warmUp() -> hud.setMatch -> audio.matchStart -> 'match'. Input
+ * comes from setup.inputProvider or a local provider over the bound devices.
  *
  * Pause rules (brief sections 3 and 11): pause(-1) is a system pause (hidden page, portrait, error) that anyone may
- * resume; a human pause can be resumed only by that human. Hidden page: pause, release inputs, suspend audio; on
+ * resume; a human pause can be resumed only by that human. [QF-5] A pause held by a human who was handed to the CPU
+ * (setHumanDevice 'cpu', e.g. his pad died while his pause menu was open) becomes a system pause: nobody is ever
+ * locked out of resuming, restarting or quitting. Hidden page: pause, release inputs, suspend audio; on
  * return audio resumes and the pause menu shows (never auto-resume). Blur releases every held input.
  *
  * resume() on a session that is not paused (running or finished) re-syncs the router to the match state; screens
@@ -40,7 +43,6 @@ import type { EventBuffer } from '../contracts/events';
 import { createInputFrame, type CameraProjector, type InputFrame } from '../contracts/input';
 import type { MatchConfig, SimState } from '../contracts/state';
 import { preparePracticeState } from '../modes/practice';
-import { setLocalPerspective } from '../audio/crowd';
 import { createStatsTracker } from '../modes/stats';
 import { cloneState as simCloneState } from '../sim/core/clone';
 import { createEventBuffer as simCreateEventBuffer } from '../sim/core/events';
@@ -313,7 +315,9 @@ export function createSession(deps: SessionDeps): AppSession {
       if (!ok) return;
     }
     paused = true;
-    pausedBy = byHuman;
+    // [QF-5] A human handed to the CPU cannot resume any more: his pause (e.g. restored by the reconnect flow after the
+    // hand-off) is a system pause that anyone may lift, never a match nobody can resume, restart or quit.
+    pausedBy = cpuHumans.includes(byHuman) ? -1 : byHuman;
     markPauseChange();
     // Synchronously, before anything else can sample: no held stick, sprint or charge survives the pause (PAD-02).
     if (provider) safe(() => provider!.releaseAll(), 'releaseAll');
@@ -332,7 +336,7 @@ export function createSession(deps: SessionDeps): AppSession {
       syncScreen();
       return true;
     }
-    if (pausedBy !== -1 && byHuman !== pausedBy) return false;
+    if (pausedBy !== -1 && byHuman !== pausedBy && !cpuHumans.includes(pausedBy)) return false;
     if (hidden || blocked) return false;
     const hooks = setup?.hooks;
     if (hooks?.allowPause) {
@@ -354,9 +358,19 @@ export function createSession(deps: SessionDeps): AppSession {
     return true;
   }
 
+  /**
+   * Crowd perspective for online 1v1 through the engine (AudioEngineImpl.setPerspective; optional on the contract's
+   * AudioEngine). [QF-5] The session never reaches into an audio module itself: an audio module that is missing or
+   * mocked can never fail a match load.
+   */
+  function setPerspective(side: number): void {
+    const f = (audio as Partial<{ setPerspective(side: number): void }>).setPerspective;
+    if (typeof f === 'function') safe(() => f.call(audio, side), 'audio.setPerspective');
+  }
+
   function teardown(): void {
     gen++;
-    setLocalPerspective(-1);
+    setPerspective(-1);
     const p = provider;
     provider = null;
     if (p) safe(() => p.dispose(), 'provider.dispose');
@@ -409,11 +423,15 @@ export function createSession(deps: SessionDeps): AppSession {
       }
       provider = p;
       renderer.setMatch(curr, clubs);
+      // [QF-5] Audio warm-up on the loading screen: buffers the menus did not pre-render yet are finished now, never
+      // during play (AudioEngineImpl.warmUp; optional on the contract's AudioEngine).
+      const audioWarmUp = (audio as Partial<{ warmUp(): void }>).warmUp;
+      if (typeof audioWarmUp === 'function') safe(() => audioWarmUp.call(audio), 'audio.warmUp');
       await renderer.warmUp();
       if (gen !== myGen) return;
       hud.setMatch(curr, clubs);
       hud.setVisible(true);
-      setLocalPerspective(onlineLocalSide(s));
+      setPerspective(onlineLocalSide(s));
       audio.matchStart(curr);
       runtime = { prev, curr, provider: p, frames, events, stats };
       lastPhase = curr.match.phase;
@@ -540,6 +558,7 @@ export function createSession(deps: SessionDeps): AppSession {
         // Through the frame (deterministic, in replays); the sim applies it on the next tick, also after a pause.
         session.queueCommand(human, Command.HAND_TO_CPU, human);
         cpuHumans.push(human);
+        if (paused && pausedBy === human) pausedBy = -1; // [QF-5] his pause is now everyone's (see pause())
         if (canRebind(p)) safe(() => p.rebind(human, []), 'rebind');
         return true;
       }

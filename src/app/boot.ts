@@ -14,7 +14,9 @@
  * Exposes window.__dotkick = { ctx, app } (tests read ctx.session.getState()) and window.__dotkickFrameStats.
  * Lifecycle rules (brief section 3): hidden page pauses the match, stops the loop and suspends audio; returning
  * shows the pause menu and never fast-forwards; blur releases every held input; portrait or a too-small window
- * pauses and shows the rotate card; any uncaught error pauses and shows the recovery screen.
+ * pauses and shows the rotate card; any uncaught error pauses and shows the recovery screen. [QF-5] A lost WebGL
+ * context pauses and blocks Resume (app/blockers.ts) until the restored context is rebuilt; the update toast waits
+ * while a match loads or is played (blockers.ts isPlayBusy).
  */
 import { MenuAction, UiSound, type AppContext, type GameRenderer } from '../contracts/app';
 import { GAME_NAME, GAME_VERSION } from '../contracts/constants';
@@ -36,6 +38,7 @@ import { createGameRenderer } from '../render/index';
 import { installDebugOverlay } from '../ui/debugOverlay';
 import { createHud, type Hud } from '../ui/hud/index';
 import { registerScreens } from '../ui/index';
+import { createBlockers, isPlayBusy } from './blockers';
 import { createLoop, type GameLoop } from './loop';
 import { createNullRenderer } from './nullRenderer';
 import { createRouter } from './router';
@@ -200,17 +203,11 @@ export function boot(): AppHandle {
   listen(window, 'keydown', blockNativeActivation, true);
   listen(window, 'keyup', blockNativeActivation, true);
 
-  let portrait = false;
-  let tooSmall = false;
+  // Portrait, a too-small window and a lost WebGL context all block the match (system pause, no resume until clear).
+  const blockers = createBlockers((b) => sess.setBlocked(b));
   const ipad = installIpadHardening({
-    onPortraitChange: (p) => {
-      portrait = p;
-      sess.setBlocked(portrait || tooSmall);
-    },
-    onTooSmallChange: (s) => {
-      tooSmall = s;
-      sess.setBlocked(portrait || tooSmall);
-    },
+    onPortraitChange: (p) => blockers.set('portrait', p),
+    onTooSmallChange: (s) => blockers.set('tooSmall', s),
     onLowPowerSuspected: () => {
       diagnostics.log('platform', 'steady 30 fps with idle frames: Low Power Mode likely');
       if (!settings.get().lowPowerHintShown) settings.update((s) => { s.lowPowerHintShown = true; });
@@ -298,10 +295,22 @@ export function boot(): AppHandle {
   }
   disposers.push(settings.subscribe(bound ? () => loop.invalidate() : applySettings));
 
-  // WebGL context loss (GFX-01 rebuilds GPU resources; the match resumes from the pause menu).
+  // WebGL context loss (GFX-01 rebuilds GPU resources; the match resumes from the pause menu). [QF-5] The match stays
+  // blocked (paused, Resume refused) from the loss until the restored context is rebuilt: a Resume in between would
+  // run the match with nothing drawn.
   const r = renderer as Partial<{ onContextLost(fn: () => void): () => void; onContextRestored(fn: () => void): () => void }>;
-  if (typeof r.onContextLost === 'function') disposers.push(r.onContextLost(() => sess.pause(-1)));
-  if (typeof r.onContextRestored === 'function') disposers.push(r.onContextRestored(() => loop.invalidate()));
+  if (typeof r.onContextLost === 'function') {
+    disposers.push(r.onContextLost(() => {
+      sess.pause(-1);
+      blockers.set('gpu', true);
+    }));
+  }
+  if (typeof r.onContextRestored === 'function') {
+    disposers.push(r.onContextRestored(() => {
+      blockers.set('gpu', false);
+      loop.invalidate();
+    }));
+  }
 
   // Page lifecycle.
   let hidden = false;
@@ -378,8 +387,11 @@ export function boot(): AppHandle {
     }
   }
 
-  if (document.readyState === 'complete') void registerServiceWorker({ diagnostics });
-  else listen(window, 'load', () => void registerServiceWorker({ diagnostics }), { once: true });
+  // [QF-5] The update toast waits while a match is being played or loading (it would cover the scoreboard and catch
+  // touches).
+  const swOptions = { diagnostics, isBusy: () => isPlayBusy(sess, router) };
+  if (document.readyState === 'complete') void registerServiceWorker(swOptions);
+  else listen(window, 'load', () => void registerServiceWorker(swOptions), { once: true });
 
   return app;
 }

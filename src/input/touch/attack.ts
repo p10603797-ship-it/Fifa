@@ -21,7 +21,8 @@
  *   | SHOOT           | shot (+power)         | chip / finesse / fake shot / power shot  | - (TAP)      |
  *   | SPRINT & SKILL  | hold sprint, tap skill| skill / knock-on / hard stop / skill     | - (TAP)      |
  * The attack set is live (claims touches) in ATTACK, KEEPER (keeper throws / drop kick / drop: section 9 keeper row)
- * and SET_PIECE modes, unless the caller passes its own `enabled`. Gestures Only hides PASS, THROUGH and SHOOT.
+ * and SET_PIECE modes, unless the caller passes its own `enabled`. Gestures Only hides PASS, THROUGH and SHOOT except
+ * at set pieces (SET_PIECE mode: the kick-off is taken with PASS and has no gesture).
  * Inside overlapping slop the nearest live button wins. Direction hints (arrows from ATTACK_SWIPE_HINTS) show on a
  * T_TOUCHUI.hintHoldMs hold while opts.hints() is true (TouchSettings.hintMatchesLeft > 0): hintMask.
  * Wiring (TCH-07, index.ts): pass `placements: t.layout` to computeClusterLayout; create the cluster with
@@ -178,6 +179,29 @@ export function computeClusterLayout(w: number, h: number, safe: SafeInsets, opt
   return out;
 }
 
+/**
+ * Match layout guard (the touch source calls it after computeClusterLayout): editor placements keep their corner
+ * distances on another viewport (Stage Manager / Split View window sizes), and the clamp into the safe area can then
+ * land a button on the pause button, which wins every touch it covers (routing priority: a SHOOT tap paused the match).
+ * Such a button is pushed straight down until it is T_TOUCHUI.buttonGap (x spacing) clear of PAUSE (QF-3 QA-23). The
+ * default layout never comes near PAUSE. Pure; edits `out` in place.
+ */
+export function keepClearOfPause(out: ClusterLayout, h: number, safe: SafeInsets, spacing?: number): ClusterLayout {
+  const gap = T_TOUCHUI.buttonGap * Math.max(1, fin(spacing, 1));
+  const bottom = Math.max(0, fin(h, 0)) - Math.max(0, fin(safe.bottom, 0)) - T_TOUCHUI.systemEdgeMargin;
+  const pz = out.pause;
+  for (let slot = 0; slot < 4; slot++) {
+    const g = out.slots[slot]!;
+    const dx = g.cx - pz.cx;
+    const dy = g.cy - pz.cy;
+    const need = g.r + pz.r + gap;
+    if (dx * dx + dy * dy >= need * need) continue;
+    const down = pz.cy + Math.sqrt(Math.max(0, need * need - dx * dx));
+    g.cy = Math.min(down, bottom - g.r);
+  }
+  return out;
+}
+
 /** Attack buttons in slot order with their TouchButtonId and overlay label. */
 export const ATTACK_BUTTONS: readonly (readonly [ClusterSlot, TouchButtonId, string])[] = [
   [ClusterSlot.BIG, TouchButtonId.SPRINT_SKILL, 'SPRINT'],
@@ -262,7 +286,9 @@ export function createAttackCluster(state: TouchIntentState, layout: ClusterLayo
   const setLive = (): boolean => (enabled ? enabled() : attackSetActive(state.mode));
   const live = (id: TouchButtonId): boolean => {
     if (!setLive()) return false;
-    if (id !== TouchButtonId.SPRINT_SKILL && opts.gesturesOnly && opts.gesturesOnly()) return false;
+    // Gestures Only hides PASS, THROUGH and SHOOT in play; at set pieces they stay (section 9 "Kick-off: PASS" has no
+    // gesture, "PASS plays it short", "or use the buttons"), else a touch player could not kick off (QF-3 FIX-06).
+    if (id !== TouchButtonId.SPRINT_SKILL && state.mode !== ClusterMode.SET_PIECE && opts.gesturesOnly && opts.gesturesOnly()) return false;
     return true;
   };
   /** Distance from (x, y) to a button's rim (negative inside). */

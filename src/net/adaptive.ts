@@ -101,6 +101,12 @@ export interface RttEstimator {
   readonly samples: number;
   /** Add one raw sample; returns false (ignored) when it is not a plausible round trip. */
   add(sampleMs: number): boolean;
+  /**
+   * Start from an estimate measured elsewhere (the transport's own smoothed values) instead of from nothing: the first
+   * raw sample would otherwise set the jitter to rtt / 2 (RFC 6298) and inflate the delay for the first seconds.
+   * Ignored when not plausible or when samples were already added.
+   */
+  seed(rttMs: number, jitterMs: number): void;
   reset(): void;
 }
 
@@ -123,6 +129,12 @@ export function createRttEstimator(): RttEstimator {
       }
       n++;
       return true;
+    },
+    seed(r, j) {
+      if (n > 0 || !Number.isFinite(r) || !Number.isFinite(j) || r <= 0 || r > LOCAL_TUNING.maxSampleMs || j < 0) return;
+      srtt = r;
+      rttvar = Math.min(j, r);
+      n = 1;
     },
     reset() {
       srtt = 0;
@@ -156,6 +168,7 @@ export function createRttMeter(opts: RttMeterOptions): RttMeter {
     get jitterMs() { return est.jitterMs; },
     get samples() { return est.samples; },
     add: (s) => est.add(s),
+    seed: (r, j) => est.seed(r, j),
     reset() {
       est.reset();
       lastPing = -Infinity;
@@ -217,6 +230,8 @@ export interface AdaptiveDelay {
   readonly target: number;
   /** Feed one RTT sample (ms). */
   sample(rttMs: number): void;
+  /** Start the round-trip estimate from values measured before (RttEstimator.seed); the delay itself is unchanged. */
+  seed(rttMs: number, jitterMs: number): void;
   /** Delay to use for the input of `tick` (changes only at agreed ticks). */
   delayFor(tick: number): number;
   /** Agreed switch: from `atTick` on, delayFor returns `delay` (clamped to min..max). */
@@ -253,6 +268,9 @@ export function createAdaptiveDelay(opts: AdaptiveDelayOptions = {}): AdaptiveDe
     get target() { return target; },
     get scheduled() { return switches.length > 0 ? switches[switches.length - 1]!.delay : initial; },
     get switches() { return switches; },
+    seed(r, j) {
+      est.seed(r, j);
+    },
     sample(rttMs) {
       const before = est.rttMs;
       if (!est.add(rttMs)) return;

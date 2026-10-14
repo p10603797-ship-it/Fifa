@@ -195,7 +195,7 @@
   left: 50%;
   bottom: 100%;
   flex-direction: column-reverse;
-  transform: translate(-50%, -8px);
+  transform: translate(calc(-50% + var(--dk-hx, 0px)), calc(-8px + var(--dk-hy, 0px)));
 }
 
 .dk-hint--up .dk-hint-arrow {
@@ -206,7 +206,7 @@
   left: 50%;
   top: 100%;
   flex-direction: column;
-  transform: translate(-50%, 8px);
+  transform: translate(calc(-50% + var(--dk-hx, 0px)), calc(8px + var(--dk-hy, 0px)));
 }
 
 .dk-hint--down .dk-hint-arrow {
@@ -217,7 +217,7 @@
   right: 100%;
   top: 50%;
   flex-direction: row-reverse;
-  transform: translate(-8px, -50%);
+  transform: translate(calc(-8px + var(--dk-hx, 0px)), calc(-50% + var(--dk-hy, 0px)));
 }
 
 .dk-hint--left .dk-hint-arrow {
@@ -227,7 +227,7 @@
 .dk-hint--right {
   left: 100%;
   top: 50%;
-  transform: translate(8px, -50%);
+  transform: translate(calc(8px + var(--dk-hx, 0px)), calc(-50% + var(--dk-hy, 0px)));
 }
 
 .dk-hint--right .dk-hint-arrow {

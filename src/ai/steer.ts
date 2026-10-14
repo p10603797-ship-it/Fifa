@@ -19,8 +19,12 @@
  *     Score = interception tick (+ a sub-tick tie-break on the player's own arrival time).
  *  3. Candidates: active outfield players; controlled players (human or CPU brain, p.ctrl >= 0), with a bias of
  *     controlledBiasTicks while he is going for the ball (moving toward the interception point, or on it); the
- *     keeper only when GKP says he is going (act GK_RUSH) or he is controlled.
- *  4. Claims that bypass hysteresis, in order: the keeper in GK_RUSH; the intended receiver of our own pass
+ *     keeper only when GKP says he is going (act GK_RUSH) or he is controlled. [INT-A] A keeper on a USER rush
+ *     (GKP-03 RushMode USER_HOLD / USER_TIMED: a human holds keeper-rush) counts as a controlled candidate: a held
+ *     rush button sent him 60 m upfield after a ball while, as the claiming chaser, no outfield teammate chased it
+ *     (fuzz ball-untouched watchdog).
+ *  4. Claims that bypass hysteresis, in order: the keeper in an AI GK_RUSH (GKP-03 keeps it in his come-out zone);
+ *     the intended receiver of our own pass
  *     (ball.passTarget, ball.lastKickTeam === team — TAI-14 gives him RECEIVE, so nobody else may chase) while the
  *     pass is intact (ball.lastTouchTeam === team: an opponent's deflection ends it), he is not down (busy <=
  *     chaserHysteresisTicks) and the claim was not already lost for this pass (another candidate took the chase
@@ -105,11 +109,13 @@ const LOCAL_TUNING = {
   occupiedStopDist: 1.5,
   occupiedHoldExtra: 0.5,
   /** [INT-A trailing] A ball job chasing a loose ball that rolls away from him (faster than overshootMinSpeed m/s)
-   *  aims overshootSec x ball speed (at most overshootMax m) beyond his target along the ball's path, so SIM-04's
-   *  arrival braking does not leave him trailing 1-2 m behind it. m/s, s, m. */
+   *  aims overshootSec x ball speed (at least overshootMin: more than his braking distance at top speed; at most
+   *  overshootMax m) beyond his target along the ball's path, so SIM-04's arrival braking does not leave him trailing
+   *  1-2 m behind it. m/s, s, m, m. */
   overshootMinSpeed: 1,
   overshootSec: 0.6,
-  overshootMax: 4,
+  overshootMin: 3.5,
+  overshootMax: 5,
 } as const; // TUNING-CR
 
 const LT = LOCAL_TUNING;
@@ -356,12 +362,23 @@ function clearChaser(s: SimState, team: number): void {
   t.chaserT = 0;
 }
 
-/** Keeper of `team` if active and (by GKP) committed to the ball: GK_RUSH. */
+/**
+ * [INT-A] First GKP-03 RushMode of a user rush (USER_HOLD 2, USER_TIMED 3; AI_BALL 0 and AI_ONE_ON_ONE 1 are the
+ * brain's). Mirrored, not imported: keeper/sweeper.ts imports this module. int-a-gameplay pins the value.
+ */
+export const RUSH_USER_MODE_MIN = 2;
+
+/** True if `p` is a keeper on a user-ordered rush (GK_RUSH in a user RushMode). */
+function userRush(p: Readonly<PlayerState>): boolean {
+  return p.isKeeper === 1 && p.act === ActionKind.GK_RUSH && p.actA >= RUSH_USER_MODE_MIN;
+}
+
+/** Keeper of `team` if active and (by GKP) committed to the ball: an AI GK_RUSH (a user rush is a candidate). */
 function rushingKeeper(s: SimState, team: number, first: number, end: number): number {
   const k = s.teams[team]!.keeperSlot;
   if (k < first || k >= end) return -1;
   const p = s.players[k]!;
-  return p.active === 1 && p.act === ActionKind.GK_RUSH ? k : -1;
+  return p.active === 1 && p.act === ActionKind.GK_RUSH && p.actA < RUSH_USER_MODE_MIN ? k : -1;
 }
 
 /**
@@ -421,7 +438,7 @@ export function assignChaser(s: SimState, team: number, ev: EventSink): void {
     OK[i] = 0;
     const p = s.players[i]!;
     if (p.active !== 1) continue;
-    const controlled = p.ctrl >= 0;
+    const controlled = p.ctrl >= 0 || userRush(p);
     if (p.isKeeper === 1 && !controlled) continue;
     evalIntercept(s, i);
     let sc = IT[i]! + 0.001 * (IP[i]! < 999 ? IP[i]! : 999);
@@ -450,8 +467,8 @@ export function assignChaser(s: SimState, team: number, ev: EventSink): void {
     else if (!curOk) pick = best;
     else if (best === cur) pick = cur;
     else {
-      const bestCtl = s.players[best]!.ctrl >= 0;
-      const curCtl = s.players[cur]!.ctrl >= 0;
+      const bestCtl = s.players[best]!.ctrl >= 0 || userRush(s.players[best]!);
+      const curCtl = s.players[cur]!.ctrl >= 0 || userRush(s.players[cur]!);
       const claim = bestCtl && !curCtl;
       const gain = SCORE[cur]! - bestScore;
       const need = claim ? 0 : T_AI.chaserHysteresisTicks;
@@ -500,6 +517,7 @@ function steerJob(s: SimState, slot: number): void {
     const bv = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
     if (bv > LT.overshootMinSpeed && (b.x - p.x) * b.vx + (b.z - p.z) * b.vz > 0) {
       let o = bv * LT.overshootSec;
+      if (o < LT.overshootMin) o = LT.overshootMin;
       if (o > LT.overshootMax) o = LT.overshootMax;
       tx = clampTo(tx + (b.vx / bv) * o, TGT_MAX_X);
       tz = clampTo(tz + (b.vz / bv) * o, TGT_MAX_Z);

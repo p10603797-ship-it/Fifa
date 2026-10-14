@@ -59,7 +59,9 @@ describe('SIM-06 in the step pipeline: a human dribbling with the stick', () => 
       const ev = runTicks(s, 300, (_t, _s, out) => { out[0]!.mx = AXIS_SCALE; out[0]!.buttons = sprint ? Btn.SPRINT : 0; }, {
         check: 'core',
         until: (st) => {
-          if (st.ball.owner !== P1 && lost < 0) lost = st.tick;
+          // Lost by his own touches only: [INT-A] with the higher defensive lines the parked away defenders now step up
+          // into his path near the end of the run, and a tackle there is not a dribble-mechanics failure.
+          if (st.ball.owner !== P1 && lost < 0 && st.ball.lastTouchTeam !== 1) lost = st.tick;
           lead[sprint] = Math.max(lead[sprint]!, st.ball.x - st.players[P1]!.x);
           return false;
         },

@@ -132,10 +132,10 @@ Total assignments: 201.
 | PLT-04 | 1 | done | lane/squad agent report; 3 own test files pass |  |
 | PLT-05 | 1 | done | lane/squad agent report; 3 own test files pass |  |
 | PLT-06 | 1 | done | README, DEPLOY, ASSETS, DEVICE_CHECKLIST; plt-06-docs 20 tests (links, scripts, every §9/§10 row, licences); README commands run in a fresh copy | Pages workflow file not added (publishing is the user's decision); licence notices into dist -> QF-5 |
-| INT-01 | 2 | running | INT-A running |  |
+| INT-01 | 2 | done | INT-A: 100 Professional matches --enforce all: 0 exceptions / invariant failures / watchdogs, determinism PASS; possession 57%, pass completion 75.6%, offsides, blow-outs in band; 17 int-a tests | goals 0.91, shots 8.25, fouls 5.5 below §7 bands -> QF-2 |
 | INT-02 | 2 | done | INT-B: touch and pad full matches in the real app (int-b-touch-match, int-b-pad-match) | |
-| INT-03 | 2 | running | INT-C running |  |
-| INT-04 | 2 | running | INT-B done (app side: rumble in loop, audio camera x + back sound; sim side with INT-A); INT-A sim side running | |
+| INT-03 | 2 | done | INT-C: live-match screenshots reviewed (13 scenes + night/restore); 20-31 draw calls, 47k-96k triangles per tier; foot slip 0.43 -> 0.06; context restore rebuild | per-frame render alloc 1.3-2.3 KB (QF-7); free-kick taker on camera line (QF-4) |
+| INT-04 | 2 | done | INT-A sim events + INT-B app side (audio camera x, rumble, HUD, stats HEADER_PASS) | |
 | INT-05 | 2 | done | INT-B: every local mode to its end screen and back (int-b-modes) | |
 | INT-06 | 2 | done | INT-B: set pieces by touch and by pad (int-b-setpieces) | |
 | INT-07 | 2 | done | INT-B: 1v1 pad v pad and touch v pad, no crosstalk, only pauser resumes | |

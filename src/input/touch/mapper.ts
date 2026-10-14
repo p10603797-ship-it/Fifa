@@ -14,7 +14,11 @@
  *  2. Stick -> mx / mz (screen x -> +x, screen y -> +z, rotated by CameraProjector.stickRotation(); radial
  *     quantisation exactly as axes.ts writeMoveAxes, inlined so no double is boxed per tick).
  *     Stick strafe (double-tap-and-hold) -> MOD_L held in ATTACK once it has lasted LOCAL_TUNING.strafeDelayTicks
- *     (so a double tap on the stick is never an L1 tap = trigger run).
+ *     (so a double tap on the stick is never an L1 tap = trigger run), with our side on the ball; held at least
+ *     T_INPUT.tapTicks once sent; released by a face press that carries no MOD_L of its own (a strafing PASS tap is a
+ *     ground pass, not pass and go) until the stick lifts (strafeMod, QF-3 FIX-06). A stick that lifts (or is
+ *     cancelled) inside that minimum keeps sending its last axes with MOD_L until both end together: L1 held with the
+ *     stick released is "stop and face goal", a 14-tick skill that swallowed the next pass (QF-3 QA-23).
  *  3. Button events -> bits held for the right number of ticks. A button that has tap, hold AND swipe meanings cannot
  *     know which one a touch-down is, and the sim starts a kick at the face press with the modifiers held then, so
  *     those presses are committed when the recogniser (TCH-03) classifies them: a TAP becomes a press as long as the
@@ -27,10 +31,11 @@
  *     stick is pushed, else at the tap time (a tap is a skill move; R2 with a released stick would stop the ball).
  *        attack (ATTACK / SET_PIECE)   tap / hold          up              down           left               right
  *        PASS                          PASS                LOB             L1+PASS        L1+R1+LOB (*)      R1+PASS
- *        THROUGH                       THROUGH             L1+THROUGH      L1 tap (run)   -                  -
+ *        THROUGH                       THROUGH             L1+THROUGH      L1 tap (run)*  -                  -
  *        SHOOT                         SHOOT               L1+SHOOT        R1+SHOOT       SHOOT then PASS    L1+R1+SHOOT
  *        SPRINT & SKILL                hold R2, tap skill  skillUp         KNOCK_ON       HARD_STOP          skillRight
- *        double tap: PASS,PASS / THROUGH,THROUGH.
+ *        double tap: PASS,PASS / THROUGH,THROUGH.  (*) only with our side on the ball or our pass in flight (else
+ *        SIM-16 reads the L1 press as a switch): otherwise the swipe does nothing.
  *        (*) PASS swipe left by a controlled player inside the crossing zone (geometry.inCrossingZone, ATTACK mode at
  *        touch-down) = ground cross: two LOB taps (LOB one tick, released one tick, LOB one tick: SIM-15 reads LOB,LOB
  *        and converts the first lob's wind-up into GROUND_CROSS; no explicit power, which would end the first kick's
@@ -41,7 +46,12 @@
  *        (CLEAR -> SHOOT, as at touch-down); SWITCH tap -> L1, any swipe -> RS_FLICK with ax / az = the swipe in pitch
  *        space; 2ND DEF tap / hold -> R1, swipe down -> THROUGH held (keeper rush).
  *     A press keeps the meaning it had at touch-down (event mode). CANCEL = release without action: a press that has
- *     not reached the sim is dropped, one that has is released at once. Two presses of the same bit are always
+ *     not reached the sim is dropped, one that has is released at once. When the sim's context family (attack /
+ *     defence, simFamily) changes while presses are down or in flight, they keep their old meaning (voidStale, QF-3
+ *     QA-23): unsent actions are dropped, held bits that mean something else held in the new family are released
+ *     (THROUGH held in defence rushes the keeper out, PASS contains, R1 is the second defender / a combo modifier),
+ *     and the presses commit nothing more. Defending a free kick, SPRINT and THROUGH never go out (the sim reads them
+ *     as move the wall / wall jump; touch has no wall controls). Two presses of the same bit are always
  *     separated by one released tick so the sim sees both edges; edges (skill, flick, explicit power) are one per tick.
  *  4. Pitch gestures -> frame gesture fields, one per tick: target = tap point / swipe end projected with
  *     CameraProjector.screenToPitch (gx / gz decimetres), gSlot = the player nearest the target within
@@ -69,7 +79,7 @@ import {
   type TouchIntentState,
 } from '../../contracts/touch';
 import { T_INPUT, T_TOUCHUI } from '../../contracts/tuning';
-import { Ctx, controlContext, LOCAL_TUNING as RESOLVE_TUNING } from '../../sim/control/resolveShared';
+import { Ctx, controlContext, ourPassInFlight, LOCAL_TUNING as RESOLVE_TUNING } from '../../sim/control/resolveShared';
 import { inCrossingZone } from '../../sim/pitch/geometry';
 import { writeAimAxes } from '../axes';
 import { TAP_MS } from './button';
@@ -115,6 +125,13 @@ const TICK_MS = 1000 / TICK_HZ;
 const TAP_TICKS_MAX = T_INPUT.tapTicks - 1;
 /** The second tap of a double tap is committed at touch-down when it lands this soon after the first lift, ms. */
 export const DOUBLE_TAP_COMMIT_MS = Math.min(T_TOUCHUI.doubleTapMs, (T_INPUT.doubleTapTicks - 1) * TICK_MS);
+
+/** The four face bits (Cross, Circle, Square, Triangle positions). */
+const FACE_BITS = Btn.PASS | Btn.SHOOT | Btn.LOB | Btn.THROUGH;
+/** Bits whose HELD meaning in defence differs from attack (contain, keeper rush, second defender). */
+const HOLD_MEANS_DEFENCE = Btn.PASS | Btn.THROUGH | Btn.MOD_R;
+/** Bits whose HELD meaning in attack differs from defence (strafe, controlled sprint / combo modifiers). */
+const HOLD_MEANS_ATTACK = Btn.MOD_L | Btn.MOD_R;
 
 /** InputFrame bit for each touch button in the attack cluster (0 = no direct bit). Indexed by TouchButtonId. */
 export const TOUCH_HOLD_BITS: readonly number[] = [
@@ -336,6 +353,13 @@ const P_PENDING = 1;
 const P_SWIPED = 2;
 /** Classified: its action is scheduled (and possibly held until the lift). */
 const P_ACTIVE = 3;
+/** Voided: the sim context family changed while the finger was down; nothing more until it lifts (QF-3 QA-23). */
+const P_VOID = 4;
+
+/** Sim context families (what the sim makes of held buttons): unknown / attack (incl. keeper, own set piece) / defence. */
+const FAM_NONE = -1;
+const FAM_ATTACK = 0;
+const FAM_DEFENCE = 1;
 
 /** Action pool size (held presses + pulses + edges in flight). */
 const POOL = 32;
@@ -368,6 +392,10 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
   const tapUpMs = new Float64Array(B);
   const tapMode = new Uint8Array(B);
   const tapValid = new Uint8Array(B);
+  /** Sim context family of the press at its touch-down (FAM_*), followed while its meaning stays the same. */
+  const pFam = new Int8Array(B);
+  /** SPRINT rows whose context family changed while down: the sprint hold stays, the tap / swipe meaning is void. */
+  const pNoTap = new Uint8Array(B);
 
   // ---- action pool (sample-indexed timeline)
   const aUsed = new Uint8Array(POOL);
@@ -382,6 +410,8 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
   const aFlick = new Uint8Array(POOL);
   const aAx = new Int32Array(POOL);
   const aAz = new Int32Array(POOL);
+  /** Sim context family of the press each action belongs to (FAM_*; FAM_NONE = not a button press: SKIP). */
+  const aFam = new Int8Array(POOL);
   let gen = 0;
 
   // ---- gesture FIFO (pitch-space, ready for the frame)
@@ -406,6 +436,16 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
   const bitSource = new Int8Array(11).fill(-1);
   let lastPowerButton = -1;
   let strafeTicks = 0;
+  /** Consecutive samples the stick strafe has sent MOD_L (0 = not sending). */
+  let strafeOn = 0;
+  /** A face press went out during this strafe hold: no MOD_L until the stick lifts (QF-3 FIX-06). */
+  let strafeSpent = false;
+  /** Last stick axes the strafe sent (held through its MOD_L minimum after the stick ends, QF-3 QA-23). */
+  let strafeMx = 0;
+  let strafeMz = 0;
+  /** Sim context family this sample (FAM_*), and consecutive samples a loose ball has read as ours (simFamily). */
+  let curFam = FAM_NONE;
+  let looseAttackN = 0;
   let prevStick = false;
   let touchDown = false;
   let modeInit = false;
@@ -498,6 +538,7 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
     aFlick[slot] = flick;
     aAx[slot] = ax;
     aAz[slot] = az;
+    aFam[slot] = owner >= 0 && owner < B ? pFam[owner]! : FAM_NONE;
     return slot;
   }
 
@@ -556,12 +597,14 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
         pulse(b, ATTACK_PRESS_BITS[b]!, tapPulseTicks(durMs), tMs, 0);
         break;
       case Row.SPRINT_SKILL: {
+        if (pNoTap[b] === 1) { closeHold(b, tMs, false); break; }
         closeHold(b, tMs, true);
         const t = settingsOf();
         schedule(b, 0, 1, tMs, 0, 0, validSkill(t?.skillTap, DEFAULT_SKILL_TAP), 0, 0, 0);
         break;
       }
       case Row.TACKLE:
+        if (pNoTap[b] === 1) { closeHold(b, tMs, false); break; }
         closeHold(b, tMs, true);
         pulse(b, Btn.SHOOT, tapPulseTicks(durMs), tMs, 0);
         break;
@@ -586,6 +629,8 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
     pState[b] = P_PENDING;
     pMode[b] = mode;
     pDownMs[b] = tMs;
+    pFam[b] = curFam;
+    pNoTap[b] = 0;
     pClear[b] = b === TouchButtonId.SLIDE && (opts.slideClear ? opts.slideClear() : prevClear) ? 1 : 0;
     pAfterUp[b] = 0;
     if (mode === ClusterMode.HIDDEN || hiddenNow) {
@@ -655,9 +700,10 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
 
   function onSwipe(b: number, dir: SwipeDir, tMs: number, ctx: InputSampleContext): void {
     const ps = pState[b]!;
-    if (ps === P_IDLE || ps === P_SWIPED) return;
+    if (ps === P_IDLE || ps === P_SWIPED || ps === P_VOID) return;
     const mode = pMode[b]!;
     const row = rowOf(b, mode);
+    if (pNoTap[b] === 1) { pState[b] = P_ACTIVE; return; } // a SPRINT row across a context change: sprint only
     if (dir < SwipeDir.UP || dir > SwipeDir.RIGHT) return;
     switch (row) {
       case Row.KICK: {
@@ -672,7 +718,10 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
           pSwipeBits[b] = cell[1];
           pSwipePower[b] = flickPowerOf(b);
         } else if (cell[0] === SwipeCell.PULSE) {
-          pulse(b, cell[1], 1, tMs, 0);
+          // THROUGH swipe down = an L1 tap ("trigger a teammate's run"). Without our side on the ball (a loose ball
+          // the cluster already shows as ours) SIM-16 reads that L1 press as "change player" and no run can start,
+          // so the swipe does nothing rather than switch away from the player the ball is coming to (QF-3 FIX-06).
+          if (cell[1] !== Btn.MOD_L || ownBallOrPass(ctx)) pulse(b, cell[1], 1, tMs, 0);
         } else if (cell[0] === SwipeCell.FAKE) {
           pulse(b, Btn.SHOOT, 1, tMs, 0);
           pulse(b, Btn.PASS, 1, tMs, 1);
@@ -761,6 +810,8 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
         pulse(b, Btn.MOD_L, 1, tMs, 0);
       }
       closeHold(b, tMs, false);
+    } else if (ps === P_VOID) {
+      closeHold(b, tMs, false);
     } else if (ps === P_SWIPED) {
       const after = tMs - pSwipeMs[b]!;
       if (after <= LOCAL_TUNING.flickLiftMs) schedule(b, pSwipeBits[b]!, 1, tMs, 0, pSwipePower[b]!, 0, 0, 0, 0);
@@ -798,6 +849,139 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
         openHold(b, Btn.SPRINT, now);
       }
     }
+  }
+
+  /**
+   * What the sim makes of held buttons for this human on the coming tick (FAM_*): in open play SIM-15's context for
+   * the controlled player (controlContext: ATTACK / KEEPER -> attack, DEFENCE -> defence, read from the same state the
+   * sim resolves the coming tick from); at a restart not yet taken the taking side (and both sides at a penalty or a
+   * shoot-out) -> attack, the other side -> defence; cut-scenes, taken restarts and no controlled player -> unknown.
+   */
+  function simFamily(ctx: InputSampleContext): number {
+    const s = ctx.state;
+    if (!s) return FAM_NONE;
+    const m = s.match;
+    const ph = m.phase;
+    if (ph !== MatchPhase.IN_PLAY) looseAttackN = 0;
+    if (ph === MatchPhase.SHOOT_OUT) return FAM_ATTACK;
+    if (ph === MatchPhase.KICK_OFF || ph === MatchPhase.THROW_IN || ph === MatchPhase.GOAL_KICK || ph === MatchPhase.CORNER ||
+        ph === MatchPhase.FREE_KICK || ph === MatchPhase.PENALTY) {
+      if (m.restart.taken === 1) return FAM_NONE;
+      return m.restart.team === ctx.side || ph === MatchPhase.PENALTY ? FAM_ATTACK : FAM_DEFENCE;
+    }
+    if (ph !== MatchPhase.IN_PLAY) return FAM_NONE;
+    const slot = controlledSlot(s, ctx.side, ctx.human);
+    if (slot < 0 || s.players[slot]!.active !== 1) return FAM_NONE;
+    if (controlContext(s as SimState, slot) === Ctx.DEFENCE) {
+      looseAttackN = 0;
+      return FAM_DEFENCE;
+    }
+    // A loose ball read as ours (arriving at him / he is nearer) can waver back: a change toward attack counts once it
+    // has lasted LOCAL_TUNING.looseSwapTicks (like the cluster swap); our ball or our pass in flight counts at once.
+    // A change toward defence always counts at once (THROUGH held there rushes the keeper out on that very tick).
+    if (ownBallOrPass(ctx)) {
+      looseAttackN = 0;
+      return FAM_ATTACK;
+    }
+    looseAttackN++;
+    return looseAttackN >= LOCAL_TUNING.looseSwapTicks || curFam !== FAM_DEFENCE ? FAM_ATTACK : FAM_DEFENCE;
+  }
+
+  /**
+   * Section 9: "A thumb already down keeps its old meaning until it lifts." The sim reads every press by its context
+   * at that tick, and HELD buttons tick by tick: THROUGH held in defence rushes the keeper out, PASS held contains, R1
+   * held calls the second defender; in attack R1 held is a controlled sprint and the driven / finesse modifier of the
+   * next face press, L1 held the strafe; a SHOOT press is a shot in attack and a tackle in defence. So when the sim
+   * context family changes while touch presses are in flight (QF-3 QA-23):
+   *  - a scheduled action not sent yet is dropped (its press would arrive with the other meaning: a TACKLE tap's SHOOT
+   *    after the ball was won is a shot, a PASS tap after it was stolen a contain);
+   *  - a sent action stops sending the bits that mean something else held in the new family (HOLD_MEANS_*), except a
+   *    modifier held on its own, which keeps its edge T_INPUT.tapTicks long first (a shorter one is an L1 / R1 tap =
+   *    trigger run, call for support, timed second defender). Bits whose held meaning is the same stay: SPRINT, and
+   *    SHOOT / LOB / L1 in defence, so a kick still charging (a first-time shot whose loose-ball context wavers) keeps
+   *    its power bar;
+   *  - presses still down are voided: their tap / hold / swipe commits nothing more (P_VOID); SPRINT rows keep their
+   *    sprint hold (R2 is sprint in both) and only lose their tap / swipe meaning.
+   */
+  function voidStale(fam: number): void {
+    if (fam === FAM_NONE) return;
+    const strip = fam === FAM_DEFENCE ? HOLD_MEANS_DEFENCE : HOLD_MEANS_ATTACK;
+    for (let i = 0; i < POOL; i++) {
+      if (aUsed[i] === 0 || aFam[i] === FAM_NONE || aFam[i] === fam) continue;
+      aFam[i] = fam;
+      if (aStart[i]! >= n) { freeAction(i); continue; }
+      const ab = aBits[i]!;
+      if ((ab & strip) === 0) continue;
+      if ((ab & FACE_BITS) === 0 && (ab & ~strip & ~(Btn.MOD_L | Btn.MOD_R)) === 0) {
+        // A modifier on its own: release it no sooner than a tap's length after its press.
+        const minEnd = aStart[i]! + T_INPUT.tapTicks;
+        if (aEnd[i]! > minEnd) aEnd[i] = minEnd > n ? minEnd : n;
+        else if (aEnd[i]! < minEnd) aEnd[i] = minEnd;
+      } else {
+        aBits[i] = ab & ~strip;
+      }
+    }
+    for (let b = 0; b < B; b++) {
+      if (pState[b] === P_IDLE) continue;
+      if (pFam[b] === FAM_NONE) { pFam[b] = fam; continue; }
+      if (pFam[b] === fam) continue;
+      pFam[b] = fam;
+      tapValid[b] = 0;
+      const row = rowOf(b, pMode[b]!);
+      if (row === Row.SPRINT_SKILL || row === Row.TACKLE) pNoTap[b] = 1;
+      else pState[b] = P_VOID;
+    }
+  }
+
+  /** The human's side defends a free kick not taken yet (the wall is set; RUL-05 defendInput reads R2 / L2 / Y). */
+  function defendingFreeKick(ctx: InputSampleContext): boolean {
+    const s = ctx.state;
+    if (!s) return false;
+    const m = s.match;
+    return m.phase === MatchPhase.FREE_KICK && m.restart.taken !== 1 && m.restart.team !== ctx.side;
+  }
+
+  /** Our side has the ball (owner / keeper's hands) or our pass is in flight: SIM-16's attack context. */
+  function ownBallOrPass(ctx: InputSampleContext): boolean {
+    const s = ctx.state;
+    if (!s) return false;
+    const b = s.ball;
+    const h = b.heldBy >= 0 ? b.heldBy : b.owner;
+    if (h >= 0 && h < NUM_SLOTS) return slotTeam(h) === ctx.side;
+    return ourPassInFlight(s as SimState, ctx.side);
+  }
+
+  /** A press of only MOD_L (no face bit) is scheduled for a later sample (it needs its own press edge). */
+  function pureModLPending(): boolean {
+    for (let i = 0; i < POOL; i++) {
+      if (aUsed[i] === 0 || aStart[i]! <= n) continue;
+      const ab = aBits[i]!;
+      if ((ab & Btn.MOD_L) !== 0 && (ab & FACE_BITS) === 0) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Does the stick strafe (double-tap and hold, section 9) send MOD_L this sample? `actBits` = the scheduled presses'
+   * bits for this sample. MOD_L is the strafe-dribble modifier, but it is also L1 for the sim, so (QF-3 FIX-06):
+   *  - it starts once the strafe has lasted strafeDelayTicks, only while our side has the ball or our pass is in
+   *    flight (SIM-16 reads a MOD_L press without that as "change player");
+   *  - once sent it stays at least T_INPUT.tapTicks samples (a shorter MOD_L is an L1 tap = trigger a run);
+   *  - a face press that does not carry MOD_L itself (PASS / SHOOT / THROUGH tap, hold, double tap) releases it on
+   *    that very sample and the strafe sends no MOD_L again until the stick lifts: a strafing PASS tap is a ground
+   *    pass, never pass and go (L1 + Cross), a SHOOT tap a shot, never a chip (the sim reads combos at the face press;
+   *    the face press in the same sample marks the released MOD_L as used, so it is no trigger-run tap either);
+   *  - a button's own MOD_L-only press waiting for its edge (THROUGH swipe down) releases it a sample early.
+   */
+  function strafeMod(ctx: InputSampleContext, strafeHeld: boolean, actBits: number): boolean {
+    let on = strafeHeld && !strafeSpent && strafeTicks > LOCAL_TUNING.strafeDelayTicks && (strafeOn > 0 || ownBallOrPass(ctx));
+    if (!on && strafeOn > 0 && strafeOn < T_INPUT.tapTicks) on = true;
+    if (!on || (actBits & Btn.MOD_L) !== 0) return on;
+    if ((actBits & FACE_BITS & ~lastOut) !== 0) {
+      if (strafeHeld) strafeSpent = true;
+      return false;
+    }
+    return !pureModLPending();
   }
 
   /**
@@ -1146,6 +1330,7 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
       const prevMode = st.mode;
       const prevClear = st.clearOn;
       const hidden = modeInit && prevMode === ClusterMode.HIDDEN;
+      curFam = simFamily(ctx);
 
       // 3 / 4: drain the queues (presses keep the meaning they had at touch-down).
       const anyDown = drainButtons(ctx, prevClear, hidden);
@@ -1160,17 +1345,19 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
       if (!Number.isFinite(T.now)) T.now = T.lastMs;
       timers(T.now);
 
-      // 1: cluster mode and CLEAR for the next touches.
+      // 1: cluster mode and CLEAR for the next touches; presses whose sim context changed while down are voided.
       updateMode(ctx);
+      voidStale(curFam);
 
-      // 2: stick and strafe.
+      // 2: stick (the strafe's MOD_L is added after the scheduled presses, below).
       if (stickNow) writeStick(out, ctx.projector);
       let bits = 0;
-      if (stickNow && st.stickStrafe && st.mode === ClusterMode.ATTACK) {
+      const strafeHeld = stickNow && st.stickStrafe && st.mode === ClusterMode.ATTACK;
+      if (strafeHeld) {
         strafeTicks++;
-        if (strafeTicks > LOCAL_TUNING.strafeDelayTicks) bits |= Btn.MOD_L;
       } else {
         strafeTicks = 0;
+        strafeSpent = false;
       }
 
       // 3: scheduled presses for this tick.
@@ -1188,6 +1375,27 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
           }
         }
         if (!(aEnd[i]! > n + 1)) freeAction(i);
+      }
+      // Defending a free kick, the sim reads R2 / L2 as "move the wall" and Triangle as "wall jump" (section 10). Touch
+      // has no wall controls (section 9): SPRINT & TACKLE's R2 slid the wall one way only (and every tackle tap nudged
+      // it; defenders cannot sprint there) and a 2ND DEF swipe down (keeper rush) jumped the wall. Neither goes out.
+      if (defendingFreeKick(ctx)) bits &= ~(Btn.SPRINT | Btn.THROUGH);
+      if (strafeMod(ctx, strafeHeld, bits)) {
+        bits |= Btn.MOD_L;
+        strafeOn++;
+        if (strafeHeld) {
+          strafeMx = out.mx;
+          strafeMz = out.mz;
+        } else if (!stickNow) {
+          // The stick lifted (or was cancelled) before the strafe's MOD_L lasted T_INPUT.tapTicks: MOD_L stays to its
+          // minimum (else an L1 tap = trigger run) and so does the strafe's last stick, because L1 held with the stick
+          // released is "stop and face goal" (a 14-tick skill that swallowed the next pass). Both end together, like a
+          // long strafe's lift: a plain stop, no action (QF-3 QA-23).
+          out.mx = strafeMx;
+          out.mz = strafeMz;
+        }
+      } else {
+        strafeOn = 0;
       }
       out.buttons = bits;
       lastOut = bits;
@@ -1212,11 +1420,15 @@ export function createTouchMapper(state: TouchIntentState, opts: TouchMapperOpti
         pAct[b] = -1;
         pAfterUp[b] = 0;
         tapValid[b] = 0;
+        pNoTap[b] = 0;
       }
       aUsed.fill(0);
       gHead = 0;
       gCount = 0;
+      looseAttackN = 0;
       strafeTicks = 0;
+      strafeOn = 0;
+      strafeSpent = false;
       touchDown = false;
       bitSource.fill(-1);
       lastPowerButton = -1;

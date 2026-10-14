@@ -17,8 +17,9 @@
  *    (down to down, like the stick's double tap) and within LOCAL_TUNING.doubleTapSlopPt of it. Because the sim acts
  *    on a TAP at once, a single tap is held back until its double-tap window closes (emitted by update(t), by the
  *    next pointer event or by a timer) and a double tap emits ONLY the DOUBLE_TAP. (sx, sy) = first tap's touch-down
- *    (the target), (ex, ey) = second tap's lift. When no double-tap rule is enabled, or during cut-scenes
- *    (ClusterMode.HIDDEN: any tap skips), taps are emitted at lift without waiting. If the second touch turns into a
+ *    (the target), (ex, ey) = second tap's lift. When no double-tap rule is enabled, when opts.doubleTapUsed() says a
+ *    double tap means nothing more than a tap (penalties), or during cut-scenes (ClusterMode.HIDDEN: any tap skips),
+ *    taps are emitted at lift without waiting. If the second touch turns into a
  *    swipe or a hold, the first tap is emitted as a TAP right then and the second touch is classified on its own;
  *    a cancelled second touch cancels the double tap (nothing is emitted).
  *  - Swipes: travel above tapMaxPt, finished within LOCAL_TUNING.swipeMaxMs, mean speed along the path at least
@@ -411,6 +412,13 @@ export interface PitchGestureOptions {
    * update() call follows. Default true where setTimeout exists; tests driving update() themselves pass false.
    */
   timers?: boolean;
+  /**
+   * Whether a double tap means something different from a tap right now (default yes). When false (penalties and
+   * shoot-out kicks, where TAP and DOUBLE_TAP do the same: chip at the goal / keeper dive), taps are emitted at the
+   * lift instead of waiting out the double-tap window: a keeper's late dive tap must not arrive 300 ms after it was made
+   * (QF-3 QA-29).
+   */
+  doubleTapUsed?(): boolean;
 }
 
 export interface PitchGestureControl extends TouchControl {
@@ -491,6 +499,7 @@ export function createPitchGestures(opts: PitchGestureOptions): PitchGestureCont
     return masterOn() ? gestureKindFor(kind, settings()) : GestureKind.NONE;
   }
   function doubleTapOn(): boolean {
+    if (opts.doubleTapUsed && !opts.doubleTapUsed()) return false;
     return allowed(GestureKind.DOUBLE_TAP) === GestureKind.DOUBLE_TAP;
   }
   /** T.now = tMs (or the latest finite time when tMs is not finite); advances T.clock. */

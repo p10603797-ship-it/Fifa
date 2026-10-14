@@ -26,6 +26,8 @@
  * [INT-B] Touch controls hide while a pad drives the same side (section 9): the touch source runs TCH-09's
  * createPadDriveWatcher over its intent state and the pads bound to the same human (live pad sources), updated in its
  * pollFrame after the pads were polled; the next screen touch brings the controls back (touch/index.ts onDown).
+ * [QF-3 FIX-07] A keyboard source bound to the same human hides them the same way (KeyboardInputSource.lastInputMs:
+ * a game key pressed after the touch source was created).
  */
 
 import type { DeviceInfo, DeviceRegistry, PlatformInfo, SettingsStore } from '../contracts/app';
@@ -33,7 +35,7 @@ import { PadFamily } from '../contracts/enums';
 import { clearInputFrame, type CameraProjector, type InputSource } from '../contracts/input';
 import type { Settings } from '../contracts/settings';
 import type { ReadonlySimState } from '../contracts/state';
-import { createKeyboardSource, isEditableTarget } from './keyboard';
+import { createKeyboardSource, isEditableTarget, type KeyboardInputSource } from './keyboard';
 import { detectPadFamily, effectiveFamily, padLabel } from './pad/glyphs';
 import { getPadManager, type PadEventKind, type PadManager, type PadSlot } from './pad/manager';
 import { createPadSource } from './pad/mapper';
@@ -139,6 +141,17 @@ export function createDeviceRegistry(opts: DeviceRegistryOptions): DotkickDevice
     }
   }
   const padKeysOf = (human: number): readonly string[] => (human >= 0 && human < padKeysByHuman.length ? padKeysByHuman[human]! : NO_KEYS);
+  /** Live keyboard sources and the human each drives (the touch controls hide while it drives the same human). */
+  const keyboards: { src: KeyboardInputSource; human: number }[] = [];
+  /** Latest game key press (keyboard source clock) of a keyboard bound to `human`, -1 when none. */
+  function keyboardInputMs(human: number): number {
+    let t = -1;
+    for (let i = 0; i < keyboards.length; i++) {
+      const k = keyboards[i]!;
+      if (k.human === human && k.src.lastInputMs > t) t = k.src.lastInputMs;
+    }
+    return t;
+  }
   let override = familyOverride(opts.settings.get());
   let disposed = false;
 
@@ -305,6 +318,9 @@ export function createDeviceRegistry(opts: DeviceRegistryOptions): DotkickDevice
         });
         // Section 9: hide the touch controls while a pad bound to the same human drives the side.
         const watcher = createPadDriveWatcher(src.state, pads, () => padKeysOf(human));
+        // [QF-3 FIX-07] ... or the keyboard bound to the same human (a key pressed before this source existed does
+        // not count; the next screen touch brings the controls back, touch/index.ts onDown).
+        let seenKeyMs = keyboardInputMs(human);
         const dispose = src.dispose.bind(src);
         src.dispose = (): void => {
           if (touchSource === src) touchSource = null;
@@ -316,10 +332,26 @@ export function createDeviceRegistry(opts: DeviceRegistryOptions): DotkickDevice
         polled.pollFrame = (nowMs: number): void => {
           poll(nowMs);
           watcher.update();
+          const k = keyboardInputMs(human);
+          if (k > seenKeyMs) {
+            seenKeyMs = k;
+            src.state.hiddenByPad = true;
+          }
         };
         return polled;
       }
-      if (deviceId === 'keyboard') return withPadPolling(createKeyboardSource({ onPause }));
+      if (deviceId === 'keyboard') {
+        const kb = createKeyboardSource({ onPause });
+        const entry = { src: kb, human };
+        keyboards.push(entry);
+        const kbDispose = kb.dispose.bind(kb);
+        kb.dispose = (): void => {
+          const i = keyboards.indexOf(entry);
+          if (i >= 0) keyboards.splice(i, 1);
+          kbDispose();
+        };
+        return withPadPolling(kb);
+      }
       if (deviceId.startsWith('pad:')) return createBoundPadSource(deviceId, human, onPause);
       return withPadPolling(createNullSource(deviceId));
     },

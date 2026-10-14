@@ -27,6 +27,13 @@ export function teamAiTick(s: SimState, ev: EventSink): void {
     tacticsTick(s, team, ev);
     updateShape(s, team, ev);
     resetJobs(s, team);
+    if (phase !== MatchPhase.IN_PLAY) {
+      // [INT-A, TAI-05 CR] assignPressing only runs in open play: clear its press / cover picks so nobody (SIM-15's
+      // second-defender press, the next open-play tick's hysteresis) reads a stale pick from before the stoppage.
+      const t = s.teams[team]!;
+      t.pressSlot = -1;
+      t.coverSlot = -1;
+    }
     if (restart) {
       setPiecePositions(s, team, ev);
     } else if (phase === MatchPhase.IN_PLAY) {

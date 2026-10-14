@@ -285,7 +285,9 @@ describe('TAI-09 scorePassOptions', () => {
     const lob = of(opts, 9, [KickKind.LOB_PASS])[0]!;
     expect(lob).toBeDefined();
     expect(ground.completion).toBeLessThan(0.2);
-    expect(lob.completion).toBeGreaterThan(ground.completion + 0.3);
+    // [INT-A] margin 0.3 -> 0.15: aerial reception was recalibrated (aerialMin/Max 0.72/0.95 -> 0.4/0.6) against
+    // soak outcomes where lobs reached the receiver about 13% of the time.
+    expect(lob.completion).toBeGreaterThan(ground.completion + 0.15);
   });
 
   it('a driven pass replaces a ground pass a slow ball would lose', () => {

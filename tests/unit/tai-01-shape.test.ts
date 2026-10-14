@@ -17,7 +17,7 @@ import {
   BOX_SPOTS, createTacticParams, EXTRA_STRIKER_SHAPES, extraStrikerOverride, FOCUS_MODIFIERS, QUICK_TACTICS, resolveTactics,
   slotLineFor, slotRole, TacticFlag,
 } from '../../src/data/tactics';
-import { homePosition, homePositionAt, invalidateShape, updateShape } from '../../src/ai/shape';
+import { homePosition, homePositionAt, invalidateShape, lineGapMax, updateShape } from '../../src/ai/shape';
 import { NULL_SINK } from '../../src/sim/core/events';
 import { hashState } from '../../src/sim/core/hash';
 import { secondLastDefenderX } from '../../src/sim/core/query';
@@ -498,7 +498,9 @@ describe('TAI-01 defensive line from TAI-04 team.lineX', () => {
 describe('TAI-01 compact lines', () => {
   const BALLS: [number, number][] = [[-48, 0], [-30, 25], [-10, -30], [0, 0], [12, 12], [25, -5], [40, 30], [50, -33]];
 
-  it.each(FORMS)('formation %i: no gap between consecutive outfield depths exceeds T_AI.lineSpacingMax', (form) => {
+  // [INT-A] In possession the lines stretch (lineGapMax: up to 1.5 x T_AI.lineSpacingMax); out of possession they stay
+  // within T_AI.lineSpacingMax (BRIEF §7 "out of possession: stay compact" / "in possession: stretch").
+  it.each(FORMS)('formation %i: no gap between consecutive outfield depths exceeds the phase gap (T_AI.lineSpacingMax out of possession)', (form) => {
     let checked = 0;
     for (const phase of [...PHASES, TeamPhase.SET_PIECE]) {
       for (const focus of FOCI) {
@@ -511,7 +513,8 @@ describe('TAI-01 compact lines', () => {
               const of = outfield(s, 0);
               for (const [bu, bv] of BALLS) {
                 const h = homes(s, 0, bu, bv);
-                expect(maxGap(h, of), `${phase}/${focus}/${extra}/${missing}/(${bu},${bv})`).toBeLessThanOrEqual(T_AI.lineSpacingMax + EPS);
+                expect(maxGap(h, of), `${phase}/${focus}/${extra}/${missing}/(${bu},${bv})`).toBeLessThanOrEqual(lineGapMax(phase) + EPS);
+                if (phase === TeamPhase.DEFEND || phase === TeamPhase.TRANSITION_DEFEND) expect(maxGap(h, of)).toBeLessThanOrEqual(T_AI.lineSpacingMax + EPS);
                 checked++;
               }
             }
@@ -526,7 +529,7 @@ describe('TAI-01 compact lines', () => {
     const s = scen({ form: FormationId.F442, phase: TeamPhase.ATTACK, focus: TacticalFocus.ATTACKING });
     const h = homes(s, 0, 20, 0);
     const of = outfield(s, 0);
-    expect(maxGap(h, of)).toBeLessThanOrEqual(T_AI.lineSpacingMax + EPS);
+    expect(maxGap(h, of)).toBeLessThanOrEqual(lineGapMax(TeamPhase.ATTACK) + EPS);
     expect(meanU(h, idxWithRoles(FormationId.F442, FWD_ROLES))).toBeGreaterThan(meanU(h, idxWithRoles(FormationId.F442, MID_ROLES)));
   });
 });
@@ -819,7 +822,7 @@ describe('TAI-01 teams playing short', () => {
     const k = h[s.players[s.teams[team]!.keeperSlot]!.formIdx]!;
     expect(of.filter((f) => h[f]!.u === k.u && h[f]!.v === k.v)).toHaveLength(0);
     expect(minPairDist(h, of)).toBeGreaterThan(3);
-    expect(maxGap(h, of)).toBeLessThanOrEqual(T_AI.lineSpacingMax + EPS);
+    expect(maxGap(h, of)).toBeLessThanOrEqual(lineGapMax(s.teams[team]!.phase) + EPS);
     for (const f of of) {
       expect(Math.abs(h[f]!.v)).toBeLessThanOrEqual(V_MAX + EPS);
       expect(Math.abs(h[f]!.u)).toBeLessThanOrEqual(U_MAX + EPS);

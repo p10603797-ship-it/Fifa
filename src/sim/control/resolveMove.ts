@@ -84,14 +84,14 @@ export function moveTick(s: SimState, c: number, ctl: ControllerState, p: Player
       // [INT-A trailing] A ball rolling away from him: aim past the meeting point along its path (no arrival braking
       // short of it) and run at least at the ball's pace (sprinting when that is above jog speed).
       const bv = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
-      if (bv > LT.meetOvershootMinSpeed && (b.x - p.x) * b.vx + (b.z - p.z) * b.vz > 0) {
+      const ahead = (b.x - p.x) * b.vx + (b.z - p.z) * b.vz;
+      if (bv > LT.meetOvershootMinSpeed && ahead > 0) {
         let o = bv * LT.meetOvershootSec;
+        if (o < LT.meetOvershootMin) o = LT.meetOvershootMin;
         if (o > LT.meetOvershootMax) o = LT.meetOvershootMax;
         tx += (b.vx / bv) * o;
         tz += (b.vz / bv) * o;
-        const need = bv * LT.meetPaceMul;
-        if (need > tsp) tsp = need > top ? top : need;
-        if (tsp > jog * 1.0001) want = 1;
+        if (ahead / bv > LT.meetCatchDist) { tsp = top; want = 1; }
       }
       ctl.receiver = slot;
     }

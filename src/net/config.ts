@@ -33,8 +33,16 @@ export interface NetConfig {
   handshakeTimeoutMs: number;
   /** Ping interval on the control channel, ms (RTT and jitter for the adaptive input delay). */
   pingIntervalMs: number;
-  /** No message at all from the other side for this long while open means it is gone ('disconnected'), ms. */
+  /**
+   * No message at all from the other side for this long while open means it is gone ('disconnected'), ms. Long enough
+   * for a GC pause or a slow frame burst; a known long stall (match warm-up) is announced with NetTransport.expectBusy.
+   */
   silenceTimeoutMs: number;
+  /**
+   * Host: an established guest link that has been silent this long is given up when ANOTHER peer dials the room (a
+   * guest whose page reloaded comes back under a new peer id before the old link timed out), ms.
+   */
+  replaceSilentMs: number;
   /** Delay before a host that lost the broker tries to re-register its room id, ms (rejoins need the broker). */
   brokerRetryMs: number;
 }
@@ -51,7 +59,8 @@ export const NET_CONFIG: NetConfig = {
   connectTimeoutMs: 15_000,
   handshakeTimeoutMs: 5_000,
   pingIntervalMs: 500,
-  silenceTimeoutMs: 6_000,
+  silenceTimeoutMs: 10_000,
+  replaceSilentMs: 2_000,
   brokerRetryMs: 2_000,
 };
 

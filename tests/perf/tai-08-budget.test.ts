@@ -137,7 +137,11 @@ describe('TAI-08 budget', () => {
   // doubles at call boundaries it did not inline (16 bytes each; JavaScriptCore on the iPad NaN-boxes doubles, so
   // there it is nothing): ~0 when a full evaluation runs every call (decide* cases, the sharp check), a few dozen bytes
   // per call in the mixed execute / evaluate cases. TAI-09 / TAI-10 allocation is reported (allocTotal), not judged.
-  const LIMIT_B: Record<string, number> = { decideEveryCall: 64, decideOwnHalf: 32, steadyDribble: 200, shotInBox: 200 };
+  // [INT-A] decide* limits 64 / 32 -> 200 / 100: with the retuned value model the decide scenarios now also execute a
+  // dribble / skill each call (runDribble / rotateInto / stickOut box their stick doubles, as in steadyDribble) and the
+  // width-aware posValue is no longer inlined (one boxed return per option). Still V8 boxing only, no source-level
+  // allocation; JavaScriptCore NaN-boxes doubles.
+  const LIMIT_B: Record<string, number> = { decideEveryCall: 200, decideOwnHalf: 100, steadyDribble: 200, shotInBox: 200 };
   for (const name of ['decideEveryCall', 'decideOwnHalf', 'steadyDribble', 'shotInBox']) {
     it(`cpuCarrier within budget per call: ${name}`, () => {
       expect(res).not.toBeNull();
