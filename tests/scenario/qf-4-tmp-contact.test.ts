@@ -67,6 +67,7 @@ function measure(seed: number, from: number, ticks: number, framesPerTick: numbe
   const contact: number[] = [];
   const pendingKicks: { slot: number; x: number; y: number; z: number }[] = [];
   let outOfReach = 0;
+  (globalThis as never as {__kd: unknown}).__kd = (a: number[]) => { if (curr.tick >= 1088 && curr.tick <= 1101) process.stdout.write('\nkd t' + curr.tick + ' ' + a.map((v) => v.toFixed(3)).join(' ')); };
   for (let t = 0; t < from + ticks; t++) {
     copyState(prev, curr);
     for (let i2 = 0; i2 < NUM_SLOTS; i2++) chgPrev[i2] = curr.players[i2]!.actCharging;
@@ -139,6 +140,7 @@ describe('tmp', () => {
   it('ab', () => {
     const on = measure(20261014, 600, 1500, 1);
     process.stdout.write('\nON ' + JSON.stringify(on));
+    return;
     REACH_SWITCH.kick = 0; REACH_SWITCH.touch = 0; REACH_SWITCH.align = 0;
     const off = measure(20261014, 600, 1500, 1);
     process.stdout.write('\nOFF ' + JSON.stringify(off));
