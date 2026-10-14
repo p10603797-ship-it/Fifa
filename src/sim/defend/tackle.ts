@@ -15,8 +15,9 @@
  *                 chance, harder pokes (ball driven through) and a STUMBLE for the victim of a ball-first body contact.
  *   SLIDE_TACKLE  slideWindup / slideContactTicks / slideRecovery. The slide speed v0 = clamp(his speed along the slide,
  *                 slideMinSpeed, slideMaxSpeed), reached by the end of the wind-up, decays linearly to 0 over
- *                 slideGlideTicks from the contact (LOCKED, no homing once on the ground). The foot zone is the segment from his centre to slideFootReach ahead,
- *                 slideFootRadius wide; together with the glide that is about T_TACKLE.slideReach at a sprint. A slide
+ *                 slideGlideTicks from the contact (LOCKED, no homing once on the ground). The foot zone is the
+ *                 segment from his centre to slideFootReach ahead, slideFootRadius wide; with the glide that is about
+ *                 T_TACKLE.slideReach at a sprint. A slide
  *                 always plays a loose ball its feet reach (never left under him). Quick get-up (quickGetUp, the
  *                 human's second X): the recovery after the window shrinks to T_TACKLE.slideGetUpQuick.
  *   SHOULDER      shoulderWindup / shoulderContactTicks / shoulderRecovery, not locked (he keeps running alongside).
@@ -39,9 +40,9 @@
  *       (d / reach)^2) x angle (front frontMul, side sideMul, behind behindMul, linear in the facing dot) x shieldMul
  *       when SIM-05 shieldBlocks x skillProtectMul when he is in a SIM-13 skill outside its vulnerable window,
  *       clamped to minChance..maxChance. Tackle skill = standingTackle (slide: slidingTackle); resistance = dribbling,
- *       ballControl, strength (resistWeights). Exposure (timing): 1 in the skill's vulnerable window,
- *       firstTouchExposure in his first-touch window, kickWindupExposure in a kick wind-up, else how far the ball is
- *       from his feet between touches (exposureNear..exposureFar).
+ *       ballControl, strength (resistDribbling / resistControl / resistStrength). Exposure (timing): 1 in the skill's
+ *       vulnerable window, firstTouchExposure in his first-touch window, kickWindupExposure in a kick wind-up, else how
+ *       far the ball is from his feet between touches (exposureNear..exposureFar).
  *     Won (TACKLE c=1): the carrier is dispossessed (noTouchT = T_DRIBBLE.dispossessedNoTouch); stand / hard keep the
  *     ball with keepChance (by standingTackle; hard x hardKeepMul; never a slide, never a ball faster than
  *     keepMaxBallSpeed relative to him): takePossession, the ball cushioned onto settleAhead in front of him, and the
@@ -84,9 +85,9 @@
  * (swept: the ball's segment this tick against his position; outside his reach the tick before), in the order the
  * ball reaches them, gets one s.rng roll each: chance = lerp(interceptChanceMin, Max, interceptions / agility blend)
  * x ball speed (1 up to interceptEasySpeed .. interceptHardMul at interceptHardSpeed) x distance of the pass line from
- * him (1 inside half the reach .. interceptEdgeMul at the edge) x height (1 up to 0.5 m .. interceptHighMul at the
- * max) x facing (1 ball in
- * front .. interceptBehindMul from behind). (No "reactions" attribute exists: agility stands in for it.) Success:
+ * him (1 inside interceptCoreFrac of the reach .. interceptEdgeMul at the edge) x height (1 up to interceptLowHeight
+ * .. interceptHighMul at the max) x facing (1 ball in front .. interceptBehindMul from behind). (No "reactions"
+ * attribute exists: agility stands in for it.) Success:
  * the ball moves back to the contact point on its own path; slow enough relative to him (lerp(interceptControlSpeedLo,
  * Hi, ballControl)) -> controlled (takePossession, cushioned to his feet), else blocked (DEFLECTION off him). A ball
  * whose path runs through his body (interceptBodyBlock x body radius) on any tick cannot slip past even when the roll
@@ -102,18 +103,19 @@ export {
   standTackleHandler, stumbleHandler,
 } from './tackleHooks';
 import { bindTackleImpl } from './tackleHooks';
-import { HALF_LENGTH, NUM_SLOTS, PLAYERS_PER_TEAM, TICK_HZ } from '../../contracts/constants';
+import { HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PLAYERS_PER_TEAM, TICK_HZ } from '../../contracts/constants';
 import { ActionKind, ChallengeKind, CrossKind, KickKind, MatchPhase, isFootPassKind } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
 import {
   MAX_CHALLENGES, MoveMode, createChallengeRecord, type ChallengeRecord, type PlayerState, type SimState,
 } from '../../contracts/state';
 import { createKickLaunch, type ActionRequest, type KickLaunch } from '../../contracts/systems';
-import { T_DRIBBLE, T_PLAYER, T_TACKLE } from '../../contracts/tuning';
+import { T_BALL, T_DRIBBLE, T_PLAYER, T_TACKLE } from '../../contracts/tuning';
 import { RESTART_PHASES } from '../../contracts/transitions';
 import { beginAction, endAction, isFree } from '../actions/dispatch';
 import { clamp01, dcos, dsin, lerp } from '../core/dmath';
 import { applyKick, ballTouchedThisTick, takePossession } from '../core/kick';
+import { pressureOn } from '../core/query';
 import { rngFloat, rngGauss } from '../core/rng';
 import { createV2, rotateToward2 } from '../core/vec';
 import { aerialChance, startAerialClearance } from '../kicks/aerial';
@@ -133,6 +135,8 @@ export const LOCAL_TUNING = { // TUNING-CR
   windupSpeedKeep: 0.9,
   /** Aim at the ball (start, homing) when it is within this distance, m; else straight ahead / at the target. */
   aimRange: 8,
+  /** Faster than this he aims a tackle with nothing to aim at along his run (else his facing), m/s. */
+  movingSpeed: 0.5,
   // ---- foot zones
   /** Standing / hard tackle: ball within this half-angle of the lunge direction (beyond closeRadius), rad. */
   standConeHalf: 1.3,
@@ -193,8 +197,11 @@ export const LOCAL_TUNING = { // TUNING-CR
   keepMaxBallSpeed: 7,
   /** Kept / intercepted ball: settles this far ahead of him ... m */
   settleAhead: 0.5,
-  /** ... over this time, s. */
+  /** ... over this time, s; along his run when faster than settleRunSpeed (m/s), else toward the ball. */
   settleTime: 0.25,
+  settleRunSpeed: 1,
+  /** Ball speed giving a KICK event power of 1 for pokes / deflections, m/s. */
+  kickPowerRef: 20,
   /** Poke spread (half-angle around the lunge direction), rad. */
   standPokeSpread: 1.4,
   hardPokeSpread: 0.7,
@@ -249,6 +256,8 @@ export const LOCAL_TUNING = { // TUNING-CR
   // ---- down states
   /** STUMBLE: max |DIRECT stick| / ARRIVE speed as a fraction of jog. */
   stumbleMoveScale: 0.35,
+  /** Share of his speed kept when he starts to stumble. */
+  stumbleSpeedKeep: 0.6,
   /** Quick get-up from FALLEN allowed after this many ticks on the ground. */
   fallQuickMinTicks: 20,
   // ---- ball stuck under a down player
@@ -279,12 +288,22 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** Pressured target: |z| and distance upfield, m. */
   clearTouchlineZ: 31,
   clearUpfield: 28,
-  /** Minimum forward component (cos to the attack direction). */
+  /** Minimum forward component (cos to the attack direction); an aim error may not leave this x clearErrForwardFrac. */
   clearMinForward: 0.4,
+  clearErrForwardFrac: 0.5,
+  /** Pressured from the centre (|z| below this, m): the side he faces. */
+  clearCentreBand: 0.5,
+  /** Kicking quality weights (the rest: shotPower) and the speed share that does not depend on quality. */
+  clearQualityLong: 0.5,
+  clearQualityStrength: 0.3,
+  clearPowerFloor: 0.6,
+  /** Planned landing point: no-drag range x this. */
+  clearRangeDragFrac: 0.75,
   /** Aim error sigma at best / worst quality, rad; speed error sigma, fraction. */
   clearErrBase: 0.05,
   clearErrMax: 0.2,
   clearSpeedErr: 0.06,
+  clearSpeedErrCap: 0.2,
   // ---- interceptions
   interceptMaxHeight: 1.0,
   interceptMinSpeed: 6,
@@ -297,6 +316,9 @@ export const LOCAL_TUNING = { // TUNING-CR
   interceptHardMul: 0.35,
   interceptEdgeMul: 0.45,
   interceptHighMul: 0.6,
+  /** Full distance factor inside this fraction of the reach; full height factor up to this height, m. */
+  interceptCoreFrac: 0.5,
+  interceptLowHeight: 0.5,
   interceptBehindMul: 0.6,
   interceptMaxChance: 0.97,
   /** Max ball speed relative to him for a controlled interception (ballControl 1 .. 99), m/s. */
@@ -525,8 +547,8 @@ function downFor(s: SimState, slot: number, kind: ActionKind, ticks: number): vo
     p.moveMode = MoveMode.LOCKED;
     p.stunT = ticks + T.getUpTicks;
   } else {
-    p.vx *= 0.6;
-    p.vz *= 0.6;
+    p.vx *= L.stumbleSpeedKeep;
+    p.vz *= L.stumbleSpeedKeep;
     p.stunT = ticks;
   }
   p.wantSprint = 0;
@@ -603,7 +625,7 @@ export function startTackle(s: SimState, slot: number, kind: ActionKind, targetS
   let dl = Math.sqrt(dx * dx + dz * dz);
   if (dl < 1e-6) {
     const sp = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
-    if (sp > 0.5) { dx = p.vx; dz = p.vz; } else { dx = p.fx; dz = p.fz; }
+    if (sp > L.movingSpeed) { dx = p.vx; dz = p.vz; } else { dx = p.fx; dz = p.fz; }
     dl = Math.sqrt(dx * dx + dz * dz);
     if (dl < 1e-6) { dx = 1; dz = 0; dl = 1; }
   }
@@ -719,7 +741,7 @@ function solveClear(s: SimState, slot: number, out: KickLaunch): number {
   const rx = p.actDirX, rz = p.actDirZ;
   const hasReq = rx * rx + rz * rz > 0.25;
   if (hasReq && rx * dir >= L.clearMinForward) { ax = rx; az = rz; } else if (pressured) {
-    let side = p.z > 0.5 ? 1 : p.z < -0.5 ? -1 : (p.fz < 0 ? -1 : 1);
+    let side = p.z > L.clearCentreBand ? 1 : p.z < -L.clearCentreBand ? -1 : (p.fz < 0 ? -1 : 1);
     if (hasReq && rz * side < 0 && rz !== 0) side = -side;
     ax = dir * L.clearUpfield;
     az = side * L.clearTouchlineZ - p.z;
@@ -735,17 +757,18 @@ function solveClear(s: SimState, slot: number, out: KickLaunch): number {
     az = sz * Math.sqrt(1 - L.clearMinForward * L.clearMinForward);
   }
   const a = s.attrs[slot]!;
-  const q = clamp01(0.5 * attr01(a.longPassing) + 0.3 * attr01(a.strength) + 0.2 * attr01(a.shotPower));
+  const q = clamp01(L.clearQualityLong * attr01(a.longPassing) + L.clearQualityStrength * attr01(a.strength) +
+    (1 - L.clearQualityLong - L.clearQualityStrength) * attr01(a.shotPower));
   const power = clampN(fin(p.actPower), L.clearMinPower, 1);
-  let speed = lerp(L.clearSpeedMin, L.clearSpeedMax, power * (0.6 + 0.4 * q));
-  const pressure = near >= 6 ? 0 : near <= 1 ? 1 : 1 - (near - 1) / 5;
+  let speed = lerp(L.clearSpeedMin, L.clearSpeedMax, power * (L.clearPowerFloor + (1 - L.clearPowerFloor) * q));
+  const pressure = pressureOn(s, slot);
   const sigma = lerp(L.clearErrMax, L.clearErrBase, q) * (1 + pressure);
   const ang = rngGauss(s.rng) * sigma;
   const se = rngGauss(s.rng) * L.clearSpeedErr;
   const c = dcos(ang), sn = dsin(ang);
   let ux = ax * c - az * sn, uz = ax * sn + az * c;
-  if (ux * dir < L.clearMinForward * 0.5) { ux = ax; uz = az; } // an error never turns it back toward goal
-  speed *= clampN(1 + se, 0.8, 1.2);
+  if (ux * dir < L.clearMinForward * L.clearErrForwardFrac) { ux = ax; uz = az; } // an error never turns it back
+  speed *= clampN(1 + se, 1 - L.clearSpeedErrCap, 1 + L.clearSpeedErrCap);
   const h = speed * dcos(L.clearAngle);
   const vy = speed * dsin(L.clearAngle);
   out.vx = ux * h;
@@ -754,9 +777,9 @@ function solveClear(s: SimState, slot: number, out: KickLaunch): number {
   out.sx = 0; out.sy = 0; out.sz = 0;
   out.kind = KickKind.CLEARANCE;
   out.target = -1;
-  const range = h * (2 * vy / 9.81) * 0.75;
+  const range = h * (2 * vy / T_BALL.gravity) * L.clearRangeDragFrac;
   out.tx = clampN(p.x + ux * range, -HALF_LENGTH, HALF_LENGTH);
-  out.tz = clampN(p.z + uz * range, -40, 40);
+  out.tz = clampN(p.z + uz * range, -HALF_WIDTH, HALF_WIDTH);
   out.onTarget = 0;
   return 1;
 }
@@ -861,7 +884,7 @@ function cushion(s: SimState, slot: number, dirX: number, dirZ: number): void {
   const b = s.ball, p = s.players[slot]!;
   let fx = dirX, fz = dirZ;
   const sp = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
-  if (sp > 1) { fx = p.vx / sp; fz = p.vz / sp; }
+  if (sp > L.settleRunSpeed) { fx = p.vx / sp; fz = p.vz / sp; }
   const fl = Math.sqrt(fx * fx + fz * fz);
   if (fl < 1e-6) { fx = p.fx; fz = p.fz; } else { fx /= fl; fz /= fl; }
   const tx = p.x + fx * L.settleAhead, tz = p.z + fz * L.settleAhead;
@@ -883,7 +906,7 @@ function contactKick(s: SimState, slot: number, vx: number, vy: number, vz: numb
   l.target = -1;
   l.tx = s.ball.x; l.tz = s.ball.z;
   l.onTarget = 0;
-  applyKick(s, slot, l, clamp01(Math.sqrt(vx * vx + vz * vz) / 20), ev);
+  applyKick(s, slot, l, clamp01(Math.sqrt(vx * vx + vz * vz) / L.kickPowerRef), ev);
 }
 
 /** Tackler i wins the ball (from carrier v, -1 = loose). Three s.rng draws, always. */
@@ -1116,8 +1139,10 @@ export function interceptChance(s: SimState, j: number, d: number, sp: number, y
   let c = lerp(L.interceptChanceMin, L.interceptChanceMax, skill);
   c *= sp <= L.interceptEasySpeed ? 1 : lerp(1, L.interceptHardMul, clamp01((sp - L.interceptEasySpeed) / (L.interceptHardSpeed - L.interceptEasySpeed)));
   const reach = T.interceptReach;
-  c *= d <= 0.5 * reach ? 1 : lerp(1, L.interceptEdgeMul, clamp01((d - 0.5 * reach) / (0.5 * reach)));
-  c *= y <= 0.5 ? 1 : lerp(1, L.interceptHighMul, clamp01((y - 0.5) / (L.interceptMaxHeight - 0.5)));
+  const core = L.interceptCoreFrac * reach;
+  c *= d <= core ? 1 : lerp(1, L.interceptEdgeMul, clamp01((d - core) / (reach - core)));
+  const low = L.interceptLowHeight;
+  c *= y <= low ? 1 : lerp(1, L.interceptHighMul, clamp01((y - low) / (L.interceptMaxHeight - low)));
   const bl = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
   if (bl > 1e-6) {
     const comes = -(b.vx * q.fx + b.vz * q.fz) / bl; // 1 = ball coming at his face, -1 = from behind

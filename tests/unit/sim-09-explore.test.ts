@@ -1,84 +1,75 @@
 /**
- * [SIM-10] "Weighted so he meets it in stride": with the kick error switched off (SIM-08 kickErrorAim mocked to 0, so
- * only the lead / weight solve is measured), the ball flown with the sim's own physics (SIM-02 ballStepTick) meets a
- * runner who keeps running at full speed along his run (accelerating to top speed from his current speed, the model
- * SIM-04 ticksToReach uses) within 1 m, at a playable height, for ground, lobbed and dinked through balls, straight,
- * diagonal and standing starts. The real-error, full-pipeline version is tests/scenario/sim-10-pipeline.test.ts.
+ * [SIM-09] Lobs and crosses in the full pipeline: SIM-15 button routing -> startLob (crossing-zone conversions) ->
+ * SIM-08 KICK handler -> solveLob / solveCross -> SIM-01/02 ball; a lob over a defender completed to the receiver; a
+ * cross landing on its zone; determinism.
  */
-import { describe, expect, it, vi } from 'vitest';
-
-vi.mock('../../src/sim/kicks/pass', async (orig) => ({
-  ...(await orig<typeof import('../../src/sim/kicks/pass')>()),
-  kickErrorAim: () => 0,
-}));
-
-import { KickKind } from '../../src/contracts/enums';
+import { describe, expect, it } from 'vitest';
+import { ActionKind, ControllerKind, KickKind, MatchPhase } from '../../src/contracts/enums';
+import { EventType, type SimEvent } from '../../src/contracts/events';
+import { Btn, type InputFrame } from '../../src/contracts/input';
 import type { SimState } from '../../src/contracts/state';
-import { T_TOUCH } from '../../src/contracts/tuning';
-import { maxSpeed } from '../../src/sim/players/locomotion';
-import { fly, KICKER, launched, MATE_A, place, quiet, solveThroughKick } from './sim-09-helpers';
+import { hashState } from '../../src/sim/core/hash';
+import { crossTarget } from '../../src/sim/kicks/lob';
+import { findEvents, makeScenario, runTicks } from '../harness/scenario';
+import { giveBall, KICKER, MATE_A, OPP_A, place, skill } from './sim-09-helpers';
 
-/**
- * Closest approach between the launched ball and the runner (kinematic: accelerating at his accel to his top speed
- * along the unit direction toward the lead point, then on along it), counting only ticks with the ball at or below
- * trap height. Returns [distance, tick, ball height there, runner speed there].
- */
-function meet(s: SimState, slot: number, l: { vx: number; vy: number; vz: number; sx: number; sy: number; sz: number; tx: number; tz: number; kind: number; target: number; onTarget: number }): [number, number, number, number] {
-  const q = s.players[slot]!;
-  const top = maxSpeed(s, slot, true);
-  const acc = s.attrs[slot]!.accel;
-  let ux = l.tx - q.x, uz = l.tz - q.z;
-  const ul = Math.hypot(ux, uz);
-  ux /= ul; uz /= ul;
-  let px = q.x, pz = q.z;
-  let v = Math.max(0, q.vx * ux + q.vz * uz);
-  const b = launched(s, l as never);
-  let best: [number, number, number, number] = [Infinity, -1, 0, 0];
-  fly(b, 300, (i, bb) => {
-    v = Math.min(top, v + acc / 60);
-    px += ux * v / 60; pz += uz * v / 60;
-    const d = Math.hypot(bb.x - px, bb.z - pz);
-    if (bb.y <= T_TOUCH.trapHeight && d < best[0]) best = [d, i, bb.y, v];
-  });
-  return best;
-}
-
-function scene(x: number, z: number, vx: number, vz: number): SimState {
-  const s = quiet(1, 0, -5);
-  const l = Math.hypot(vx, vz) || 1;
-  place(s, MATE_A, x, z, vx / l || 1, vz / l, vx, vz);
-  s.players[MATE_A]!.sprinting = 1;
+/** IN_PLAY, offside off, no CPU brains; P1 on the kicker at (kx, kz) with the ball; everybody else far away. */
+function live(kx: number, kz: number, fx: number, fz: number, seed = 3): SimState {
+  const s = makeScenario({ phase: MatchPhase.IN_PLAY, seed, config: { offside: 0 }, humans: [{ side: 0, slot: KICKER }] });
+  for (let t = 0; t < 2; t++) { const c = s.ctrl[2 + t]!; c.kind = ControllerKind.NONE; c.slot = -1; s.teams[t]!.cpu.active = 0; }
+  for (let i = 0; i < 22; i++) {
+    if (i === 0 || i === 11 || i === KICKER) continue;
+    place(s, i, (i < 11 ? -30 : -40) + (i % 3), -25 + (i % 11) * 5);
+  }
+  place(s, 11, 52, 0);
+  place(s, 0, -52, 0);
+  s.teams[0]!.dir = 1; s.teams[1]!.dir = -1;
+  const l = Math.hypot(fx, fz);
+  place(s, KICKER, kx, kz, fx / l, fz / l);
+  s.players[KICKER]!.ctrl = 0;
+  skill(s, KICKER, 80);
+  giveBall(s, KICKER);
   return s;
 }
 
-describe('SIM-10 in stride (solver timing vs the sim ball physics)', () => {
-  const runs: [string, number, number, number, number][] = [
-    ['straight at full speed', 14, 6, 9, 0],
-    ['diagonal toward the touchline', 14, 6, 7.5, 4],
-    ['diagonal inside', 14, 12, 7.5, -4],
-    ['jogging', 12, 6, 4, 0],
-    ['standing (led toward goal)', 12, 6, 0, 0],
-  ];
-  for (const kind of [KickKind.THROUGH_GROUND, KickKind.THROUGH_LOBBED, KickKind.THROUGH_DINKED]) {
-    for (const [name, x, z, vx, vz] of runs) {
-      it(`${KickKind[kind]}: ${name} - the runner meets it within 1 m without stopping`, () => {
-        for (const pw of [0.2, 0.6, 1]) {
-          const s = scene(x, z, vx, vz);
-          const l = solveThroughKick(s, kind, { power: pw, dirX: 1, dirZ: 0.3 })!;
-          expect(l.target).toBe(MATE_A);
-          const [d, tick, h] = meet(s, MATE_A, l);
-          console.log(KickKind[kind], name, pw, d.toFixed(2), tick, h.toFixed(2)); expect(d).toBeLessThan(1);
-          expect(h).toBeLessThanOrEqual(T_TOUCH.trapHeight);
-          // Met ahead of where he started, along his run (into space, not back to him).
-          const q = s.players[MATE_A]!;
-          expect((l.tx - q.x) * (vx || 1) + (l.tz - q.z) * vz).toBeGreaterThan(0);
-        }
-      });
-    }
-  }
+/**
+ * Press `buttons` (stick (mx, mz)) once the kicker is free with the ball: `holds` lists [press ticks, gap ticks] pairs
+ * (a double tap is two pairs). Stops pressing once he has struck the ball.
+ */
+function presses(buttons: number, mx: number, mz: number, holds: [number, number][]) {
+  let n = 0;
+  let started = false;
+  const plan: number[] = [];
+  for (const [on, off] of holds) { for (let i = 0; i < on; i++) plan.push(1); for (let i = 0; i < off; i++) plan.push(0); }
+  return (_t: number, st: SimState, out: InputFrame[]): void => {
+    if (st.ball.lastKickBy === KICKER && st.ball.owner !== KICKER) return;
+    const f = out[0]!;
+    f.mx = mx; f.mz = mz;
+    if (!started && !(st.players[KICKER]!.act === ActionKind.NONE && st.ball.owner === KICKER)) return;
+    started = true;
+    if (n < plan.length && plan[n++] === 1) f.buttons = buttons;
+  };
+}
 
-  it('the KICKER is the passer in every run (sanity of the scene)', () => {
-    const s = scene(14, 6, 9, 0);
-    expect(s.ball.owner).toBe(KICKER);
+function kicksBy(ev: SimEvent[], slot: number): number[] {
+  return findEvents(ev, EventType.KICK, (e) => e.a === slot).map((e) => e.b);
+}
+
+describe('SIM-09 in the pipeline', () => {
+  it('the LOB button family through SIM-15: zone conversions and the outside-the-zone kinds', () => {
+    const cases: [string, number, number, number, number, number, [number, number][], KickKind][] = [
+describe('x', () => { it('trace', () => {
+  const s = live(0, 0, 1, 0);
+  place(s, MATE_A, 26, 4);
+  place(s, OPP_A, 12, 2);
+  let k = -1;
+  const ev = runTicks(s, 300, presses(Btn.LOB, 125, 20, [[12, 0]]), {
+    until: (st, tev) => {
+      for (const e of tev) if (e.type === EventType.KICK || e.type === EventType.PASS_COMPLETE || e.type === EventType.BOUNCE || e.type === EventType.INTERCEPT || e.type === EventType.AERIAL) console.log('ev', st.tick, e.type, e.a, e.b, e.x.toFixed(1), e.z.toFixed(1));
+      if (st.ball.lastKickBy === KICKER && k < 0) { k = st.tick; console.log('kick', st.ball.passTarget, st.ball.passX.toFixed(1), st.ball.passZ.toFixed(1)); }
+      if (k > 0 && (st.tick - k) % 10 === 0) { const q = st.players[MATE_A]!; console.log('t', st.tick - k, 'q', q.x.toFixed(1), q.z.toFixed(1), 'job', q.job, 'ctrl', q.ctrl, 'act', q.act, 'b', st.ball.x.toFixed(1), st.ball.y.toFixed(1), st.ball.z.toFixed(1), 'own', st.ball.owner, 'p1', st.ctrl[0]!.slot); }
+      return false;
+    },
   });
-});
+  void ev;
+}); });

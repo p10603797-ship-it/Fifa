@@ -210,14 +210,15 @@ export function legIK(out: Pose, side: number, ax: number, ay: number, az: numbe
   sr = sr < -1 ? -1 : sr > 1 ? 1 : sr;
   const rD = Math.asin(sr);
   const hp = wrapPi(Math.atan2(y, x) - Math.atan2(vy * Math.cos(rD), vx));
+  // Joint limits win over the target (an extreme target leaves the foot a little short instead of a broken hip).
   if (left) {
-    out[P.HIP_L_PITCH] = hp;
-    out[P.HIP_L_ROLL] = rD;
-    out[P.KNEE_L] = knee;
+    out[P.HIP_L_PITCH] = clamp(hp, POSE_MIN[P.HIP_L_PITCH]!, POSE_MAX[P.HIP_L_PITCH]!);
+    out[P.HIP_L_ROLL] = clamp(rD, POSE_MIN[P.HIP_L_ROLL]!, POSE_MAX[P.HIP_L_ROLL]!);
+    out[P.KNEE_L] = clamp(knee, POSE_MIN[P.KNEE_L]!, POSE_MAX[P.KNEE_L]!);
   } else {
-    out[P.HIP_R_PITCH] = hp;
-    out[P.HIP_R_ROLL] = -rD;
-    out[P.KNEE_R] = knee;
+    out[P.HIP_R_PITCH] = clamp(hp, POSE_MIN[P.HIP_R_PITCH]!, POSE_MAX[P.HIP_R_PITCH]!);
+    out[P.HIP_R_ROLL] = clamp(-rD, POSE_MIN[P.HIP_R_ROLL]!, POSE_MAX[P.HIP_R_ROLL]!);
+    out[P.KNEE_R] = clamp(knee, POSE_MIN[P.KNEE_R]!, POSE_MAX[P.KNEE_R]!);
   }
 }
 
@@ -494,14 +495,43 @@ export function evalClip(clip: Clip, t: number, out: Pose): void {
     KEY_OUT[c] = h00 * V[o0 + c]! + h10 * h * M[o0 + c]! + h01 * V[o1 + c]! + h11 * h * M[o1 + c]!;
   }
   for (let c = 0; c < POSE_SIZE; c++) out[c] = KEY_OUT[c]!;
-  if (clip.ikLeft) {
-    legIK(out, -1, KEY_OUT[IKL]!, KEY_OUT[IKL + 1]!, KEY_OUT[IKL + 2]!);
-    setFootPitch(out, -1, KEY_OUT[IKL + 3]!);
-  }
-  if (clip.ikRight) {
-    legIK(out, 1, KEY_OUT[IKR]!, KEY_OUT[IKR + 1]!, KEY_OUT[IKR + 2]!);
-    setFootPitch(out, 1, KEY_OUT[IKR + 3]!);
-  }
+  if (clip.ikLeft) clipLeg(out, -1, KEY_OUT[IKL]!, KEY_OUT[IKL + 1]!, KEY_OUT[IKL + 2]!, KEY_OUT[IKL + 3]!);
+  if (clip.ikRight) clipLeg(out, 1, KEY_OUT[IKR]!, KEY_OUT[IKR + 1]!, KEY_OUT[IKR + 2]!, KEY_OUT[IKR + 3]!);
+}
+
+/** Lowest sole point relative to the ankle joint for a foot pitch (m, <= 0). */
+function soleLow(pitch: number): number {
+  const c = Math.cos(pitch), s = Math.sin(pitch);
+  const toe = BODY.toeX * s - BODY.ankleY * c, heel = BODY.heelX * s - BODY.ankleY * c;
+  return toe < heel ? toe : heel;
+}
+
+/**
+ * Clip IK leg: ankle target + foot pitch. When the ankle limits cannot give the pitch (the foot ends up steeper),
+ * the ankle is raised so the lowest sole point stays where the authored pitch would have put it (no toe digging in).
+ */
+function clipLeg(out: Pose, side: number, ax: number, ay: number, az: number, pitch: number): void {
+  legIK(out, side, ax, ay, az);
+  setFootPitch(out, side, pitch);
+  const got = footPitchOf(out, side);
+  if (Math.abs(got - pitch) < 0.01) return;
+  const lift = soleLow(pitch) - soleLow(got);
+  if (lift <= 0) return;
+  legIK(out, side, ax, ay + lift, az);
+  setFootPitch(out, side, pitch);
+}
+
+/**
+ * IK target [ankle x, ankle y, ankle z, pitch] for a foot resting on the grass at toe/heel position x, z with foot
+ * pitch `pitch` (- = heel lifted, the toe touches; + = toes up, the heel touches). Module load helper for clips.
+ */
+export function groundFoot(x: number, z: number, pitch = 0): readonly [number, number, number, number] {
+  const c = Math.cos(pitch), s = Math.sin(pitch);
+  // Lowest sole point at y = 0: toe = ankle + Rz(p)(toeX, -ankleY); heel = ankle + Rz(p)(heelX, -ankleY).
+  const toeDy = BODY.toeX * s - BODY.ankleY * c;
+  const heelDy = BODY.heelX * s - BODY.ankleY * c;
+  const y = -(toeDy < heelDy ? toeDy : heelDy);
+  return [x, y, z, pitch];
 }
 
 /** Standing ankle height above the ground for a flat foot (m). */

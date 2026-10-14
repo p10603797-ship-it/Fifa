@@ -282,20 +282,40 @@ export function wobbleSway(age: number, amp: number): number {
   return WOB_OUT[0]!;
 }
 
+/** wobbleAmplitude(bar, io[i]) into io[j]: the per-frame form (no double crosses a call boundary). */
+function wobbleAmpCore(bar: number, io: Float64Array, i: number, j: number): void {
+  const T = LOCAL_TUNING;
+  const sp = io[i]!;
+  const g = bar === 1 ? T.wobbleGainBar : T.wobbleGainPost;
+  const a = g * (sp > 0 ? sp : 0);
+  io[j] = a > T.wobbleMax ? T.wobbleMax : a;
+}
+
+const WAMP_IO = new Float64Array(2);
+
 /** Sway amplitude (m) for a POST event: bar = 1 for the crossbar. */
 export function wobbleAmplitude(bar: number, impactSpeed: number): number {
-  const T = LOCAL_TUNING;
-  const g = bar === 1 ? T.wobbleGainBar : T.wobbleGainPost;
-  const a = g * (impactSpeed > 0 ? impactSpeed : 0);
-  return a > T.wobbleMax ? T.wobbleMax : a;
+  WAMP_IO[0] = impactSpeed;
+  wobbleAmpCore(bar, WAMP_IO, 0, 1);
+  return WAMP_IO[1]!;
 }
+
+/** netRippleAmplitude(io[i]) into io[j]: the per-frame form (no double crosses a call boundary). */
+function rippleAmpCore(io: Float64Array, i: number, j: number): void {
+  const T = LOCAL_TUNING;
+  const speed = io[i]!;
+  if (!(speed >= T.netMinSpeed)) { io[j] = 0; return; }
+  const a = speed * T.netGain;
+  io[j] = a > T.netMaxAmp ? T.netMaxAmp : a;
+}
+
+const AMP_IO = new Float64Array(2);
 
 /** Outward ripple amplitude (m) for a ball meeting the net at `speed` m/s (0 below netMinSpeed). */
 export function netRippleAmplitude(speed: number): number {
-  const T = LOCAL_TUNING;
-  if (!(speed >= T.netMinSpeed)) return 0;
-  const a = speed * T.netGain;
-  return a > T.netMaxAmp ? T.netMaxAmp : a;
+  AMP_IO[0] = speed;
+  rippleAmpCore(AMP_IO, 0, 1);
+  return AMP_IO[1]!;
 }
 
 export interface NetImpact {
@@ -314,15 +334,9 @@ export function createNetImpact(): NetImpact {
   return { x: 0, y: 0, z: 0, t: 0, sheet: SHEET_BACK };
 }
 
-/**
- * Where a ball inside (or entering) the net of `end` at p moving with v meets the net: the first sheet its straight
- * path reaches (the ball surface touching it), projected onto that sheet and clamped into it. A ball that would hit
- * the ground first rolls on (y >= BALL_RADIUS). A ball not moving into any sheet hits the back at its own height.
- * Writes and returns `out`. Pure, no allocation.
- */
-export function predictNetImpact(
-  end: number, px: number, py: number, pz: number, vx: number, vy: number, vz: number, out: NetImpact,
-): NetImpact {
+/** predictNetImpact with p = io[0..2], v = io[3..5]: the per-frame form (no double crosses a call boundary). */
+function impactCore(end: number, io: Float64Array, out: NetImpact): void {
+  const px = io[0]!, py = io[1]!, pz = io[2]!, vx = io[3]!, vy = io[4]!, vz = io[5]!;
   const e = end < 0 ? -1 : 1;
   const u = e * px;
   const du = e * vx;
@@ -349,6 +363,22 @@ export function predictNetImpact(
   out.z = cz;
   out.t = t;
   out.sheet = sheet;
+}
+
+const IMPACT_IO = new Float64Array(6);
+
+/**
+ * Where a ball inside (or entering) the net of `end` at p moving with v meets the net: the first sheet its straight
+ * path reaches (the ball surface touching it), projected onto that sheet and clamped into it. A ball that would hit
+ * the ground first rolls on (y >= BALL_RADIUS). A ball not moving into any sheet hits the back at its own height.
+ * Writes and returns `out`. Pure, no allocation.
+ */
+export function predictNetImpact(
+  end: number, px: number, py: number, pz: number, vx: number, vy: number, vz: number, out: NetImpact,
+): NetImpact {
+  const io = IMPACT_IO;
+  io[0] = px; io[1] = py; io[2] = pz; io[3] = vx; io[4] = vy; io[5] = vz;
+  impactCore(end, io, out);
   return out;
 }
 
@@ -770,8 +800,15 @@ export function createGoals(ctx: RenderContext): GoalsModule {
   const V = new Float64Array(7);
   const V_TIME = 0, V_LX = 1, V_LY = 2, V_LZ = 3, V_PVX = 4, V_PVY = 5, V_PVZ = 6;
   let hasLast = false;
-  /** detect() registers: interpolated ball centre and its apparent velocity (doubles never cross a call boundary). */
+  /**
+   * Call registers (doubles never cross a call boundary; V8 boxes them at a call it does not inline):
+   * D: detect() ball centre and apparent velocity. E: entry() ball p (0..2), v (3..5), speed (6); amplitude scratch
+   * (7). Q: addRipple() centre (0..2), signed amplitude (3), delay (4). H: postHit() speed (0), point (1..3), amplitude scratch (4).
+   */
   const D = new Float64Array(6);
+  const E = new Float64Array(8);
+  const Q = new Float64Array(5);
+  const H = new Float64Array(5);
   const impact = createNetImpact();
   // Debug close-up.
   let closeEnd = 0;
@@ -813,9 +850,10 @@ export function createGoals(ctx: RenderContext): GoalsModule {
     sw.x = sway[0]!; sw.y = sway[1]!;
   }
 
-  /** Start a ripple at (x, y, z) with signed amplitude amp after `delay` s. Replaces a free or the oldest slot. */
-  function addRipple(x: number, y: number, z: number, amp: number, delay: number): void {
-    if (amp === 0 || !Number.isFinite(x + y + z + amp + delay)) return;
+  /** Start a ripple at Q (centre, signed amplitude, delay s). Replaces a free or the oldest slot. */
+  function addRipple(): void {
+    const x = Q[0]!, y = Q[1]!, z = Q[2]!, amp = Q[3]!, delay = Q[4]!;
+    if (amp === 0 || !(x - x === 0 && y - y === 0 && z - z === 0 && amp - amp === 0 && delay - delay === 0)) return;
     let slot = -1;
     let oldest = -INF;
     for (let i = 0; i < RIPPLE_SLOTS; i++) {
@@ -827,26 +865,33 @@ export function createGoals(ctx: RenderContext): GoalsModule {
     rip[o] = x; rip[o + 1] = y; rip[o + 2] = z; rip[o + 3] = delay > 0 ? -delay : 0; rip[o + 4] = amp;
   }
 
-  /** The ball entered the net of `end` at p with velocity v (speed in m/s). */
-  function entry(end: number, px: number, py: number, pz: number, vx: number, vy: number, vz: number, speed: number): void {
+  /** The ball entered the net of `end` (E: position, velocity, speed in m/s). */
+  function entry(end: number): void {
     const k = end < 0 ? 0 : 1;
     lastEntry[k] = V[V_TIME]!;
-    const amp = netRippleAmplitude(speed);
-    if (amp === 0) return;
-    predictNetImpact(end, px, py, pz, vx, vy, vz, impact);
-    const delay = impact.t < T.impactDelayMax ? impact.t : T.impactDelayMax;
-    addRipple(impact.x, impact.y, impact.z, amp, delay);
+    rippleAmpCore(E, 6, 7);
+    if (E[7] === 0) return;
+    impactCore(end, E, impact);
+    Q[0] = impact.x; Q[1] = impact.y; Q[2] = impact.z; Q[3] = E[7]!;
+    Q[4] = impact.t < T.impactDelayMax ? impact.t : T.impactDelayMax;
+    addRipple();
   }
 
-  function postHit(end: number, bar: number, speed: number, x: number, y: number, z: number): void {
+  /** POST event on the goal of `end` (bar = 1 for the crossbar; H: impact speed, hit point). */
+  function postHit(end: number, bar: number): void {
     const k = end < 0 ? 0 : 1;
-    const a = wobbleAmplitude(bar, speed);
+    const speed = H[0]!;
+    wobbleAmpCore(bar, H, 0, 4);
+    const a = H[4]!;
     // A new hit restarts the shake unless the current one is still stronger.
     const remaining = wobAmp[k]! * Math.exp(-wobAge[k]! / T.wobbleDecay) * (wobAge[k]! < T.wobbleDuration ? 1 : 0);
     if (a > remaining) { wobAge[k] = 0; wobAmp[k] = a; }
     let ra = speed * T.postRippleGain;
     if (ra > T.postRippleMax) ra = T.postRippleMax;
-    if (ra > 0) addRipple(x, y, z, ra, 0);
+    if (ra > 0) {
+      Q[0] = H[1]!; Q[1] = H[2]!; Q[2] = H[3]!; Q[3] = ra; Q[4] = 0;
+      addRipple();
+    }
   }
 
   /** Interpolated-ball detection from the D registers (ball, apparent velocity): entries (replays), sheet contacts. */
@@ -866,7 +911,8 @@ export function createGoals(ctx: RenderContext): GoalsModule {
       // Entry into the net volume (whole ball over the line, inside the mouth).
       const u0 = e * V[V_LX]!;
       if (u0 <= NET_FRONT && u > NET_FRONT && inside && time - lastEntry[k]! >= T.entryWindow) {
-        entry(e, bx, by, bz, vx, vy, vz, Math.sqrt(vx * vx + vy * vy + vz * vz));
+        E[0] = bx; E[1] = by; E[2] = bz; E[3] = vx; E[4] = vy; E[5] = vz; E[6] = Math.sqrt(vx * vx + vy * vy + vz * vz);
+        entry(e);
       }
       const inEntry = time - lastEntry[k]! < T.entryWindow;
       const du = e * vx;
@@ -899,12 +945,15 @@ export function createGoals(ctx: RenderContext): GoalsModule {
         let ap = fromInside ? vn : -vn;
         const pap = fromInside ? pvn : -pvn;
         if (pap > ap) ap = pap;
-        const amp = netRippleAmplitude(ap);
+        E[6] = ap;
+        rippleAmpCore(E, 6, 7);
+        const amp = E[7]!;
         if (amp === 0) continue;
         lastContact[ti] = time;
         cy = cy < 0 ? 0 : cy > GH ? GH : cy;
         cz = cz < -GW ? -GW : cz > GW ? GW : cz;
-        addRipple(cx, cy, cz, fromInside ? amp : -amp, 0);
+        Q[0] = cx; Q[1] = cy; Q[2] = cz; Q[3] = fromInside ? amp : -amp; Q[4] = 0;
+        addRipple();
       }
     }
   }
@@ -1034,9 +1083,11 @@ export function createGoals(ctx: RenderContext): GoalsModule {
           const k = end < 0 ? 0 : 1;
           if (V[V_TIME]! - lastEntry[k]! < T.entryWindow && lastEntry[k]! > -INF) continue;
           const b = state.ball;
-          entry(end, ev.x, ev.y, ev.z, b.vx, b.vy, b.vz, ev.c);
+          E[0] = ev.x; E[1] = ev.y; E[2] = ev.z; E[3] = b.vx; E[4] = b.vy; E[5] = b.vz; E[6] = ev.c;
+          entry(end);
         } else if (ev.type === EventType.POST) {
-          postHit(ev.a < 0 ? -1 : 1, ev.b, ev.c, ev.x, ev.y, ev.z);
+          H[0] = ev.c; H[1] = ev.x; H[2] = ev.y; H[3] = ev.z;
+          postHit(ev.a < 0 ? -1 : 1, ev.b);
         }
       }
     },

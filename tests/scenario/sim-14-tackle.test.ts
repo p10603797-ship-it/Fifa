@@ -451,6 +451,31 @@ describe('SIM-14 glitch list', () => {
   });
 });
 
+describe('SIM-14 in a bot match', () => {
+  it('forced tackles of every kind near the ball keep every invariant and stay deterministic', () => {
+    const KINDS = [ActionKind.STAND_TACKLE, ActionKind.HARD_TACKLE, ActionKind.SLIDE_TACKLE, ActionKind.SHOULDER, ActionKind.PUSH_PULL];
+    const run = (): { hash: number; started: number; tackles: number } => {
+      const s = makeScenario({ seed: 2, config: { halfMinutes: 2 } });
+      let started = 0;
+      const ev = runTicks(s, 3000, (t, st) => {
+        if (t % 7 !== 0) return;
+        const b = st.ball;
+        for (let i = 0; i < 22; i++) {
+          const p = st.players[i]!;
+          if (p.isKeeper === 1 || Math.hypot(p.x - b.x, p.z - b.z) > 3.5) continue;
+          if (b.owner >= 0 && st.players[b.owner]!.team === p.team) continue;
+          started += startTackle(st, i, KINDS[(t + i) % KINDS.length]!, -1, EV);
+        }
+      }, { check: 'all' });
+      return { hash: hashState(s), started, tackles: tackles(ev).length };
+    };
+    const a = run();
+    expect(a.started).toBeGreaterThan(40);
+    expect(a.tackles).toBeGreaterThanOrEqual(a.started);
+    expect(run()).toEqual(a);
+  }, 60_000);
+});
+
 describe('SIM-14 determinism', () => {
   it('the same tackles give the same state hash; a mid-tackle clone continues identically', () => {
     const run = (): number[] => {

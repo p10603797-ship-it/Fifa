@@ -236,9 +236,12 @@ describe('SIM-14 clearances', () => {
     // a dropping cross: about head height when it reaches him
     loose(s, -30, 0, -14, 0);
     s.ball.y = 3.5; s.ball.py = 3.5; s.ball.vy = 1.5; s.ball.grounded = 0;
-    const r = startClearance(s, P1, KickKind.CLEARANCE, createActionRequest(), EV);
-    if (r === 1) expect([ActionKind.HEADER, ActionKind.VOLLEY]).toContain(s.players[P1]!.act);
-    else expect(s.players[P1]!.act).toBe(ActionKind.NONE);
+    expect(startClearance(s, P1, KickKind.CLEARANCE, createActionRequest(), EV)).toBe(1);
+    expect(s.players[P1]!.act).toBe(ActionKind.HEADER);
+    expect(s.players[P1]!.actKick).toBe(KickKind.HEADER_PASS);
+    const ev = stepN(s, 80, (st) => st.ball.lastKickBy === P1);
+    expect(ev.some((e) => e.type === EventType.KICK && e.a === P1 && e.b === KickKind.HEADER_PASS)).toBe(true);
+    expect(s.ball.vx).toBeGreaterThan(0); // headed away from his goal
   });
 
   it('a standing tackle reach is the tuned one', () => {

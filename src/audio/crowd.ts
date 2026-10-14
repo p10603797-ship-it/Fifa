@@ -20,7 +20,7 @@ import { HALF_LENGTH } from '../contracts/constants';
 import { ControllerKind, MatchPhase } from '../contracts/enums';
 import type { ReadonlySimState } from '../contracts/state';
 import {
-  clamp01, FilterKind, glide, lerp, loopRenderer, type MonoSource, NoiseBand, oneShotEnv, oneShotRenderer, setNow, Wander,
+  clamp01, FilterKind, glide, lerp, loopRenderer, type MonoSource, NoiseBand, oneShotEnv, oneShotRenderer, riseFromZero, Wander,
 } from './dsp';
 import { getAudioServices } from './services';
 import type { AudioCtx, AudioModule } from './types';
@@ -558,33 +558,6 @@ export function renderReaction(r: Reaction) {
 
 // ------------------------------------------------------------------ module
 
-/** Loop sources disconnect themselves once stopped (assigned by reference: no closure). */
-function disconnectSelf(this: AudioScheduledSourceNode): void {
-  try {
-    this.disconnect();
-  } catch {
-    /* already disconnected */
-  }
-}
-
-function stopSource(s: AudioBufferSourceNode | null, at: number): void {
-  if (!s) return;
-  s.onended = disconnectSelf;
-  try {
-    s.stop(at);
-  } catch {
-    /* not started */
-  }
-}
-
-function safeConnect(a: AudioNode, b: AudioNode): void {
-  try {
-    a.connect(b);
-  } catch {
-    /* fake / closed context */
-  }
-}
-
 export function createCrowd(ctx: AudioCtx): CrowdModule {
   const T = LOCAL_TUNING;
   const ac = ctx.ctx;
@@ -595,11 +568,8 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
   const reactionHandles = new Int32Array(REACTION_COUNT).fill(-1);
   if (bank) for (let r = 0; r < REACTION_COUNT; r++) reactionHandles[r] = bank.define(REACTION_IDS[r]!, REACTION_SPECS[r]!.dur, 2, renderReaction(r));
 
-  // Persistent bed graph (created once, at unlock): murmur gain -> bus; roar -> low-pass -> roar gain -> bus.
-  const murmurGain = ac.createGain();
-  murmurGain.gain.value = 0;
-  const roarGain = ac.createGain();
-  roarGain.gain.value = 0;
+  // Bed graph: per match, murmur loop -> its gain -> bus and roar loop -> its gain -> low-pass (shared) -> bus. Fresh
+  // gains per start, so a bed still fading out after a quit never fights the next match's fade-in.
   let roarFilter: BiquadFilterNode | null = null;
   if (typeof (ac as Partial<AudioContext>).createBiquadFilter === 'function') {
     try {
@@ -607,13 +577,13 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
       roarFilter.type = 'lowpass';
       roarFilter.frequency.value = T.roarLpMin;
       roarFilter.Q.value = 0.5;
+      roarFilter.connect(ctx.crowd);
     } catch {
       roarFilter = null;
     }
   }
-  if (roarFilter) safeConnect(roarFilter, roarGain);
-  safeConnect(murmurGain, ctx.crowd);
-  safeConnect(roarGain, ctx.crowd);
+  let murmurGain: GainNode | null = null;
+  let roarGain: GainNode | null = null;
 
   let murmurSrc: AudioBufferSourceNode | null = null;
   let roarSrc: AudioBufferSourceNode | null = null;
@@ -632,7 +602,19 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
   const lastGain = new Float64Array(REACTION_COUNT);
   const stats: CrowdStats = { reactions: new Int32Array(REACTION_COUNT), skipped: 0, bedStarts: 0 };
 
-  function makeLoop(buf: AudioBuffer, dest: AudioNode, offset: number): AudioBufferSourceNode | null {
+  function makeGain(dest: AudioNode): GainNode | null {
+    try {
+      const g = ac.createGain();
+      g.gain.value = 0;
+      g.connect(dest);
+      return g;
+    } catch {
+      return null;
+    }
+  }
+
+  function makeLoop(buf: AudioBuffer, dest: AudioNode | null, offset: number): AudioBufferSourceNode | null {
+    if (!dest) return null;
     try {
       const s = ac.createBufferSource();
       s.buffer = buf;
@@ -645,11 +627,38 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
     }
   }
 
+  /** Stop a loop at `at` and release it and its gain once it ended (match end only: one closure per loop). */
+  function retire(src: AudioBufferSourceNode | null, gain: GainNode | null, at: number): void {
+    if (src) {
+      src.onended = () => {
+        try {
+          src.disconnect();
+          gain?.disconnect();
+        } catch {
+          /* already disconnected */
+        }
+      };
+      try {
+        src.stop(at);
+      } catch {
+        /* not started */
+      }
+    } else {
+      try {
+        gain?.disconnect();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   function stopLoops(at: number): void {
-    stopSource(murmurSrc, at);
-    stopSource(roarSrc, at);
+    retire(murmurSrc, murmurGain, at);
+    retire(roarSrc, roarGain, at);
     murmurSrc = null;
     roarSrc = null;
+    murmurGain = null;
+    roarGain = null;
     running = false;
   }
 
@@ -660,28 +669,32 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
     const r = bank.get(bedRoar);
     if (!m || !r) return;
     const t = ac.currentTime;
-    setNow(murmurGain.gain, 0, t);
-    setNow(roarGain.gain, 0, t);
+    murmurGain = makeGain(ctx.crowd);
+    roarGain = makeGain(roarFilter ?? ctx.crowd);
     murmurSrc = makeLoop(m, murmurGain, 0);
     // A different offset so the two loops' wrap points never coincide.
-    roarSrc = makeLoop(r, roarFilter ?? roarGain, T.bedSeconds * 0.5);
+    roarSrc = makeLoop(r, roarGain, T.bedSeconds * 0.5);
     running = murmurSrc !== null || roarSrc !== null;
-    if (running) {
-      stats.bedStarts++;
-      st[Io.APPLIED] = st[Io.INTENSITY]!;
-      bedLevels(st[Io.INTENSITY]!, levels);
-      // Fade in: a glide with a time constant of a third of the fade reaches ~95% by the end.
-      glide(murmurGain.gain, levels.murmur, t, T.fadeIn / 3);
-      glide(roarGain.gain, levels.roar, t, T.fadeIn / 3);
-      st[Io.CLOCK] = -T.fadeIn; // leave the fade alone until it is nearly done
+    if (!running) {
+      stopLoops(t);
+      return;
     }
+    stats.bedStarts++;
+    st[Io.APPLIED] = st[Io.INTENSITY]!;
+    bedLevels(st[Io.INTENSITY]!, levels);
+    // Fade in from 0: a glide with a time constant of a third of the fade reaches ~95% by its end.
+    if (murmurGain) riseFromZero(murmurGain.gain, levels.murmur, t, T.fadeIn / 3);
+    if (roarGain) riseFromZero(roarGain.gain, levels.roar, t, T.fadeIn / 3);
+    if (roarFilter) glide(roarFilter.frequency, levels.roarCutoff, t, T.fadeIn / 3);
+    st[Io.CLOCK] = -T.fadeIn; // leave the fade alone until it is nearly done
   }
 
   function fadeOutBed(): void {
     if (!running) return;
     const t = ac.currentTime;
-    glide(murmurGain.gain, 0, t, T.fadeOut / 4);
-    glide(roarGain.gain, 0, t, T.fadeOut / 4);
+    // Six time constants within the fade: the loops stop at ~0.25% of their level (inaudible, no click).
+    if (murmurGain) glide(murmurGain.gain, 0, t, T.fadeOut / 6);
+    if (roarGain) glide(roarGain.gain, 0, t, T.fadeOut / 6);
     stopLoops(t + T.fadeOut);
   }
 
@@ -689,8 +702,8 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
     st[Io.APPLIED] = st[Io.INTENSITY]!;
     bedLevels(st[Io.INTENSITY]!, levels);
     const t = ac.currentTime;
-    glide(murmurGain.gain, levels.murmur, t, T.paramTc);
-    glide(roarGain.gain, levels.roar, t, T.paramTc);
+    if (murmurGain) glide(murmurGain.gain, levels.murmur, t, T.paramTc);
+    if (roarGain) glide(roarGain.gain, levels.roar, t, T.paramTc);
     if (roarFilter) glide(roarFilter.frequency, levels.roarCutoff, t, T.paramTc);
   }
 
@@ -784,8 +797,6 @@ export function createCrowd(ctx: AudioCtx): CrowdModule {
     dispose() {
       stopLoops(ac.currentTime);
       try {
-        murmurGain.disconnect();
-        roarGain.disconnect();
         roarFilter?.disconnect();
       } catch {
         /* ignore */

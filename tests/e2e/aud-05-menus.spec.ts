@@ -1,7 +1,8 @@
 /**
- * [AUD-05] Menu sounds in a real browser (Web Audio in headless Chromium): the splash tap that unlocks audio plays
- * START (queued until the context runs), keyboard navigation (Enter on a menu entry) plays CONFIRM through the menus
- * voice pool from pre-rendered buffers, key repeat is debounced, and nothing logs an error or warning.
+ * [AUD-05] Menu sounds in a real browser (Web Audio in headless Chromium): the key press that starts the game and
+ * unlocks audio plays START (queued until the context runs), keyboard navigation (Enter on a menu entry) plays
+ * CONFIRM through the menus voice pool from pre-rendered buffers, key repeat is debounced, and nothing logs an
+ * error or warning.
  * Run: npx vite build --outDir dist-e2e/aud-01 --emptyOutDir && PW_DIST=dist-e2e/aud-01 PW_PORT=4201 npx playwright test tests/e2e/aud-05-menus.spec.ts
  */
 import { expect, test, type Page } from '@playwright/test';
@@ -47,15 +48,19 @@ test.describe('AUD-05 menu sounds', () => {
   test('splash START, CONFIRM on keyboard navigation, debounced key repeat, menus pool, no errors', async ({ page }) => {
     const messages = collectConsole(page);
     await page.goto('/');
-    await page.getByTestId('splash-start').tap();
+    await expect(page.getByTestId('splash-start')).toBeVisible();
+    // A keyboard player: any key starts (a key press is a user gesture that may unlock audio).
+    await page.keyboard.press('KeyG');
     await expect(page.getByTestId('main-kickoff')).toBeVisible();
+    const focused = (): Promise<string | null | undefined> => page.evaluate(() => document.activeElement?.getAttribute('data-testid'));
+    await expect.poll(focused).toBe('main-kickoff');
     await page.waitForFunction(() => (window.__dotkick!.ctx.audio as unknown as AudioEngineImpl).info().state === 'running');
-    // The unlock tap's START sound played from its pre-rendered buffer (not the oscillator fallback).
+    // The unlocking key press's START sound played from its pre-rendered buffer (not the oscillator fallback).
     await expect.poll(async () => (await uiInfo(page)).played[UiSound.START]).toBe(1);
 
     // Keyboard: walk to Settings in the top bar, open it (CONFIRM), come back.
     await page.keyboard.press('ArrowUp');
-    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('main-settings');
+    await expect.poll(focused).toBe('main-settings');
     await page.keyboard.press('Enter');
     await expect.poll(async () => (await uiInfo(page)).played[UiSound.CONFIRM]).toBeGreaterThanOrEqual(1);
     await page.keyboard.press('Escape');

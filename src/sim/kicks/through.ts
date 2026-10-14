@@ -19,7 +19,7 @@
  * Power scales the lead: the pick is lerp(first, last ideal sample, power) (short lead with a firm ball .. long lead
  * weighted to die into space); a point an opponent reaches first (reaction + run at oppSpeed within oppReach; the
  * keeper inside his penalty area with keeperReach / keeperMargin: his claim zone) or, for a ground ball, whose path an
- * opponent reaches before the ball, moves to the nearest safe ideal sample (shorter first), then the nearest safe
+ * opponent reaches before the ball (SIM-01 groundRollTime to his projection on it), moves to the nearest safe ideal sample (shorter first), then the nearest safe
  * early / firm one; with none safe the power pick stays. No ideal sample: the first early sample (safe first), else the
  * last firm one. Returns 0 when no sample is feasible. Onside-ness is RUL-08's job.
  * SOLVER (solveThrough): runner = actSlot, else selectRunner (Assisted / Semi): teammates (keeper excluded) in the cone
@@ -105,6 +105,8 @@ export const LOCAL_TUNING = { // TUNING-CR
   defMargin: 0.15,
   /** The keeper: run speed (m/s); inside his penalty area (claim zone) reach (m) and margin (s). */
   keeperSpeed: 6.5,
+  /** A ground ball passing within this distance of an opponent runs into him (body + ball), m. */
+  blockReach: 0.6,
   keeperReach: 2.0,
   keeperMargin: 0.4,
   /** Lead points stay this far inside the touchlines and this far out from the goal lines, m. */
@@ -224,14 +226,15 @@ function timedGroundSpeed(D: number, T: number): number {
 
 /**
  * True if an opponent of `team` reaches (px, pz) before the runner (who needs tr s) with the margin, or, for a ground
- * ball (D m long, from (bx, bz)), reaches its path before the ball does (ball at its average speed D / tr).
+ * ball launched at v0 m/s (D m long, from (bx, bz); v0 <= 0 = no path check), reaches its path before the ball does
+ * (SIM-01 groundRollTime to his projection on the path).
  */
-function contested(s: SimState, team: number, px: number, pz: number, tr: number, ground: boolean, bx: number, bz: number, D: number): boolean {
+function contested(s: SimState, team: number, px: number, pz: number, tr: number, v0: number, bx: number, bz: number, D: number): boolean {
   const oFirst = team === 0 ? PPT : 0;
   const attDir = s.teams[team]!.dir >= 0 ? 1 : -1;
   const inBox = inPenaltyArea(px, pz, attDir);
   const lx = px - bx, lz = pz - bz;
-  const vAvg = tr > 0 ? D / tr : 1e9;
+  const ground = v0 > 0;
   for (let j = oFirst; j < oFirst + PPT; j++) {
     const o = s.players[j]!;
     if (o.active !== 1) continue;
@@ -250,8 +253,14 @@ function contested(s: SimState, team: number, px: number, pz: number, tr: number
       if (along > 0 && along < D) {
         let perp = (ox * lz - oz * lx) / D;
         if (perp < 0) perp = -perp;
+        // On the path: the ball runs into him whatever his reaction.
+        if (perp <= LT.blockReach) return true;
         const tOpp = LT.oppReact + (perp > LT.oppReach ? (perp - LT.oppReach) / spd : 0);
-        if (tOpp < along / vAvg) return true;
+        // Cheap reject first: the ball is never faster than its launch speed.
+        if (tOpp < along / v0) {
+          const tb = groundRollTime(v0, along);
+          if (!(tb >= 0) || tOpp < tb) return true;
+        }
       }
     }
   }
@@ -349,7 +358,9 @@ function leadSearch(s: SimState, slot: number, r: number, power: number, mode: n
       }
     }
     SST[i] = st;
-    SDG[i] = (st !== ST_LATE || SLATE[i]! <= LT.maxLateSec) && contested(s, team, px, pz, tr, ground, b.x, b.z, D) ? 1 : 0;
+    let v0 = 0;
+    if (ground) { v0 = st === ST_LATE ? vmaxG : SV[i]!; if (st === ST_EARLY) v0 = groundPassSpeed(D, amin); }
+    SDG[i] = (st !== ST_LATE || SLATE[i]! <= LT.maxLateSec) && contested(s, team, px, pz, tr, v0, b.x, b.z, D) ? 1 : 0;
   }
   // Power picks within the ideal samples; danger moves the pick.
   let lo = -1, hi = -1;

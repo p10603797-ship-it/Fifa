@@ -15,7 +15,11 @@
  * - The limiter (DynamicsCompressor) on the master keeps stacked peaks (goal roar + whistle + kick) from clipping.
  * - Modules (crowd AUD-02, sfx AUD-03, whistles AUD-04, eventMap + ui AUD-05) are created once on unlock with an
  *   AudioCtx that also carries services (services.ts): capped one-shot voice pools per bus and the buffer bank.
- *   The bank renders the modules' buffers in chunks from update() within a small per-frame budget.
+ *   The bank renders the modules' buffers in chunks from update() within a small per-frame budget (larger in
+ *   menus, where frames are idle); the menu sounds render at once so the unlocking tap's START can play.
+ *   Sim events go to the event map (AUD-05), the one module that turns them into sfx / whistle / crowd cues.
+ * - playUi while the context is still starting (inside the unlock gesture) is held and played once it runs, if
+ *   that is within LOCAL_TUNING.pendingUiMs.
  * - setPaused(true): crowd ducked to LOCAL_TUNING.pauseCrowdDuck, effects muted, one-shots stopped; menus stay.
  *   Sim events are only passed on while the context runs and the game is not paused, so nothing queued during a
  *   pause or a background stint plays all at once afterwards ("sounds stacking after a pause").

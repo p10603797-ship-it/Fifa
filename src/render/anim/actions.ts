@@ -22,7 +22,7 @@
 import { AnimId, type Pose, type PoseFn } from '../../contracts/render';
 import type { PoseTable } from '../types';
 import { shieldPose } from './locomotion';
-import { ANKLE_Y, createClip, evalClip, mirrorPose, type Clip } from './poseMath';
+import { ANKLE_Y, createClip, evalClip, groundFoot, mirrorPose, type Clip } from './poseMath';
 
 const AY = ANKLE_Y;
 type Ik = readonly [number, number, number, number];
@@ -160,7 +160,7 @@ const VOLLEY = createClip([
   },
   {
     t: 0.62, pose: { ROOT_ROLL: -0.35, SPINE_YAW: 0.4, HEAD_YAW: 0.1, SHOULDER_R_PITCH: 0.45, SHOULDER_L_ROLL: 1.0 },
-    ikR: [0.12, 0.58, -0.04, -0.2],
+    ikR: [0.12, 0.58, 0.03, -0.2],
   },
   { t: 0.82, pose: { ROOT_Y: -0.06, ROOT_ROLL: -0.1, SPINE_YAW: 0.1, SHOULDER_L_ROLL: 0.4, SHOULDER_R_ROLL: 0.3 }, ikR: [0.08, 0.16, 0.14, 0] },
   { t: 1, pose: NEUTRAL, ikL: [0.02, AY, -0.14, 0], ikR: [0.04, AY, 0.13, 0] },
@@ -198,7 +198,7 @@ const HEADER = createClip([
   },
   {
     t: 0.38, pose: { ROOT_Y: 0.08, SPINE_PITCH: -0.12, HEAD_PITCH: -0.4, SHOULDER_L_PITCH: 1.4, SHOULDER_R_PITCH: 1.4, SHOULDER_L_ROLL: 0.4, SHOULDER_R_ROLL: 0.4 },
-    ikL: [-0.02, 0.1, -0.12, -0.6], ikR: [-0.02, 0.1, 0.12, -0.6],
+    ikL: [-0.02, 0.2, -0.12, -0.6], ikR: [-0.02, 0.2, 0.12, -0.6],
   },
   {
     t: 0.5, pose: { ROOT_Y: 0.38, SPINE_PITCH: 0.28, HEAD_PITCH: 0.4, SHOULDER_L_PITCH: 0.9, SHOULDER_R_PITCH: 0.9, SHOULDER_L_ROLL: 0.95, SHOULDER_R_ROLL: 0.95, ELBOW_L: 1.0, ELBOW_R: 1.0 },
@@ -218,7 +218,7 @@ const HEADER = createClip([
 const THROW_IN = createClip([
   {
     t: 0, pose: { ...NEUTRAL, ROOT_Y: -0.05, SPINE_PITCH: -0.05, HEAD_PITCH: -0.1, SHOULDER_L_PITCH: 2.75, SHOULDER_R_PITCH: 2.75, SHOULDER_L_ROLL: 0.25, SHOULDER_R_ROLL: 0.25, ELBOW_L: 1.5, ELBOW_R: 1.5 },
-    ikL: [0.22, AY, -0.1, 0], ikR: [-0.22, AY, 0.12, -0.25],
+    ikL: [0.22, AY, -0.1, 0], ikR: groundFoot(-0.22, 0.12, -0.25),
   },
   { t: 0.3, pose: { ROOT_Y: -0.08, ROOT_PITCH: -0.08, SPINE_PITCH: -0.35, HEAD_PITCH: -0.2, SHOULDER_L_PITCH: 3.1, SHOULDER_R_PITCH: 3.1, ELBOW_L: 2.2, ELBOW_R: 2.2 } },
   { t: 0.45, pose: { ROOT_Y: -0.07, ROOT_PITCH: 0.05, SPINE_PITCH: 0.25, HEAD_PITCH: 0.05, SHOULDER_L_PITCH: 2.3, SHOULDER_R_PITCH: 2.3, ELBOW_L: 0.35, ELBOW_R: 0.35 } },
@@ -242,7 +242,7 @@ const GK_THROW_OVER = createClip([
   },
   {
     t: 0.45, pose: { ROOT_YAW: 0.05, SPINE_YAW: 0.25, SPINE_PITCH: 0.25, SHOULDER_R_PITCH: 2.5, SHOULDER_R_ROLL: 0.5, ELBOW_R: 0.25, SHOULDER_L_PITCH: 0.3 },
-    ikL: [0.3, AY, -0.1, 0], ikR: [-0.12, AY, 0.13, -0.3],
+    ikL: [0.3, AY, -0.1, 0], ikR: groundFoot(-0.12, 0.13, -0.3),
   },
   { t: 0.65, pose: { SPINE_PITCH: 0.35, SHOULDER_R_PITCH: 1.0, SHOULDER_R_ROLL: 0.3, ELBOW_R: 0.3 } },
   { t: 1, pose: NEUTRAL, ikL: [0.12, AY, -0.12, 0], ikR: [-0.02, AY, 0.13, 0] },
@@ -252,7 +252,7 @@ const GK_ROLL = createClip([
   { t: 0, pose: { ...NEUTRAL, ...HOLD_CHEST }, ikL: STAND_L, ikR: STAND_R },
   {
     t: 0.3, pose: { ROOT_Y: -0.22, SPINE_PITCH: 0.45, HEAD_PITCH: -0.2, SHOULDER_R_PITCH: -0.9, SHOULDER_R_ROLL: 0.15, ELBOW_R: 0.2, SHOULDER_L_PITCH: 0.6, ELBOW_L: 0.6 },
-    ikL: [0.32, AY, -0.12, 0], ikR: [-0.25, AY, 0.14, -0.4],
+    ikL: [0.32, AY, -0.12, 0], ikR: groundFoot(-0.25, 0.14, -0.4),
   },
   { t: 0.45, pose: { ROOT_Y: -0.28, SPINE_PITCH: 0.55, SHOULDER_R_PITCH: 0.8, ELBOW_R: 0.15 } },
   { t: 0.7, pose: { ROOT_Y: -0.14, SPINE_PITCH: 0.35, SHOULDER_R_PITCH: 1.0, SHOULDER_L_PITCH: 0.3 } },

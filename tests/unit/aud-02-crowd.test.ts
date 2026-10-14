@@ -285,9 +285,10 @@ describe('AUD-02 crowd module on the engine', () => {
     expect(crowd.intensity).toBeGreaterThan(calm + 0.2);
     // Bed gains move only through setTargetAtTime (never a step: no zipper noise / click).
     const murmurGain = loops[0]!.outputs[0] as FakeGain;
-    const roarFilter = loops[1]!.outputs[0] as FakeBiquad;
+    const roarGain = loops[1]!.outputs[0] as FakeGain;
+    const roarFilter = roarGain.outputs[0] as FakeBiquad;
     expect(roarFilter).toBeInstanceOf(FakeBiquad);
-    const bedGains = [murmurGain, roarFilter.outputs[0] as FakeGain];
+    const bedGains = [murmurGain, roarGain];
     expect(bedGains[0]).toBeInstanceOf(FakeGain);
     expect(bedGains[1]).toBeInstanceOf(FakeGain);
     // The roar opens up (brighter) with the build-up, also by smooth automation.
@@ -307,9 +308,36 @@ describe('AUD-02 crowd module on the engine', () => {
     boot.engine.matchEnd();
     expect(crowd.bedRunning).toBe(false);
     for (const l of loops) expect(l.stoppedAt).toBeCloseTo(boot.ac.currentTime + T.fadeOut, 6);
+    // At the stop time the bed is all but silent (no click when the loops stop).
+    for (const g of bedGains) expect(g.gain.valueAt(boot.ac.currentTime + T.fadeOut)).toBeLessThan(0.005);
     frames(boot, null, 2);
-    for (const g of bedGains) expect(g.gain.value).toBeLessThan(0.02);
+    for (const g of bedGains) expect(g.gain.value).toBeLessThan(0.005);
+    // Ended loops release themselves and their gains.
+    for (const l of loops) l.onended?.();
+    for (const g of bedGains) expect(g.disconnected).toBeGreaterThan(0);
     expect(boot.errors).toEqual([]);
+    boot.engine.dispose();
+  });
+
+  it('a new match while the previous bed still fades out gets its own fresh loops and gains (no fight, no click)', async () => {
+    const boot = await bootRealEngine({ createEngine: createAudioEngine });
+    const s = makeScenario({ phase: MatchPhase.IN_PLAY, ball: { x: 0, z: 0 } });
+    boot.engine.matchStart(s);
+    frames(boot, s, 3);
+    const first = boot.ac.created.sources.filter((x: FakeSource) => x.loop);
+    const firstGain = first[0]!.outputs[0] as FakeGain;
+    boot.engine.matchEnd();
+    frames(boot, null, 0.3);
+    boot.engine.matchStart(s);
+    const all = boot.ac.created.sources.filter((x: FakeSource) => x.loop);
+    expect(all.length).toBe(4);
+    const secondGain = all[2]!.outputs[0] as FakeGain;
+    expect(secondGain).not.toBe(firstGain);
+    // The old bed keeps fading to silence; the new one fades in from 0.
+    const t = boot.ac.currentTime;
+    expect(firstGain.gain.valueAt(t + 1)).toBeLessThan(firstGain.gain.valueAt(t));
+    expect(secondGain.gain.valueAt(t)).toBe(0);
+    expect(secondGain.gain.valueAt(t + 1)).toBeGreaterThan(0.2);
     boot.engine.dispose();
   });
 

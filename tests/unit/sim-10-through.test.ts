@@ -92,18 +92,21 @@ describe('SIM-10 throughLeadPoint', () => {
   });
 
   it('avoids the keeper\'s claim zone when possible, and still leads when it is not', () => {
-    const open = scene(18, 4, 9, 0);
+    const open = scene(12, 6, 7, 0);
     const deep = lead(open, 1)!;
     expect(inPenaltyArea(deep.x, deep.z, 1)).toBe(true);
-    const s = scene(18, 4, 9, 0);
+    const s = scene(12, 6, 7, 0);
     place(s, OPP_GK, 51, 0);
     const p = lead(s, 1)!;
     expect(p.x).toBeLessThan(deep.x - 2);
     expect(keeperFirst(s, p)).toBe(false);
-    // Runner already deep in the box with the keeper close: no safe point, a lead is still given.
-    const t = scene(44, 3, 8, 0);
-    place(t, OPP_GK, 50, 0);
-    expect(lead(t, 0.5)).not.toBeNull();
+    // Runner in the box with the keeper close: no safe point, a lead is still given (into the claim zone).
+    const t = scene(38, 3, 7, 0);
+    t.players[KICKER]!.x = 25; t.ball.x = 25.5;
+    place(t, OPP_GK, 42, 3); // already off his line toward the runner
+    const q = lead(t, 0.5)!;
+    expect(q).not.toBeNull();
+    expect(keeperFirst(t, q)).toBe(true);
   });
 
   it('moves away from a defender sitting on the power pick', () => {
@@ -116,15 +119,22 @@ describe('SIM-10 throughLeadPoint', () => {
 
   it('a ground lead avoids a path an opponent cuts out; a lofted one does not care about the path', () => {
     const s = scene(10, 6, 8, 0);
-    const free = lead(s, 0.5)!;
-    // Opponent standing right on the ball's path to the free pick.
-    place(s, OPP_B, (s.ball.x + free.x) / 2, (s.ball.z + free.z) / 2);
-    const g = lead(s, 0.5)!;
-    expect(Math.hypot(g.x - free.x, g.z - free.z)).toBeGreaterThan(0.5);
+    const free = lead(s, 0)!;
+    // Opponent standing on the ball's path to the free pick, near the passer (far from every lead point).
+    const ox = 4, oz = -4;
+    const fx = free.x - s.ball.x, fz = free.z - s.ball.z;
+    const perp = (x: number, z: number, lx: number, lz: number): number => Math.abs((x - s.ball.x) * lz - (z - s.ball.z) * lx) / Math.hypot(lx, lz);
+    expect(perp(ox, oz, fx, fz)).toBeLessThan(0.5);
+    place(s, OPP_B, ox, oz);
+    const g = lead(s, 0)!;
+    expect(Math.hypot(g.x - free.x, g.z - free.z)).toBeGreaterThan(1.5);
+    // The new path does not run into him.
+    expect(perp(ox, oz, g.x - s.ball.x, g.z - s.ball.z)).toBeGreaterThan(LT.blockReach);
+    // A lobbed lead flies over him: unchanged.
     const lf = scene(10, 6, 8, 0);
-    const lfree = lead(lf, 0.5, 1)!;
-    place(lf, OPP_B, (lf.ball.x + lfree.x) / 2, (lf.ball.z + lfree.z) / 2);
-    expect(lead(lf, 0.5, 1)).toEqual(lfree);
+    const lfree = lead(lf, 0, 1)!;
+    place(lf, OPP_B, ox, oz);
+    expect(lead(lf, 0, 1)).toEqual(lfree);
   });
 
   it('stays inside the pitch (touchline and goal-line margins) and is pure', () => {

@@ -343,3 +343,17 @@ export function setNow(p: AudioParam, v: number, t: number): void {
   }
   p.value = v;
 }
+
+/** Start a fresh AudioParam at 0 at time `t` and glide to `v` (time constant `tc`); no cancel (nothing scheduled). */
+export function riseFromZero(p: AudioParam, v: number, t: number, tc: number): void {
+  try {
+    if (typeof p.setValueAtTime === 'function' && typeof p.setTargetAtTime === 'function') {
+      p.setValueAtTime(0, t);
+      p.setTargetAtTime(v, t, Math.max(0.001, tc));
+      return;
+    }
+  } catch {
+    /* fall back */
+  }
+  p.value = v;
+}

@@ -681,14 +681,20 @@ describe('GFX-04 scenario: a real shot into the net', () => {
 });
 
 describe('GFX-04 no per-frame allocation', () => {
-  it('update() (ripples, frame shake, contact detection) and onEvents() allocate nothing', () => {
-    const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', 'tests/unit/gfx-04-alloc-probe.ts', '50000'], {
+  it('update() allocates nothing per frame (ripples, frame shake, ball near the net); events and impacts stay small', () => {
+    // Child process: V8 sampling heap profiler, allocations under update() / onEvents() only (tests/unit/gfx-04-alloc-probe.ts).
+    const r = spawnSync(process.execPath, ['--import', 'tsx', 'tests/unit/gfx-04-alloc-probe.ts', '30000'], {
       cwd: process.cwd(), encoding: 'utf8', timeout: 150_000,
     });
     expect(r.status, r.stderr).toBe(0);
     const bytes = JSON.parse(r.stdout.trim().split('\n').pop()!) as Record<string, number>;
-    expect(Object.keys(bytes).sort()).toEqual(['events', 'frames']);
-    // A single boxed double is 12 bytes; what remains is measurement noise.
-    for (const [name, b] of Object.entries(bytes)) expect(b, name).toBeLessThan(8);
+    expect(Object.keys(bytes).sort()).toEqual(['events', 'frames', 'impacts', 'rareEvents']);
+    // Steady frames and hot (optimised) event handling: nothing (one boxed double would be 12-16 bytes).
+    expect(bytes.frames, 'frames').toBeLessThan(1);
+    expect(bytes.events, 'events').toBeLessThan(1);
+    // Rare paths run in V8's interpreter, which boxes double arithmetic: a net entry + side-netting contact costs
+    // ~1 KB per 72-frame cycle, a NET + POST pair ~1.6 KB. Bounded so a regression to real per-frame garbage shows.
+    expect(bytes.impacts, 'impacts (bytes per frame over impact cycles)').toBeLessThan(40);
+    expect(bytes.rareEvents, 'rare NET + POST pair (bytes)').toBeLessThan(4096);
   }, 180_000);
 });

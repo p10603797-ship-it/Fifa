@@ -278,13 +278,14 @@ describe('GFX-13 ball module (headless)', () => {
 
 describe('GFX-13 no per-frame allocation', () => {
   it('ball, blob shadows and every on-pitch aid (landing target, labels, off-screen arrow) allocate nothing per frame', () => {
-    const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', 'tests/unit/gfx-13-alloc-probe.ts', '50000'], {
+    // Child process: V8 sampling heap profiler, allocations under the modules' update() only (tests/unit/gfx-13-alloc-probe.ts).
+    const r = spawnSync(process.execPath, ['--import', 'tsx', 'tests/unit/gfx-13-alloc-probe.ts', '30000'], {
       cwd: process.cwd(), encoding: 'utf8', timeout: 150_000,
     });
     expect(r.status, r.stderr).toBe(0);
     const bytes = JSON.parse(r.stdout.trim().split('\n').pop()!) as Record<string, number>;
     expect(Object.keys(bytes).sort()).toEqual(['ball', 'markers', 'markersArrow']);
-    // A single boxed double is 12 bytes; what remains is measurement noise.
-    for (const [name, b] of Object.entries(bytes)) expect(b, name).toBeLessThan(8);
+    // Bytes per frame (one boxed double would already be 12-16 bytes per frame).
+    for (const [name, b] of Object.entries(bytes)) expect(b, name).toBeLessThan(1);
   }, 180_000);
 });

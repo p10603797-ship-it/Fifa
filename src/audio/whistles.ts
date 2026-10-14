@@ -38,7 +38,7 @@ const LOCAL_TUNING = {
   /** Same whistle kind again within this time is ignored, s. */
   repeatWindow: 0.5,
   /** Gap after the final whistle's last blast before the full-time sting, s. */
-  fullTimeStingGap: 0.25,
+  fullTimeStingGap: 0.15,
   /** Playback gains of whistles and stings; random pitch spread of whistles (fraction). */
   whistleGain: 0.9,
   stingGain: 0.55,

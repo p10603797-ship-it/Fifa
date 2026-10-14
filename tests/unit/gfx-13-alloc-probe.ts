@@ -1,11 +1,13 @@
 /**
  * [GFX-13] Allocation probe for the per-frame paths of the ball / blob shadows and on-pitch aids modules (run by
- * tests/unit/gfx-13-ball.test.ts in a child process): node --expose-gc --import tsx tests/unit/gfx-13-alloc-probe.ts [n]
- * Prints JSON { ball, markers, markersArrow }: bytes allocated per frame by the module calls (the harness's own
- * per-frame cost is measured without the module calls and subtracted). A boxed double alone is 12 bytes.
- * Every aid is on (two humans, receiver ring, next-switch marker, power bar, landing target with periodic
- * re-prediction, colour-blind labels); the arrow case keeps the ball off screen.
+ * tests/unit/gfx-13-ball.test.ts in a child process): node --import tsx tests/unit/gfx-13-alloc-probe.ts [n]
+ * Uses the V8 sampling heap profiler (objects already collected included) and counts the allocations made under the
+ * modules' update() (src/render/ball.ts, src/render/markers.ts; any frame of the stack, inlined frames too).
+ * Prints JSON { ball, markers, markersArrow }: bytes per update() frame. Every aid is on (two humans, receiver ring,
+ * next-switch marker, power bar, landing target with a re-prediction per kick, colour-blind labels); the arrow case
+ * keeps the ball off screen.
  */
+import { Session } from 'node:inspector';
 import { PerspectiveCamera, Scene, type WebGLRenderer } from 'three';
 import { BALL_RADIUS, NUM_SLOTS } from '../../src/contracts/constants';
 import { ControllerKind, MatchPhase, QualityTier } from '../../src/contracts/enums';
@@ -17,9 +19,38 @@ import { createMarkers } from '../../src/render/markers';
 import { createInterpState, type RenderContext, type RenderFrame } from '../../src/render/types';
 import { initMatch } from '../../src/sim/init';
 
-const gc = (globalThis as { gc?: () => void }).gc;
-if (!gc) throw new Error('run with node --expose-gc');
-const n = Number(process.argv[2] ?? 50000);
+const n = Number(process.argv[2] ?? 30000);
+
+// ---------------------------------------------------------------- allocation sampling (V8 sampling heap profiler)
+
+const session = new Session();
+session.connect();
+function post<R>(method: string, params: object = {}): Promise<R> {
+  return new Promise((resolve, reject) => session.post(method, params, (e, r) => (e ? reject(e) : resolve(r as R))));
+}
+interface SampleNode { callFrame: { url: string; functionName: string }; selfSize: number; children: SampleNode[] }
+
+/**
+ * Bytes allocated per run of f under the function `fn` of the file matching `file` (any frame of the allocation's
+ * stack, inlined frames included): f runs `warm` times for the JIT, then n times under the sampling heap profiler
+ * (32-byte mean interval, objects collected by minor / major GCs included).
+ */
+async function bytesUnder(f: (i: number) => void, file: RegExp, fn: string, warm = 20000): Promise<number> {
+  for (let i = 0; i < warm; i++) f(i);
+  await post('HeapProfiler.startSampling', {
+    samplingInterval: 32, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
+  });
+  for (let i = 0; i < n; i++) f(i);
+  const { profile } = await post<{ profile: { head: SampleNode } }>('HeapProfiler.stopSampling');
+  let bytes = 0;
+  const walk = (node: SampleNode, under: boolean): void => {
+    const hit = under || (file.test(node.callFrame.url) && node.callFrame.functionName === fn);
+    if (hit) bytes += node.selfSize;
+    for (const c of node.children) walk(c, hit);
+  };
+  walk(profile.head, false);
+  return bytes / n;
+}
 
 const settings = createDefaultSettings();
 settings.accessibility.colourBlindMarkers = true;
@@ -55,9 +86,9 @@ markers.setMatch!(s, []);
 const interp = createInterpState();
 const frame: RenderFrame = { prev: s, curr: s, alpha: 1, frame: { nowMs: 0, dtMs: 1000 / 60, frame: 0, ticks: 1, paused: false }, interp };
 
-/** One frame: a lofted ball flying over the halfway line (or far off screen), periodically re-kicked. */
-let drawAids = true;
-function step(i: number, offScreen: boolean): void {
+/** One frame: a lofted ball flying over the halfway line (or far off screen), re-kicked every 2 s. */
+let offScreen = false;
+function step(i: number): void {
   const k = i % 120;
   b.x = offScreen ? 70 + k * 0.05 : -10 + k * 0.15; b.z = 3; b.y = k < 100 ? 0.5 + 8 * (k / 100) * (1 - k / 100) * 4 : BALL_RADIUS;
   b.vx = 9; b.vy = k < 50 ? 6 : -6; b.vz = 0; b.sx = 0; b.sy = 2; b.sz = 5;
@@ -67,47 +98,27 @@ function step(i: number, offScreen: boolean): void {
   fillInterp(interp, s, s, 1);
   frame.frame.frame++;
   frame.frame.nowMs += 1000 / 60;
-  if (!drawAids) return;
   ball.update(frame); // ball + aids together, as in a real frame
   markers.update(frame);
 }
 
-/** Bytes allocated per call of f: after a long warm-up (JIT code is heap-allocated too), the least of three rounds. */
-function perCall(f: (i: number) => void): number {
-  for (let i = 0; i < 20000; i++) f(i);
-  let best = Infinity;
-  for (let r = 0; r < 3; r++) {
-    gc!();
-    const h0 = process.memoryUsage().heapUsed;
-    for (let i = 0; i < n; i++) f(i);
-    const per = (process.memoryUsage().heapUsed - h0) / n;
-    if (per < best) best = per;
-  }
-  return best;
-}
-
-function measure(offScreen: boolean): number {
-  return perCall((i) => step(i, offScreen));
-}
-
-let drawBall = true;
-/** Ball module alone (markers off): a ball rolling, then in the air. */
+/** Ball module alone: a ball rolling, then in the air. */
 function ballFrame(i: number): void {
   const k = i % 120;
   interp.ballX = -10 + k * 0.15; interp.ballY = k < 60 ? BALL_RADIUS : 2 + (k % 7) * 0.3; interp.ballZ = 3;
   frame.frame.frame++;
-  if (drawBall) ball.update(frame);
+  ball.update(frame);
 }
 
-// Net bytes per frame: the module's frame minus the same harness frame without the module calls.
-const res: Record<string, number> = {};
-drawBall = false;
-const ballBase = perCall(ballFrame);
-drawBall = true;
-res.ball = perCall(ballFrame) - ballBase;
-drawAids = false;
-const base = measure(false);
-drawAids = true;
-res.markers = measure(false) - base;
-res.markersArrow = measure(true) - base;
-console.log(JSON.stringify(res));
+const BALL_FILE = /src\/render\/ball\.ts$/;
+const MARKERS_FILE = /src\/render\/markers\.ts$/;
+
+void (async () => {
+  const res: Record<string, number> = {};
+  res.ball = await bytesUnder(ballFrame, BALL_FILE, 'update');
+  res.markers = await bytesUnder(step, MARKERS_FILE, 'update');
+  offScreen = true;
+  res.markersArrow = await bytesUnder(step, MARKERS_FILE, 'update');
+  session.disconnect();
+  console.log(JSON.stringify(res));
+})();

@@ -22,9 +22,12 @@
 import { AnimId, type Pose, type PoseFn } from '../../contracts/render';
 import type { PoseTable } from '../types';
 import { keeperReadyPose } from './locomotion';
-import { ANKLE_Y, createClip, evalClip, mirrorPose, type Clip, type KeySpec } from './poseMath';
+import { ANKLE_Y, createClip, evalClip, groundFoot, mirrorPose, type Clip, type KeySpec } from './poseMath';
 
 const AY = ANKLE_Y;
+type Ik = readonly [number, number, number, number];
+const STAND_L: Ik = [0.0, AY, -0.12, 0];
+const STAND_R: Ik = [0.0, AY, 0.12, 0];
 const NEUTRAL = {
   ROOT_Y: -0.03, ROOT_PITCH: 0, ROOT_ROLL: 0, ROOT_YAW: 0, ROOT_FWD: 0, ROOT_SIDE: 0,
   SPINE_PITCH: 0.05, SPINE_YAW: 0, SPINE_ROLL: 0, HEAD_PITCH: 0, HEAD_YAW: 0,
@@ -35,7 +38,7 @@ const NEUTRAL = {
 // ============================================================ tackles
 
 const STAND_TACKLE = createClip([
-  { t: 0, pose: NEUTRAL, ikL: [0.0, AY, -0.12, 0], ikR: [0.0, AY, 0.12, 0] },
+  { t: 0, pose: NEUTRAL, ikL: STAND_L, ikR: STAND_R },
   {
     t: 0.12, pose: { ROOT_Y: -0.12, SPINE_PITCH: 0.3, HEAD_PITCH: 0.1, SHOULDER_L_ROLL: 0.5, SHOULDER_R_ROLL: 0.5 },
     ikL: [-0.1, AY, -0.13, 0], ikR: [0.15, 0.15, 0.1, 0.1],
@@ -46,76 +49,105 @@ const STAND_TACKLE = createClip([
       ROOT_Y: -0.25, ROOT_FWD: 0.15, SPINE_PITCH: 0.4, HEAD_PITCH: 0.2,
       SHOULDER_L_ROLL: 0.9, SHOULDER_L_PITCH: 0.2, SHOULDER_R_ROLL: 0.6, SHOULDER_R_PITCH: -0.3, ELBOW_L: 0.4, ELBOW_R: 0.5,
     },
-    ikL: [-0.25, AY, -0.13, -0.3], ikR: [0.74, 0.1, 0.05, 0.25],
+    ikL: groundFoot(-0.2, -0.13, -0.15), ikR: [0.72, 0.1, 0.05, 0.25],
   },
   { t: 0.45, pose: { ROOT_Y: -0.23, ROOT_FWD: 0.13, SPINE_PITCH: 0.38 }, ikR: [0.62, 0.1, 0.08, 0.15] },
-  { t: 0.7, pose: { ROOT_Y: -0.1, ROOT_FWD: 0.05, SPINE_PITCH: 0.2, SHOULDER_L_ROLL: 0.4, SHOULDER_R_ROLL: 0.3, SHOULDER_R_PITCH: 0 }, ikL: [-0.1, AY, -0.13, 0], ikR: [0.25, AY, 0.12, 0] },
-  { t: 1, pose: NEUTRAL, ikL: [0.0, AY, -0.12, 0], ikR: [0.02, AY, 0.12, 0] },
+  {
+    t: 0.7, pose: { ROOT_Y: -0.1, ROOT_FWD: 0.05, SPINE_PITCH: 0.2, SHOULDER_L_ROLL: 0.4, SHOULDER_R_ROLL: 0.3, SHOULDER_R_PITCH: 0 },
+    ikL: [-0.1, AY, -0.13, 0], ikR: [0.25, AY, 0.12, 0],
+  },
+  { t: 1, pose: NEUTRAL, ikL: STAND_L, ikR: [0.02, AY, 0.12, 0] },
 ], { contact: 0.25 });
 
-/** Slide: drop to the grass on the hip, leading (right) leg along the ground, trailing leg tucked; quick get-up. */
+/** Slide: drop onto the hip, leading (right) leg along the grass, trailing knee up; quick get-up. */
 const SLIDE_DOWN = {
-  ROOT_Y: -0.72, ROOT_PITCH: -0.85, SPINE_PITCH: 0.1, HEAD_PITCH: 0.55, ROOT_ROLL: -0.12,
-  HIP_R_PITCH: 0.74, KNEE_R: 0.05, ANKLE_R: -0.25, HIP_L_PITCH: 0.42, HIP_L_ROLL: 0.35, KNEE_L: 1.6, ANKLE_L: -0.2,
-  SHOULDER_L_PITCH: -0.45, SHOULDER_L_ROLL: 0.55, ELBOW_L: 0.15, SHOULDER_R_PITCH: 1.1, SHOULDER_R_ROLL: 0.65, ELBOW_R: 0.5,
+  ROOT_Y: -0.72, ROOT_PITCH: -0.85, ROOT_ROLL: -0.12, SPINE_PITCH: 0.1, HEAD_PITCH: 0.55,
+  SHOULDER_L_PITCH: -1.25, SHOULDER_L_ROLL: 0.5, ELBOW_L: 0.1, SHOULDER_R_PITCH: 1.1, SHOULDER_R_ROLL: 0.65, ELBOW_R: 0.5,
 } as const;
 const SLIDE = createClip([
-  { t: 0, pose: { ...NEUTRAL, ROOT_Y: -0.06, SPINE_PITCH: 0.15, HIP_R_PITCH: 0.3, KNEE_R: 0.4, HIP_L_PITCH: -0.2, KNEE_L: 0.5 } },
-  { t: 0.08, pose: SLIDE_DOWN },
-  { t: 0.4, pose: { ...SLIDE_DOWN, ROOT_PITCH: -0.8, HEAD_PITCH: 0.45, KNEE_R: 0.12 } },
+  { t: 0, pose: { ...NEUTRAL, ROOT_Y: -0.06, SPINE_PITCH: 0.15 }, ikL: groundFoot(-0.2, -0.12, -0.3), ikR: [0.3, 0.12, 0.12, 0] },
+  { t: 0.08, pose: SLIDE_DOWN, ikL: [0.3, AY, -0.12, 0.1], ikR: [0.82, 0.12, 0.08, 0.9] },
+  { t: 0.4, pose: { ROOT_PITCH: -0.8, HEAD_PITCH: 0.45 }, ikR: [0.8, 0.12, 0.09, 0.8] },
   {
-    t: 0.6, pose: { ROOT_Y: -0.66, ROOT_PITCH: -0.3, ROOT_ROLL: -0.05, HEAD_PITCH: 0.15, HIP_R_PITCH: 1.1, KNEE_R: 0.7, ANKLE_R: 0, HIP_L_PITCH: 0.6, KNEE_L: 1.9, SHOULDER_L_PITCH: -0.3, SHOULDER_R_PITCH: 0.2, SHOULDER_R_ROLL: 0.4 },
+    t: 0.6, pose: { ROOT_Y: -0.68, ROOT_PITCH: -0.3, ROOT_ROLL: -0.05, HEAD_PITCH: 0.15, SHOULDER_L_PITCH: -0.8, SHOULDER_R_PITCH: 0.2, SHOULDER_R_ROLL: 0.4 },
+    ikL: [0.3, AY, -0.12, 0], ikR: [0.62, 0.1, 0.12, 0.3],
   },
   {
-    t: 0.82, pose: { ROOT_Y: -0.36, ROOT_PITCH: 0.35, ROOT_ROLL: 0, SPINE_PITCH: 0.2, HEAD_PITCH: -0.1, HIP_R_PITCH: 0.9, KNEE_R: 1.6, ANKLE_R: 0.5, HIP_L_PITCH: 0.7, HIP_L_ROLL: 0.1, KNEE_L: 1.7, ANKLE_L: 0.55, SHOULDER_L_PITCH: 0.4, SHOULDER_R_PITCH: 0.5, ELBOW_L: 0.5 },
+    t: 0.82, pose: { ROOT_Y: -0.38, ROOT_PITCH: 0.35, ROOT_ROLL: 0, SPINE_PITCH: 0.2, HEAD_PITCH: -0.1, SHOULDER_L_PITCH: 0.4, SHOULDER_R_PITCH: 0.5, ELBOW_L: 0.5 },
+    ikL: [0.18, AY, -0.13, 0], ikR: [0.22, AY, 0.13, 0],
   },
-  { t: 1, pose: NEUTRAL },
+  { t: 1, pose: NEUTRAL, ikL: STAND_L, ikR: STAND_R },
 ], { contact: 0.08 });
 
 // ============================================================ stumble, fall, get-up
 
+/** Stumble: the upper body pitches forward with the arms thrown out, a stagger step, recovery. */
 const STUMBLE = createClip([
-  { t: 0, pose: NEUTRAL },
+  { t: 0, pose: NEUTRAL, ikL: STAND_L, ikR: STAND_R },
   {
-    t: 0.25, pose: { ROOT_Y: -0.1, ROOT_PITCH: 0.35, SPINE_PITCH: 0.2, HEAD_PITCH: -0.2, SHOULDER_L_PITCH: 0.9, SHOULDER_R_PITCH: 0.6, SHOULDER_L_ROLL: 0.8, SHOULDER_R_ROLL: 0.9, ELBOW_L: 0.5, ELBOW_R: 0.6, HIP_R_PITCH: 0.3, KNEE_R: 0.5, HIP_L_PITCH: -0.65, KNEE_L: 0.4, ANKLE_L: -0.3 },
+    t: 0.25, pose: {
+      ROOT_Y: -0.1, ROOT_PITCH: 0.1, SPINE_PITCH: 0.45, HEAD_PITCH: -0.25, SHOULDER_L_PITCH: 0.9, SHOULDER_R_PITCH: 0.6,
+      SHOULDER_L_ROLL: 0.8, SHOULDER_R_ROLL: 0.9, ELBOW_L: 0.5, ELBOW_R: 0.6,
+    },
+    ikL: groundFoot(-0.35, -0.12, -0.5), ikR: [0.42, AY, 0.13, 0],
   },
+  { t: 0.38, pose: { SPINE_PITCH: 0.4, SHOULDER_L_PITCH: 0.6, SHOULDER_R_PITCH: 0.9 }, ikL: [0.08, 0.2, -0.11, -0.2] },
+  { t: 0.5, pose: { ROOT_Y: -0.08, ROOT_ROLL: 0.08, SPINE_PITCH: 0.32, SHOULDER_L_PITCH: 0.5, SHOULDER_R_PITCH: 1.0 }, ikL: [0.5, AY, -0.1, 0], ikR: groundFoot(0.05, 0.13, -0.4) },
   {
-    t: 0.5, pose: { ROOT_Y: -0.08, ROOT_PITCH: 0.25, ROOT_ROLL: 0.1, SHOULDER_L_PITCH: 0.5, SHOULDER_R_PITCH: 1.0, HIP_R_PITCH: -0.55, KNEE_R: 0.35, ANKLE_R: -0.3, HIP_L_PITCH: 0.2, KNEE_L: 0.5, ANKLE_L: 0 },
+    t: 0.75, pose: { ROOT_Y: -0.05, ROOT_PITCH: 0.03, ROOT_ROLL: 0, SPINE_PITCH: 0.15, HEAD_PITCH: 0, SHOULDER_L_PITCH: 0.2, SHOULDER_R_PITCH: 0.3, SHOULDER_L_ROLL: 0.4, SHOULDER_R_ROLL: 0.4 },
+    ikL: [0.25, AY, -0.11, 0], ikR: [0.15, AY, 0.12, 0],
   },
-  { t: 0.75, pose: { ROOT_Y: -0.05, ROOT_PITCH: 0.1, ROOT_ROLL: 0, SPINE_PITCH: 0.1, HEAD_PITCH: 0, SHOULDER_L_PITCH: 0.2, SHOULDER_R_PITCH: 0.3, SHOULDER_L_ROLL: 0.4, SHOULDER_R_ROLL: 0.4, HIP_R_PITCH: -0.15, KNEE_R: 0.25, HIP_L_PITCH: 0.1, KNEE_L: 0.2 } },
-  { t: 1, pose: NEUTRAL },
+  { t: 1, pose: NEUTRAL, ikL: [0.08, AY, -0.12, 0], ikR: [0.04, AY, 0.12, 0] },
 ]);
 
 /** Lying on the back (end of FALL, start of GET_UP). */
 const LYING = {
   ROOT_Y: -0.8, ROOT_PITCH: -1.45, ROOT_ROLL: 0, SPINE_PITCH: 0, HEAD_PITCH: 0.25,
   SHOULDER_L_PITCH: 0.2, SHOULDER_R_PITCH: 0.2, SHOULDER_L_ROLL: 1.1, SHOULDER_R_ROLL: 1.1, ELBOW_L: 0.3, ELBOW_R: 0.3,
-  HIP_L_PITCH: 0.12, HIP_R_PITCH: 0.12, HIP_L_ROLL: 0.1, HIP_R_ROLL: 0.1, KNEE_L: 0.2, KNEE_R: 0.2, ANKLE_L: -0.2, ANKLE_R: -0.2,
 } as const;
+const LYING_L: Ik = [0.82, 0.1, -0.13, 1.2];
+const LYING_R: Ik = [0.82, 0.1, 0.13, 1.2];
 
+/** Fall: legs taken away, sit down hard, lie on the back, clutch a knee. */
 const FALL = createClip([
-  { t: 0, pose: NEUTRAL },
-  { t: 0.1, pose: { ROOT_Y: -0.25, ROOT_PITCH: -0.5, SPINE_PITCH: 0.2, HEAD_PITCH: 0.3, HIP_L_PITCH: 0.6, HIP_R_PITCH: 0.4, KNEE_L: 0.3, KNEE_R: 0.4, SHOULDER_L_PITCH: 0.8, SHOULDER_R_PITCH: 0.8, SHOULDER_L_ROLL: 1.2, SHOULDER_R_ROLL: 1.2 } },
-  { t: 0.22, pose: { ROOT_Y: -0.68, ROOT_PITCH: -0.8, SPINE_PITCH: 0.15, HIP_L_PITCH: 0.8, HIP_R_PITCH: 0.9, KNEE_L: 0.5, KNEE_R: 0.4, SHOULDER_L_PITCH: -0.4, SHOULDER_R_PITCH: -0.4, SHOULDER_L_ROLL: 0.6, SHOULDER_R_ROLL: 0.6 } },
-  { t: 0.35, pose: LYING },
-  { t: 0.6, pose: { ...LYING, HIP_R_PITCH: 0.95, KNEE_R: 1.6, SHOULDER_L_PITCH: 1.2, SHOULDER_R_PITCH: 1.3, SHOULDER_L_ROLL: 0.3, SHOULDER_R_ROLL: 0.3, ELBOW_L: 0.8, ELBOW_R: 0.8, HEAD_PITCH: 0.45 } },
-  { t: 0.85, pose: LYING },
+  { t: 0, pose: NEUTRAL, ikL: STAND_L, ikR: STAND_R },
+  {
+    t: 0.1, pose: { ROOT_Y: -0.25, ROOT_PITCH: -0.5, SPINE_PITCH: 0.2, HEAD_PITCH: 0.3, SHOULDER_L_PITCH: 0.8, SHOULDER_R_PITCH: 0.8, SHOULDER_L_ROLL: 1.2, SHOULDER_R_ROLL: 1.2 },
+    ikL: [0.12, 0.1, -0.12, 0.2], ikR: [0.45, 0.35, 0.12, 0.3],
+  },
+  {
+    t: 0.22, pose: { ROOT_Y: -0.72, ROOT_PITCH: -0.8, SPINE_PITCH: 0.15, SHOULDER_L_PITCH: -0.4, SHOULDER_R_PITCH: -0.4, SHOULDER_L_ROLL: 0.6, SHOULDER_R_ROLL: 0.6 },
+    ikL: [0.66, 0.14, -0.12, 0.6], ikR: [0.68, 0.16, 0.12, 0.6],
+  },
+  { t: 0.35, pose: LYING, ikL: LYING_L, ikR: LYING_R },
+  {
+    t: 0.6, pose: { SHOULDER_L_PITCH: 1.2, SHOULDER_R_PITCH: 1.3, SHOULDER_L_ROLL: 0.3, SHOULDER_R_ROLL: 0.3, ELBOW_L: 0.8, ELBOW_R: 0.8, HEAD_PITCH: 0.45 },
+    ikR: [0.42, AY, 0.13, 0],
+  },
+  { t: 0.85, pose: LYING, ikL: LYING_L, ikR: LYING_R },
   { t: 1, pose: LYING },
 ]);
 
 const GET_UP = createClip([
-  { t: 0, pose: { ...NEUTRAL, ...LYING } },
-  { t: 0.35, pose: { ROOT_Y: -0.7, ROOT_PITCH: -0.4, SPINE_PITCH: 0.2, HEAD_PITCH: 0.1, HIP_L_PITCH: 0.95, HIP_R_PITCH: 0.65, KNEE_L: 1.5, KNEE_R: 0.4, SHOULDER_L_PITCH: -0.6, SHOULDER_R_PITCH: -0.6, SHOULDER_L_ROLL: 0.4, SHOULDER_R_ROLL: 0.4, ELBOW_L: 0.1, ELBOW_R: 0.1 } },
-  { t: 0.65, pose: { ROOT_Y: -0.42, ROOT_PITCH: 0.45, SPINE_PITCH: 0.25, HEAD_PITCH: -0.15, HIP_L_PITCH: 0.75, HIP_R_PITCH: 0.75, HIP_L_ROLL: 0.05, HIP_R_ROLL: 0.05, KNEE_L: 1.9, KNEE_R: 1.9, ANKLE_L: 0.6, ANKLE_R: 0.6, SHOULDER_L_PITCH: 0.5, SHOULDER_R_PITCH: 0.5, SHOULDER_L_ROLL: 0.3, SHOULDER_R_ROLL: 0.3, ELBOW_L: 0.5, ELBOW_R: 0.5 } },
-  { t: 1, pose: NEUTRAL },
+  { t: 0, pose: { ...NEUTRAL, ...LYING }, ikL: LYING_L, ikR: LYING_R },
+  {
+    t: 0.35, pose: { ROOT_Y: -0.72, ROOT_PITCH: -0.35, SPINE_PITCH: 0.2, HEAD_PITCH: 0.1, SHOULDER_L_PITCH: -0.9, SHOULDER_R_PITCH: -0.9, SHOULDER_L_ROLL: 0.4, SHOULDER_R_ROLL: 0.4, ELBOW_L: 0.05, ELBOW_R: 0.05 },
+    ikL: [0.36, AY, -0.12, 0], ikR: [0.78, 0.12, 0.12, 0.9],
+  },
+  {
+    t: 0.65, pose: { ROOT_Y: -0.45, ROOT_PITCH: 0.4, SPINE_PITCH: 0.25, HEAD_PITCH: -0.15, SHOULDER_L_PITCH: 0.5, SHOULDER_R_PITCH: 0.5, SHOULDER_L_ROLL: 0.3, SHOULDER_R_ROLL: 0.3, ELBOW_L: 0.5, ELBOW_R: 0.5 },
+    ikL: [0.2, AY, -0.13, 0], ikR: [0.24, AY, 0.13, 0],
+  },
+  { t: 1, pose: NEUTRAL, ikL: STAND_L, ikR: STAND_R },
 ]);
 
 // ============================================================ keeper
 
+const KEEPER_FEET_L = groundFoot(0.14, -0.18, -0.1);
+const KEEPER_FEET_R = groundFoot(0.14, 0.18, -0.1);
 const READY = {
   ...NEUTRAL, ROOT_Y: -0.18, SPINE_PITCH: 0.3, HEAD_PITCH: -0.28,
   SHOULDER_L_PITCH: 0.85, SHOULDER_R_PITCH: 0.85, SHOULDER_L_ROLL: 0.4, SHOULDER_R_ROLL: 0.4, ELBOW_L: 1.1, ELBOW_R: 1.1,
-  HIP_L_PITCH: 0.55, HIP_R_PITCH: 0.55, HIP_L_ROLL: 0.12, HIP_R_ROLL: 0.12, KNEE_L: 1.0, KNEE_R: 1.0, ANKLE_L: 0.45, ANKLE_R: 0.45,
 } as const;
 
 /** Full-stretch pose per dive height (right side): root roll toward the dive, arms overhead (toward the side). */
@@ -124,44 +156,58 @@ const DIVE_LOW_SPEC: DiveSpec = { roll: 1.5, rootY: -0.5, afterY: -0.62, shoulde
 const DIVE_MID_SPEC: DiveSpec = { roll: 1.32, rootY: 0.0, afterY: -0.25, shoulder: 2.75, spineRoll: 0.12 };
 const DIVE_HIGH_SPEC: DiveSpec = { roll: 1.0, rootY: 0.42, afterY: 0.2, shoulder: 2.95, spineRoll: 0.2 };
 
+/** Trailing-leg ankle target for a rolled, flying body: along the body line from each hip (model space). */
+function trailingLeg(roll: number, rootY: number, side: number, len: number, fwd: number): Ik {
+  const pelvisY = 0.94 + rootY;
+  // Root frame after the roll: z axis (0, -sin r, cos r), leg direction (0, -cos r, -sin r).
+  const hy = pelvisY - side * 0.095 * Math.sin(roll), hz = side * 0.095 * Math.cos(roll);
+  let y = hy - len * Math.cos(roll);
+  const z = hz - len * Math.sin(roll);
+  if (y < 0.1) y = 0.1;
+  return [fwd, y, z, -0.4];
+}
+
 function diveClip(d: DiveSpec): Clip {
+  // Lying on the side: rolled a little short of 90 degrees so the lower shoulder and arm rest on the grass.
+  const lyingRoll = 1.3, lyingY = -0.68;
   const keys: KeySpec[] = [
-    { t: 0, pose: READY },
+    { t: 0, pose: READY, ikL: KEEPER_FEET_L, ikR: KEEPER_FEET_R },
     {
       t: 0.15, pose: {
         ROOT_Y: -0.27, ROOT_ROLL: 0.2, ROOT_SIDE: 0.04, SPINE_ROLL: 0.1, SPINE_PITCH: 0.2, HEAD_PITCH: -0.2,
         SHOULDER_L_PITCH: 1.5, SHOULDER_R_PITCH: 1.6, ELBOW_L: 0.6, ELBOW_R: 0.5,
-        HIP_R_ROLL: 0.35, HIP_R_PITCH: 0.4, KNEE_R: 0.7, ANKLE_R: 0.2, HIP_L_PITCH: 0.7, KNEE_L: 1.25, ANKLE_L: 0.5,
       },
+      ikL: groundFoot(0.12, -0.2, -0.3), ikR: [0.12, 0.17, 0.27, -0.2],
     },
     {
       t: 0.35, pose: {
         ROOT_Y: d.rootY, ROOT_ROLL: d.roll, ROOT_SIDE: 0.02, ROOT_PITCH: 0.05, SPINE_ROLL: d.spineRoll, SPINE_PITCH: 0.05,
-        HEAD_PITCH: -0.1, HEAD_YAW: 0, SHOULDER_L_PITCH: d.shoulder, SHOULDER_R_PITCH: d.shoulder,
-        SHOULDER_L_ROLL: 0.15, SHOULDER_R_ROLL: 0.3, ELBOW_L: 0.1, ELBOW_R: 0.08,
-        HIP_R_ROLL: 0.15, HIP_R_PITCH: 0.1, KNEE_R: 0.15, ANKLE_R: -0.4, HIP_L_ROLL: 0.25, HIP_L_PITCH: -0.05, KNEE_L: 0.35, ANKLE_L: -0.5,
+        HEAD_PITCH: -0.1, SHOULDER_L_PITCH: d.shoulder, SHOULDER_R_PITCH: d.shoulder,
+        SHOULDER_L_ROLL: 0.15, SHOULDER_R_ROLL: 0.05, ELBOW_L: 0.1, ELBOW_R: 0.08,
       },
+      ikL: trailingLeg(d.roll, d.rootY, -1, 0.8, -0.08), ikR: trailingLeg(d.roll, d.rootY, 1, 0.78, 0.0),
     },
-    { t: 0.47, pose: { ROOT_Y: d.afterY, ROOT_ROLL: Math.min(1.52, d.roll + 0.15) } },
+    {
+      t: 0.47, pose: { ROOT_Y: d.afterY, ROOT_ROLL: Math.min(lyingRoll, d.roll + 0.1), SHOULDER_R_ROLL: -0.15 },
+      ikL: trailingLeg(Math.min(lyingRoll, d.roll + 0.1), d.afterY, -1, 0.8, -0.08),
+      ikR: trailingLeg(Math.min(lyingRoll, d.roll + 0.1), d.afterY, 1, 0.78, 0.0),
+    },
     {
       t: 0.62, pose: {
-        ROOT_Y: -0.73, ROOT_ROLL: 1.52, ROOT_SIDE: 0, SPINE_ROLL: 0.05, SHOULDER_L_PITCH: 2.2, SHOULDER_R_PITCH: 2.3,
-        ELBOW_L: 0.8, ELBOW_R: 0.7, HIP_R_PITCH: 0.35, KNEE_R: 0.5, HIP_L_PITCH: 0.45, KNEE_L: 0.7,
+        ROOT_Y: lyingY, ROOT_ROLL: lyingRoll, ROOT_SIDE: 0, SPINE_ROLL: 0, SHOULDER_L_PITCH: 2.2, SHOULDER_R_PITCH: 2.0,
+        SHOULDER_R_ROLL: -0.2, ELBOW_L: 0.8, ELBOW_R: 0.7,
       },
+      ikL: trailingLeg(lyingRoll, lyingY, -1, 0.72, 0.1), ikR: trailingLeg(lyingRoll, lyingY, 1, 0.7, 0.15),
     },
     {
-      t: 0.78, pose: {
-        ROOT_Y: -0.7, ROOT_ROLL: 1.2, SHOULDER_L_PITCH: 1.4, SHOULDER_R_PITCH: 1.0, SHOULDER_R_ROLL: 0.9, ELBOW_R: 0.3,
-        HIP_R_PITCH: 0.9, KNEE_R: 1.5, HIP_L_PITCH: 0.9, KNEE_L: 1.6,
-      },
+      t: 0.78, pose: { ROOT_Y: -0.62, ROOT_ROLL: 1.1, SHOULDER_L_PITCH: 1.4, SHOULDER_R_PITCH: 1.2, SHOULDER_R_ROLL: -0.1, ELBOW_R: 0.3 },
+      ikL: [0.25, 0.1, -0.5, 0], ikR: [0.3, 0.1, -0.35, 0],
     },
     {
-      t: 0.9, pose: {
-        ROOT_Y: -0.4, ROOT_ROLL: 0.3, ROOT_PITCH: 0.3, SPINE_ROLL: 0, SPINE_PITCH: 0.3, SHOULDER_L_PITCH: 0.8, SHOULDER_R_PITCH: 0.6,
-        SHOULDER_R_ROLL: 0.5, HIP_R_PITCH: 1.0, HIP_L_PITCH: 1.0, HIP_R_ROLL: 0.12, HIP_L_ROLL: 0.12, KNEE_R: 1.8, KNEE_L: 1.8, ANKLE_R: 0.6, ANKLE_L: 0.6,
-      },
+      t: 0.9, pose: { ROOT_Y: -0.4, ROOT_ROLL: 0.3, ROOT_PITCH: 0.3, SPINE_ROLL: 0, SPINE_PITCH: 0.3, SHOULDER_L_PITCH: 0.8, SHOULDER_R_PITCH: 0.6, SHOULDER_R_ROLL: 0.5 },
+      ikL: groundFoot(0.1, -0.3, -0.4), ikR: [0.16, AY, 0.05, 0],
     },
-    { t: 1, pose: READY },
+    { t: 1, pose: READY, ikL: KEEPER_FEET_L, ikR: KEEPER_FEET_R },
   ];
   return createClip(keys, { contact: 0.35 });
 }
@@ -170,8 +216,6 @@ const DIVE_LOW = diveClip(DIVE_LOW_SPEC);
 const DIVE_MID = diveClip(DIVE_MID_SPEC);
 const DIVE_HIGH = diveClip(DIVE_HIGH_SPEC);
 
-const KEEPER_FEET_L = [0.14, AY, -0.18, -0.1] as const;
-const KEEPER_FEET_R = [0.14, AY, 0.18, -0.1] as const;
 const HOLD_CHEST = { SHOULDER_L_PITCH: 0.7, SHOULDER_R_PITCH: 0.7, SHOULDER_L_ROLL: 0.12, SHOULDER_R_ROLL: 0.12, ELBOW_L: 1.95, ELBOW_R: 1.95 } as const;
 
 /** Catch: hands up and forward to meet the ball, then gathered into the chest. */
@@ -188,9 +232,9 @@ const PARRY = createClip([
   { t: 0.3, pose: { ROOT_Y: -0.22, SPINE_PITCH: 0.3, SHOULDER_L_PITCH: 0.6, SHOULDER_R_PITCH: 0.6, ELBOW_L: 1.3, ELBOW_R: 1.3 } },
   {
     t: 0.5, pose: { ROOT_Y: 0.25, SPINE_PITCH: -0.1, HEAD_PITCH: -0.35, SHOULDER_L_PITCH: 2.5, SHOULDER_R_PITCH: 2.5, SHOULDER_L_ROLL: 0.32, SHOULDER_R_ROLL: 0.32, ELBOW_L: 0.08, ELBOW_R: 0.08 },
-    ikL: [0.04, 0.28, -0.14, -0.5], ikR: [0.04, 0.28, 0.14, -0.5],
+    ikL: [0.04, 0.3, -0.14, -0.5], ikR: [0.04, 0.3, 0.14, -0.5],
   },
-  { t: 0.7, pose: { ROOT_Y: 0.05, SPINE_PITCH: 0.05, HEAD_PITCH: -0.2, SHOULDER_L_PITCH: 1.8, SHOULDER_R_PITCH: 1.8, ELBOW_L: 0.4, ELBOW_R: 0.4 }, ikL: [0.08, 0.12, -0.16, -0.3], ikR: [0.08, 0.12, 0.16, -0.3] },
+  { t: 0.7, pose: { ROOT_Y: 0.05, SPINE_PITCH: 0.05, HEAD_PITCH: -0.2, SHOULDER_L_PITCH: 1.8, SHOULDER_R_PITCH: 1.8, ELBOW_L: 0.4, ELBOW_R: 0.4 }, ikL: [0.08, 0.2, -0.16, -0.3], ikR: [0.08, 0.2, 0.16, -0.3] },
   { t: 0.85, pose: { ROOT_Y: -0.16, SPINE_PITCH: 0.22, HEAD_PITCH: -0.2, SHOULDER_L_PITCH: 1.0, SHOULDER_R_PITCH: 1.0, ELBOW_L: 0.9, ELBOW_R: 0.9 }, ikL: KEEPER_FEET_L, ikR: KEEPER_FEET_R },
   { t: 1, pose: { ROOT_Y: -0.15, SPINE_PITCH: 0.25 } },
 ], { contact: 0.5 });
@@ -214,19 +258,22 @@ const WALL_JUMP = createClip([
 
 // ============================================================ celebrations, dejection
 
-/** 1: knee slide, arms spread up, then back to the feet. */
+/** 1: knee slide (kneeling on both knees, toes tucked), arms spread up, then back to the feet. */
+const KNEEL_FOOT_L = groundFoot(-0.42, -0.13, -1.1);
+const KNEEL_FOOT_R = groundFoot(-0.42, 0.13, -1.1);
 const KNEELING = {
-  ROOT_Y: -0.46, ROOT_PITCH: -0.3, SPINE_PITCH: -0.2, HEAD_PITCH: -0.4,
-  HIP_L_PITCH: -0.3, HIP_R_PITCH: -0.3, HIP_L_ROLL: 0.12, HIP_R_ROLL: 0.12, KNEE_L: 1.57, KNEE_R: 1.57, ANKLE_L: -1.0, ANKLE_R: -1.0,
+  ROOT_Y: -0.4, ROOT_PITCH: -0.3, SPINE_PITCH: -0.2, HEAD_PITCH: -0.4,
   SHOULDER_L_PITCH: 0.3, SHOULDER_R_PITCH: 0.3, SHOULDER_L_ROLL: 2.4, SHOULDER_R_ROLL: 2.4, ELBOW_L: 0.1, ELBOW_R: 0.1,
 } as const;
 const CELEBRATE_1 = createClip([
-  { t: 0, pose: { ...NEUTRAL, SPINE_PITCH: 0.12 } },
-  { t: 0.12, pose: { ROOT_Y: -0.3, ROOT_PITCH: -0.1, HIP_L_PITCH: 0.3, HIP_R_PITCH: 0.3, KNEE_L: 1.1, KNEE_R: 1.1, SHOULDER_L_ROLL: 1.6, SHOULDER_R_ROLL: 1.6, ELBOW_L: 0.3, ELBOW_R: 0.3 } },
-  { t: 0.22, pose: KNEELING },
+  { t: 0, pose: { ...NEUTRAL, SPINE_PITCH: 0.12 }, ikL: STAND_L, ikR: STAND_R },
+  { t: 0.12, pose: { ROOT_Y: -0.25, ROOT_PITCH: -0.1, SHOULDER_L_ROLL: 1.6, SHOULDER_R_ROLL: 1.6, ELBOW_L: 0.3, ELBOW_R: 0.3 }, ikL: [0.08, AY, -0.13, 0], ikR: [0.08, AY, 0.13, 0] },
+  { t: 0.22, pose: KNEELING, ikL: KNEEL_FOOT_L, ikR: KNEEL_FOOT_R },
   { t: 0.62, pose: { ...KNEELING, ELBOW_L: 0.45, ELBOW_R: 0.45, HEAD_PITCH: -0.5 } },
-  { t: 0.82, pose: { ROOT_Y: -0.3, ROOT_PITCH: 0.05, SPINE_PITCH: 0.15, HEAD_PITCH: 0, HIP_R_PITCH: 1.2, KNEE_R: 1.3, ANKLE_R: 0.3, HIP_L_PITCH: -0.1, KNEE_L: 1.4, ANKLE_L: -0.6, SHOULDER_L_ROLL: 0.5, SHOULDER_R_ROLL: 0.5, ELBOW_L: 0.4, ELBOW_R: 0.4 } },
-  { t: 1, pose: NEUTRAL },
+  { t: 0.72, pose: { ROOT_Y: -0.38, ROOT_PITCH: -0.1, SPINE_PITCH: 0.05, HEAD_PITCH: -0.1, SHOULDER_L_ROLL: 1.0, SHOULDER_R_ROLL: 1.0 }, ikR: [0.05, 0.28, 0.14, 0] },
+  { t: 0.82, pose: { ROOT_Y: -0.33, ROOT_PITCH: 0.1, SPINE_PITCH: 0.15, HEAD_PITCH: 0, SHOULDER_L_ROLL: 0.5, SHOULDER_R_ROLL: 0.5, ELBOW_L: 0.4, ELBOW_R: 0.4 }, ikR: [0.36, AY, 0.14, 0] },
+  { t: 0.92, pose: { ROOT_Y: -0.16, ROOT_PITCH: 0.05 }, ikL: [-0.05, 0.2, -0.13, -0.3] },
+  { t: 1, pose: NEUTRAL, ikL: STAND_L, ikR: [0.06, AY, 0.13, 0] },
 ]);
 
 /** 2: "aeroplane": arms out wide, banking side to side through the upper body (works over a run too). */
@@ -255,8 +302,8 @@ const DEJECTION = createClip([
   { t: 0.15, pose: { SPINE_PITCH: 0.15, HEAD_PITCH: 0.45, SHOULDER_L_PITCH: 2.3, SHOULDER_R_PITCH: 2.3, SHOULDER_L_ROLL: 1.1, SHOULDER_R_ROLL: 1.1, ELBOW_L: 2.4, ELBOW_R: 2.4 } },
   { t: 0.4, pose: { SPINE_YAW: 0.12, HEAD_YAW: 0.15 } },
   { t: 0.55, pose: { SPINE_YAW: -0.05, HEAD_YAW: -0.1 } },
-  { t: 0.72, pose: { ROOT_Y: -0.28, SPINE_PITCH: 0.85, SPINE_YAW: 0, HEAD_YAW: 0, HEAD_PITCH: 0.15, SHOULDER_L_PITCH: 0.75, SHOULDER_R_PITCH: 0.75, SHOULDER_L_ROLL: 0.15, SHOULDER_R_ROLL: 0.15, ELBOW_L: 0.15, ELBOW_R: 0.15 } },
-  { t: 1, pose: { ROOT_Y: -0.3, SPINE_PITCH: 0.88 } },
+  { t: 0.72, pose: { ROOT_Y: -0.24, SPINE_PITCH: 0.8, SPINE_YAW: 0, HEAD_YAW: 0, HEAD_PITCH: 0.15, SHOULDER_L_PITCH: 0.7, SHOULDER_R_PITCH: 0.7, SHOULDER_L_ROLL: 0.15, SHOULDER_R_ROLL: 0.15, ELBOW_L: 0.15, ELBOW_R: 0.15 }, ikL: [0.08, AY, -0.15, 0], ikR: [0.08, AY, 0.15, 0] },
+  { t: 1, pose: { ROOT_Y: -0.25, SPINE_PITCH: 0.82 } },
 ]);
 
 // ============================================================ table
