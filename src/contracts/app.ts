@@ -270,8 +270,20 @@ export interface HumanBinding {
   deviceIds: string[];
 }
 
+/** Mode hooks the session consults (online 1v1: NET-06). All optional; local modes leave them out. */
+export interface MatchHooks {
+  /** Asked before a pause (pausing = true) or resume takes effect; byHuman -1 = system. Return false to refuse. */
+  allowPause?(byHuman: number, pausing: boolean): boolean;
+  /** After the pause state changed (online: tell the peer). */
+  onPauseChange?(paused: boolean, byHuman: number): void;
+  /** On quit or restart, before match resources are released (online: tell the peer, close the room). */
+  onQuit?(): void;
+}
+
 export interface MatchSetup {
   config: MatchConfig;
+  /** Mode hooks (online pause rules and quit notification). */
+  hooks?: MatchHooks;
   bindings: HumanBinding[];
   /** Mode-specific payload (cup tie, practice kind, online session handle). */
   modeData?: unknown;
