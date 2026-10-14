@@ -60,6 +60,7 @@ import { MoveMode, type ControllerState, type PlayerState, type SimState } from 
 import { T_BALL, T_INPUT, T_PLAYER } from '../../contracts/tuning';
 import { DRAG_K, MAGNUS_K } from '../ball/flight';
 import { ticksToReach } from '../players/locomotion';
+import { Ctx, FACE_MASK, controlContext } from './resolveShared';
 
 // Imported double constants copied into module consts: hot loops then read plain locals (module-namespace getters
 // in some loaders box doubles on every read).
@@ -922,6 +923,17 @@ export function switchTick(s: SimState, c: number, ev: EventSink, f?: Readonly<I
   }
 }
 
+/**
+ * [QF-3 QA-27] L1 pressed together with a face button on a loose ball that SIM-15 resolves as ours (controlContext
+ * ATTACK: arriving at the controlled player, or he is nearer than the opponents) is the face button's L1 combo (chip,
+ * pass and go, lobbed through, driven lob, power shot), not "change player": section 10, "a modifier combo resolves
+ * when the face button is pressed, never when the modifier is". Touch sends every L1 combo in one frame. L1 alone
+ * still switches; with an opponent on the ball (DEFENCE) L1 + face still switches.
+ */
+function modifierCombo(s: SimState, ctl: ControllerState, pressed: number): boolean {
+  return (pressed & FACE_MASK) !== 0 && validSlot(ctl.slot) && controlContext(s, ctl.slot) === Ctx.ATTACK;
+}
+
 function switchTickInner(s: SimState, c: number, ev: EventSink, f: Readonly<InputFrame> | null | undefined): void {
   const ctl = s.ctrl[c]!;
   ensureControlledPlayer(s, c, ev);
@@ -935,7 +947,7 @@ function switchTickInner(s: SimState, c: number, ev: EventSink, f: Readonly<Inpu
   if ((pressed & Btn.RS_FLICK) !== 0) {
     flickDir(s, c, f, DIR);
     manual = bestSwitchTarget(s, c, DIR[0]!, DIR[1]!);
-  } else if ((pressed & Btn.MOD_L) !== 0 && ctl.switchLockT <= MANUAL_HOLD) {
+  } else if ((pressed & Btn.MOD_L) !== 0 && ctl.switchLockT <= MANUAL_HOLD && !modifierCombo(s, ctl, pressed)) {
     manual = bestSwitchTarget(s, c, 0, 0);
   }
   if (manual >= 0) manualSwitch(s, c, manual, ev);
