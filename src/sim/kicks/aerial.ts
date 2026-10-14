@@ -228,8 +228,8 @@ const LOCAL_TUNING = {
   headerPassMaxSpeed: 16,
   volleyPassMaxSpeed: 22,
   /** Launch angle (rad) for short (5 m) .. long (25 m) header passes; volley passes. */
-  headerPassAngleNear: 0.55,
-  headerPassAngleFar: 0.3,
+  headerPassAngleNear: 0.4,
+  headerPassAngleFar: 0.22,
   volleyPassAngle: 0.28,
   /** Receiver lead: expected ball speed to the receiver, m/s; max lead time, s. */
   passLeadSpeed: 12,
