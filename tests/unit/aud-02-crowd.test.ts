@@ -15,7 +15,7 @@ import { loopRenderer, type MonoSource } from '../../src/audio/dsp';
 import { createAudioEngine } from '../../src/audio/engine';
 import type { SampleRenderer } from '../../src/audio/bank';
 import { makeScenario } from '../harness/scenario';
-import { bootRealEngine, type FakeSource } from './aud-01-fakes';
+import { bootRealEngine, FakeBiquad, FakeGain, type FakeSource } from './aud-01-fakes';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -284,8 +284,15 @@ describe('AUD-02 crowd module on the engine', () => {
     frames(boot, s, 3);
     expect(crowd.intensity).toBeGreaterThan(calm + 0.2);
     // Bed gains move only through setTargetAtTime (never a step: no zipper noise / click).
-    const bedGains = boot.ac.created.gains.filter((g) => loops.some((l) => l.outputs[0] === g || (l.outputs[0] as { outputs?: unknown[] }).outputs?.[0] === g));
-    expect(bedGains.length).toBe(2);
+    const murmurGain = loops[0]!.outputs[0] as FakeGain;
+    const roarFilter = loops[1]!.outputs[0] as FakeBiquad;
+    expect(roarFilter).toBeInstanceOf(FakeBiquad);
+    const bedGains = [murmurGain, roarFilter.outputs[0] as FakeGain];
+    expect(bedGains[0]).toBeInstanceOf(FakeGain);
+    expect(bedGains[1]).toBeInstanceOf(FakeGain);
+    // The roar opens up (brighter) with the build-up, also by smooth automation.
+    expect(roarFilter.frequency.value).toBeGreaterThan(T.roarLpMin + 200);
+    expect(roarFilter.frequency.log).not.toContain('value');
     for (const g of bedGains) {
       expect(g.gain.log).not.toContain('value');
       expect(g.gain.maxStep(boot.ac.currentTime - 2, boot.ac.currentTime)).toBeLessThan(0.01);
@@ -342,7 +349,8 @@ describe('AUD-02 crowd module on the engine', () => {
     boot.engine.setPaused(true);
     crowd.cue(CrowdCue.FOUL, 1, 1);
     expect(crowd.stats.reactions[Reaction.BOO]).toBe(0);
-    // Pause stopped the reactions (engine) and the bed keeps running, ducked.
+    // Pause stopped the reactions (engine, after a short fade) and the bed keeps running, ducked.
+    boot.ac.advance(0.1);
     expect(pool.active()).toBe(0);
     expect(crowd.bedRunning).toBe(true);
     expect(boot.errors).toEqual([]);

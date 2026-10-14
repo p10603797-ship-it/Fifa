@@ -12,10 +12,10 @@ describe('explore', () => {
     owned(s, P1, 0.6, 0);
     place(s, P2, 2.0, 0, -1, 0);
     const ev = createEventBuffer();
-    console.log('start', startTackle(s, P2, ActionKind.STAND_TACKLE, -1, ev));
+    process.stderr.write("\n"+['start', startTackle(s, P2, ActionKind.STAND_TACKLE, -1, ev)].join(" "));
     const out = stepN(s, 40, (st, e) => {
       const p = st.players[P2]!;
-      console.log(st.tick, ActionKind[p.act], p.actT, p.x.toFixed(2), p.vx.toFixed(2), 'ball', st.ball.x.toFixed(2), st.ball.owner, e.filter(x=>x.type===EventType.TACKLE||x.type===EventType.KICK||x.type===EventType.FOUL).map(x=>`${EventType[x.type]} a${x.a} b${x.b} c${x.c} d${x.d}`).join(';'));
+      process.stderr.write("\n"+[st.tick, ActionKind[p.act], p.actT, p.x.toFixed(2), p.vx.toFixed(2), 'ball', st.ball.x.toFixed(2), st.ball.owner, e.filter(x=>x.type===EventType.TACKLE||x.type===EventType.KICK||x.type===EventType.FOUL).map(x=>`${EventType[x.type]} a${x.a} b${x.b} c${x.c} d${x.d}`).join(';')].join(" "));
     });
   });
   it('slide from behind', () => {
@@ -24,11 +24,11 @@ describe('explore', () => {
     owned(s, P1, 0.6, 0);
     place(s, P2, -3, 0, 1, 0, 7);
     const ev = createEventBuffer();
-    console.log('start', startTackle(s, P2, ActionKind.SLIDE_TACKLE, -1, ev));
+    process.stderr.write("\n"+['start', startTackle(s, P2, ActionKind.SLIDE_TACKLE, -1, ev)].join(" "));
     stepN(s, 80, (st, e) => {
       const p = st.players[P2]!; const q = st.players[P1]!;
       const ch = st.match.challenges.filter(c=>c.active);
-      console.log(st.tick, ActionKind[p.act], p.actT, p.x.toFixed(2), p.vx.toFixed(2), 'v', ActionKind[q.act], q.x.toFixed(2), 'ball', st.ball.x.toFixed(2), st.ball.owner, e.filter(x=>x.type===EventType.TACKLE||x.type===EventType.KICK||x.type===EventType.FOUL||x.type===EventType.CARD).map(x=>`${EventType[x.type]} a${x.a} b${x.b} c${x.c} d${x.d}`).join(';'), ch.length);
+      process.stderr.write("\n"+[st.tick, ActionKind[p.act], p.actT, p.x.toFixed(2), p.vx.toFixed(2), 'v', ActionKind[q.act], q.x.toFixed(2), 'ball', st.ball.x.toFixed(2), st.ball.owner, e.filter(x=>x.type===EventType.TACKLE||x.type===EventType.KICK||x.type===EventType.FOUL||x.type===EventType.CARD).map(x=>`${EventType[x.type]} a${x.a} b${x.b} c${x.c} d${x.d}`).join(';'), ch.length].join(" "));
     });
   });
 });

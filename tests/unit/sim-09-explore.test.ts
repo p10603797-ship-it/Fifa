@@ -34,7 +34,7 @@ function press(buttons: number, mx: number, mz: number, ticks: number) {
 }
 
 it('explore pipeline through', () => {
-  for (const [vx, ticks] of [[7, 3], [7, 20], [0, 10], [4, 30]] as const) {
+  for (const [vx, ticks] of [[7, 3]] as const) {
     const s = live();
     place(s, MATE_A, 12, 6, 1, 0, vx, 0);
     const out = { x: 0, z: 0 };
@@ -49,6 +49,7 @@ it('explore pipeline through', () => {
         }
         if (kickTick > 0) {
           const q = st.players[MATE_A]!;
+          if ((st.tick - kickTick) % 6 === 0) log.push(`t${st.tick - kickTick} q=(${q.x.toFixed(1)},${q.z.toFixed(1)}) v=${Math.hypot(q.vx,q.vz).toFixed(1)} ctrl=${q.ctrl} job=${q.job} tgt=(${q.tgtX.toFixed(1)},${q.tgtZ.toFixed(1)}) mm=${q.moveMode} b=(${st.ball.x.toFixed(1)},${st.ball.z.toFixed(1)}) act=${q.act}`);
           const d = Math.hypot(st.ball.x - q.x, st.ball.z - q.z);
           if (d < minD) { minD = d; spAtMin = Math.hypot(q.vx, q.vz); }
           if (st.ball.owner >= 0 && owner < 0) { owner = st.ball.owner; ownTick = st.tick - kickTick; spOwn = Math.hypot(q.vx, q.vz); log.push(`own at ${ownTick} by ${owner} pos=(${q.x.toFixed(1)},${q.z.toFixed(1)}) sp=${spOwn.toFixed(1)}`); return true; }
@@ -56,7 +57,7 @@ it('explore pipeline through', () => {
         return false;
       },
     });
-    console.log(vx, ticks, log.join(' | '), 'minD', minD.toFixed(2), 'spAtMin', spAtMin.toFixed(1));
+    console.log(vx, ticks, log.join('\n'), 'minD', minD.toFixed(2), 'spAtMin', spAtMin.toFixed(1));
   }
   void MATE_B; void KickKind;
 });
