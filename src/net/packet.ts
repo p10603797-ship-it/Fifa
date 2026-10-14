@@ -5,7 +5,7 @@
  *  - NET_PROTOCOL_VERSION: compared in the '$hello' handshake (different builds refuse to play: 'version-mismatch').
  *  - packSenderFrame / unpackSenderFrame: one human's InputFrame <-> FRAME_INTS int16 values, encoded exactly like
  *    packFrames (src/sim/core/serialize.ts) encodes one human (bitfields as uint16, other fields clamped to int16).
- *  - encodeInputPacket / decodeInputPacket: InputPacket <-> bytes (16-byte header + little-endian int16 frames).
+ *  - encodeInputPacket / decodeInputPacket: InputPacket <-> bytes (24-byte header + little-endian int16 frames).
  *    The decoder never throws: malformed data returns null and is ignored.
  *  - createControlCodec: ControlMessage <-> JSON strings, fragmenting messages longer than CONTROL_FRAGMENT_CHARS
  *    ('~id:i:n:' prefix) so any size travels on data channels with a small message limit.
@@ -24,10 +24,12 @@ export const NET_PROTOCOL_VERSION = `${GAME_VERSION}/sim${SIM_VERSION}/net1`;
 export const FRAME_INTS = INPUT_FIELDS.length;
 /** Most frames one packet may carry (decoder limit; normal packets carry T_NET.redundancy at most). */
 export const MAX_PACKET_FRAMES = 64;
-/** Bytes before the frame data: magic, firstTick, count, ack (4 x int32, little-endian). */
-export const PACKET_HEADER_BYTES = 16;
-/** 'DKN1'. */
-export const PACKET_MAGIC = 0x444b4e31;
+/** Bytes before the frame data: magic, firstTick, count, ack, tick, adv * 16 (6 x int32, little-endian). */
+export const PACKET_HEADER_BYTES = 24;
+/** 'DKN2'. */
+export const PACKET_MAGIC = 0x444b4e32;
+/** Fixed-point scale of InputPacket.adv on the wire. */
+export const PACKET_ADV_SCALE = 16;
 /** Control strings longer than this are split into fragments (keeps every data-channel message < 16 KB in UTF-8). */
 export const CONTROL_FRAGMENT_CHARS = 5000;
 /** Largest reassembled control message, chars (guards memory against a broken or hostile peer). */
@@ -83,6 +85,9 @@ export function encodeInputPacket(p: InputPacket): ArrayBuffer {
   v.setInt32(4, p.firstTick | 0, true);
   v.setInt32(8, count, true);
   v.setInt32(12, p.ack | 0, true);
+  v.setInt32(16, p.tick | 0, true);
+  const adv = Math.round(p.adv * PACKET_ADV_SCALE);
+  v.setInt32(20, Number.isFinite(adv) ? Math.max(-0x7fffffff, Math.min(0x7fffffff, adv)) : 0, true);
   for (let i = 0; i < n; i++) v.setInt16(PACKET_HEADER_BYTES + i * 2, p.data[i]!, true);
   return buf;
 }
@@ -97,12 +102,14 @@ export function decodeInputPacket(raw: unknown): InputPacket | null {
   const firstTick = v.getInt32(4, true);
   const count = v.getInt32(8, true);
   const ack = v.getInt32(12, true);
-  if (count < 1 || count > MAX_PACKET_FRAMES || firstTick < 0 || ack < -1) return null;
+  const tick = v.getInt32(16, true);
+  const adv = v.getInt32(20, true) / PACKET_ADV_SCALE;
+  if (count < 1 || count > MAX_PACKET_FRAMES || firstTick < 0 || ack < -1 || tick < -1) return null;
   const n = count * FRAME_INTS;
   if (v.byteLength !== PACKET_HEADER_BYTES + n * 2) return null;
   const data = new Int16Array(n);
   for (let i = 0; i < n; i++) data[i] = v.getInt16(PACKET_HEADER_BYTES + i * 2, true);
-  return { firstTick, count, ack, data };
+  return { firstTick, count, ack, tick, adv, data };
 }
 
 /** Wire size of a packet, bytes. */

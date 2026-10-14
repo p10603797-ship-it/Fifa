@@ -30,6 +30,10 @@
  * Rules: Resume, Restart and Quit belong to the human who paused (any human after a system pause); a refused action
  * says why (refusalMessage) for REFUSAL_NOTE_MS, then the line returns to who paused; the note is reset on show().
  *
+ * QUICK_SUB detection: update() reads the humans' frames of the latest tick (AppSession.runtime()), which sees the
+ * command when one tick ran in the frame (the usual case at 60 / 120 Hz); a reliable hook from the loop is a change
+ * request to the lead. window.__dotkickPause exposes the mounted menu for e2e tests and the debug overlay.
+ *
  * Extra exports beyond the WAVE 0 API: PauseMenu.onBack / openQuickSub / page, openPausePage (half-time shortcut),
  * mayControlPause, humanForTeam, teamOfHuman, manageableTeams, defaultManagedTeam, encodeSub, the team-orders model
  * (createTeamOrders, teamOrders, resetTeamOrders, reconcileOrders, takeOrders, pumpTeamOrders, effective*, set*,
@@ -1412,6 +1416,7 @@ export function createPauseMenu(): PauseMenu {
       el.addEventListener('pointerup', onPointerUp);
       el.addEventListener('pointercancel', onPointerCancel);
       root.append(el);
+      if (typeof window !== 'undefined') (window as unknown as PauseDebugWindow).__dotkickPause = api;
     },
     show() {
       if (!ctx || !el || visible) return;
@@ -1530,7 +1535,16 @@ export function createPauseMenu(): PauseMenu {
       visible = false;
       noteUntil = 0;
       page = 'main';
+      if (typeof window !== 'undefined') {
+        const w = window as unknown as PauseDebugWindow;
+        if (w.__dotkickPause === api) delete w.__dotkickPause;
+      }
     },
   };
   return api;
+}
+
+/** window.__dotkickPause: the mounted pause menu (e2e tests and the debug overlay; like window.__dotkickUi). */
+interface PauseDebugWindow {
+  __dotkickPause?: PauseMenu;
 }

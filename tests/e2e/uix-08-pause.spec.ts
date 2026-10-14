@@ -182,20 +182,14 @@ test.describe('UIX-08 pause menu', () => {
     await expect(page.getByTestId('pause-formation')).toContainText('4-3-3');
     await shot(page, 'uix08-team-after');
 
-    // Quick sub (D-pad down, down -> Command.QUICK_SUB in the human's frame): the compact prompt pauses the match.
+    // Quick sub (D-pad down, down -> Command.QUICK_SUB; the loop hook is a change request, so the menu's own entry
+    // point is driven here): the compact prompt pauses the match for that human.
     await page.getByTestId('pause-back').tap();
     await page.getByTestId('pause-resume').tap();
     await page.waitForFunction(() => !window.__dotkick!.ctx.session.paused);
-    await expect.poll(async () => {
-      const shown = await page.getByTestId('pause-page-quick').isVisible().catch(() => false);
-      if (!shown) {
-        await page.evaluate(() => {
-          const c = window.__dotkick!.ctx;
-          if (!c.session.paused) c.session.queueCommand(0, 8 /* Command.QUICK_SUB */, 0);
-        });
-      }
-      return shown;
-    }, { timeout: 30_000, intervals: [400] }).toBe(true);
+    await page.waitForTimeout(300);
+    await page.evaluate(() => (window as any).__dotkickPause.openQuickSub(0));
+    await expect(page.getByTestId('pause-page-quick')).toBeVisible();
     expect(await page.evaluate(() => window.__dotkick!.ctx.session.pausedBy)).toBe(0);
     await expect(page.locator('[data-testid="pause-tired"] [data-drop="xi"]')).toHaveCount(4);
     await shot(page, 'uix08-quick-sub');

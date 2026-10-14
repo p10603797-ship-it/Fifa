@@ -20,6 +20,10 @@
  *  - Adaptive delay (NET-04, adaptive.ts): RTT samples from the transport drive the target; the host announces
  *    switches at an agreed future tick. A raise fills the skipped ticks with "held" frames (axes and held buttons of
  *    the previous frame, no edges); a drop simply samples nothing until t + delay passes the newest frame.
+ *  - Time sync (adaptive.ts TimeSync): every packet carries the sender's tick and frame advantage; when this side
+ *    runs HOLD_THRESHOLD ticks ahead it holds its sim once for k + holdCatchUpTicks ticks (ready() false, but not
+ *    `waiting`), because the app loop makes up to MAX_TICKS_PER_FRAME - 1 held ticks afterwards. Without it the
+ *    leading side would stall briefly on every late frame and catch up again, for the whole match.
  *  - Desync guard (NET-05, desync.ts): the state handed to take() is the result of tick state.tick, so take() hashes
  *    it every 30 ticks, the host sends a snapshot on a mismatch, and the guest hard-syncs inside take(): the state
  *    is replaced in place (copyState) and the frames for snapshot tick + 1 are returned, after which the loop simply
@@ -30,7 +34,7 @@
  */
 import { createCommandQueue, mergeInputFrame } from '../app/localInput';
 import type { TickInputProvider } from '../contracts/app';
-import { MAX_HUMANS } from '../contracts/constants';
+import { MAX_HUMANS, MAX_TICKS_PER_FRAME } from '../contracts/constants';
 import type { Command } from '../contracts/enums';
 import {
   Btn, clearInputFrame, copyInputFrame, createInputFrame, type CameraProjector, type InputFrame, type InputSampleContext,
@@ -38,8 +42,8 @@ import {
 } from '../contracts/input';
 import type { ReadonlySimState, SimState } from '../contracts/state';
 import {
-  createAdaptiveDelay, createDelaySync, createFrameRing, decodeRedundant, encodeRedundant, NET_DELAY_START, NET_REDUNDANCY,
-  type AdaptiveDelay, type RedundancyMode,
+  createAdaptiveDelay, createDelaySync, createFrameRing, createTimeSync, decodeRedundant, encodeRedundant, NET_DELAY_START,
+  NET_REDUNDANCY, TICK_MS, type AdaptiveDelay, type RedundancyMode, type TimeSync,
 } from './adaptive';
 import { createDesyncGuard, type DesyncGuard } from './desync';
 import { FRAME_INTS } from './packet';
@@ -64,7 +68,11 @@ export interface LockstepOptions {
   localHuman: number;
   /** Local devices merged into the local frame (owned by the provider from now on). */
   localSources: InputSource[];
-  /** Initial input delay in ticks (both sides must use the same value; T_NET.delayInitial). */
+  /**
+   * Initial input delay in ticks (T_NET.delayInitial, or a start value the host picked from transport.rtt with
+   * computeTargetDelay). Every frame is self-described, so correctness never depends on both sides using the same
+   * value, but they should (the host's later switches apply to both).
+   */
   delay: number;
   /** First tick the session will take (default 1: initMatch leaves state.tick at 0). Same on both sides. */
   firstTick?: number;
@@ -84,6 +92,14 @@ export interface LockstepOptions {
   redundancy?: number;
   /** Hash interval, ticks (default T_NET.hashInterval = 30). */
   hashInterval?: number;
+  /** Frame-advantage time sync (default true). */
+  timeSync?: boolean;
+  /**
+   * Ticks of held time the host loop makes up after a hold (default MAX_TICKS_PER_FRAME - 1, matching
+   * src/app/loopMath endFrame); a hold sheds k ticks by holding k + holdCatchUpTicks. Use 0 for a loop that drops
+   * the time of held frames.
+   */
+  holdCatchUpTicks?: number;
 }
 
 export interface LockstepStats {
@@ -105,6 +121,10 @@ export interface LockstepStats {
   framesReceived: number;
   duplicateFrames: number;
   delay: number;
+  /** Time sync: ticks this side runs ahead (negative = behind), holds done and ticks they shed. */
+  advantage: number;
+  holds: number;
+  heldTicks: number;
   delayChanges: number;
   lateDelaySwitches: number;
   rttMs: number;
@@ -124,6 +144,9 @@ export interface LockstepProvider extends TickInputProvider {
   readonly stats: LockstepStats;
   readonly adaptive: AdaptiveDelay;
   readonly guard: DesyncGuard;
+  readonly timeSync: TimeSync;
+  /** True while a time-sync hold keeps the sim still (not a stall: no waiting indicator). */
+  readonly holding: boolean;
   /** Packed frames of ticks from..to for both humans (diagnostics, desync reports). */
   describeInputs(fromTick: number, toTick: number): { tick: number; h0: number[] | null; h1: number[] | null }[];
 }
@@ -160,12 +183,16 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
   const fixedDelay = Math.max(1, Math.round(opts.delay ?? NET_DELAY_START));
   const startDelay = useAdaptive ? adaptive.delayFor(firstTick) : fixedDelay;
   const log = opts.log;
+  const useTimeSync = opts.timeSync !== false;
+  const holdCatchUp = Math.max(0, opts.holdCatchUpTicks ?? MAX_TICKS_PER_FRAME - 1);
+  const timeSync = createTimeSync();
+  let holdUntil = -Infinity;
 
   const localRing = createFrameRing(HISTORY_TICKS, firstTick);
   const remoteRing = createFrameRing(HISTORY_TICKS, firstTick);
   const sources = opts.localSources.slice();
   const queue = createCommandQueue();
-  const packet: InputPacket = { firstTick: 0, count: 0, ack: -1, data: new Int16Array(redundancy * FRAME_INTS) };
+  const packet: InputPacket = { firstTick: 0, count: 0, ack: -1, tick: -1, adv: 0, data: new Int16Array(redundancy * FRAME_INTS) };
   const genFrame = createInputFrame();
   const prevFrame = createInputFrame();
   const sampleScratch = createInputFrame();
@@ -212,6 +239,8 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
 
   function send(mode: RedundancyMode): void {
     if (disposed || !encodeRedundant(localRing, lastGen, remoteAck, remoteRing.contiguous, mode, redundancy, packet)) return;
+    packet.tick = lastTaken;
+    packet.adv = timeSync.localAdvantage;
     tr.sendInputs(packet);
     st.packetsSent++;
     if (mode === 'catch-up') st.resends++;
@@ -223,6 +252,7 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
       if (disposed) return;
       st.packetsReceived++;
       if (p.ack > remoteAck) remoteAck = p.ack;
+      timeSync.onPacket(lastTaken, p.tick, p.adv);
       const added = decodeRedundant(p, remoteRing);
       st.framesReceived += added;
       st.duplicateFrames += p.count - added;
@@ -233,7 +263,7 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
       if (useAdaptive) sync.handle(m);
     }),
     tr.onEvent((e) => {
-      if (!disposed && e.type === 'rtt' && useAdaptive) adaptive.sample(e.sampleMs);
+      if (!disposed && e.type === 'rtt') adaptive.sample(e.sampleMs); // fixed delay: still measured for stats
     }),
   ];
 
@@ -281,18 +311,22 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
     get delay() { return useAdaptive ? adaptive.delay : fixedDelay; },
     adaptive,
     guard,
+    timeSync,
+    get holding() { return lastNow < holdUntil; },
     get stats(): LockstepStats {
       return {
         stalls: st.stalls, maxStallMs: Math.max(st.maxStallMs, waiting ? lastNow - stallStart : 0), totalStallMs: st.totalStallMs,
         lastTaken, newestLocal: lastGen, remoteContiguous: remoteRing.contiguous, remoteAck, packetsSent: st.packetsSent,
         resends: st.resends, packetsReceived: st.packetsReceived, framesReceived: st.framesReceived,
-        duplicateFrames: st.duplicateFrames, delay: provider.delay, delayChanges: sync.changes, lateDelaySwitches: sync.late,
+        duplicateFrames: st.duplicateFrames, delay: provider.delay, advantage: timeSync.advantage, holds: timeSync.holds,
+        heldTicks: timeSync.heldTicks, delayChanges: sync.changes, lateDelaySwitches: sync.late,
         rttMs: adaptive.rttMs, jitterMs: adaptive.jitterMs, desyncs: guard.desyncs, resyncs: guard.resyncs,
         lastResyncTick: guard.lastResyncTick,
       };
     },
     describeInputs,
     ready(tick) {
+      if (lastNow < holdUntil) return false; // time-sync hold: deliberate, not a stall
       const ok = localRing.has(tick) && remoteRing.has(tick);
       if (!ok) {
         if (!waiting) {
@@ -335,6 +369,13 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
           src.pollFrame(nowMs);
         } catch (err) {
           log?.('net', `input source ${src.id} poll failed: ${String(err)}`);
+        }
+      }
+      if (useTimeSync && !waiting && nowMs >= holdUntil) {
+        const k = timeSync.poll(nowMs);
+        if (k > 0) {
+          holdUntil = nowMs + (k + holdCatchUp) * TICK_MS;
+          log?.('net', `time sync: ${timeSync.advantage.toFixed(2)} ticks ahead, holding ${k + holdCatchUp} ticks`);
         }
       }
       if (nowMs - lastSendMs >= (waiting ? RESEND_WAITING_MS : RESEND_IDLE_MS)) send('catch-up');

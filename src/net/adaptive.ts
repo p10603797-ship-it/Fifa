@@ -23,6 +23,14 @@
  *   Frames are generated at take(t) for tick t + delayFor(t): a raise fills the skipped ticks with "held" copies of
  *   the previous frame (edges cleared), a drop skips sampling until t + delay passes the newest frame (lockstep.ts).
  *
+ * Time sync
+ *   createTimeSync()       frame advantage from packets: raw = our tick - the sender's tick (InputPacket.tick), smoothed;
+ *                          each packet also carries the sender's smoothed raw value (InputPacket.adv). advantage =
+ *                          (ours - theirs) / 2 is how many ticks this side runs ahead (latency cancels out, asymmetric
+ *                          links settle at their centre). When it reaches HOLD_THRESHOLD_TICKS the leading side holds
+ *                          its sim for a few ticks once (lockstep.ts), instead of stalling a little on every late
+ *                          frame and catching up again (the app loop makes up to 3 ticks of held time afterwards).
+ *
  * Redundancy
  *   createFrameRing(cap)   packed frames by tick (FRAME_INTS int16 each) with a contiguity watermark.
  *   encodeRedundant(...)   'newest' mode: the newest frames not yet acknowledged, at most `redundancy` of them (every
@@ -55,6 +63,16 @@ const LOCAL_TUNING = {
   switchLeadMinTicks: 45,
   /** Round-trip samples above this are ignored (suspended tab, clock jump), ms. */
   maxSampleMs: 10_000,
+  /** EWMA gain of the raw frame advantage, per received packet, 0..1. */
+  advantageGain: 0.05,
+  /** Packets needed before time sync acts. */
+  advantageMinSamples: 30,
+  /** Hold the sim when running at least this many ticks ahead of the other side. */
+  holdThresholdTicks: 1.0,
+  /** Minimum time between two holds, ms (the other side's estimate needs a round trip to follow). */
+  holdCooldownMs: 2000,
+  /** Longest single hold, ticks shed. */
+  maxHoldTicks: 6,
 } as const; // TUNING-CR
 
 export const NET_DELAY_MIN: number = T_NET.delayMin;
@@ -336,6 +354,66 @@ export function createDelaySync(opts: DelaySyncOptions): DelaySync {
       a.schedule(want, at);
       changes++;
       opts.send({ type: CTRL_DELAY, delay: a.scheduled, at });
+    },
+  };
+}
+
+// ---------------------------------------------------------------- time sync
+
+export interface TimeSync {
+  /** Our smoothed raw advantage (our tick - the other side's tick as seen in its packets), ticks. Sent in packets. */
+  readonly localAdvantage: number;
+  /** The other side's smoothed raw advantage, as last reported. */
+  readonly remoteAdvantage: number;
+  /** (local - remote) / 2: ticks this side runs ahead of the other (negative = behind). */
+  readonly advantage: number;
+  readonly samples: number;
+  /** Holds requested so far, and the ticks they shed. */
+  readonly holds: number;
+  readonly heldTicks: number;
+  /** A packet arrived: our latest tick, the sender's tick and its reported raw advantage. */
+  onPacket(localTick: number, remoteTick: number, remoteAdv: number): void;
+  /** Whole ticks to shed now (0 when in sync or cooling down); starts the cooldown when it returns > 0. */
+  poll(nowMs: number): number;
+  reset(): void;
+}
+
+export function createTimeSync(): TimeSync {
+  let local = 0;
+  let remote = 0;
+  let n = 0;
+  let holds = 0;
+  let held = 0;
+  let lastHold = -Infinity;
+  return {
+    get localAdvantage() { return local; },
+    get remoteAdvantage() { return remote; },
+    get advantage() { return (local - remote) / 2; },
+    get samples() { return n; },
+    get holds() { return holds; },
+    get heldTicks() { return held; },
+    onPacket(localTick, remoteTick, remoteAdv) {
+      const raw = localTick - remoteTick;
+      if (!Number.isFinite(raw) || !Number.isFinite(remoteAdv)) return;
+      local = n === 0 ? raw : local + (raw - local) * LOCAL_TUNING.advantageGain;
+      remote = remoteAdv;
+      n++;
+    },
+    poll(nowMs) {
+      if (n < LOCAL_TUNING.advantageMinSamples || nowMs - lastHold < LOCAL_TUNING.holdCooldownMs) return 0;
+      const adv = (local - remote) / 2;
+      if (!(adv >= LOCAL_TUNING.holdThresholdTicks)) return 0;
+      const k = Math.min(LOCAL_TUNING.maxHoldTicks, Math.floor(adv + 0.5));
+      lastHold = nowMs;
+      holds++;
+      held += k;
+      return k;
+    },
+    reset() {
+      local = 0;
+      remote = 0;
+      n = 0;
+      lastHold = -Infinity;
     },
   };
 }

@@ -418,7 +418,7 @@ export function createDesyncGuard(opts: DesyncGuardOptions): DesyncGuard {
       if (isHost || disposed || !pending || s.tick < pending.tick) return false;
       const p = pending;
       pending = null;
-      let diff: string | null = null;
+      let diff: string | null;
       try {
         diff = diffState(s, p.state);
       } catch {

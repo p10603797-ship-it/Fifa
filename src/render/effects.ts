@@ -16,7 +16,9 @@
  * DRAW CALLS: 0 when idle (everything hidden); at most 3 while effects show (particles: one Points with a pooled
  * buffer of maxParticles x effectsScale; trail: one Mesh; flash: one Mesh). Unlit shaders, no textures.
  * No allocation in update() / onEvents(): typed-array pools, module-level scratch, an xorshift generator in a typed
- * array. warmUp() runs every effect once (shader programs are compiled by the renderer's scene compile).
+ * array. warmUp() runs every effect through update() off screen often enough for the JIT to optimise it (shader programs
+ * are compiled by the renderer's scene compile, which includes hidden objects).
+ * DEBUG: window.__dotkickEffects (this module; snapshot()) for e2e.
  */
 
 import {
@@ -615,6 +617,10 @@ export function createEffects(ctx: RenderContext): EffectsModule {
       tGeo.dispose(); tMat.dispose();
       flash.geometry.dispose(); fMat.dispose();
       matchOn = false;
+      if (typeof window !== 'undefined') {
+        const w = window as unknown as { __dotkickEffects?: EffectsModule };
+        if (w.__dotkickEffects === module) delete w.__dotkickEffects;
+      }
     },
   };
 

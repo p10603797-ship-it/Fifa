@@ -104,6 +104,10 @@ export interface NetsimPeerReport {
   lateDelaySwitches: number;
   rttMs: number;
   jitterMs: number;
+  /** Time sync: final advantage (ticks ahead), holds and ticks shed. */
+  advantage: number;
+  holds: number;
+  heldTicks: number;
   packetsSent: number;
   resends: number;
   duplicateFrames: number;
@@ -244,7 +248,8 @@ function peerReport(p: Peer): NetsimPeerReport {
     maxStallAfterWarmupMs: p.maxStallAfterWarmupMs, totalStallMs: p.totalStallMs,
     desyncs: g.desyncs, firstDesyncTick: g.firstDesyncTick, resyncs: g.resyncs, lastResyncTick: g.lastResyncTick, verified: g.verified,
     delayFinal: pr.delay, delayMin: p.delayMin, delayMax: p.delayMax, switches: pr.adaptive.switches.map((x) => ({ ...x })),
-    lateDelaySwitches: s.lateDelaySwitches, rttMs: s.rttMs, jitterMs: s.jitterMs, packetsSent: s.packetsSent, resends: s.resends,
+    lateDelaySwitches: s.lateDelaySwitches, rttMs: s.rttMs, jitterMs: s.jitterMs, advantage: s.advantage, holds: s.holds,
+    heldTicks: s.heldTicks, packetsSent: s.packetsSent, resends: s.resends,
     duplicateFrames: s.duplicateFrames,
   };
 }
@@ -402,7 +407,8 @@ export function formatNetsimReport(r: NetsimReport): string {
   const p = (x: NetsimPeerReport): string =>
     `ticks ${x.ticks} stalls ${x.stalls} (after warmup ${x.stallsAfterWarmup}, max ${x.maxStallAfterWarmupMs.toFixed(0)} ms; ` +
     `max overall ${x.maxStallMs.toFixed(0)} ms) desyncs ${x.desyncs} resyncs ${x.resyncs} delay ${x.delayMin}..${x.delayMax} ` +
-    `(final ${x.delayFinal}) rtt ${x.rttMs.toFixed(0)}±${x.jitterMs.toFixed(0)} ms resends ${x.resends}`;
+    `(final ${x.delayFinal}) rtt ${x.rttMs.toFixed(0)}±${x.jitterMs.toFixed(0)} ms resends ${x.resends} ` +
+    `holds ${x.holds} (${x.heldTicks} ticks, adv ${x.advantage.toFixed(2)})`;
   const l = r.link;
   return [
     `netsim ${r.ok ? 'OK' : 'FAIL'}: finished ${r.finished} hashesEqual ${r.hashesEqual} framesEqual ${r.framesEqual} ` +

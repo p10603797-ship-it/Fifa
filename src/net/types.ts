@@ -54,8 +54,8 @@ export type NetErrorReason =
 /**
  * One input packet: the sender's own frames for ticks firstTick .. firstTick + count - 1. Each frame is FRAME_INTS
  * (= INPUT_FIELDS.length) int16 values encoded like packFrames (src/sim/core/serialize.ts) encodes one human; see
- * packSenderFrame / unpackSenderFrame in packet.ts. On the wire (encodeInputPacket) a 16-byte header carries
- * magic, firstTick, count and ack, followed by the int16 data (little-endian).
+ * packSenderFrame / unpackSenderFrame in packet.ts. On the wire (encodeInputPacket) a 24-byte header carries
+ * magic, firstTick, count, ack, tick and adv, followed by the int16 data (little-endian).
  */
 export interface InputPacket {
   /** Tick of the first frame in `data`. */
@@ -67,7 +67,14 @@ export interface InputPacket {
    * starts its catch-up resends after it. -1 before anything arrived.
    */
   ack: number;
-  /** count * FRAME_INTS values. Receivers must copy what they keep (senders reuse the buffer). */
+  /** The sender's latest simulated tick when it sent the packet (time sync). */
+  tick: number;
+  /**
+   * The sender's smoothed raw frame advantage in ticks (its tick minus our tick as seen in our packets), carried as
+   * 1/16 tick on the wire. Each side halves (own - other's) to learn how far ahead it runs (adaptive.ts TimeSync).
+   */
+  adv: number;
+  /** At least count * FRAME_INTS values (extra values are ignored). Receivers copy what they keep (senders reuse it). */
   data: Int16Array;
 }
 
