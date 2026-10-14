@@ -146,9 +146,10 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-09): move into T_AI as pass* (ti
   pressNear: 0,
   pressFar: 0.9,
   pressMax: 0.25,
-  /** Aerial reception: completion x lerp(aerialMin, aerialMax, ballControl 1..99). */
-  aerialMin: 0.72,
-  aerialMax: 0.95,
+  /** Aerial reception: completion x lerp(aerialMin, aerialMax, ballControl 1..99) [INT-A: was 0.72 .. 0.95 while
+   *  measured lob / lobbed-through completion was 4% / 0% over soak matches: landing duels, charge-downs, keepers]. */
+  aerialMin: 0.4,
+  aerialMax: 0.6,
   /** Arrival faster than T_TOUCH.hardBallSpeed: completion x (1 - hardLoss x min(1, excess / hardBallSpeed)). */
   hardLoss: 0.25,
   /** Teammates' reaction before running to a reception point (SIM-04-style run time for runners / cross attackers), s. */

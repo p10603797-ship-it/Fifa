@@ -20,11 +20,32 @@
  * stale. setSettings(s) / bindSettings(store) keep ctx.settings current for every module and re-apply camera and
  * graphics settings (tier and fixed resolution scale) when they change. [CR: GameRenderer.setSettings in
  * contracts/app.ts; the app calls it from its settings subscriber.]
+ *
+ * INTEGRATION [INT-C]
+ *  - Quality (GFX-02): a tier the quality module picks on its own (AUTO startup test, step down) arrives through
+ *    QualityHooks.setTier and is broadcast to every other module's setQuality, exactly like a settings change.
+ *    QualityHooks.lowPowerSuspected only records `lowPowerSuspected` for diagnostics: the ONE Low Power hint path is
+ *    GFX-02's detector -> render/quality.ts onLowPowerSuspected listeners -> platform/ipados.ts (toast, sets
+ *    settings.lowPowerHintShown). The renderer never shows a hint itself.
+ *  - MSAA is a context-creation attribute and is never recreated mid-session: the context gets multisampling only
+ *    when the stored settings ask for the QUALITY tier when the renderer starts (TierParams.msaa of QUALITY). AUTO and
+ *    later switches to QUALITY get the shadow map now and no multisampling (MSAA follows an explicit QUALITY choice
+ *    from the next app start). A QUALITY context that steps down keeps its multisampling (`msaa` reports it).
+ *  - Context loss (GFX-01): 'webglcontextlost' -> contextLost = true, nothing is drawn, onContextLost listeners run
+ *    (the session pauses). 'webglcontextrestored' -> three.js re-creates its GL state, then this file rebuilds: the
+ *    core recompiles every scene material (RendererCore.rebuild; geometry and textures re-upload from their CPU
+ *    copies on the next draw) and the viewport is re-applied to every module; only then contextLost turns
+ *    false and the onContextRestored listeners run (the session may offer resume). The session must not resume while
+ *    contextLost is true (CR to the app owner).
+ *  - cameraX(): x of the camera drawn last (the broadcast camera in open play) for stereo panning of sim events
+ *    (audio/sfx.ts setCameraX; the app wires it once per frame).
+ *  - Establishing shots: the GFX-15 director already shows them in PRE_MATCH (kick-off) and FULL_TIME / POST_MATCH,
+ *    skippable through the sim's skip, so the app needs no establishing() calls.
  */
 
 import { PerspectiveCamera, Scene, type WebGLRenderer } from 'three';
 import type { FrameInfo, GameRenderer, SettingsStore } from '../contracts/app';
-import { NUM_SLOTS } from '../contracts/constants';
+import { NUM_SLOTS, WORLD_MAX_X, WORLD_MIN_X } from '../contracts/constants';
 import type { Club } from '../contracts/data';
 import { QualityTier } from '../contracts/enums';
 import type { EventBuffer } from '../contracts/events';
@@ -42,8 +63,8 @@ import { createGoals } from './goals';
 import { createMarkers } from './markers';
 import { createPitch } from './pitch';
 import { createPlayerModel } from './players/model';
-import { createQuality, type QualityModule } from './quality';
-import { createRenderer, type RendererCore } from './renderer';
+import { createQuality, sanitizeTier, TIER_PARAMS, type QualityModule, type QualityOptions } from './quality';
+import { createRenderer, type RebuildReport, type RendererCore, type RendererCoreOptions } from './renderer';
 import { createReplay, type ReplayModule } from './replay';
 import { createStadium } from './stadium';
 import { createInterpState, type InterpState, type RenderContext, type RenderFrame, type RenderModule } from './types';
@@ -66,6 +87,22 @@ export interface DotkickRenderer extends GameRenderer {
   /** Context restored and GPU resources rebuilt: resume from the pause menu. */
   onContextRestored(fn: () => void): () => void;
   /**
+   * True from 'webglcontextlost' until the restored context is rebuilt (nothing is drawn meanwhile). The session must
+   * keep the match paused (no resume) while this is true.
+   */
+  readonly contextLost: boolean;
+  /** Rebuild report of the latest context restore (null before one happened). Diagnostics and tests. */
+  readonly lastRebuild: Readonly<RebuildReport> | null;
+  /** The WebGL context was created with multisample anti-aliasing (explicit QUALITY tier at start). */
+  readonly msaa: boolean;
+  /** GFX-02's Low Power Mode detector fired this page (diagnostics only; platform/ipados.ts shows the hint). */
+  readonly lowPowerSuspected: boolean;
+  /**
+   * x (m) of the camera drawn last: the broadcast camera in open play, the set-piece / replay camera while one is
+   * active. Clamped to the world bounds, 0 before the first frame. For stereo panning (audio sfx.setCameraX).
+   */
+  cameraX(): number;
+  /**
    * Apply the latest settings snapshot. ctx.settings is replaced for every module; camera / reduced motion and
    * graphics (quality tier, fixed resolution scale) are re-applied only when they changed; modules get
    * RenderModule.onSettings. Cheap when nothing relevant changed. Safe before init() and after dispose().
@@ -76,6 +113,36 @@ export interface DotkickRenderer extends GameRenderer {
    * runs. Binding again replaces the previous binding.
    */
   bindSettings(store: Pick<SettingsStore, 'get' | 'subscribe'>): () => void;
+}
+
+/** Test seams and environment for createGameRenderer (production code passes nothing). */
+export interface GameRendererOptions {
+  /** Builds the GFX-01 core. Default createRenderer; Node tests pass a fake core (there is no WebGL in Node). */
+  createCore?: (canvas: HTMLCanvasElement, opts: RendererCoreOptions) => RendererCore;
+  /** Builds the scene modules after quality, in MODULE ORDER. Default: the GFX modules. Node tests pass stubs. */
+  createModules?: (ctx: RenderContext) => RenderModule[];
+  /** GFX-02 environment (clock, frame wait, page visibility); default the browser's. */
+  quality?: QualityOptions;
+}
+
+/** The GFX scene modules after quality, in MODULE ORDER. */
+function defaultModules(ctx: RenderContext): RenderModule[] {
+  return [
+    createStadium(ctx),
+    createPitch(ctx),
+    createGoals(ctx),
+    createCrowd(ctx),
+    createPlayerModel(ctx),
+    createBall(ctx),
+    createMarkers(ctx),
+    createEffects(ctx),
+  ];
+}
+
+/** Multisampling for a context created with these settings: explicit QUALITY only (see INTEGRATION above). Pure. */
+export function msaaAtStart(settings: Readonly<Settings>): boolean {
+  const t = sanitizeTier(settings.graphics.tier);
+  return t === QualityTier.QUALITY && TIER_PARAMS[t]!.msaa;
 }
 
 /**
@@ -153,7 +220,7 @@ function showUnavailable(canvas: HTMLCanvasElement | null, reason: string, visib
   el.style.display = 'flex';
 }
 
-export function createGameRenderer(): DotkickRenderer {
+export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRenderer {
   const settings0 = createDefaultSettings();
   const ctx: RenderContext = {
     renderer: null as unknown as WebGLRenderer,
@@ -193,6 +260,11 @@ export function createGameRenderer(): DotkickRenderer {
   /** Tier last requested through setQuality / settings (re-requested when the fixed resolution scale changes). */
   let requestedTier: QualityTier = settings0.graphics.tier;
   let unbindSettings: (() => void) | null = null;
+  /** Lost and not rebuilt yet (see DotkickRenderer.contextLost). */
+  let lost = false;
+  let lastRebuild: RebuildReport | null = null;
+  let msaa = false;
+  let lowPower = false;
 
   const projector: CameraProjector = {
     screenToPitch: (sx, sy, out) => (cinematic.active ? cinematic : broadcast).screenToPitch(sx, sy, out),
@@ -220,11 +292,60 @@ export function createGameRenderer(): DotkickRenderer {
     };
   }
 
+  /** Run every listener (a copy: a listener may unsubscribe); one that throws does not stop the others. */
+  function emitAll(list: (() => void)[]): void {
+    const copy = list.slice();
+    let first: unknown = null;
+    for (let i = 0; i < copy.length; i++) {
+      try {
+        copy[i]!();
+      } catch (err) {
+        if (first === null) first = err;
+      }
+    }
+    if (first !== null) throw first;
+  }
+
+  /** A resolved tier reaches every module but quality (which applied it), the replay and the cameras. */
+  function broadcastTier(tier: QualityTier): void {
+    for (let i = 0; i < modules.length; i++) {
+      const m = modules[i]!;
+      if (m !== quality) m.setQuality?.(tier);
+    }
+    replay?.setQuality?.(tier);
+    broadcast.setQuality?.(tier);
+    cinematic.setQuality?.(tier);
+  }
+
+  /**
+   * After 'webglcontextrestored' (three.js already re-created its GL state, keeping its JS-side flags such as
+   * shadowMap.enabled, and the core re-applied clear colour and size): re-apply the viewport to every module and
+   * recompile every material for the scene. Geometry and textures re-upload from their CPU copies on the next draw.
+   */
+  function rebuildAfterRestore(c: RendererCore): void {
+    api.resize(ctx.size.cssW, ctx.size.cssH, ctx.size.dpr);
+    const report = c.rebuild(ctx.scene, ctx.camera);
+    lastRebuild = report;
+    if (report.missingTextures > 0) {
+      console.warn(`[render] context restored: ${report.missingTextures} texture(s) have no CPU copy and draw blank`);
+    }
+  }
+
   const api: DotkickRenderer = {
     projector,
     get available() { return core !== null && core.available; },
     get failure() { return core ? core.failure : ''; },
     get replaying() { return replay !== null && replay.playing; },
+    get contextLost() { return lost; },
+    get lastRebuild() { return lastRebuild; },
+    get msaa() { return msaa; },
+    get lowPowerSuspected() { return lowPower; },
+
+    cameraX() {
+      const x = ctx.camera.position.x;
+      if (!Number.isFinite(x)) return 0;
+      return x < WORLD_MIN_X ? WORLD_MIN_X : x > WORLD_MAX_X ? WORLD_MAX_X : x;
+    },
 
     init(canvas: HTMLCanvasElement, settings: Readonly<Settings>) {
       if (core) return;
@@ -234,16 +355,30 @@ export function createGameRenderer(): DotkickRenderer {
       ctx.cameraSettings = { ...settings.camera };
       ctx.reducedMotion = settings.accessibility.reducedCameraMotion;
       broadcast.setSettings(ctx.cameraSettings, ctx.reducedMotion);
-      core = createRenderer(canvas, { clearColor: 0x07070d });
+      msaa = msaaAtStart(settings);
+      core = (opts.createCore ?? createRenderer)(canvas, { clearColor: 0x07070d, antialias: msaa });
       if (typeof window !== 'undefined') window.__dotkickRendererStats = statsNow;
       if (!core.available || !core.renderer) {
+        msaa = false;
         console.warn(`[render] ${core.failure}`);
         return;
       }
       ctx.renderer = core.renderer;
       const c = core;
-      c.onContextLost(() => { for (let i = 0; i < lostFns.length; i++) lostFns[i]!(); });
-      c.onContextRestored(() => { for (let i = 0; i < restoredFns.length; i++) restoredFns[i]!(); });
+      c.onContextLost(() => {
+        lost = true;
+        emitAll(lostFns);
+      });
+      c.onContextRestored(() => {
+        try {
+          rebuildAfterRestore(c);
+        } catch (err) {
+          console.error('[render] rebuild after context restore failed', err);
+        } finally {
+          lost = c.lost;
+          if (!lost) emitAll(restoredFns);
+        }
+      });
       quality = createQuality(ctx, {
         setScale: (s) => {
           c.setScale(s);
@@ -251,18 +386,12 @@ export function createGameRenderer(): DotkickRenderer {
           ctx.size.scale = c.scale;
           for (let i = 0; i < modules.length; i++) modules[i]!.resize?.(); // RenderModule.resize: scale is part of ctx.size
         },
-      });
-      modules.push(
-        quality,
-        createStadium(ctx),
-        createPitch(ctx),
-        createGoals(ctx),
-        createCrowd(ctx),
-        createPlayerModel(ctx),
-        createBall(ctx),
-        createMarkers(ctx),
-        createEffects(ctx),
-      );
+        setTier: (t) => broadcastTier(t),
+        lowPowerSuspected: () => { lowPower = true; },
+      }, opts.quality);
+      modules.push(quality);
+      const scene = (opts.createModules ?? defaultModules)(ctx);
+      for (let i = 0; i < scene.length; i++) modules.push(scene[i]!);
       replay = createReplay(ctx);
       if (typeof window !== 'undefined') {
         api.resize(window.innerWidth || 1180, window.innerHeight || 820, window.devicePixelRatio || 1);
@@ -286,7 +415,7 @@ export function createGameRenderer(): DotkickRenderer {
     },
 
     async warmUp() {
-      if (!core || !core.available || !core.renderer) return;
+      if (!core || !core.available || !core.renderer || core.lost) return;
       const r = core.renderer;
       // Compile every material against the scene's lights with all match objects visible. compileAsync only when
       // parallel compilation exists (three.js warns otherwise, and e2e requires a clean console).
@@ -316,7 +445,7 @@ export function createGameRenderer(): DotkickRenderer {
     },
 
     render(prev: ReadonlySimState, curr: ReadonlySimState, alpha: number, frame: FrameInfo) {
-      if (!matchActive || !core || !core.renderer || core.lost) return;
+      if (!matchActive || !core || !core.renderer || core.lost || lost) return;
       fillInterp(interp, prev, curr, alpha);
       frameObj.prev = prev;
       frameObj.curr = curr;
@@ -347,11 +476,7 @@ export function createGameRenderer(): DotkickRenderer {
     setQuality(tier: QualityTier) {
       requestedTier = tier;
       if (!quality) return;
-      const resolved = quality.request(tier);
-      for (let i = 0; i < modules.length; i++) {
-        const m = modules[i]!;
-        if (m !== quality) m.setQuality?.(resolved);
-      }
+      broadcastTier(quality.request(tier));
     },
 
     stats: statsNow,
@@ -413,6 +538,7 @@ export function createGameRenderer(): DotkickRenderer {
       core = null;
       lostFns.length = 0;
       restoredFns.length = 0;
+      lost = false;
       if (typeof window !== 'undefined' && window.__dotkickRendererStats === statsNow) delete window.__dotkickRendererStats;
     },
 

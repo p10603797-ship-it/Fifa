@@ -63,15 +63,15 @@ import { otherTeam, possessingTeam, teamEnd, teamStart } from '../sim/core/query
 const LOCAL_TUNING = {
   /** Back-line height: u = dataBack + lineOffset + lineSlope * ballU, clamped to [lineMin, lineMax]. dataBack is
    *  the formation's deepest outfield slot (its neutral back line). m, m/m, m (team frame), m (team frame). */
-  lineOffset: [8, 16, 0, 14, -3, 0],
+  lineOffset: [8, 16, 7, 14, 3, 7],
   lineSlope: [0.55, 0.6, 0.55, 0.55, 0.55, 0.55],
   lineMin: [-40, -36, -46.5, -36, -46.5, -44],
-  lineMax: [2, 16, 4, 14, -2, 4],
+  lineMax: [2, 16, 9, 14, 3, 9],
   /** Absolute back-line limits after focus and TAI-04 lineX, m (floor = own goal-area edge + 0.5 m). */
   lineFloor: -46.5,
   lineCeil: 18,
   /** Vertical stretch of formation depths relative to the deepest outfield slot (1 = data depths). */
-  depthScale: [1.15, 1.3, 1.0, 1.3, 0.95, 1],
+  depthScale: [1.25, 1.45, 1.0, 1.4, 0.95, 1],
   /** Back-line depth stagger kept in defending phases (0 = perfectly flat, 1 = data stagger). */
   defFlatten: 0.3,
   /** Lateral stretch of the formation width (1 = data width). */
@@ -94,8 +94,11 @@ const LOCAL_TUNING = {
   focusDepth: [1, 0.9, 1.08],
   /** Accepted deviation of TAI-04's team.lineX from this module's own back-line estimate, m. */
   lineXTrust: 15,
-  /** Max gap between consecutive outfield depths as a fraction of T_AI.lineSpacingMax. */
+  /** Max gap between consecutive outfield depths as a fraction of T_AI.lineSpacingMax ... */
   lineGapFraction: 0.97,
+  /** ... x this per phase [INT-A: a team in possession stretches (about 40 m from the back line to the forwards);
+   *  one capped at 14 m gaps in possession had nobody between or beyond the opponents' lines]. */
+  lineGapScale: [1.35, 1.5, 1, 1.5, 1, 1],
   /** Formation slots of one line whose nx differ by at most this form one sub-line (normalised units). */
   subLineTolerance: 0.12,
   /** Span kept by a sub-line with k of n members: spreadMin + (1 - spreadMin) * (k - 1) / (n - 1). */
@@ -635,7 +638,7 @@ function computeShape(s: SimState, team: number): void {
     while (j > 0 && hu[ord[j - 1]!]! > hu[f]!) { ord[j] = ord[j - 1]!; j--; }
     ord[j] = f;
   }
-  const gap = T_AI.lineSpacingMax * T.lineGapFraction;
+  const gap = T_AI.lineSpacingMax * T.lineGapFraction * T.lineGapScale[ph]!;
   let prevOrig = n > 0 ? hu[ord[0]!]! : 0;
   for (let j = 1; j < n; j++) {
     const f = ord[j]!;

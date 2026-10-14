@@ -13,12 +13,18 @@
  * screen.onFrame, hooks) and reported (recovery screen): the loop never stops, and a stage that throws every frame
  * never starves the stages after it (controller-only players can always operate the recovery screen).
  * No allocation per frame: FrameInfo, FrameStats and timing objects are created once.
+ *
+ * [INT-B] The tick's events also go to deps.rumble (pad rumble, after audio; its own try). The default step is
+ * stepWithModes: sim step, then the mode rules that are not in the sim yet (set-piece practice re-awards its restart,
+ * modes/practice practiceRulesTick; CR to INT-A to move it into sim/step.ts after rulesTick).
  */
 import type { AudioEngine, FrameInfo, GameRenderer, HudPart } from '../contracts/app';
 import { MAX_FRAME_MS } from '../contracts/constants';
+import { ModeId } from '../contracts/enums';
 import type { EventBuffer } from '../contracts/events';
 import type { CameraProjector, InputFrame } from '../contracts/input';
-import type { SimState } from '../contracts/state';
+import type { ReadonlySimState, SimState } from '../contracts/state';
+import { practiceRulesTick } from '../modes/practice';
 import { copyState as simCopyState } from '../sim/core/clone';
 import { step as simStep } from '../sim/step';
 import { alphaOf, beginFrame, createLoopTiming, endFrame, resetLoopTiming } from './loopMath';
@@ -27,12 +33,24 @@ import type { AppRouter, FrameStats, LoopSession } from './types';
 export type StepFn = (s: SimState, frames: readonly InputFrame[], events: EventBuffer) => void;
 export type CopyStateFn = (dst: SimState, src: SimState) => void;
 
+/**
+ * One tick: the sim step, then mode rules still outside the sim (set-piece practice, MOD-04 practiceRulesTick; a
+ * no-op in every other mode). Deterministic (pure over the state); replays recorded and played back in the app both
+ * run it. Allocation-free.
+ */
+export function stepWithModes(s: SimState, frames: readonly InputFrame[], events: EventBuffer): void {
+  simStep(s, frames, events);
+  if (s.config.mode === ModeId.PRACTICE) practiceRulesTick(s, events);
+}
+
 export interface LoopDeps {
   session: LoopSession & { readonly paused: boolean };
   renderer: GameRenderer;
   hud: HudPart;
   audio: AudioEngine;
   router: Pick<AppRouter, 'current' | 'currentScreen'>;
+  /** Pad rumble: the tick's events after audio (PAD-07 createRumbleListener). */
+  rumble?: { onEvents(events: EventBuffer, state: ReadonlySimState): void } | null;
   /** Menu navigation (pads + keyboard -> MenuAction). Polled every frame. */
   menuInput?: { poll(nowMs: number): void } | null;
   getProjector(): CameraProjector | null;
@@ -112,7 +130,7 @@ export function createFrameStats(): FrameStatsRecorder {
 }
 
 export function createLoop(deps: LoopDeps): GameLoop {
-  const step = deps.step ?? simStep;
+  const step = deps.step ?? stepWithModes;
   const copyState = deps.copyState ?? simCopyState;
   const raf = deps.raf ?? ((cb: (t: number) => void) => requestAnimationFrame(cb));
   const caf = deps.caf ?? ((id: number) => cancelAnimationFrame(id));
@@ -209,6 +227,13 @@ export function createLoop(deps: LoopDeps): GameLoop {
               audio.onEvents(ev, rt.curr);
             } catch (err) {
               deps.onError(err, 'loop.audio.onEvents');
+            }
+            if (deps.rumble) {
+              try {
+                deps.rumble.onEvents(ev, rt.curr);
+              } catch (err) {
+                deps.onError(err, 'loop.rumble.onEvents');
+              }
             }
           }
           rt.stats.onTick(rt.curr, ev);

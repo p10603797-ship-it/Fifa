@@ -113,14 +113,14 @@ Total assignments: 201.
 | DAT-03 | 1 | done | lane/squad agent report; 1 own test files pass |  |
 | DAT-04 | 1 | done | lane/squad agent report; 3 own test files pass |  |
 | DAT-05 | 1 | done | tools/balance.ts + --audit; 50 tests; 29/29 attributes read and visibly change play (docs/ATTRIBUTE_AUDIT.md) | balance FAIL today (80-88% 0-0 draws) -> INT-A / QF-2 tuning |
-| NET-01 | 1 | running | NET-A squad running |  |
-| NET-02 | 1 | running | NET-A squad running |  |
+| NET-01 | 1 | done | NET-A squad: tests/net 60 pass; DoD 5 netsim (80 ms each way, 20 ms jitter, 5% loss) full match 0 desyncs, hashes equal | real PeerJS path only against a fake broker; needs the device check |
+| NET-02 | 1 | done | NET-A squad: tests/net 60 pass; DoD 5 netsim (80 ms each way, 20 ms jitter, 5% loss) full match 0 desyncs, hashes equal | real PeerJS path only against a fake broker; needs the device check |
 | NET-03 | 1 | queued | queued for NET-B |  |
-| NET-04 | 1 | running | NET-A squad running |  |
-| NET-05 | 1 | running | NET-A squad running |  |
+| NET-04 | 1 | done | NET-A squad: tests/net 60 pass; DoD 5 netsim (80 ms each way, 20 ms jitter, 5% loss) full match 0 desyncs, hashes equal | real PeerJS path only against a fake broker; needs the device check |
+| NET-05 | 1 | done | NET-A squad: tests/net 60 pass; DoD 5 netsim (80 ms each way, 20 ms jitter, 5% loss) full match 0 desyncs, hashes equal | real PeerJS path only against a fake broker; needs the device check |
 | NET-06 | 1 | queued | queued for NET-B |  |
 | NET-07 | 1 | queued | queued for NET-B |  |
-| NET-08 | 1 | running | NET-A squad running |  |
+| NET-08 | 1 | done | NET-A squad: tests/net 60 pass; DoD 5 netsim (80 ms each way, 20 ms jitter, 5% loss) full match 0 desyncs, hashes equal | real PeerJS path only against a fake broker; needs the device check |
 | MOD-01 | 1 | done | lane/squad agent report; 2 own test files pass |  |
 | MOD-02 | 1 | done | lane/squad agent report; 1 own test files pass |  |
 | MOD-03 | 1 | done | lane/squad agent report; 1 own test files pass |  |

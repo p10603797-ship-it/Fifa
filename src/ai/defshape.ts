@@ -20,7 +20,7 @@
  *
  * Line height (team.lineX: the back line stands on it, ball-side defenders up to `stagger` higher, so it is our
  * offside line give or take the stagger):
- *  1. Base: the formation's neutral back line + lineSlope * ball u (a backward ball in flight is predicted
+ *  1. Base: the formation's neutral back line + lineOffset + lineSlope * ball u (a backward ball in flight is predicted
  *     stepLookahead ahead) + the tactic offset (data/tactics resolveTactics lineNx: focus, offside trap, team press).
  *  2. Step up together when the ball goes back or sideways: the opponents' last kick went backward (receiver /
  *     reception point at least QUICK_TACTICS.offsideTrap.triggerBackM further from our goal than the kicker) or
@@ -77,8 +77,11 @@ import { assignJob, isJobDriven } from './jobs';
 
 const LOCAL_TUNING = {
   // ---- line height (team frame u, m from the centre spot toward the opposition goal)
-  /** The line follows the ball: neutral back line + lineSlope * ball u, m/m. */
+  /** The line follows the ball: neutral back line + lineOffset + lineSlope * ball u, m/m. */
   lineSlope: 0.55,
+  /** ... + this, m [INT-A: the block defended ~24 m goal-side of the ball, a low block that left no space to play
+   *  into and smothered every shot; a mid-block line leaves room in behind for through balls]. */
+  lineOffset: 7,
   /** Highest line, m (team frame; + the tactic offset when it is positive). */
   lineCeil: 2,
   /** Lowest line with the ball far (= 6-yard box edge) / near our goal, m from the own goal line. */
@@ -453,7 +456,7 @@ function lineInputs(s: SimState, team: number, dir: number): void {
   EVAL.ceil = LT.lineCeil + (lineOff > 0 ? lineOff : 0);
   EVAL.floor = -HALF_LENGTH + LT.floorNear + (LT.floorFar - LT.floorNear) * ramp(LT.ballNearDist, LT.ballFarDist, bu + HALF_LENGTH);
   const ballBase = loose === 1 && vu > 0 ? bu + vu * LT.stepLookahead : bu;
-  EVAL.base = F_BACK_U[formationIndex(s.teams[team]!.formation)]! + LT.lineSlope * ballBase + lineOff;
+  EVAL.base = F_BACK_U[formationIndex(s.teams[team]!.formation)]! + LT.lineOffset + LT.lineSlope * ballBase + lineOff;
 }
 
 /** Step up on a backward / square ball or a carrier dribbling back (stage 2). */

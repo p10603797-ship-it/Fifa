@@ -138,7 +138,7 @@ export const T_PASS = {
   /** Weak-foot error multiplier at weakFoot 1 (5 -> 1.0). */
   weakFootErrorMul: 1.8,
   /** Lob launch angles, rad. */
-  lobAngle: 0.62,
+  lobAngle: 0.5,
   highLobAngle: 0.95,
   drivenLobAngle: 0.35,
   dinkedAngle: 0.45,

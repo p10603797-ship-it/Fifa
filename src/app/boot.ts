@@ -6,6 +6,11 @@
  * menu input -> loop -> iPadOS hardening, visibility / blur / pagehide / resize / orientation, WebGL context loss
  * -> debug overlay -> splash -> bench hook -> service worker.
  *
+ * [INT-B] Also: the app replay recorder fed by SessionDeps.onTick (recovery installed with attach: false), the PAD-03
+ * reconnect flow + card (installReconnectFlow), PAD-07 rumble (loop rumble consumer; stopped on pause and at match
+ * end), the router's input-Back sound, the renderer camera x for sfx panning each frame, and a viewport change
+ * (resize, rotation, toolbar) releasing every held input. GFX-02's detector is the only Low Power Mode path.
+ *
  * Exposes window.__dotkick = { ctx, app } (tests read ctx.session.getState()) and window.__dotkickFrameStats.
  * Lifecycle rules (brief section 3): hidden page pauses the match, stops the loop and suspends audio; returning
  * shows the pause menu and never fast-forwards; blur releases every held input; portrait or a too-small window
@@ -18,11 +23,14 @@ import { createAudioEngine, type AudioEngineImpl } from '../audio/engine';
 import { createDeviceRegistry } from '../input/devices';
 import { createFocusNavigator } from '../input/focus';
 import { createMenuInput } from '../input/menuInput';
+import { installReconnectFlow, type ReconnectHandle } from '../input/pad/reconnect';
+import { createRumbleListener, type RumbleListener } from '../input/pad/rumble';
 import { createDiagnostics } from '../platform/diagnostics';
 import { createPlatformInfo } from '../platform/info';
 import { installIpadHardening } from '../platform/ipados';
 import { registerServiceWorker } from '../platform/pwa';
 import { installRecovery, type Recovery } from '../platform/recovery';
+import { createLiveReplayRecorder, setAppReplayRecorder, type LiveReplayRecorder } from '../platform/replayRecorder';
 import { createSettingsStore } from '../platform/settingsStore';
 import { createGameRenderer } from '../render/index';
 import { installDebugOverlay } from '../ui/debugOverlay';
@@ -43,6 +51,12 @@ export interface AppHandle {
   readonly hud: Hud;
   readonly audio: AudioEngineImpl;
   readonly recovery: Recovery;
+  /** PAD-03 reconnect flow and card. */
+  readonly reconnect: ReconnectHandle;
+  /** PAD-07 rumble consumer. */
+  readonly rumble: RumbleListener;
+  /** App-wide replay recorder (fed after every tick). */
+  readonly replay: LiveReplayRecorder;
   dispose(): void;
 }
 
@@ -101,7 +115,7 @@ export function boot(): AppHandle {
     if (recovery) recovery.reportError(err, where);
     else diagnostics.log('error', `${where}: ${String(err)}`, err instanceof Error ? err : undefined);
   };
-  const router = createRouter(uiRoot, () => ctx!, { onError: reportError });
+  const router = createRouter(uiRoot, () => ctx!, { onError: reportError, onUserBack: () => audio.playUi(UiSound.BACK) });
 
   let renderer: GameRenderer;
   try {
@@ -123,15 +137,33 @@ export function boot(): AppHandle {
     platform,
     onPause: (human: number) => session?.requestPause(human),
   });
+  disposers.push(() => devices.dispose());
+  const rumble = createRumbleListener(devices, settings);
+  disposers.push(() => rumble.dispose());
+  // Replay recorder: fed by the session's per-tick hook (recovery no longer wraps afterTick).
+  const replay = createLiveReplayRecorder();
+  setAppReplayRecorder(replay);
+  let replayFailed = false;
   const sess = createSession({
     router, renderer, hud, audio, devices, diagnostics, clubs: CLUBS, getProjector,
     setMatchLayer: (on) => document.body.classList.toggle('match-active', on),
     onError: reportError,
+    onTick: (rt) => {
+      if (replayFailed) return;
+      try {
+        replay.onTick(rt.frames, rt.curr);
+      } catch (err) {
+        replayFailed = true; // never let the recorder break play; log once
+        diagnostics.log('error', `replay recorder stopped: ${String(err)}`, err instanceof Error ? err : undefined);
+      }
+    },
+    onPause: () => rumble.stopAll(),
+    onMatchEnd: () => rumble.stopAll(),
   });
   session = sess;
   const appCtx: AppContext = { router, settings, audio, focus, devices, session: sess, platform, diagnostics, clubs: CLUBS };
   ctx = appCtx;
-  const rec = installRecovery(appCtx);
+  const rec = installRecovery(appCtx, { recorder: replay, attach: false });
   recovery = rec;
   hud.mount(hudRoot, appCtx);
   registerScreens(router);
@@ -140,6 +172,12 @@ export function boot(): AppHandle {
   // actions are swallowed (pad B is SHOOT, not Back). START (Options / P) toggles the pause through the debounce.
   const menuInput = createMenuInput({ focus, onPause: () => sess.requestPause(sess.uiHuman()) });
   disposers.push(() => menuInput.dispose());
+  // PAD-03: a bound pad lost mid-match pauses with the reconnect card (any pad button resumes; hand to touch / CPU).
+  // Installed before the screen-level focus handlers below so its guard sees menu actions first while a card is up.
+  const reconnect = installReconnectFlow({
+    session: sess, devices, platform, root: uiRoot, focus, onError: (err, where) => reportError(err, `reconnect.${where}`),
+  });
+  disposers.push(() => reconnect.dispose());
   disposers.push(
     focus.onAction((a) => {
       if (sess.ticking && router.current === 'match') return true;
@@ -177,6 +215,8 @@ export function boot(): AppHandle {
       diagnostics.log('platform', 'steady 30 fps with idle frames: Low Power Mode likely');
       if (!settings.get().lowPowerHintShown) settings.update((s) => { s.lowPowerHintShown = true; });
     },
+    // A resize, rotation or toolbar change mid-hold never leaves a stuck stick or sprint.
+    onViewportChange: () => sess.releaseInputs(),
   });
   disposers.push(() => ipad.dispose());
 
@@ -201,8 +241,10 @@ export function boot(): AppHandle {
     loop.invalidate();
   };
 
+  // Broadcast camera x for sfx panning (INT-C adds GameRenderer cameraX(); read defensively until then).
+  const camRenderer = renderer as { cameraX?: () => number };
   const loop = createLoop({
-    session: sess, renderer, hud, audio, router, menuInput, getProjector,
+    session: sess, renderer, hud, audio, router, menuInput, getProjector, rumble,
     onError: reportError,
     beforeFrame: () => {
       if (resizePending) {
@@ -210,9 +252,10 @@ export function boot(): AppHandle {
         applyResize();
       }
     },
-    afterFrame: (frame, busyMs) => {
+    afterFrame: (frame) => {
       debugOverlay.update(frame);
-      if (sess.ticking) ipad.reportFrame(frame.dtMs, busyMs);
+      if (sess.loaded && typeof camRenderer.cameraX === 'function') audio.setCameraX(camRenderer.cameraX());
+      else audio.setCameraX(Number.NaN);
     },
   });
   window.__dotkickFrameStats = loop.stats;
@@ -293,6 +336,9 @@ export function boot(): AppHandle {
     hud,
     audio,
     recovery: rec,
+    reconnect,
+    rumble,
+    replay,
     dispose() {
       loop.stop();
       for (const d of disposers.splice(0).reverse()) {

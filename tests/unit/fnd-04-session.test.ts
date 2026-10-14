@@ -28,7 +28,7 @@ function fakeState(): SimState {
 function fakeProvider(): LocalInputProvider {
   return {
     ready: () => true, take: vi.fn(), pump: vi.fn(), waiting: false, releaseAll: vi.fn(), dispose: vi.fn(),
-    queueCommand: vi.fn(), sourceCount: 0,
+    queueCommand: vi.fn(), sourceCount: 0, rebind: vi.fn(), devicesOf: () => [],
   };
 }
 

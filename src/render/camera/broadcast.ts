@@ -8,7 +8,8 @@
  *    and turns to look at the ball, so it is square-on at midfield and angles toward goal near either box.
  *  - Framing: the look-at point leads the ball by leadMin..leadMax (3-6 m) in the direction of play. Framing limits
  *    are solved every frame on the REAL camera transform: the ball stays above ballBottomMargin (15%) of the screen
- *    height, above the touch controls (button cluster and floating-stick rest zone, mirrored with the controls),
+ *    height, above the touch controls (button cluster and floating-stick rest zone, mirrored with the controls) and
+ *    the HUD radar at the bottom centre (radarZoneMargin, INT-C),
  *    below a top margin (scoreboard) and inside the side edges. Limits are soft-kneed (C1): the camera eases toward
  *    a limit and never jumps.
  *  - High balls: the camera tilts up ahead of time from the predicted apex so a lofted ball stays in view.
@@ -108,6 +109,14 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-14 broadcast camera)
   zoneRamp: 100,
   /** A zone never asks for more than this fraction of the screen height. */
   zoneMaxFrac: 0.4,
+  // ---- HUD radar (bottom centre; mirrors ui/hud/radar.ts RADAR_TUNING, CSS px) [INT-C]
+  /** Radar canvas size at HUD scale 1, gap to the bottom edge, and the cap on its height (fraction of the screen). */
+  radarW: 168,
+  radarH: 110,
+  radarBottom: 16,
+  radarMaxVh: 0.19,
+  /** HUD scale with accessibility.largerHud (ui/hud/hudShared.ts HUD_LARGE_SCALE). */
+  radarLargeScale: 1.25,
 } as const;
 
 const LT = LOCAL_TUNING;
@@ -270,6 +279,8 @@ export interface TouchZones {
   stickW: number;
   stickH: number;
   mirror: boolean;
+  /** HUD scale of the bottom-centre radar (1, or LOCAL_TUNING.radarLargeScale with the larger HUD). [INT-C] */
+  hudScale?: number;
 }
 
 /**
@@ -306,7 +317,24 @@ export function touchZones(s: Readonly<Settings> | null | undefined, out: TouchZ
   out.stickW = LT.stickZoneW;
   out.stickH = LT.stickZoneH;
   out.mirror = t?.mirror === true;
+  out.hudScale = s?.accessibility?.largerHud === true ? LT.radarLargeScale : 1;
   return out;
+}
+
+/**
+ * Bottom margin (fraction of the screen height) the ball needs at screen column sx (CSS px) to stay clear of the HUD
+ * radar at the bottom centre (ui/hud/radar.ts: radarW x radarH at the HUD scale, height capped at radarMaxVh, radarBottom
+ * above the bottom edge) plus LOCAL_TUNING.zonePad; 0 away from it, smooth in sx (zoneRamp). The radar can be turned
+ * off in the HUD; the framing keeps the ball clear of its place either way. Pure. [INT-C: "ball hidden under the HUD"]
+ */
+export function radarZoneMargin(sx: number, w: number, h: number, z: Readonly<TouchZones>): number {
+  const hh = Math.max(1, h);
+  const hs = z.hudScale !== undefined && z.hudScale > 0 ? z.hudScale : 1;
+  const rh = Math.min(LT.radarH * hs, LT.radarMaxVh * hh);
+  const rw = LT.radarW * (rh / LT.radarH);
+  const frac = Math.min(LT.zoneMaxFrac, (rh + LT.radarBottom + LT.zonePad) / hh);
+  const into = (rw / 2 + LT.zonePad) - Math.abs(sx - w / 2);
+  return frac * smoothstep01((into + LT.zoneRamp) / LT.zoneRamp);
 }
 
 /**
@@ -373,7 +401,7 @@ export function createBroadcastCamera(ctx: RenderContext): BroadcastCameraModule
   const S = new Float64Array(STATE_SIZE);
   const vel = new Float64Array(CHANNELS);
   const euler = new Euler(0, 0, 0, 'YXZ');
-  const zones: TouchZones = { clusterW: 0, clusterH: 0, stickW: 0, stickH: 0, mirror: false };
+  const zones: TouchZones = { clusterW: 0, clusterH: 0, stickW: 0, stickH: 0, mirror: false, hudScale: 1 };
   let zonesFor: Readonly<Settings> | null = null;
   // Small integers only below (Smis never allocate).
   let leadDir = 1;
@@ -593,7 +621,7 @@ export function createBroadcastCamera(ctx: RenderContext): BroadcastCameraModule
       const depth = fd * Math.cos(theta) - dy * Math.sin(theta);
       const ndcX = depth > MIN_AHEAD ? xc / (depth * tH) : 0;
       const sx = (ndcX + 1) * 0.5 * W;
-      const mB = Math.max(T_CAMERA.ballBottomMargin, touchZoneMargin(sx, W, H, zones));
+      const mB = Math.max(T_CAMERA.ballBottomMargin, touchZoneMargin(sx, W, H, zones), radarZoneMargin(sx, W, H, zones));
       const phiBot = Math.atan((-1 + 2 * mB) * tV);
       const phi = Math.atan2(dy, fd) + thetaPre;
       theta = thetaPre + softBand(phi, phiBot, phiTop, kV) - phi;

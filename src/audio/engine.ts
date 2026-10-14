@@ -41,7 +41,7 @@ import { createBufferBank } from './bank';
 import { createCrowd } from './crowd';
 import { createEventMap } from './eventMap';
 import type { AudioCtxWithServices, AudioModuleName, AudioServices } from './services';
-import { createSfx } from './sfx';
+import { createSfx, type SfxModule } from './sfx';
 import type { AudioCtx, AudioModule, UiAudioModule } from './types';
 import { createUi } from './ui';
 import { createVoicePool } from './voices';
@@ -119,6 +119,11 @@ export interface AudioEngineImpl extends AudioEngine {
   readonly services: AudioServices | null;
   /** Snapshot for diagnostics and tests (allocates; not for per-frame use). */
   info(): AudioEngineInfo;
+  /**
+   * Broadcast camera x for stereo panning (INT-B: the app passes the renderer's camera x every frame; NaN = estimate
+   * from the ball). Kept across unlock: the sfx module gets it as soon as it exists. Allocation-free.
+   */
+  setCameraX(x: number): void;
   dispose(): void;
 }
 
@@ -261,6 +266,9 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
   let limiter: DynamicsCompressorNode | null = null;
   let modules: AudioModule[] = [];
   let ui: UiAudioModule | null = null;
+  let sfxMod: SfxModule | null = null;
+  /** Latest camera x from the app (NaN = none). */
+  let cameraX = Number.NaN;
   let unlocked = false;
   let paused = false;
   /** False after suspend() until resume(): the app wants silence (hidden page). */
@@ -503,6 +511,14 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
     // Created (and so pre-rendered) in the order sounds are first needed: menus right after the tap, the match later.
     ui = create(4, createUi, c);
     const sfx = create(1, createSfx, c);
+    sfxMod = sfx;
+    if (sfx) {
+      try {
+        sfx.setCameraX(cameraX);
+      } catch (err) {
+        moduleFailed(1, err, 'setCameraX');
+      }
+    }
     const whistles = create(2, createWhistles, c);
     const eventMap = create(3, createEventMap, c);
     const crowdMod = create(0, createCrowd, c);
@@ -671,6 +687,17 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
       }
       void requestResume(ac);
     },
+    setCameraX(x) {
+      const v = typeof x === 'number' && Number.isFinite(x) ? x : Number.NaN;
+      if (v === cameraX || (v !== v && cameraX !== cameraX)) return;
+      cameraX = v;
+      if (!sfxMod) return;
+      try {
+        sfxMod.setCameraX(v);
+      } catch (err) {
+        moduleFailed(1, err, 'setCameraX');
+      }
+    },
     info() {
       return {
         state: ac ? ac.state : 'none',
@@ -704,6 +731,7 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
       each((m) => m.dispose(), 'dispose');
       modules = [];
       ui = null;
+      sfxMod = null;
       if (services) {
         services.effects.dispose();
         services.crowd.dispose();

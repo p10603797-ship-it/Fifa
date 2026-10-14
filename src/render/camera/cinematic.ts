@@ -62,8 +62,9 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
   takerBack: 8,
   takerHeight: 3.2,
   takerFov: 36,
-  /** Ball height on screen (fraction from the top) the pitch is solved for. */
-  takerBallY: 0.74,
+  /** Ball height on screen (fraction from the top) the pitch is solved for. INT-C: 0.74 -> 0.68, so the taker standing
+   *  behind the ball (lower on screen) stays above the HUD radar at the bottom centre. */
+  takerBallY: 0.68,
   /** The crossbar stays at least this fraction below the top edge. */
   takerTopMargin: 0.12,
   // ---- goal kicks (in front of the goal, looking up-field)
@@ -79,10 +80,13 @@ export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
   // ---- corner (raised view from behind the flag)
   cornerBack: 8,
   cornerHeight: 7,
-  cornerFov: 50,
+  /** INT-C: 50 -> 56 with cornerBallY 0.8 -> 0.7: at 0.8 the ball sat just above the HUD radar and the taker behind it
+   *  (lower on screen, toward the camera) stood under the radar, hiding the ball; the wider FOV keeps the goal frame
+   *  ~10% below the top edge. */
+  cornerFov: 56,
   /** Look target on the goal axis this far from the goal line, m (the penalty spot). */
   cornerLookIn: 11,
-  cornerBallY: 0.8,
+  cornerBallY: 0.7,
   // ---- establishing orbit (high, inside the bowl, around the centre spot)
   orbitRadiusX: 56,
   orbitRadiusZ: 40,

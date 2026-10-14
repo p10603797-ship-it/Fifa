@@ -81,7 +81,8 @@ describe('TCH-03 cluster layout (section 9 Layout)', () => {
               // Fan away from the anchored side: left of BIG normally, right of it when mirrored.
               expect(mirror ? l.slots[ClusterSlot.LOW].cx > big.cx : l.slots[ClusterSlot.LOW].cx < big.cx).toBe(true);
               expect(mirror ? big.cx < w / 2 : big.cx > w / 2).toBe(true);
-              expect(mirror ? l.pause.cx < w / 2 : l.pause.cx > w / 2).toBe(true);
+              // INT-B: the pause stays top right in both layouts (mirrored, the top left is the scoreboard's).
+              expect(l.pause.cx > w / 2).toBe(true);
               n++;
             }
           }
@@ -91,12 +92,13 @@ describe('TCH-03 cluster layout (section 9 Layout)', () => {
     expect(n).toBe(6 * 4 * 2 * 3 * 3);
   });
 
-  it('mirror with a one-sided inset keeps the cluster and pause inside the left safe edge', () => {
+  it('mirror with a one-sided inset keeps the cluster inside the left safe edge; the pause stays top right', () => {
     const safe = { top: 0, right: 0, bottom: 21, left: 59 };
     const l = computeClusterLayout(1180, 820, safe, { mirror: true });
     const big = l.slots[ClusterSlot.BIG];
     expect(big.cx - big.r).toBeCloseTo(59 + T_TOUCHUI.systemEdgeMargin, 9);
-    expect(l.pause.cx - l.pause.r).toBeCloseTo(59 + T_TOUCHUI.systemEdgeMargin, 9);
+    // INT-B (TCH-09 CR): the pause no longer mirrors onto the scoreboard; it keeps the right-edge margin.
+    expect(l.pause.cx + l.pause.r).toBeCloseTo(1180 - T_TOUCHUI.systemEdgeMargin, 9);
     checkLayout(l, 1180, 820, safe);
   });
 

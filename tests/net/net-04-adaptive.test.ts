@@ -92,7 +92,8 @@ describe('NET-04 adaptive delay controller (synthetic RTT series)', () => {
     d.sample(260);
     expect(d.target).toBe(8);
     for (let i = 0; i < 80; i++) d.sample(60);
-    expect(d.target).toBe(computeTargetDelay(d.rttMs, d.jitterMs));
+    const want = computeTargetDelay(d.rttMs, d.jitterMs);
+    expect(d.target === want || d.target === want + 1).toBe(true); // within the lowering margin
     // Clamped at 8 on a terrible link.
     for (let i = 0; i < 10; i++) d.sample(900);
     expect(d.target).toBe(8);
@@ -262,26 +263,28 @@ describe('NET-04 time sync', () => {
     expect(behind.poll(10_000)).toBe(0); // only the leader holds
   });
 
-  it('a late-starting guest is absorbed by one hold instead of periodic stalls (netsim)', async () => {
-    // 70 ms start offset at 60 ms latency and delay 8: the host's frames always arrive in time, the guest's arrive
-    // ~7 ms late, so without time sync the host stalls briefly (and catches up) all match long.
+  it('a lead left by a frame hiccup is shed by one hold instead of periodic stalls (netsim)', async () => {
+    // The guest freezes for 150 ms (its loop drops what it cannot catch up), leaving the host ahead. At 95 ms latency
+    // and delay 8 the guest's frames then arrive a little late, so without time sync the host stalls briefly (and
+    // catches up) on almost every frame for the rest of the match.
     const run = (timeSync: boolean) => runNetsim({
       config: netsimConfig({ seed: 8 }),
       maxTicks: 2400,
       delay: 8,
       adaptive: false,
       timeSync,
-      startOffsetMs: 70,
-      warmupTicks: 240,
-      link: { latencyMs: 60, jitterMs: 10, seed: 8 },
+      startOffsetMs: 0,
+      warmupTicks: 600,
+      hiccups: [{ peer: 1, atMs: 3000, ms: 150 }],
+      link: { latencyMs: 95, jitterMs: 10, seed: 8 },
     });
     const off = await run(false);
     expect(off.ok).toBe(true);
-    expect(off.host.stallsAfterWarmup).toBeGreaterThan(20);
+    expect(off.host.stallsAfterWarmup).toBeGreaterThan(100);
     const on = await run(true);
     expect(on.ok).toBe(true);
     expect(on.host.holds).toBeGreaterThanOrEqual(1);
     expect(Math.abs(on.host.advantage)).toBeLessThan(1.5);
-    expect(on.host.stallsAfterWarmup + on.guest.stallsAfterWarmup).toBeLessThanOrEqual(1);
+    expect(on.host.stallsAfterWarmup + on.guest.stallsAfterWarmup).toBe(0);
   });
 });

@@ -147,6 +147,11 @@ export interface LockstepProvider extends TickInputProvider {
   readonly timeSync: TimeSync;
   /** True while a time-sync hold keeps the sim still (not a stall: no waiting indicator). */
   readonly holding: boolean;
+  /**
+   * The other side has acknowledged every local frame up to the last tick taken. At the end of a match keep pumping
+   * until this is true (or a short timeout), so a peer a few ticks behind never waits for a frame nobody resends.
+   */
+  readonly drained: boolean;
   /** Packed frames of ticks from..to for both humans (diagnostics, desync reports). */
   describeInputs(fromTick: number, toTick: number): { tick: number; h0: number[] | null; h1: number[] | null }[];
 }
@@ -313,6 +318,7 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
     guard,
     timeSync,
     get holding() { return lastNow < holdUntil; },
+    get drained() { return remoteAck >= lastTaken; },
     get stats(): LockstepStats {
       return {
         stalls: st.stalls, maxStallMs: Math.max(st.maxStallMs, waiting ? lastNow - stallStart : 0), totalStallMs: st.totalStallMs,

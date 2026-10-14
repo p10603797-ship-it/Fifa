@@ -22,6 +22,10 @@
  * every onBoundPadChange listener run (the session auto-pauses; PAD-03 shows the card); when it comes back (same key,
  * any index) onPadReconnect runs. A pad bound while already disconnected is reported on its source's first frame.
  * Disposing the source unbinds it.
+ *
+ * [INT-B] Touch controls hide while a pad drives the same side (section 9): the touch source runs TCH-09's
+ * createPadDriveWatcher over its intent state and the pads bound to the same human (live pad sources), updated in its
+ * pollFrame after the pads were polled; the next screen touch brings the controls back (touch/index.ts onDown).
  */
 
 import type { DeviceInfo, DeviceRegistry, PlatformInfo, SettingsStore } from '../contracts/app';
@@ -34,6 +38,7 @@ import { detectPadFamily, effectiveFamily, padLabel } from './pad/glyphs';
 import { getPadManager, type PadEventKind, type PadManager, type PadSlot } from './pad/manager';
 import { createPadSource } from './pad/mapper';
 import { createTouchInput } from './touch/index';
+import { createPadDriveWatcher } from './touch/overlay';
 
 export interface DeviceRegistryOptions {
   /** Container for the touch overlay (index.html <div id="touch">). */
@@ -121,6 +126,19 @@ export function createDeviceRegistry(opts: DeviceRegistryOptions): DotkickDevice
   let lastKeyMs = -1;
   let lastTouchMs = -1;
   let touchSource: InputSource | null = null;
+  /** Pad keys bound to each human (live pad sources), rebuilt when a binding changes (read every frame, no allocation). */
+  const padKeysByHuman: string[][] = [];
+  const NO_KEYS: readonly string[] = [];
+  function refreshPadKeys(): void {
+    for (let h = 0; h < padKeysByHuman.length; h++) padKeysByHuman[h]!.length = 0;
+    for (let i = 0; i < bindings.length; i++) {
+      const b = bindings[i]!;
+      if (b.human < 0) continue;
+      while (padKeysByHuman.length <= b.human) padKeysByHuman.push([]);
+      padKeysByHuman[b.human]!.push(b.deviceId);
+    }
+  }
+  const padKeysOf = (human: number): readonly string[] => (human >= 0 && human < padKeysByHuman.length ? padKeysByHuman[human]! : NO_KEYS);
   let override = familyOverride(opts.settings.get());
   let disposed = false;
 
@@ -246,6 +264,7 @@ export function createDeviceRegistry(opts: DeviceRegistryOptions): DotkickDevice
     const connected = slot !== null && slot.connected;
     const b: MutableBinding = { deviceId, human, connected, reportPending: !connected };
     bindings.push(b);
+    refreshPadKeys();
     const innerPoll = src.pollFrame?.bind(src);
     src.pollFrame = (nowMs: number): void => {
       if (innerPoll) innerPoll(nowMs);
@@ -260,6 +279,7 @@ export function createDeviceRegistry(opts: DeviceRegistryOptions): DotkickDevice
     src.dispose = (): void => {
       const i = bindings.indexOf(b);
       if (i >= 0) bindings.splice(i, 1);
+      refreshPadKeys();
       innerDispose();
     };
     return src;
@@ -283,13 +303,21 @@ export function createDeviceRegistry(opts: DeviceRegistryOptions): DotkickDevice
           root: opts.touchRoot, getProjector: opts.getProjector, getState: opts.getState, settings: opts.settings,
           platform: opts.platform, onPause,
         });
+        // Section 9: hide the touch controls while a pad bound to the same human drives the side.
+        const watcher = createPadDriveWatcher(src.state, pads, () => padKeysOf(human));
         const dispose = src.dispose.bind(src);
         src.dispose = (): void => {
           if (touchSource === src) touchSource = null;
           dispose();
         };
         touchSource = src;
-        return withPadPolling(src);
+        const polled = withPadPolling(src);
+        const poll = polled.pollFrame!;
+        polled.pollFrame = (nowMs: number): void => {
+          poll(nowMs);
+          watcher.update();
+        };
+        return polled;
       }
       if (deviceId === 'keyboard') return withPadPolling(createKeyboardSource({ onPause }));
       if (deviceId.startsWith('pad:')) return createBoundPadSource(deviceId, human, onPause);
@@ -335,6 +363,7 @@ export function createDeviceRegistry(opts: DeviceRegistryOptions): DotkickDevice
       subs.length = 0;
       bindListeners.length = 0;
       bindings.length = 0;
+      refreshPadKeys();
     },
   };
 }

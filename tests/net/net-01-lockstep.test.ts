@@ -295,8 +295,10 @@ describe('NET-01 lockstep provider', () => {
     const resend = tr.sent.at(-1)!;
     expect(resend.firstTick).toBe(1); // the other side acknowledged nothing yet
     expect(resend.count).toBe(6); // ticks 1..6 (start frames + the three sampled since)
+    expect(p.drained).toBe(false); // ticks 1..3 taken, nothing acknowledged
     // Once it acknowledges tick 5, resends start at 6.
     tr.deliver({ ...packetOf(4, [neutral]), ack: 5 });
+    expect(p.drained).toBe(true);
     p.pump(2 * RESEND_WAITING_MS + 2);
     expect(tr.sent.at(-1)!.firstTick).toBe(6);
     p.dispose();

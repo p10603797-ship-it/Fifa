@@ -68,6 +68,8 @@ export interface NetsimOptions {
   injectDesync?: { peer: 0 | 1; tick: number; mutate?: (s: SimState) => void };
   /** Change link conditions mid-run. */
   linkChanges?: { atMs: number; conditions: MemoryLinkConditions }[];
+  /** Freeze one peer's frame loop for `ms` at `atMs` (a GC pause or a busy main thread). */
+  hiccups?: { peer: 0 | 1; atMs: number; ms: number }[];
   compress?: 'auto' | 'gzip' | 'none';
   /** Diagnostics.log compatible sink for both peers (peer index in the message). */
   log?: (kind: string, message: string, data?: unknown) => void;
@@ -271,6 +273,7 @@ export async function runNetsim(opts: NetsimOptions): Promise<NetsimReport> {
   const matchTicks = Number.isFinite(maxTicks) ? maxTicks : Math.round(opts.config.halfMinutes * 2 * 3600 * 1.6);
   const maxVirtualMs = opts.maxVirtualMs ?? matchTicks * TICK_MS * 4 + 60_000;
   const changes = (opts.linkChanges ?? []).slice().sort((a, b) => a.atMs - b.atMs);
+  const hiccups = (opts.hiccups ?? []).map((h) => ({ ...h, done: false }));
 
   // Open both ends of the link.
   let opened = false;
@@ -371,6 +374,12 @@ export async function runNetsim(opts: NetsimOptions): Promise<NetsimReport> {
       if (!p.provider) startPeer(p);
       runFrame(p, t);
       p.nextFrameAt += p.frameMs;
+      for (const h of hiccups) {
+        if (!h.done && h.peer === p.idx && t - t0 >= h.atMs) {
+          h.done = true;
+          p.nextFrameAt += h.ms;
+        }
+      }
     }
     for (let i = 0; i < 10_000 && peers.some((p) => p.provider?.guard.busy); i++) await settle();
     if (peers[0]!.finished && peers[1]!.finished) break;

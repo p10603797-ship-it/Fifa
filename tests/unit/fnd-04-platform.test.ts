@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AppContext, ScreenId, SettingsStore } from '../../src/contracts/app';
 import { UiSound } from '../../src/contracts/app';
 import { AUDIO_ENGINE_TUNING } from '../../src/audio/engine';
-import { ControllerKind, ModeId, RestartKind } from '../../src/contracts/enums';
+import { ControllerKind, MatchPhase, ModeId, RestartKind } from '../../src/contracts/enums';
 import { createDefaultSettings } from '../../src/contracts/settings';
 import { EventType } from '../../src/contracts/events';
 import { createMemoryStorage } from '../../src/platform/storage';
@@ -35,21 +35,14 @@ describe('FND-04 platform detection', () => {
     expect(classifyViewport(2560, 1080)).toEqual({ portrait: false, tooSmall: false });
   });
 
-  it('suspects Low Power Mode only after a steady 30 fps with idle frames, once', () => {
+  // INT-B: GFX-02's detector (render/quality.ts) is the only Low Power Mode path; reportFrame is a kept no-op, so the
+  // old frame-time detector case is gone. The app no longer calls reportFrame at all.
+  it('reportFrame never suspects Low Power Mode (one detector: GFX-02)', () => {
     const onLowPowerSuspected = vi.fn();
     const hard = installIpadHardening({ onLowPowerSuspected });
-    for (let i = 0; i < 119; i++) hard.reportFrame(33.3, 4);
-    hard.reportFrame(16.7, 4); // a 60 fps frame resets the run
-    for (let i = 0; i < 119; i++) hard.reportFrame(33.3, 4);
-    expect(onLowPowerSuspected).not.toHaveBeenCalled();
-    hard.reportFrame(33.3, 4);
-    expect(onLowPowerSuspected).toHaveBeenCalledTimes(1);
     for (let i = 0; i < 300; i++) hard.reportFrame(33.3, 4);
-    expect(onLowPowerSuspected).toHaveBeenCalledTimes(1);
-    const busy = vi.fn();
-    const h2 = installIpadHardening({ onLowPowerSuspected: busy });
-    for (let i = 0; i < 300; i++) h2.reportFrame(33.3, 20); // genuinely busy: not Low Power Mode
-    expect(busy).not.toHaveBeenCalled();
+    expect(onLowPowerSuspected).not.toHaveBeenCalled();
+    hard.dispose();
   });
 });
 
@@ -111,7 +104,7 @@ describe('FND-04 recovery and diagnostics', () => {
     expect(d.recent()[0]).toContain('line 13');
     expect(d.recent().at(-1)).toContain('bad thing');
     expect(d.lastError).toBe('bad thing');
-    expect(d.total).toBe(21);
+    expect(d.total).toBe(22); // 21 lines plus the settings store's storage line (PLT-03 logger attached at creation)
     d.addSection('Replay', () => 'none');
     d.addSection('Broken', () => { throw new Error('nope'); });
     const r = d.report();
@@ -132,7 +125,7 @@ describe('FND-04 stats tracker', () => {
       ball: { owner: -1 },
       teams: [{ goals: 0 }, { goals: 0 }],
       players: Array.from({ length: 22 }, (_, i) => ({ rosterIdx: i % 11 })),
-      match: { period: 1, periodT: 0, periodLen: 100, addedT: 0, shootout: { active: 0, winner: -1, goals: [0, 0] }, winner: -1, forfeitTeam: -1 },
+      match: { phase: MatchPhase.IN_PLAY, period: 1, periodT: 0, periodLen: 100, addedT: 0, shootout: { active: 0, winner: -1, goals: [0, 0] }, winner: -1, forfeitTeam: -1 },
     } as unknown as ReadonlySimState & { tick: number; ball: { owner: number }; teams: { goals: number }[] };
     const t = createStatsTracker();
     t.reset(s);
@@ -143,7 +136,7 @@ describe('FND-04 stats tracker', () => {
       ev.begin(++s.tick);
       t.onTick(s, ev);
     }
-    (s.ball as { owner: number }).owner = -1; // loose ball: counts for nobody
+    (s.ball as { owner: number }).owner = -1; // loose ball: stays with the last owner (MOD-05 sticky possession)
     ev.begin(++s.tick);
     ev.emit(EventType.SHOT, 9, 1, 0.3);
     ev.emit(EventType.SHOT, 15, 0, 0.1);
@@ -160,7 +153,7 @@ describe('FND-04 stats tracker', () => {
     expect(sum.teams[0].passes).toBe(1);
     expect(sum.teams[0].passesCompleted).toBe(1);
     expect(sum.teams[1].corners).toBe(1);
-    expect(sum.teams[0].possession).toBeCloseTo(0.75);
+    expect(sum.teams[0].possession).toBeCloseTo(0.6); // 3 home ticks of 5 IN_PLAY ticks (MOD-05 definition)
     expect(sum.goals).toEqual([{ team: 0, rosterIdx: 9, assistRosterIdx: 4, ownGoal: false, minute: 1 }]);
     expect(sum.winner).toBe(0);
     expect(sum.ticks).toBe(5);

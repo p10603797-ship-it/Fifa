@@ -403,9 +403,19 @@ describe('TCH-09 layout inside the safe area and off the HUD at 4:3, 16:10 and 2
   }
 });
 
-// TCH-03 computeClusterLayout mirrors the pause button to the top left, onto the scoreboard (CR to TCH-03 in the TCH-09
-// report: keep the pause top right when mirrored). The overlay draws the pause where its hit area is.
-it.todo('mirrored layout: the pause button stays top right, clear of the scoreboard (needs the TCH-03 CR)');
+// TCH-03 computeClusterLayout used to mirror the pause button to the top left, onto the scoreboard; INT-B applied the
+// TCH-09 CR (keep the pause top right when mirrored). The overlay draws the pause where its hit area is.
+it('mirrored layout: the pause button stays top right, clear of the scoreboard', () => {
+  for (const [w, h] of [[1024, 768], [1180, 820], [1260, 540]] as [number, number][]) {
+    for (const safe of [NO_SAFE, { top: 24, right: 20, bottom: 20, left: 20 }, { top: 0, right: 44, bottom: 21, left: 44 }]) {
+      const n = computeClusterLayout(w, h, safe);
+      const m = computeClusterLayout(w, h, safe, { mirror: true });
+      expect(m.pause).toEqual(n.pause);
+      expect(m.pause.cx).toBeGreaterThan(w / 2);
+      expect(layoutClearOfHud(m, w, h, safe), `${w}x${h} ${JSON.stringify(safe)}`).toBe(true);
+    }
+  }
+});
 
 describe('TCH-09 createPadDriveWatcher (touch controls hide while a controller drives that side)', () => {
   function pads(): { list: Record<string, { connected: boolean; lastInputMs: number }>; find(k: string): { connected: boolean; lastInputMs: number } | null } {

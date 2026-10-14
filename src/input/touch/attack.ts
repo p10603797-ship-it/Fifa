@@ -65,7 +65,7 @@ export interface ClusterLayoutOptions {
   spacing?: number;
   /** Size multiplier (0.7..1.4). */
   scale?: number;
-  /** Mirror for left-handers (cluster bottom left, pause top left). */
+  /** Mirror for left-handers (cluster bottom left; the pause button stays top right, clear of the scoreboard). */
   mirror?: boolean;
   /**
    * Per-button placements from the controls editor (TouchSettings.layout). A slot uses its attack button's key
@@ -169,9 +169,11 @@ export function computeClusterLayout(w: number, h: number, safe: SafeInsets, opt
     g.cx = toX(side);
     g.cy = cy;
   }
+  // The pause button stays top right in both layouts: mirrored, the top left belongs to the scoreboard (TCH-09 HUD
+  // regions), so it never moves with the cluster.
   const pr = PAUSE_SIZE / 2;
   out.pause.r = pr;
-  out.pause.cx = toX(sideInset + margin + pr);
+  out.pause.cx = w - sRight - margin - pr;
   out.pause.cy = sTop + margin + pr;
   return out;
 }

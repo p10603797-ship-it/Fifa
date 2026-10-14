@@ -20,6 +20,8 @@
  * PAUSE fires opts.onPause when the finger lifts on the button (immediately, even while no tick runs).
  * Lifecycle: releaseAll() cancels every pointer, releases every control and clears the mapper (no stuck sprint, stick
  * or power bar); dispose() also removes every listener and the overlay DOM.
+ * [INT-B] The overlay is bound to the cluster controller, stick config, touch settings and clock right after the
+ * cluster is created (overlay.bind).
  */
 
 import type { PlatformInfo, SettingsStore } from '../../contracts/app';
@@ -92,6 +94,9 @@ export function createTouchInput(opts: TouchInputOptions): TouchInputSource {
   const attack = createAttackCluster(state, layout, undefined, { hints, gesturesOnly: () => touch().gesturesOnly === true });
   const defence = createDefenceCluster(state, layout, undefined, { hints });
   const cluster = createClusterController({ state, attack, defence });
+  // TCH-09: the overlay draws the cluster controller's slot labels / pressed slots, the live stick config (size, fixed
+  // origin) and Gestures Only / hint settings; one clock with the controls.
+  overlay.bind({ cluster, stickConfig: stickCfg, touchSettings: touch, now });
 
   let pausePending = false;
   const pauseBtn = createTouchButton({ state, id: TouchButtonId.PAUSE, geom: { cx: layout.pause.cx, cy: layout.pause.cy, r: layout.pause.r } });

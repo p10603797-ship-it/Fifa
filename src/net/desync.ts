@@ -418,13 +418,18 @@ export function createDesyncGuard(opts: DesyncGuardOptions): DesyncGuard {
       if (isHost || disposed || !pending || s.tick < pending.tick) return false;
       const p = pending;
       pending = null;
+      const fromTick = s.tick;
       let diff: string | null;
       try {
+        // Diagnostics only: compare with the tick aligned, so a guest that is ahead still names a field.
+        s.tick = p.tick;
         diff = diffState(s, p.state);
+        if (fromTick !== p.tick) diff = `(local ${fromTick - p.tick} ticks ahead) ${diff ?? 'none'}`;
       } catch {
         diff = null;
+      } finally {
+        s.tick = fromTick;
       }
-      const fromTick = s.tick;
       copyState(s, p.state);
       stats.epoch = p.e;
       stats.resyncs++;

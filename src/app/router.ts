@@ -12,6 +12,9 @@
  *   and the browser back gesture (popstate on a sentinel history entry that is re-armed so the page is never left).
  *   A keyboard press seen both as keydown and as the menu input's BACK is collapsed (BACK_DEDUPE_MS).
  * - Navigation requested while another navigation is running (e.g. inside mount) is queued and run afterwards.
+ * - [INT-B] onUserBack: a Back from an input device (backFromInput) that pops a screen calls it (the app plays
+ *   UiSound.BACK, AUD-05). Not called when the screen handled Back itself (it plays its own sound), at the root, or for
+ *   programmatic back() calls (on-screen Back buttons already play the sound on their click).
  */
 import type { AppContext, Screen, ScreenFactory, ScreenId, ScreenParams } from '../contracts/app';
 import type { AppRouter } from './types';
@@ -27,6 +30,8 @@ export interface RouterOptions {
   onError?(err: unknown, where: string): void;
   /** After each completed navigation. */
   onChange?(id: ScreenId | null): void;
+  /** A Back from an input device popped a screen (see module doc). */
+  onUserBack?(): void;
   now?: () => number;
 }
 
@@ -35,7 +40,7 @@ interface Entry {
   params: ScreenParams;
 }
 
-type Op = { kind: 'go' | 'replace' | 'reset'; id: ScreenId; params: ScreenParams } | { kind: 'back' };
+type Op = { kind: 'go' | 'replace' | 'reset'; id: ScreenId; params: ScreenParams } | { kind: 'back'; input?: boolean };
 
 function isEditable(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
@@ -128,6 +133,13 @@ export function createRouter(root: HTMLElement, getCtx: () => AppContext, opts: 
         if (handled) return;
       }
       if (stack.length <= 1) return;
+      if (op.input && opts.onUserBack) {
+        try {
+          opts.onUserBack();
+        } catch (err) {
+          fail(err, 'onUserBack');
+        }
+      }
       unmountCurrent();
       stack.pop();
       mountTop();
@@ -202,7 +214,7 @@ export function createRouter(root: HTMLElement, getCtx: () => AppContext, opts: 
       // poll. Only that pairing is collapsed; pad B and the browser back gesture always count.
       if (source === 'menu' && t - lastKeyBackAt < BACK_DEDUPE_MS) return;
       if (source === 'key') lastKeyBackAt = t;
-      router.back();
+      run({ kind: 'back', input: true });
     },
     dispose() {
       for (const d of disposers.splice(0)) d();
