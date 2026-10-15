@@ -1,6 +1,6 @@
 /**
  * [TAI-08] CPU ball-carrier decision engine. On the ball the CPU scores its options every few ticks
- * (T_AI.carrierEvalInterval, brain.evalT): each pass candidate (TAI-09), through ball, cross, dribble into
+ * (T_LEVEL.carrierEvalTicks by level, brain.evalT): each pass candidate (TAI-09), through ball, cross, dribble into
  * space, skill move, shield, clear, and shoot (TAI-10 xG). Team style weights (TAI-12) and difficulty
  * (reaction, noise, look-ahead, execution error) shape choices. Executes the chosen plan ONLY by writing the
  * CPU InputFrame (stick, buttons held for the power it wants, aim, gestures for explicit targets) — the same
@@ -15,7 +15,7 @@
  *     the reaction delay, levelParams(level).reactionTicks, during which the carrier just keeps running the way he is
  *     going (stick along his velocity, no buttons). A loose ball (our pass in flight: the receiver meets it on his own
  *     with the stick released) or a keeper holding the ball (GKP-04 distributes) gets a neutral frame.
- *  2. Decision (first tick after the reaction delay, then every T_AI.carrierEvalInterval ticks while dribbling,
+ *  2. Decision (first tick after the reaction delay, then every T_LEVEL.carrierEvalTicks ticks while dribbling,
  *     shielding or holding; a kick or skill plan is committed until it has been executed or has failed). Every option
  *     gets a utility in goal-probability units against a possession-value model: PV(progress) = pvBase + pvSpan *
  *     ((progress + 1) / 2)^3 (less toward the touchlines) for having the ball at a spot, and lossCost = the opponents' PV(-progress) x style safety
@@ -73,10 +73,10 @@ import type { EventSink } from '../../contracts/events';
 import { Btn, GESTURE_POS_SCALE, type InputFrame } from '../../contracts/input';
 import { CpuPlan, type CpuBrainState, type PlayerState, type SimState } from '../../contracts/state';
 import type { LevelParams, StyleWeights } from '../../contracts/systems';
-import { T_AI, T_CPU, T_DRIBBLE, T_PASS, T_PLAYER, T_SKILL } from '../../contracts/tuning';
+import { T_CPU, T_DRIBBLE, T_LEVEL, T_PASS, T_PLAYER, T_SKILL } from '../../contracts/tuning';
 import { rngGauss } from '../../sim/core/rng';
 import { inPenaltyArea } from '../../sim/pitch/geometry';
-import { levelParams, styleWeights } from './levels';
+import { composureNoiseMul, levelParams, levelValue, styleWeights } from './levels';
 import { createPassOptions, scorePassOptions, type PassOption } from './passing';
 import { bestDribble, chooseSkill, estimateXg, lastXgBlock, shotLaneClear, SKILL_CHOICE } from './shooting';
 
@@ -313,8 +313,9 @@ const DRB = { x: 0, z: 0 };
 const SV = new Float64Array(3);
 /** Noise scratch: NZ[0] decision noise (noise()), NZ[1] a Gaussian draw (gauss()). */
 const NZ = new Float64Array(2);
-/** Candidate option for consider(): utility, target x / direction x, target z / direction z. */
-const CU = new Float64Array(3);
+/** Candidate option for consider(): utility, target x / direction x, target z / direction z, TAI-09 completion (-1: not
+ *  a pass). */
+const CU = new Float64Array(4);
 
 /** Execution steps (brain.p1 bits 0..3). */
 const STEP_NONE = 0;
@@ -332,7 +333,7 @@ const MODE_BUTTON = 3;
 /** Decision context (scratch, filled by fillContext at each decision). */
 const C = {
   team: 0, dir: 1, prog: 0, vHere: 0, pressure: 0, nearD: 1e9, nearOpp: -1, safetyMul: 1, noiseSd: 0, lookFrac: 0,
-  counter: 0,
+  counter: 0, riskSeen: 1,
 };
 
 /**
@@ -340,7 +341,12 @@ const C = {
  * its utility, the shot option's utility (-1e18 when not offered) and why it was not offered (SHOT_* codes), its clean
  * xG and lane clear.
  */
-export const CARRIER_DEBUG = { plan: 0, u: 0, shotU: -1e18, shotWhy: 0, shotClean: 0, shotClear: 1, prog: 0 };
+export const CARRIER_DEBUG = {
+  plan: 0, u: 0, shotU: -1e18, shotWhy: 0, shotClean: 0, shotClear: 1, prog: 0,
+  /** [QF-11] The chosen option's TAI-09 completion (before the level's risk perception; -1 for no pass), kick kind and
+   *  target slot (TAI-09 calibration tools). */
+  passC: -1, passKind: 0, passSlot: -1,
+};
 /** CARRIER_DEBUG.shotWhy codes. */
 export const SHOT_OFFERED = 0, SHOT_NOT_ATTACKING = 1, SHOT_NO_XG = 2, SHOT_OUT_OF_RANGE = 3, SHOT_BELOW_THRESHOLD = 4, SHOT_FAILED = 5;
 
@@ -348,7 +354,7 @@ export const SHOT_OFFERED = 0, SHOT_NOT_ATTACKING = 1, SHOT_NO_XG = 2, SHOT_OUT_
 const SHOT = { side: 1, valid: 0 };
 
 /** Best option so far (scratch). */
-const BEST = { plan: CpuPlan.NONE as CpuPlan, u: -1e18, slot: -1, x: 0, z: 0, mode: MODE_NONE, kind: KickKind.NONE as number };
+const BEST = { plan: CpuPlan.NONE as CpuPlan, u: -1e18, slot: -1, x: 0, z: 0, mode: MODE_NONE, kind: KickKind.NONE as number, c: -1 };
 
 // ---------------------------------------------------------------- small helpers
 
@@ -489,9 +495,11 @@ function fillContext(s: SimState, team: number, p: Readonly<PlayerState>, lv: Re
   C.prog = (t.dir * p.x) / HALF_LENGTH;
   C.safetyMul = LT.safetyLossMin + (LT.safetyLossMax - LT.safetyLossMin) * clamp01(sw.safety);
   C.vHere = posValue(C.prog, p.z);
-  C.noiseSd = clamp01(lv.decisionNoise) * LT.noiseScale;
+  C.noiseSd = clamp01(lv.decisionNoise) * LT.noiseScale * composureNoiseMul(s.attrs[p.slot]!.composure);
   C.lookFrac = clamp01(lv.lookAheadTicks / LT.lookAheadRef);
   C.counter = t.phase === TeamPhase.TRANSITION_ATTACK ? 1 : 0;
+  const rs = levelValue(s, team, T_LEVEL.passRiskSeen);
+  C.riskSeen = !(rs > 0) ? 0 : rs > 3 ? 3 : rs;
   // Nearest opponent now, and the closest one after the look-ahead (both carrying on at their velocities).
   const la = (lv.lookAheadTicks > 0 ? lv.lookAheadTicks : 0) * DT;
   const px = p.x + p.vx * la, pz = p.z + p.vz * la;
@@ -527,8 +535,11 @@ function gauss(s: SimState): void {
 /** Keep the option (utility CU[0], target / direction CU[1], CU[2]) if it beats the best so far. */
 function consider(plan: CpuPlan, slot: number, mode: number, kind: number): void {
   const u = CU[0]!;
+  const c = CU[3]!;
+  CU[3] = -1; // set by pass options only
   if (!(u > BEST.u)) return;
   BEST.plan = plan; BEST.u = u; BEST.slot = slot; BEST.x = CU[1]!; BEST.z = CU[2]!; BEST.mode = mode; BEST.kind = kind;
+  BEST.c = c;
 }
 
 function planOfPass(kind: number): CpuPlan {
@@ -564,6 +575,9 @@ function passOptionsInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<Sty
     const ox = o.x, oz = o.z;
     if (!(ox === ox && oz === oz) || ox > HALF_LENGTH + 5 || ox < -HALF_LENGTH - 5 || oz > HALF_WIDTH + 5 || oz < -HALF_WIDTH - 5) continue;
     let c = clamp01(o.completion);
+    CU[3] = c;
+    // [QF-11] A low level under-rates the interception risk (T_LEVEL.passRiskSeen) and plays the pass that is cut out.
+    c = clamp01(1 - (1 - c) * C.riskSeen);
     if (plan === CpuPlan.THROUGH) c *= 1 - LT.throughLookPenalty * (1 - C.lookFrac);
     const tprog = (dir * ox) / HALF_LENGTH;
     let vT = posValue(tprog, oz);
@@ -763,6 +777,7 @@ function decide(s: SimState, team: number, brain: CpuBrainState, p: Readonly<Pla
   sw: Readonly<StyleWeights>): void {
   fillContext(s, team, p, lv, sw);
   BEST.plan = CpuPlan.NONE; BEST.u = -1e18; BEST.slot = -1; BEST.x = 0; BEST.z = 0; BEST.mode = MODE_NONE; BEST.kind = 0;
+  BEST.c = -1; CU[3] = -1;
   const cur = brain.plan;
   const shieldAge = cur === CpuPlan.SHIELD ? brain.planT : 0;
   if (shieldAge >= LT.shieldMaxTicks) {
@@ -784,6 +799,7 @@ function decide(s: SimState, team: number, brain: CpuBrainState, p: Readonly<Pla
   setP1(brain, stepOf(brain), modeOf(brain), startedOf(brain), left > 0 ? failMaskOf(brain) : 0, left);
   const chosen = BEST.plan as CpuPlan; // (cast: the option scorers above wrote it; TS narrowed it to the reset value)
   CARRIER_DEBUG.plan = chosen; CARRIER_DEBUG.u = BEST.u;
+  CARRIER_DEBUG.passC = BEST.c; CARRIER_DEBUG.passKind = BEST.kind; CARRIER_DEBUG.passSlot = BEST.slot;
   if (cur === CpuPlan.SHIELD && chosen !== CpuPlan.SHIELD && shieldAge >= LT.shieldRestMinTicks && failEvalsOf(brain) < LT.shieldRestEvals) {
     // [INT-A] A long shield that ends on its own rests too, so the carrier does not cycle shield / dribble / shield.
     setP1(brain, stepOf(brain), modeOf(brain), startedOf(brain), failMaskOf(brain) | (1 << CpuPlan.SHIELD), LT.shieldRestEvals);
@@ -1228,7 +1244,9 @@ export function cpuCarrier(s: SimState, team: number, out: InputFrame, ev: Event
     if (brain.evalT > 0) brain.evalT--;
     if (brain.evalT <= 0 || brain.plan === CpuPlan.NONE) {
       decide(s, team, brain, p, lv, styleWeights(t.style));
-      brain.evalT = T_AI.carrierEvalInterval;
+      // [QF-11] Re-decision period by level (T_LEVEL.carrierEvalTicks; T_AI.carrierEvalInterval at Professional).
+      const every = Math.round(levelValue(s, team, T_LEVEL.carrierEvalTicks));
+      brain.evalT = every >= 1 ? every : 1;
     }
   }
   execute(s, team, brain, p, out);

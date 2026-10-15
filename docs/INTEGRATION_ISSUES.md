@@ -60,3 +60,10 @@ Collected from Wave 1 reports. Each line: area — symptom — proposed owner/fi
 - CPU corners are delivered into a nearly empty box (0-3 attackers): hold the take until >= 4 attackers are in the box or place them at the award (tests/scenario/qf-4-cr-corner-box.test.ts).
 - Fouled free-kick taker is placed at the ball while still in his fall / get-up (cosmetic).
 - Load-sensitive allocation tests: int-c-render-alloc, gfx-04-goals, gfx-05-alloc, gfx-07-alloc (+ aud-05, pad-08, tch-06) -> QF-7.
+
+## From QF-12
+- tests/e2e/fnd-int-skeleton.spec.ts live input steps (keyboard, touch, pad) are flaky in a full match (restart set-up moves): run them in Practice FREE_PLAY or only while IN_PLAY — Wave 5 e2e cleanup.
+- tch-02-stick beforeAll turns auto-switch off — applied by the lead.
+- PRE_MATCH -> KICK_OFF cut moves players up to 11.9 m in one tick: confirm the establishing shot hides it (QF-7/sign-off visual check).
+- Lifetime records are saved but no screen shows them (MOD-05 'records'): add a small records view (Wave 5 polish) or drop the claim.
+- Monkey seed 103 crashed the Chromium renderer once (memory pressure in the shared container); passed alone.

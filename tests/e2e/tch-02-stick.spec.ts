@@ -72,6 +72,8 @@ test.beforeAll(async ({ browser }) => {
   page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   await page.goto('/');
+  // Auto-switch could move the human to another player during a long stick hold (QF-12 CR 2).
+  await page.evaluate(() => window.__dotkick!.ctx.settings.update((s) => { s.controls.autoSwitch = 0; }));
   await page.getByTestId('splash-start').click();
   await page.getByTestId('main-kickoff').click();
   await page.waitForFunction(() => {

@@ -340,6 +340,14 @@ export const T_AI = {
   /** [INT-A, moved by QF-2] TAI-13 long goal kick / deep free kick target at most this far (was 75: 70 m kicks bounced on
    *  untouched into the far box), m. */
   setPieceGkLongMax: 40,
+  /** [QF-11] The player's composure scales the CPU's decision noise on him (TAI-08 option noise, TAI-11 rash and noisy
+   *  tackles): x clamp(1 + composureNoiseSlope x (composureNoiseRef - composure) / 30, composureNoiseMin,
+   *  composureNoiseMax). An average player (ref) keeps the level's noise; a calm one decides cleaner, a nervous one
+   *  rushes (BRIEF section 15: ratings show through attributes). Unitless; ref attribute points. */
+  composureNoiseSlope: 0,
+  composureNoiseRef: 72,
+  composureNoiseMin: 0.4,
+  composureNoiseMax: 1.8,
 } as const;
 
 /**
@@ -439,6 +447,22 @@ export const T_LEVEL = {
    *  side): reaction time is one of the level differences (BRIEF §7), the keeper's included. Not in LevelParams
    *  (contracts/systems.ts): GKP-02 reads it here. */
   keeperReactTicks: [10, 6, 3, 0, -2, -3] as readonly number[],
+  /** [QF-11] Extra AI tables (read through ai/cpu/levels levelValue: a human side's AI always uses the Professional
+   *  entry, so Professional is the pre-QF-11 behaviour). CPU carrier re-decision period, ticks (TAI-08; the
+   *  pre-QF-11 T_AI.carrierEvalInterval was 5 for every level): a low level reacts to a closing presser late. */
+  carrierEvalTicks: [5, 5, 5, 5, 5, 5] as readonly number[],
+  /** [QF-11] Share of a pass's interception risk the CPU carrier sees (TAI-08 / TAI-09: completion c is judged as
+   *  1 - (1 - c) x this, clamped to 0..1), 0..3: below 1 a level under-rates the men in the lane, above 1 it over-rates
+   *  them and plays safe. */
+  passRiskSeen: [1, 1, 1, 1, 1, 1] as readonly number[],
+  /** [QF-11] Team shape update period of a CPU side, ticks (TAI-01; T_AI.shapeInterval was 6 for every side): a low
+   *  level's block shifts late after the ball. */
+  shapeIntervalTicks: [6, 6, 6, 6, 6, 6] as readonly number[],
+  /** [QF-11] TAI-04 marking distance multiplier of a CPU side (markGap / markGapMid x this): a low level marks loose. */
+  markGapMul: [1, 1, 1, 1, 1, 1] as readonly number[],
+  /** [QF-11] TAI-04 back-line speed multiplier of a CPU side (lineUpRate / lineDownRate x this): a low level's line
+   *  steps and drops late. */
+  lineRateMul: [1, 1, 1, 1, 1, 1] as readonly number[],
 } as const;
 
 export const T_INPUT = {

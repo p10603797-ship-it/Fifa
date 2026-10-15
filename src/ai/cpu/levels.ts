@@ -33,7 +33,7 @@
 import { Difficulty, TeamStyle } from '../../contracts/enums';
 import type { SimState } from '../../contracts/state';
 import type { LevelParams, StyleWeights } from '../../contracts/systems';
-import { T_LEVEL } from '../../contracts/tuning';
+import { T_AI, T_LEVEL } from '../../contracts/tuning';
 import { rngGauss } from '../../sim/core/rng';
 
 export const LOCAL_TUNING = { // TUNING-CR (TAI-12): move into contracts/tuning.ts as T_STYLE
@@ -109,6 +109,39 @@ export function levelParams(level: Difficulty): LevelParams {
 /** Choice weights of a team style (frozen, shared; NEUTRAL_STYLE for an unknown style). */
 export function styleWeights(style: TeamStyle): StyleWeights {
   return validIndex(style, STYLE_COUNT) ? STYLES[style]! : NEUTRAL_STYLE;
+}
+
+/**
+ * [QF-11] Difficulty level that drives team `team`'s AI: its CPU brain's level when the team has an active CPU brain,
+ * else Professional (a human side's teammates and keeper always play at Professional; an invalid level too).
+ */
+export function teamLevel(s: SimState, team: number): Difficulty {
+  const t = validIndex(team, s.teams.length) ? s.teams[team] : undefined;
+  if (!t || t.cpu.active !== 1) return Difficulty.PROFESSIONAL;
+  const lv = t.cpu.level;
+  return validIndex(lv, LEVEL_COUNT) ? lv : Difficulty.PROFESSIONAL;
+}
+
+/**
+ * [QF-11] Entry of a per-level T_LEVEL table (index = Difficulty) at team `team`'s AI level (teamLevel); the
+ * Professional entry for a short table or a non-finite value. The extra tables (beyond LevelParams) are AI parameters
+ * only, read where they apply (contracts/systems.ts LevelParams stays the seven TAI-12 fields).
+ */
+export function levelValue(s: SimState, team: number, table: readonly number[]): number {
+  const v = table[teamLevel(s, team)];
+  if (v !== undefined && Number.isFinite(v)) return v;
+  const pro = table[Difficulty.PROFESSIONAL];
+  return pro !== undefined && Number.isFinite(pro) ? pro : 0;
+}
+
+/**
+ * [QF-11] Decision-noise multiplier for a player of composure `composure` (T_AI.composureNoise*): 1 at the reference,
+ * smaller for a calm player, larger for a nervous one, clamped; 1 for a non-finite attribute.
+ */
+export function composureNoiseMul(composure: number): number {
+  if (!Number.isFinite(composure)) return 1;
+  const m = 1 + (T_AI.composureNoiseSlope * (T_AI.composureNoiseRef - composure)) / 30;
+  return m < T_AI.composureNoiseMin ? T_AI.composureNoiseMin : m > T_AI.composureNoiseMax ? T_AI.composureNoiseMax : m;
 }
 
 /**

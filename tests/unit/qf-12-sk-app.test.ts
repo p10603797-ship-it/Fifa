@@ -7,10 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppContext, DeviceRegistry, MatchSetup, MatchSummary, Screen, ScreenId } from '../../src/contracts/app';
 import { COMMAND_QUEUE_CAPACITY } from '../../src/app/localInput';
 import { MAX_SUBS } from '../../src/contracts/constants';
-import { ControllerKind, FormationId, KitSlot, MatchPhase, ModeId, Period, Role, TacticalFocus } from '../../src/contracts/enums';
+import { Command, ControllerKind, FormationId, KitSlot, MatchPhase, ModeId, Period, PracticeKind, Role, TacticalFocus } from '../../src/contracts/enums';
 import { EventType } from '../../src/contracts/events';
 import { createDefaultSettings, type Settings } from '../../src/contracts/settings';
-import { createMatchConfig, RosterStatus } from '../../src/contracts/state';
+import { createInputFrame, type InputFrame } from '../../src/contracts/input';
+import { createMatchConfig, RosterStatus, type SimState } from '../../src/contracts/state';
 import { CLUBS } from '../../src/data/clubs';
 import { createNullRenderer } from '../../src/app/nullRenderer';
 import { createRouter } from '../../src/app/router';
@@ -25,11 +26,16 @@ import { step } from '../../src/sim/step';
 import { closeTopModal } from '../../src/ui/components';
 import { kitHex } from '../../src/ui/hud/scoreboard';
 import { createToasts } from '../../src/ui/hud/toasts';
-import { changeTeams, createFullTimeScreen } from '../../src/ui/screens/fullTime';
+import { changeTeams, createFullTimeScreen, finalActions } from '../../src/ui/screens/fullTime';
+import { createHalfTimeScreen } from '../../src/ui/screens/halfTime';
+import { createHints } from '../../src/ui/hud/hints';
+import { createReplayRecorder } from '../../src/sim/replay';
+import { replaySetup } from '../../src/platform/replayRecorder';
+import { makeScenario } from '../harness/scenario';
 import type { FlowParams } from '../../src/ui/screens/matchFlow';
 import { optionsFromSettings, startSetup } from '../../src/ui/screens/matchSettings';
 import {
-  pumpTeamOrders, resetTeamOrders, setFocusOrder, setFormationOrder, setTacticOrder, teamOrders,
+  createPauseMenu, isReplayPlayback, pumpTeamOrders, resetTeamOrders, setFocusOrder, setFormationOrder, setTacticOrder, teamOrders,
 } from '../../src/ui/screens/pause';
 import { fakeCtx } from './mod-01-fakes';
 import { FakeElement, makeAppDom } from './uix-01-fakedom';
@@ -308,5 +314,186 @@ describe('QF-12 kits: the toast chip shows the high-contrast shirt the players w
     expect(chip()).toBe(kitHex(plain.outfield[1].shirt));
     expect(kitHex(hc.outfield[0].shirt)).not.toBe(kitHex(plain.outfield[0].shirt));
     toasts.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------- replay playback
+
+describe('QF-12 replay playback (Diagnostics > Load replay): no online Rematch, no dead Restart, no team orders or hints', () => {
+  let screen: FakeElement;
+  const proto = FakeElement.prototype as unknown as { replaceChildren?: (...n: FakeElement[]) => void };
+  if (!proto.replaceChildren) {
+    proto.replaceChildren = function (this: FakeElement, ...nodes: FakeElement[]) {
+      while (this.children.length > 0) this.removeChild(this.children[0]!);
+      for (const n of nodes) this.append(n);
+    };
+  }
+  beforeEach(() => {
+    const dom = makeAppDom();
+    screen = dom.screen;
+    vi.stubGlobal('document', dom.doc);
+    vi.stubGlobal('window', dom.win);
+    resetTeamOrders();
+  });
+  afterEach(() => {
+    while (closeTopModal()) { /* leftovers */ }
+    vi.unstubAllGlobals();
+  });
+
+  /** A recorded Kick-Off (P1 home by touch) as Diagnostics plays it: replaySetup(...).setup. */
+  function replayPlayback(mode: ModeId = ModeId.KICK_OFF): MatchSetup {
+    const config = createMatchConfig();
+    config.mode = mode;
+    config.humans[0] = { ...config.humans[0]!, kind: ControllerKind.HUMAN, side: 0 };
+    const rec = createReplayRecorder(config);
+    return replaySetup(rec.replay).setup;
+  }
+
+  function ctxFor(setup: MatchSetup, state: SimState | null, frames: InputFrame[] = []) {
+    const session = {
+      active: true, paused: false, pausedBy: -1,
+      pause: vi.fn(function (this: { paused: boolean; pausedBy: number }, h: number) { this.paused = true; this.pausedBy = h; }),
+      resume: vi.fn(() => true), restart: vi.fn(), quit: vi.fn(), queueCommand: vi.fn(),
+      getState: () => state, getSetup: () => setup, runtime: () => (state ? { curr: state, frames } : null),
+    };
+    const settingsUpdate = vi.fn();
+    const ctx = {
+      session, clubs: CLUBS, audio: { playUi: vi.fn() },
+      router: { go: vi.fn(), back: vi.fn() },
+      settings: { get: () => createDefaultSettings(), update: settingsUpdate, subscribe: () => () => undefined },
+      devices: { lastActive: () => 'touch', list: () => [] },
+      platform: { isTouch: true },
+      focus: { attach: vi.fn(), detach: vi.fn(), focus: vi.fn(), handle: vi.fn(), onAction: () => () => undefined },
+    } as unknown as AppContext;
+    return { ctx, session, settingsUpdate };
+  }
+
+  const q = (id: string): FakeElement | null => screen.querySelector(`[data-testid="${id}"]`);
+
+  it('isReplayPlayback reads only a replay payload; finalActions for a replay = Quit only (was: the online Rematch)', () => {
+    expect(isReplayPlayback(replayPlayback())).toBe(true);
+    expect(isReplayPlayback({ modeData: { kind: 'cup' } })).toBe(false);
+    expect(isReplayPlayback(null)).toBe(false);
+    expect(finalActions(ModeId.KICK_OFF, true)).toEqual({ rematch: false, changeTeams: 'online-lobby', cup: false });
+    expect(finalActions(ModeId.KICK_OFF, true, true)).toEqual({ rematch: false, changeTeams: null, cup: false });
+    expect(finalActions(ModeId.CUP, true, true)).toEqual({ rematch: false, changeTeams: null, cup: false });
+  });
+
+  it('final full-time screen of a replay: Quit only (no button into the online lobby, no cup Continue)', () => {
+    for (const mode of [ModeId.KICK_OFF, ModeId.CUP]) {
+      const setup = replayPlayback(mode);
+      const { ctx, session } = ctxFor(setup, null);
+      const ft = createFullTimeScreen();
+      ft.mount(screen as unknown as HTMLElement, ctx, { final: true, summary: summary(1, 0, 0) });
+      expect(q('ft-change-teams'), `mode ${mode}`).toBeNull();
+      expect(q('ft-rematch')).toBeNull();
+      expect(q('ft-cup')).toBeNull();
+      expect(q('ft-quit')).not.toBeNull();
+      expect(ft.onBack!()).toBe(true);
+      expect(session.quit).toHaveBeenCalledTimes(1);
+      expect((ctx.router.go as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+      ft.unmount();
+      screen.removeChild(screen.children[0]!);
+      while (screen.children.length > 0) screen.removeChild(screen.children[0]!);
+    }
+  });
+
+  it('pause menu over a replay: no Restart (session.restart refuses a custom provider), no tactics; a recorded QUICK_SUB does not pause it', () => {
+    const s = makeScenario({ humans: 1, phase: MatchPhase.IN_PLAY });
+    const frames = [createInputFrame(), createInputFrame()];
+    const setup = replayPlayback();
+    const { ctx, session } = ctxFor(setup, s, frames);
+    const menu = createPauseMenu();
+    menu.mount(screen as unknown as HTMLElement, ctx);
+    // The recorded frame of P1 carries QUICK_SUB.
+    frames[0]!.cmd = Command.QUICK_SUB;
+    s.tick = 40;
+    menu.update(1000);
+    expect(session.pause).not.toHaveBeenCalled();
+    expect(session.paused).toBe(false);
+    // Paused by the viewer: the menu has Resume and Quit, no Restart; team management is read-only.
+    session.paused = true;
+    menu.show();
+    expect(q('pause-resume')).not.toBeNull();
+    expect(q('pause-quit')).not.toBeNull();
+    expect(q('pause-restart')).toBeNull();
+    expect((q('pause-tactics') as unknown as { disabled: boolean }).disabled).toBe(true);
+    menu.dispose();
+  });
+
+  it('a local match keeps Restart, tactics and the quick-sub prompt (control)', () => {
+    const s = makeScenario({ humans: 1, phase: MatchPhase.IN_PLAY });
+    const frames = [createInputFrame(), createInputFrame()];
+    const setup: MatchSetup = { config: s.config as MatchSetup['config'], bindings: [{ human: 0, deviceIds: ['touch'] }] };
+    const { ctx, session } = ctxFor(setup, s, frames);
+    const menu = createPauseMenu();
+    menu.mount(screen as unknown as HTMLElement, ctx);
+    frames[0]!.cmd = Command.QUICK_SUB;
+    s.tick = 40;
+    menu.update(1000);
+    expect(session.pause).toHaveBeenCalledWith(0);
+    menu.show();
+    expect(menu.page).toBe('quick');
+    menu.dispose();
+    const menu2 = createPauseMenu();
+    while (screen.children.length > 0) screen.removeChild(screen.children[0]!);
+    menu2.mount(screen as unknown as HTMLElement, ctx);
+    menu2.show();
+    expect(q('pause-restart')).not.toBeNull();
+    expect((q('pause-tactics') as unknown as { disabled: boolean }).disabled).toBe(false);
+    menu2.dispose();
+  });
+
+  it('half-time over a replay: no Substitutions / Tactics shortcut (it paused the playback for orders that are ignored)', () => {
+    const s = makeScenario({ humans: 1, phase: MatchPhase.HALF_TIME });
+    const { ctx } = ctxFor(replayPlayback(), s);
+    const ht = createHalfTimeScreen();
+    ht.mount(screen as unknown as HTMLElement, ctx, {});
+    expect(q('ht-continue')).not.toBeNull();
+    expect(q('ht-team')).toBeNull();
+    expect(q('ht-tactics')).toBeNull();
+    ht.unmount();
+    while (screen.children.length > 0) screen.removeChild(screen.children[0]!);
+    const local: MatchSetup = { config: s.config as MatchSetup['config'], bindings: [{ human: 0, deviceIds: ['touch'] }] };
+    const ht2 = createHalfTimeScreen();
+    ht2.mount(screen as unknown as HTMLElement, ctxFor(local, s).ctx, {});
+    expect(q('ht-team')).not.toBeNull();
+    ht2.unmount();
+  });
+
+  it('set-piece hint cards: none in a replay, so watching one never uses up the player\'s hints', () => {
+    for (const replay of [true, false]) {
+      const s = makeScenario({ humans: 1, phase: MatchPhase.IN_PLAY });
+      const setup: MatchSetup = replay ? replayPlayback() : { config: s.config as MatchSetup['config'], bindings: [{ human: 0, deviceIds: ['touch'] }] };
+      const { ctx, settingsUpdate } = ctxFor(setup, s);
+      const hints = createHints();
+      while (screen.children.length > 0) screen.removeChild(screen.children[0]!);
+      hints.mount(screen as unknown as HTMLElement, ctx);
+      hints.setMatch(s, CLUBS);
+      const frame = { dtMs: 16, alpha: 1, ticks: 1, paused: false } as never;
+      hints.update(s, frame, null);
+      s.match.phase = MatchPhase.CORNER;
+      s.match.restart.team = 0;
+      hints.update(s, frame, null);
+      expect(settingsUpdate.mock.calls.length, replay ? 'replay: no use counted' : 'local: one use counted').toBe(replay ? 0 : 1);
+      hints.dispose();
+    }
+  });
+
+  it('a replay of a tutorial session shows no coach card (its recorded steps are not the viewer\'s progress)', () => {
+    for (const replay of [true, false]) {
+      const s = makeScenario({ humans: 1, phase: MatchPhase.IN_PLAY, config: { mode: ModeId.PRACTICE, practice: PracticeKind.TUTORIAL } });
+      const base: MatchSetup = { config: s.config as MatchSetup['config'], bindings: [{ human: 0, deviceIds: ['touch'] }], modeData: { tutorial: { device: 'touch', startStep: 0 } } };
+      const setup: MatchSetup = replay ? { ...base, bindings: [], modeData: { replay: true } } : base;
+      const { ctx } = ctxFor(setup, s);
+      const hints = createHints();
+      while (screen.children.length > 0) screen.removeChild(screen.children[0]!);
+      hints.mount(screen as unknown as HTMLElement, ctx);
+      hints.setMatch(s, CLUBS);
+      hints.update(s, { dtMs: 16, alpha: 1, ticks: 1, paused: false } as never, null);
+      const kind = (screen.querySelector('[data-testid="hud-hint"]') as unknown as { dataset: Record<string, string> }).dataset.kind;
+      expect(kind, replay ? 'replay: no coach' : 'tutorial: coach card').toBe(replay ? undefined : 'tutorial');
+      hints.dispose();
+    }
   });
 });

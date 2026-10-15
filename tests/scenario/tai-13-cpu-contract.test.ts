@@ -25,7 +25,7 @@ import { LOCAL_TUNING } from '../../src/ai/setpieces';
 import { applyKick } from '../../src/sim/core/kick';
 import { NULL_SINK } from '../../src/sim/core/events';
 import { setupKickOff } from '../../src/sim/rules/machine';
-import { awardRestart, prepareTakerKick } from '../../src/sim/rules/restart';
+import { awardRestart, LOCAL_TUNING as RESTART_LT, prepareTakerKick } from '../../src/sim/rules/restart';
 import { makeScenario, runTicks } from '../harness/scenario';
 
 interface KickRec {
@@ -90,6 +90,8 @@ vi.mock('../../src/sim/rules/shootout', () => ({
 }));
 
 const SETUP = T_RULES.restartSetupTicks;
+/** [QF-11] Walked set-ups (D-008 revised: throw-ins, free kicks > 35 m out) become ready up to this much later. */
+const WALK = RESTART_LT.setupExtendMaxTicks;
 const DELAY = T_RULES.cpuRestartDelay;
 const FILL = T_PASS.powerFillTicks;
 const L = createKickLaunch();
@@ -228,8 +230,9 @@ function awarded(kind: RestartKind, team: number, x: number, z: number, shift = 
   return s;
 }
 
-/** Budget for one CPU restart: ready + delay + the longest arrival wait + aim + a full power hold + slack. */
-const BUDGET = SETUP + DELAY + LOCAL_TUNING.maxArrivalWait + LOCAL_TUNING.shotAimTicks + FILL + 10;
+/** Budget for one CPU restart: ready (a walked set-up up to WALK late) + delay + the longest arrival wait + aim + a full
+ *  power hold + slack. */
+const BUDGET = SETUP + WALK + DELAY + LOCAL_TUNING.maxArrivalWait + LOCAL_TUNING.shotAimTicks + FILL + 10;
 
 function takeIt(s: SimState, label: string, budget = BUDGET): { kick: KickRec; events: SimEvent[] } {
   const taker = s.match.restart.taker;
@@ -361,8 +364,11 @@ describe('TAI-13 CPU completes every restart kind within a few seconds (contract
   });
 
   it('a refused first input is retried with the button equivalent, still before any safety net', () => {
+    // [QF-11] A deep free kick (no wait for box runners): a cross at a wide free kick now waits up to maxArrivalWait
+    // (120) for its runners, and a gesture refused at the end of that wait is taken by RUL-05's own CPU fallback
+    // (cpuRestartDelay + 140), which this file fakes away; the retry itself is the same program either way.
     H.refuseFirstGesture = true;
-    const s = awarded(RestartKind.FREE_KICK, 1, -25, -27, -25);
+    const s = awarded(RestartKind.FREE_KICK, 1, 10, 12, 0);
     const { kick } = takeIt(s, 'free kick retry', BUDGET + LOCAL_TUNING.retryTicks + 20);
     expect(H.refused).toBe(1);
     expect(['lob', 'pass', 'shoot']).toContain(kick.via);

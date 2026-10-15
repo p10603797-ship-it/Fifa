@@ -109,6 +109,16 @@ export function teamOfHuman(s: ReadonlySimState, human: number): number {
   return c && c.kind === ControllerKind.HUMAN && (c.side === 0 || c.side === 1) ? c.side : -1;
 }
 
+/**
+ * [QF-12] True for a replay playing in the session (Diagnostics > Load replay: platform/replayRecorder replaySetup,
+ * modeData { replay: true }). Its input provider plays the recorded frames and ignores queued commands, and
+ * session.restart() refuses a custom provider, so nobody manages a team, restarts or rematches it. Pure.
+ */
+export function isReplayPlayback(setup: { modeData?: unknown } | null | undefined): boolean {
+  const md = setup?.modeData as { replay?: unknown } | null | undefined;
+  return !!md && typeof md === 'object' && md.replay === true;
+}
+
 /** Teams this menu may manage: every side with a human; online only the acting human's side. Pure. */
 export function manageableTeams(s: ReadonlySimState, actingHuman: number, online: boolean): number[] {
   if (online) {
@@ -668,6 +678,13 @@ export function createPauseMenu(): PauseMenu {
   const now = (): number => (typeof performance !== 'undefined' ? performance.now() : 0);
   const state = (): ReadonlySimState | null => (ctx ? ctx.session.getState() : null);
   const online = (): boolean => ctx?.session.getSetup()?.config.mode === ModeId.FRIEND_ONLINE;
+  /** [QF-12] A replay playback or another custom input provider: session.restart() does nothing there. */
+  const canRestart = (): boolean => {
+    const setup = ctx?.session.getSetup();
+    return !online() && !setup?.inputProvider;
+  };
+  /** Teams the acting human may manage ([QF-12] none while a replay plays: its provider ignores team orders). */
+  const teamsToManage = (s: ReadonlySimState): number[] => (isReplayPlayback(ctx?.session.getSetup()) ? [] : manageableTeams(s, acting(), online()));
   const send = (human: number, cmd: Command, arg: number): void => ctx?.session.queueCommand(human, cmd, arg);
   const play = (k: UiSound): void => {
     try {
@@ -790,7 +807,7 @@ export function createPauseMenu(): PauseMenu {
     page = p;
     if (p === 'team' || p === 'tactics' || p === 'quick') {
       const s = state();
-      const teams = s ? manageableTeams(s, acting(), online()) : [];
+      const teams = s ? teamsToManage(s) : [];
       if (!teams.includes(managed)) {
         const pref = p === 'quick' && quickHuman >= 0 ? quickHuman : acting();
         managed = s ? defaultManagedTeam(s, pref, ctx.session.pausedBy, online()) : -1;
@@ -848,11 +865,11 @@ export function createPauseMenu(): PauseMenu {
         testId: 'pause-resume', variant: 'primary', size: 'lg', autofocus: true, ctx: c,
       }),
       h('div', { class: 'pause-main__gap' }),
-      // Online matches cannot restart (session.restart() needs a local provider); Quit leaves the room.
-      online() ? null : createButton('Restart match', doRestart, { testId: 'pause-restart', ctx: c }),
+      // Online matches (and replays) cannot restart (session.restart() needs a local provider); Quit leaves the room.
+      canRestart() ? createButton('Restart match', doRestart, { testId: 'pause-restart', ctx: c }) : null,
       createButton('Quit to menu', doQuit, { testId: 'pause-quit', variant: 'danger', ctx: c }),
     );
-    const manage = s !== null && manageableTeams(s, acting(), online()).length > 0;
+    const manage = s !== null && teamsToManage(s).length > 0;
     const tiles = h(
       'div',
       { class: 'pause-tiles', attrs: { 'data-focus-group': 'none' } },
@@ -881,7 +898,7 @@ export function createPauseMenu(): PauseMenu {
   function teamTabs(): HTMLElement | null {
     const s = state();
     if (!s || !ctx) return null;
-    const teams = manageableTeams(s, acting(), online());
+    const teams = teamsToManage(s);
     if (teams.length < 2) return null;
     const tabs = createTabs(
       teams.map((t) => ({ id: String(t), label: ctx!.clubs[s.teams[t]!.clubIdx]?.code ?? (t === 0 ? 'HOME' : 'AWAY'), testId: `pause-team-${t}` })),
@@ -1072,7 +1089,7 @@ export function createPauseMenu(): PauseMenu {
     if (!s) {
       return h('div', { class: 'pause-panel pause-sub', testId: 'pause-page-team' }, subHead('Team management'), h('p', { class: 'pause-msg', text: 'No match running' }));
     }
-    const teams = manageableTeams(s, acting(), online());
+    const teams = teamsToManage(s);
     const readOnly = managed < 0 || !teams.includes(managed);
     const team = managed >= 0 ? managed : 0;
     if (managed < 0) managed = team;
@@ -1401,6 +1418,8 @@ export function createPauseMenu(): PauseMenu {
     if (tick === lastQuickTick) return;
     lastQuickTick = tick;
     if (rt.curr.match.finished === 1) return;
+    // [QF-12] A replay's recorded QUICK_SUB is history, not a request: it used to pause the playback on the prompt.
+    if (isReplayPlayback(c.session.getSetup())) return;
     for (let hu = 0; hu < MAX_HUMANS; hu++) {
       if (rt.frames[hu]?.cmd === Command.QUICK_SUB) {
         api.openQuickSub(hu);

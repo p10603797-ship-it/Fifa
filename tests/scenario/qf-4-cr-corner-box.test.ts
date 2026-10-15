@@ -62,9 +62,14 @@ function attackersAtCornerKicks(seed: number, want: number): number[] {
 }
 
 describe('QF-4 CR (QF-2): CPU corners are taken with attackers in the box', () => {
-  it.fails('at every CPU corner kick at least 3 attackers are inside the penalty area', () => {
-    const counts = [...attackersAtCornerKicks(1, 3), ...attackersAtCornerKicks(2, 3)];
-    expect(counts.length).toBeGreaterThan(1);
+  // [QF-11] Landed TAI-13 maxArrivalWait 58 -> 120. Corners fell to ~0.4 a match once defenders stopped "receiving"
+  // shots (QF-9), so seeds 1-2 alone often hold one corner or none: the matches run until four corner kicks are seen
+  // (at most 16 seeds). Measured on seeds 1-10: 3, 4, 3, 3 (every corner kick at least 3; the floor stays 3: the CPU
+  // waits for minBoxArrivals = 3 runners on their spots, a fourth is often still on his way).
+  it('at every CPU corner kick at least 3 attackers are inside the penalty area', () => {
+    const counts: number[] = [];
+    for (let seed = 1; seed <= 16 && counts.length < 4; seed++) counts.push(...attackersAtCornerKicks(seed, 4 - counts.length));
+    expect(counts.length).toBeGreaterThanOrEqual(4);
     for (const c of counts) expect(c).toBeGreaterThanOrEqual(3);
   }, 240000);
 });

@@ -1,7 +1,8 @@
 /**
  * [TAI-01] Formations and role home positions. Formations 4-4-2, 4-3-3, 4-2-3-1, 3-5-2, 5-3-2, 4-1-2-1-2
  * (data/formations.ts). Each role's home position shifts with the ball, the team phase (build-up, attack,
- * defend, transition) and the tactical focus; staggered updates (T_AI.shapeInterval, team.shapeT). Writes
+ * defend, transition) and the tactical focus; staggered updates (T_AI.shapeInterval; a CPU side: T_LEVEL.shapeIntervalTicks
+ * of its level [QF-11]; team.shapeT). Writes
  * team.homeX/homeZ (per formIdx) and every player's homeX/homeZ. Mirror for attack direction (team.dir).
  * Handles teams playing short (fewer than 11) by stretching remaining roles.
  *
@@ -50,12 +51,13 @@ import {
 import { MatchPhase, RestartKind, Role, TeamPhase } from '../contracts/enums';
 import type { EventSink } from '../contracts/events';
 import type { SimState } from '../contracts/state';
-import { T_AI } from '../contracts/tuning';
+import { T_AI, T_LEVEL } from '../contracts/tuning';
 import { FORMATIONS, ShapeLine, slotLine } from '../data/formations';
 import {
   BOX_SPOTS, createTacticParams, EXTRA_STRIKER_SHAPES, resolveTactics, slotLineFor, TacticFlag, tacticFlags,
 } from '../data/tactics';
 import { otherTeam, possessingTeam, teamEnd, teamStart } from '../sim/core/query';
+import { levelValue } from './cpu/levels';
 
 // Per-phase tables are indexed by TeamPhase: BUILD_UP, ATTACK, DEFEND, TRANSITION_ATTACK, TRANSITION_DEFEND,
 // SET_PIECE. SET_PIECE is resolved to BUILD_UP/ATTACK (restart team) or DEFEND (other team) before lookup, so its
@@ -802,8 +804,11 @@ function separateBoxMover(m: number, side: number): void {
   if (bestD >= 0) hv[m] = best;
 }
 
-function nextDelay(tick: number, team: number): number {
-  const interval = T_AI.shapeInterval >= 1 ? T_AI.shapeInterval | 0 : 1;
+/** Ticks to the next shape update: every T_LEVEL.shapeIntervalTicks of the team's AI level ([QF-11]; the Professional
+ *  entry, T_AI.shapeInterval, for a human side), team 1 offset by half an interval. */
+function nextDelay(s: SimState, tick: number, team: number): number {
+  const iv = levelValue(s, team, T_LEVEL.shapeIntervalTicks);
+  const interval = iv >= 1 ? iv | 0 : 1;
   const offset = team === 0 ? 0 : interval >> 1;
   const d = (((offset - tick) % interval) + interval) % interval;
   return d === 0 ? interval : d;
@@ -836,7 +841,7 @@ export function updateShape(s: SimState, team: number, ev: EventSink): void {
     ballIn[0] = s.ball.x; ballIn[1] = s.ball.z;
     computeShape(s, team);
     for (let f = 0; f < N; f++) { t.homeX[f] = outX[f]!; t.homeZ[f] = outZ[f]!; }
-    t.shapeT = nextDelay(s.tick, team);
+    t.shapeT = nextDelay(s, s.tick, team);
   }
   syncPlayers(s, team);
 }

@@ -20,7 +20,8 @@
  *  2. Reaction delay running (reactT > 0): keep the current run (stick along his velocity), no buttons.
  *  3. Opponent carrier at his feet (the main case):
  *     - Player choice (every switchEvalTicks, staggered by team, only when SIM-16's lock-out is over and the current
- *       defender is not already engaged goal-side): score = SIM-04 ticksToReach to the guard point + busy ticks +
+ *       defender is not already engaged goal-side, nor committed to a tackle / header / kick that will still play the
+ *       ball, committedToBall): score = SIM-04 ticksToReach to the guard point + busy ticks +
  *       notGoalSidePenalty. The best-placed defender beats the current one by switchMarginTicks (more at noisy levels)
  *       -> MOD_L press when SIM-16's next-switch marker is (about) as good, else a gesture TAP on him (gSlot).
  *     - Approach goal-side with the stick: the guard point is standoff (by pressIntensity) goal-side of the carrier
@@ -77,7 +78,7 @@ import { inSkillVulnerableWindow } from '../../sim/kicks/skills';
 import { comeOutWanted } from '../../sim/keeper/sweeperHooks';
 import { ticksToReach } from '../../sim/players/locomotion';
 import { createInterceptEstimate, estimateIntercept } from '../steer';
-import { levelParams } from './levels';
+import { composureNoiseMul, levelParams } from './levels';
 
 export const LOCAL_TUNING = {
   // ---- approach and jockey
@@ -281,6 +282,18 @@ function flush(out: InputFrame): void {
 function quantPos(v: number): number {
   const q = Math.round(v * GESTURE_POS_SCALE);
   return q < -POS_MAX ? -POS_MAX : q > POS_MAX ? POS_MAX : q;
+}
+
+/**
+ * [QF-11] His tackle / header / kick is still going to play the ball (same rule as SIM-16 switching.ts committedToBall):
+ * the CPU never hands control to another defender meanwhile (it switched away from its own man mid-tackle or mid-header
+ * 2-3 times per 4 matches, so the action was finished by an AI-driven body and the new man stood still).
+ */
+export function committedToBall(p: Readonly<PlayerState>): boolean {
+  const a = p.act;
+  if (p.actDone !== 0) return false;
+  return a === ActionKind.KICK || a === ActionKind.SHOT || a === ActionKind.HEADER || a === ActionKind.VOLLEY ||
+    (a >= ActionKind.STAND_TACKLE && a <= ActionKind.PUSH_PULL);
 }
 
 /** Busy ticks ticksToReach does not count: stun and the rest of an action that does not lock movement. */
@@ -500,7 +513,8 @@ function defendCarrier(
   let switched = false;
   const cos0 = d0 > EPS ? (d0x * gx + d0z * gz) / d0 : 1;
   const engaged = cos0 >= L.goalSideCos && d0 <= L.engagedDist;
-  if (!engaged && ctl.switchLockT === 0 && brain.reactT === 0 && (s.tick + team * 3) % L.switchEvalTicks === 0) {
+  if (!engaged && ctl.switchLockT === 0 && brain.reactT === 0 && (s.tick + team * 3) % L.switchEvalTicks === 0 &&
+    !committedToBall(p0)) {
     const mover = chooseDefender(s, team, ci, ctl, lv, slot, q, guardX, guardZ, out);
     if (mover !== slot) { slot = mover; switched = true; }
     else if (out.gesture !== GestureKind.NONE) switched = true;
@@ -552,6 +566,8 @@ function defendCarrier(
   const dBall = Math.sqrt(bx * bx + bz * bz);
   const seed = s.config.seed | 0;
   const who = team * 64 + carrier;
+  // [QF-11] A nervous defender lunges more, a calm one less (T_AI.composureNoise*).
+  const noisy = lv.decisionNoise * composureNoiseMul(s.attrs[slot]!.composure);
 
   // Standing tackle / shoulder (never from behind: that would be a push or pull).
   const kind = tackleKind(s, p, carrier);
@@ -559,12 +575,12 @@ function defendCarrier(
     exposure(s, q);
     if (expOn === 1) {
       if (expAge >= lv.tackleTimingTicks && dBall <= T_TACKLE.standReach + L.tackleApproach) {
-        const rash = noise01(seed, who, expKey * 4 + 1) < lv.decisionNoise;
+        const rash = noise01(seed, who, expKey * 4 + 1) < noisy;
         if (rash || wellTimed(s, p, q)) { pressTackle(brain, lv); return; }
       }
     } else if (dBall <= T_TACKLE.standReach && goalSide) {
       const bucket = Math.floor(s.tick / L.rashBucketTicks);
-      if (noise01(seed, who, bucket * 4 + 2) < lv.decisionNoise * L.rashLungeChance) { pressTackle(brain, lv); return; }
+      if (noise01(seed, who, bucket * 4 + 2) < noisy * L.rashLungeChance) { pressTackle(brain, lv); return; }
     }
   }
 
@@ -579,7 +595,7 @@ function defendCarrier(
     // The ball must be on our side of him (nearer to us than he is): never slide through the carrier to reach it.
     if (dBall < d && (qs > jogP || goalLineDist <= L.secondDefDist) && u < L.slideChance) pressSlide(brain, lv);
   } else if (cosG <= L.behindCos && throughOnGoal(s, team, q, L.slideBehindDist)) {
-    if (u < L.slideBehindChance * lv.decisionNoise) pressSlide(brain, lv);
+    if (u < L.slideBehindChance * noisy) pressSlide(brain, lv);
   }
 }
 

@@ -22,7 +22,7 @@ import type { ReadonlySimState } from '../../contracts/state';
 import { uiHumanOf } from '../../app/session';
 import { crestDataUrl } from '../../render/kits';
 import { createButton, h, injectStyle } from '../components';
-import { manageableTeams, openPausePage } from './pause';
+import { isReplayPlayback, manageableTeams, openPausePage } from './pause';
 
 /** "AAA 1 - 0 BBB" for the current match, or '' outside a match. */
 export function scoreLine(ctx: AppContext): string {
@@ -441,7 +441,9 @@ export function createHalfTimeScreen(): Screen {
         { class: 'brk-actions' },
         createButton(extra ? 'Continue' : 'Second half', () => sendSkip(ctx), { testId: 'ht-continue', variant: 'primary', autofocus: true, ctx }),
       );
-      const canManage = !!s && manageableTeams(s, uiHumanOf(ctx), ctx.session.getSetup()?.config.mode === ModeId.FRIEND_ONLINE).length > 0;
+      // [QF-12] Not while a replay plays (its provider ignores team orders; the shortcut paused it for nothing).
+      const canManage = !!s && !isReplayPlayback(ctx.session.getSetup()) &&
+        manageableTeams(s, uiHumanOf(ctx), ctx.session.getSetup()?.config.mode === ModeId.FRIEND_ONLINE).length > 0;
       if (canManage) {
         actions.append(
           createButton('Substitutions', () => openPausePage(ctx, 'team'), { testId: 'ht-team', hint: 'Formation and changes', ctx }),

@@ -65,8 +65,8 @@
  *    reticle onto the target first), then the button (with modifiers) is held round(power * powerFillTicks) ticks and
  *    released (the resolver fills the power bar from the hold). If the restart is still not taken retryTicks after the
  *    input and the taker is waiting again, it decides again; a gesture decision is retried with the button equivalent
- *    (PASS / LOB + stick + hold). The CPU acts before the kind modules' own CPU fallbacks (cpuRestartDelay + 60 ticks)
- *    and long before RUL-11's 4 s CPU watchdog.
+ *    (PASS / LOB + stick + hold). The CPU acts before the kind modules' own CPU fallbacks (cpuRestartDelay + their
+ *    cpuGraceTicks: 30-60 ticks, 140 for corners and free kicks) and before RUL-11's 4 s CPU watchdog.
  *  - Defending side: the CPU-controlled player walks to his set-piece spot with the stick (sprinting when far, except
  *    at free kicks where SPRINT moves the wall; not a wall member, not at kick-offs and penalties); at a free kick with
  *    a wall, THROUGH (wall jump) when the taker's SHOT is wallJumpLeadTicks from contact (+ level timing jitter, drawn
@@ -222,9 +222,10 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** A player counts as arrived within this distance of his spot, m. */
   arriveTol: 3,
   /** Crosses (corners, free kicks in range): wait for at least minBoxArrivals box runners on their spots, at most
-   *  maxArrivalWait ticks beyond cpuRestartDelay (kind modules' CPU fallbacks start at cpuRestartDelay + 60). */
+   *  maxArrivalWait ticks beyond cpuRestartDelay (RUL-04 / RUL-05's CPU fallbacks start at cpuRestartDelay +
+   *  cpuGraceTicks = 140; the wait plus the longest aim, shotAimTicks, ends a few ticks before it). */
   minBoxArrivals: 3,
-  maxArrivalWait: 58, // [QF-2] was 45: up to just before RUL-04 / RUL-05's CPU fallback (cpuRestartDelay + 60)
+  maxArrivalWait: 120, // [QF-11] was 58 (QF-2; 45 before): RUL-04 / RUL-05 cpuGraceTicks 60 / 75 -> 140 (QF-10)
   /** [QF-2] Distance weight of the corner box-runner spots (penalty spot, posts, tactic spots) in the matching cost:
    *  0.1 sent centre-backs from 45 m away, so the CPU crossed after 2.7 s into a box with 1-2 attackers (QF-4 CR). */
   cornerRunWd: 1.0,

@@ -32,7 +32,7 @@ import { startPass } from '../../src/sim/kicks/pass';
 import { startLob } from '../../src/sim/kicks/lob';
 import { startShot } from '../../src/sim/kicks/shot';
 import { setupKickOff } from '../../src/sim/rules/machine';
-import { awardRestart, isLegalRestartPosition } from '../../src/sim/rules/restart';
+import { awardRestart, isLegalRestartPosition, LOCAL_TUNING as RESTART_LT } from '../../src/sim/rules/restart';
 import { throwInSetup } from '../../src/sim/rules/throwin';
 import { cornerSetup } from '../../src/sim/rules/corner';
 import { freeKickSetup } from '../../src/sim/rules/freekick';
@@ -42,6 +42,9 @@ import { shootoutStart } from '../../src/sim/rules/shootout';
 import { makeScenario, runTicks, type ScenarioHuman } from '../harness/scenario';
 
 const SETUP = T_RULES.restartSetupTicks;
+/** [QF-11] Walked set-ups (D-008 revised: throw-ins, free kicks > 35 m out) become ready up to this much later than
+ *  SETUP (restart.t is then counted back to SETUP, so ages past ready keep their meaning). */
+const WALK = RESTART_LT.setupExtendMaxTicks;
 const DELAY = T_RULES.cpuRestartDelay;
 
 // ---------------------------------------------------------------- scenario helpers
@@ -585,7 +588,7 @@ describe('TAI-13 CPU taker: timing and input programs', () => {
     ];
     for (const [label, mk, team] of cases) {
       const s = mk();
-      const recs = recordCpu(s, team, SETUP + DELAY + LOCAL_TUNING.maxArrivalWait + 40);
+      const recs = recordCpu(s, team, SETUP + WALK + DELAY + LOCAL_TUNING.maxArrivalWait + 40);
       const first = recs.findIndex((r) => active(r.f));
       expect(first, label).toBeGreaterThanOrEqual(0);
       expect(recs[first]!.age, label).toBeGreaterThanOrEqual(DELAY);
@@ -604,7 +607,7 @@ describe('TAI-13 CPU taker: timing and input programs', () => {
   it('throw-in: TAP on an open teammate 3.5-22 m away (exact target)', () => {
     for (const seed of [1, 2, 3]) {
       const s = awarded(RestartKind.THROW_IN, 1, -20, 34, { seed, shift: -25 });
-      const recs = recordCpu(s, 1, SETUP + DELAY + 5, false);
+      const recs = recordCpu(s, 1, SETUP + WALK + DELAY + 5, false);
       const tap = recs.find((r) => r.f.gesture === GestureKind.TAP);
       expect(tap, `seed ${seed}`).toBeDefined();
       const g = tap!.f.gSlot;
@@ -910,7 +913,7 @@ const READY = {
 };
 
 describe('TAI-13 end to end: the CPU completes every restart kind within a few seconds, no watchdog (real modules)', () => {
-  const budget = SETUP + DELAY + LOCAL_TUNING.maxArrivalWait + 120;
+  const budget = SETUP + WALK + DELAY + LOCAL_TUNING.maxArrivalWait + 120;
   const complete = (s: SimState, label: string): void => {
     const ev = runTicks(s, budget, undefined, { until: (st) => st.match.phase === MatchPhase.IN_PLAY });
     expect(s.match.phase, label).toBe(MatchPhase.IN_PLAY);

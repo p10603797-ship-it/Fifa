@@ -24,6 +24,7 @@ import {
   pumpSkip, scoreLine, sendSkip, statRows, FULL_STAT_KEYS,
 } from './halfTime';
 import { cloneSetup, isFlowMode } from './matchFlow';
+import { isReplayPlayback } from './pause';
 
 export { scoreLine };
 
@@ -65,8 +66,13 @@ export interface FinalActions {
   cup: boolean;
 }
 
-/** Which buttons the final screen offers for a setup's mode (online / custom provider cannot restart). Pure. */
-export function finalActions(mode: ModeId | null, customProvider: boolean): FinalActions {
+/**
+ * Which buttons the final screen offers for a setup's mode (online / custom provider cannot restart). Pure.
+ * [QF-12] A replay playback (Diagnostics > Load replay) offers Quit only: it has a custom provider, so it was offered
+ * the online 'Rematch', which opened the online lobby (a replay of a cup tie offered the cup's Continue).
+ */
+export function finalActions(mode: ModeId | null, customProvider: boolean, replay = false): FinalActions {
+  if (replay) return { rematch: false, changeTeams: null, cup: false };
   if (mode === ModeId.CUP) return { rematch: false, changeTeams: null, cup: true };
   if (mode === ModeId.FRIEND_ONLINE || customProvider) return { rematch: false, changeTeams: 'online-lobby', cup: false };
   return { rematch: true, changeTeams: 'team-select', cup: false };
@@ -164,7 +170,7 @@ export function createFullTimeScreen(): Screen {
         panel.append(h('div', { class: `ft-grid${card ? '' : ' ft-grid--solo'}` }, stats, card));
       }
       const setup = ctx.session.getSetup();
-      const acts = finalActions(setup ? setup.config.mode : null, !!setup?.inputProvider);
+      const acts = finalActions(setup ? setup.config.mode : null, !!setup?.inputProvider, isReplayPlayback(setup));
       const row = h('div', { class: 'brk-actions' });
       if (acts.cup) {
         // [QF-12] Back to the cup with the result card of the tie just played (its CupMatchData names it).

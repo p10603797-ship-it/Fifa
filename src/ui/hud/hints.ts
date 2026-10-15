@@ -33,6 +33,15 @@ import {
 import { GLYPH_CSS, linesFor, renderHintLines, type DeviceLines } from './controlGlyphs';
 import { HUD_SHARED_CSS, bindLargerHud, humanDevice, setRadarEnabled, touchBoundToMatch, type ControlDevice, type DeviceSpec } from './hudShared';
 import { TOAST_LANE_PX, TOAST_NARROW_PX } from './toasts';
+import { isReplayPlayback } from '../screens/pause';
+
+function sessionSetup(ctx: AppContext): { modeData?: unknown } | null {
+  try {
+    return ctx.session.getSetup();
+  } catch {
+    return null;
+  }
+}
 
 /** Hint constants (UI, not gameplay; no TUNING-CR needed). */
 export const HINT_TUNING = {
@@ -302,6 +311,8 @@ export function createHints(): HudPart {
   function startSetPiece(s: ReadonlySimState, kind: RestartKind, team: number): void {
     dismissSetPiece();
     if (!ctxRef || kind === RestartKind.NONE) return;
+    // [QF-12] Nobody takes a set piece in a replay playback: no card, and no use counted off the player's hints.
+    if (isReplayPlayback(sessionSetup(ctxRef))) return;
     hintTarget(s, kind, team, target);
     if (target.human < 0) return;
     let seen: Readonly<Record<string, number>> | undefined;
@@ -434,7 +445,8 @@ export function createHints(): HudPart {
       tutDevice = null;
       doneBeat = 0;
       doneStep = -1;
-      if (state.config.practice === PracticeKind.TUTORIAL && ctxRef) {
+      // [QF-12] Not for a replay of a tutorial session: its recorded steps would be saved as the viewer's progress.
+      if (state.config.practice === PracticeKind.TUTORIAL && ctxRef && !isReplayPlayback(sessionSetup(ctxRef))) {
         let data: TutorialModeData | undefined;
         try {
           data = ctxRef.session.getSetup()?.modeData as TutorialModeData | undefined;
