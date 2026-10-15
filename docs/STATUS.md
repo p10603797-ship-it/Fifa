@@ -216,5 +216,6 @@ Total assignments: 201.
 | QF-12 | done (12 defects: records counting, cup final screen + Back, HUD kit chips match worn kits, Continue press kept, refuse benchmark/replay/tutorial mid-match, command queue overflow; full e2e 194 tests: 191 pass first run, the rest pass on rerun or are flaky test steps; monkey 15 seeds clean) | app/modes follow-up, full e2e suite run |
 | TUN-1 | queued (after QF-11) | gameplay constants into tuning.ts, hash-identical (BRIEF §4 rule 6) |
 | QF-7 | queued (after TUN-1) | performance |
+| SGN-05 | running | originality and licence audit (independent second auditor) |
 | QF-8 | queued (last) | determinism, soak 2000, fuzz 500 |
 
