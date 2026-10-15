@@ -781,7 +781,7 @@ export function createOnlineScreen(): Screen {
       h('span', { class: 'eyebrow', text: 'Room code' }),
       h('span', { class: 'net-code', text: formatRoomCode(lobby.code), testId: 'net-room-code', attrs: { 'aria-label': `Room code ${lobby.code.split('').join(' ')}` } }));
     if (lobby.isHost) {
-      const link = roomLink(lobby.code, typeof location !== 'undefined' ? location.href : 'https://dotkick.app/');
+      const link = roomLink(lobby.code, typeof location !== 'undefined' ? location.href : 'http://localhost/');
       codeCard.append(h('span', { class: 'net-link', text: link, testId: 'net-room-link' }));
       const share = h('div', { class: 'net-share' });
       share.append(createButton('Copy link', () => {

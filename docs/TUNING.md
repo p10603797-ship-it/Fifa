@@ -362,3 +362,64 @@ QF-10's files alone on the round-2 baseline (8 CPU matches, 4-minute halves, see
 | RUL-11 | penalty legality | centre outside the area / arc | whole body (SIM-05 radius) outside | Players waited at a penalty with their centre on the area line, half the body inside. |
 | RUL-11 | goal-frame rule (no constant) | - | non-keepers kept `T_PLAYER.bodyRadius` in front of the goal line inside the posts' width (+ post radius + body radius) | A player behind the goal line at a goal kick or corner was placed at the nearest legal point on the line, overlapping the post / net (QF-1 goal-frame test). |
 | RUL-11 (`rules/restartCommon.ts`) | `swapRunMaxTicks` (new) | - | 240 ticks | "Choose the taker" (SPRINT) at a walked free kick runs the new taker (within 18 m) to the ball and releases the old one where he stands; kick inputs wait until he is there. Was: both teleported (up to 18 m each) on the main camera. Free kicks within 35 m keep the instant swap (set-piece camera). |
+
+## QF-11 (Wave 4 round 2: difficulty ladder and club balance)
+
+Measured on the tree with QF-9 / QF-10's sim changes. Tools: `tools/ladder.ts` / `tools/balance.ts` (4-minute halves,
+mirror legs) and, for experiments, a scratch runner that overrides `T_*` entries per run (40-60 matches a variant,
+every variant against the same seeded configs, so unchanged pairs replay identically).
+
+### What separates the levels (one lever at a time, Legend side vs Beginner side, 40 matches, goal difference)
+
+Every other table at Professional; "GD" = the first side's goals minus the second's per match (+-1 standard error).
+
+| Lever (old table) | Extremes | GD | Reading |
+|---|---|---|---|
+| decisionNoise | 0.05 vs 0.45 | +1.62 +-0.29 | The strongest. 0 vs Professional's 0.16: +1.60; 0.05 vs 0.16: +0.85; 0.16 vs 0.6: +0.88 (steep near none, flattening). The carrier's option noise is almost all of it (without rash lunges +1.35; with only the carrier noiseless +0.35): a noisy carrier takes the best of many noisy utilities, and the many near-equal safe square passes win that lottery, so attacks die. |
+| reactionTicks | 5 vs 26 | +1.27 +-0.29 | 11 vs 40: +2.02 (the slow side keeps running head-down after every reception); faster than 11 adds little (2 vs 11: +0.23). |
+| keeperReactTicks | -3 vs +10 | +0.05 | Small until large: +20 ticks: +0.72. |
+| executionError, lookAheadTicks, tackleTimingTicks, shotThresholdXg | full range | -0.20 .. +0.05 | No measurable effect (the CPU's inputs go through assisted passing / shooting; the controlled defender's timing matters little). |
+| pressIntensity | 0.95 vs 0.35 | -0.40 +-0.27 | Pressing harder is not better here (0.95 vs 0.75: +0.03). |
+| re-decision period (new) | 3 vs 15 ticks | -0.60 +-0.22 | Re-deciding often is worse: with noise more draws of the lottery, without noise the first pass that edges ahead is taken (noise 0: every 3 ticks +0.88, every 5 +1.60). |
+| marking gap x2.2, back line x0.4 speed, shape updates every 24 ticks, loose-ball chase delay 40, pass risk / loss cost perception (new, tried) | | -0.40 .. +0.15 | Alone, none measurable; marking and line together with a slow keeper decide the bottom pairs (below). The perception, shape and chase levers were removed again. |
+
+### Tables (`T_LEVEL`, Professional unchanged, so the section 7 bands keep their reference)
+
+| Table | Was | Now |
+|---|---|---|
+| reactionTicks | 26 / 20 / 15 / 11 / 8 / 5 | 60 / 42 / 24 / 11 / 6 / 1 |
+| decisionNoise | 0.45 / 0.33 / 0.24 / 0.16 / 0.1 / 0.05 | 0.5 / 0.38 / 0.275 / 0.16 / 0.085 / 0 |
+| pressIntensity | 0.35 .. 0.95 | 0.6 / 0.65 / 0.7 / 0.75 / 0.78 / 0.8 |
+| keeperReactTicks | 10 / 6 / 3 / 0 / -2 / -3 | 30 / 21 / 10 / 0 / -3 / -8 |
+| carrierEvalTicks (new; T_AI.carrierEvalInterval 5 before) | - | 5 / 5 / 5 / 5 / 6 / 12 |
+| markGapMul (new, TAI-04) | - | 2.0 / 1.6 / 1.26 / 1 / 1 / 1 |
+| lineRateMul (new, TAI-04) | - | 0.5 / 0.65 / 0.8 / 1 / 1 / 1 |
+| composureNoiseWeight (new) | - | 0 / 0 / 0.5 / 1 / 0 / 0 |
+
+lookAheadTicks, executionError, tackleTimingTicks and shotThresholdXg keep their values (monotonic, no measurable
+effect). What a player sees: a Beginner carrier runs on head-down for a second after he gets the ball and then
+plays the safe square pass; his team marks loose, its back line steps late, its keeper reacts a third of a second
+late. A Legend carrier decides without noise and carries the ball patiently to the better option; his keeper is
+sharp. None of it touches physics, attributes or stamina.
+
+### Club balance (`T_AI.composureNoise*`)
+
+The player's composure scales the CPU's decision noise on him (`composureNoiseMul`: x clamp(1 + 0.65 x (72 -
+composure) / 30, 0.4, 1.8); the 88-rated MOS starters average 87, the 62-rated ROO 57), weighted by level
+(`composureNoiseWeight`). Top-bottom at Professional (40 matches each): slope 0 57.5% wins (GD +0.88), 0.5 72.5%,
+0.7 90%, 0.75 90%, 1.0 92.5%. Weighted at every level it narrowed the ladder at the top by 10-15 points (the cost of
+noise is concave, so a spread of noise round a level's noise shrinks the average gap to the next level), hence the
+weights.
+
+### TAI-09 completion calibration (`T_CPU`, Professional, 56 matches with the lofted factors at 1)
+
+| Kind | Estimated | Completed (next touch by a teammate) | Change |
+|---|---|---|---|
+| Ground pass | 0.92 | 0.94 (4904) | - |
+| Driven pass | 0.80 | 0.70 (2016) | - (to the intended receiver 0.52) |
+| Lob pass (chosen) | 0.72 raw | 0.76 (41) | `passAerialMin/Max` 0.4 / 0.6 -> 0.85 / 1.0 (QF-9's lofted receiver) |
+| Lofted through ball | 0.21 raw | 0.16 (172) | `passThroughLobCompletionMul` 0.25 -> 0.75 |
+| Ground through ball | 0.77 | 0.40 (143) | `passThroughGroundCompletionMul` 1 -> 0.52 |
+| Cross | 0.24 | 0.06 (67) | `passCrossCompletionMul` 1.6 -> 0.4, `passCrossCompletionAdd` 0.12 -> 0 |
+
+With the CPU's own 12-match run at the old factors, lobs were never chosen (0 in 12 matches).

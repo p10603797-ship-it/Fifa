@@ -135,12 +135,17 @@ export function levelValue(s: SimState, team: number, table: readonly number[]):
 }
 
 /**
- * [QF-11] Decision-noise multiplier for a player of composure `composure` (T_AI.composureNoise*): 1 at the reference,
- * smaller for a calm player, larger for a nervous one, clamped; 1 for a non-finite attribute.
+ * [QF-11] Decision-noise multiplier for a player of composure `composure` under a CPU of difficulty `level`
+ * (T_AI.composureNoise*, weighted by T_LEVEL.composureNoiseWeight of the level): 1 at the reference, smaller for a calm
+ * player, larger for a nervous one, clamped; 1 for a non-finite attribute or a level whose weight is 0 (World Class
+ * and Legend decide alike whatever the player: a spread of noise round a small level noise narrows the gap between
+ * the top levels, since the cost of noise is steepest near none). An invalid level uses Professional's weight.
  */
-export function composureNoiseMul(composure: number): number {
+export function composureNoiseMul(composure: number, level: Difficulty = Difficulty.PROFESSIONAL): number {
   if (!Number.isFinite(composure)) return 1;
-  const m = 1 + (T_AI.composureNoiseSlope * (T_AI.composureNoiseRef - composure)) / 30;
+  const wt = T_LEVEL.composureNoiseWeight[validIndex(level, LEVEL_COUNT) ? level : Difficulty.PROFESSIONAL];
+  const w = wt !== undefined && Number.isFinite(wt) ? wt : 1;
+  const m = 1 + (w * T_AI.composureNoiseSlope * (T_AI.composureNoiseRef - composure)) / 30;
   return m < T_AI.composureNoiseMin ? T_AI.composureNoiseMin : m > T_AI.composureNoiseMax ? T_AI.composureNoiseMax : m;
 }
 

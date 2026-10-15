@@ -307,6 +307,9 @@ describe('GKP-05 carries through the real ball physics', () => {
           if (e.type === EventType.KICK && e.a === KEEPER) { order += 'K'; kicked = true; x0 = st.ball.px; z0 = st.ball.pz; }
         }
         if (kicked) apex = Math.max(apex, st.ball.y);
+        // [QF-11] Since QF-9's lofted receiver the mate often runs in and meets a short throw before it bounces: that
+        // counts as landing at the receiver (land = the target distance); otherwise the first bounce ends the flight.
+        if (kicked && st.ball.lastTouch === MATE) { land = dist; return true; }
         if (kicked && evs.some((e) => e.type === EventType.BOUNCE)) { land = Math.hypot(st.ball.x - x0, st.ball.z - z0); return true; }
         return false;
       },

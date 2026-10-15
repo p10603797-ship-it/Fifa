@@ -26,11 +26,14 @@ Two halves, both re-runnable by QA:
 - **29 of 29 audited fields are read by `src/sim` or `src/ai`, and 29 of 29 visibly change play in their micro-test.
   Nothing is deleted.** No consumer is a stub any more, so the dynamic test file has no `it.todo` entries.
 - **Weak effects flagged for Wave 4 tuning** (they move play, but less than the others):
-  - **shotPower**: shot speed moves only about 4% from 40 to 90 (27.8 to 29.0 m/s at 80% power) because
-    `kicks/shot.ts LOCAL_TUNING.shotPowerMulMin = 0.92` (a 1-rated striker still strikes at 92% speed). Suggest 0.8.
-  - **composure**: only relieves the pressure part of the shot error (`composureRelief 0.5`), so under a 1 m press the
-    placement error drops just 14% (0.63 to 0.54 m); it also feeds penalties (40% of penalty accuracy) and the
-    penalty-taker choice. Acceptable, could be stronger.
+  - **shotPower**: shot speed moves about 12% from 40 to 90 (25.7 to 28.7 m/s at 80% power; was 4% before Wave 4).
+  - **composure**: in the sim it relieves the pressure part of the shot error (0.59 to 0.45 m under a 1 m press) and
+    feeds penalties. [QF-11] It now also scales the CPU's decision noise on the player (`T_AI.composureNoise*`,
+    `ai/cpu/levels composureNoiseMul`: the carrier's option noise and a defender's rash / noisy tackles; x0.68 at 87,
+    x1.33 at 57 with slope 0.65, weighted by level: full at Professional, half at Semi-Pro, none elsewhere). That is
+    how a rating gap shows through decisions as well as the body: the 88-rated club beat the 62-rated one in 57.5% of
+    40 Professional matches without it and 90% with slope 0.7 (`tests/scenario/qf-11-defects.test.ts` pins that a calm
+    carrier makes the clean choice more often than a nervous one).
   - **finishing at close range**: with the Assisted aim a 40-finishing striker still puts 99% of 14 m shots on target;
     finishing moves placement (0.65 to 0.18 m from the aim point), so it shows as corners hit versus shots near the
     keeper rather than misses. Tuning is for SIM-11 / Wave 4.
@@ -69,7 +72,7 @@ dynamic micro-test (table further down has the exact numbers and levels).
 | interceptions | interception chance (`interceptChance`) | - | passes cut out 0.75 m off the line 43% -> 58% | keep |
 | strength | body mass in collisions, shielding; shoulder / push duels; tackle resistance; clearance; aerial duel and the beaten jumper's stumble; keeper punch | CPU shielding | shoulder-challenge win rate 21% -> 81% | keep |
 | stamina | drain and recovery rate of the condition (which scales speed, acceleration and kick accuracy when low) | - | condition drained per minute of sprinting 0.51 -> 0.32 | keep |
-| composure | shot pressure relief; 40% of penalty accuracy; penalty-taker choice; penalty keeper's read | CPU shot decision | 14 m shot under a 1 m press: placement error 0.63 -> 0.54 m | keep (moderate) |
+| composure | shot pressure relief; 40% of penalty accuracy; penalty-taker choice; penalty keeper's read | CPU shot decision; [QF-11] CPU decision noise (carrier options, rash / noisy tackles) | 14 m shot under a 1 m press: placement error 0.59 -> 0.45 m; CPU option noise x1.33 -> x0.68 (57 -> 87) | keep |
 | gkDiving | dive speed, max reach, get-up time; claim jump height; best keeper for a sub | CPU shot placement against the keeper | save rate, hard corner shots 16-22 m: 36% -> 78% | keep |
 | gkHandling | catch-speed limit (catch vs parry), parry quality; throw accuracy; claim catch limit; punch speed | - | share of saves held 58% -> 92% | keep |
 | gkReflexes | reaction delay (`keeperReactTicks`); parry quality | CPU shot placement against the keeper | save rate, close-range shots 8-11 m: 67% -> 89% | keep |
@@ -86,15 +89,17 @@ role and the shirt is shown on the kit; neither is audited here.
 ## Dynamic audit: measured values
 
 From `DAT05_REPORT=1 npx vitest run tests/sim/dat-05-attributes.test.ts --disableConsoleIntercept` (seeded, deterministic; numbers move when
-the consuming modules are retuned, the assertions only require the direction and a visible margin).
+the consuming modules are retuned, the assertions only require the direction and a visible margin). Refreshed by QF-11
+(Wave 4 round 2) on the tree with QF-9 / QF-10's sim changes: stamina, ballControl, shotPower, composure, heading,
+height and gkDiving rows moved; every row still moves the right way.
 
 | Attribute | Level | Measured outcome | Low | High |
 |---|---|---|---|---|
 | sprintSpeed | pipeline | peak sprint speed, m/s | 8.15 (40) | 9.28 (90) |
 | acceleration | pipeline | ticks from standstill to 6 m/s | 65.0 (40) | 50.0 (90) |
 | agility | pipeline | ticks to turn a sprint 75 deg | 18.0 (40) | 14.0 (90) |
-| stamina | pipeline | condition (0..1) drained per minute of sprinting | 0.51 (40) | 0.32 (90) |
-| ballControl | model | clean first-touch chance, 14 m/s pass | 0.33 (40) | 1.00 (90) |
+| stamina | pipeline | condition (0..1) drained per minute of sprinting | 0.32 (40) | 0.20 (90) |
+| ballControl | model | clean first-touch chance, 14 m/s pass | 0.50 (40) | 1.00 (90) |
 | dribbling | pipeline | standing-tackle win rate against him | 0.44 (40) | 0.28 (90) |
 | dribbling | pipeline | mean ball-to-feet distance, sprint dribble, m | 2.04 (40) | 2.01 (90) |
 | skillMoves | model | skill moves available (of 7 stick moves) | 2.00 (1 star) | 7.00 (5 stars) |
@@ -108,16 +113,16 @@ the consuming modules are retuned, the assertions only require the direction and
 | finishing | solver | on-target rate, 14 m shot | 0.99 (40) | 1.00 (90) |
 | longShots | solver | on-target rate, 28 m shot | 0.84 (40) | 1.00 (90) |
 | longShots | solver | placement error at the line, 28 m shot, m | 1.29 (40) | 0.37 (90) |
-| shotPower | solver | launch speed at 80% power, m/s | 27.8 (40) | 29.0 (90) |
+| shotPower | solver | launch speed at 80% power, m/s | 25.7 (40) | 28.7 (90) |
 | curve | solver | side spin of a curled finesse shot, rad/s | 8.36 (40) | 10.4 (90) |
-| composure | solver | placement error at the line, 14 m shot under pressure, m | 0.63 (40) | 0.54 (90) |
-| heading | pipeline | aerial duel win rate | 0.17 (40) | 0.90 (90) |
-| height | pipeline | aerial duel win rate | 0.23 (170 cm) | 0.93 (195 cm) |
+| composure | solver | placement error at the line, 14 m shot under pressure, m | 0.59 (40) | 0.45 (90) |
+| heading | pipeline | aerial duel win rate | 0.17 (40) | 0.83 (90) |
+| height | pipeline | aerial duel win rate | 0.17 (170 cm) | 0.83 (195 cm) |
 | strength | pipeline | shoulder-challenge win rate | 0.21 (40) | 0.81 (90) |
 | standingTackle | pipeline | standing-tackle win rate | 0.19 (40) | 0.47 (90) |
 | slidingTackle | pipeline | sliding-tackle win rate | 0.31 (40) | 0.60 (90) |
 | interceptions | pipeline | passes cut out by a defender 0.75 m off the line | 0.43 (40) | 0.58 (90) |
-| gkDiving | pipeline | save rate, hard corner shots 16-22 m | 0.36 (40) | 0.78 (90) |
+| gkDiving | pipeline | save rate, hard corner shots 16-22 m | 0.31 (40) | 0.72 (90) |
 | gkReflexes | pipeline | save rate, close-range shots 8-11 m | 0.67 (40) | 0.89 (90) |
 | gkHandling | pipeline | share of saves held | 0.58 (40) | 0.92 (90) |
 | gkPositioning | model | distance from the ideal spot, m | 0.23 (40) | 0.03 (90) |
@@ -128,9 +133,9 @@ the consuming modules are retuned, the assertions only require the direction and
 <!-- static-audit:begin (generated by `npx tsx tools/balance.ts --audit --write-doc docs/ATTRIBUTE_AUDIT.md`) -->
 | Attribute | Static readers in src/sim, src/ai | Status |
 |---|---|---|
-| acceleration | sim/players/locomotion, ai/cpu/carrier (via topSpeed / accel), ai/cpu/defending (via topSpeed / accel), ai/cpu/passing (via topSpeed / accel), ai/cpu/shooting (via topSpeed / accel), ai/defshape (via topSpeed / accel), ai/jobs (via topSpeed / accel), ai/press (via topSpeed / accel), ai/runs (via topSpeed / accel), ai/setpieces (via topSpeed / accel), ai/steer (via topSpeed / accel), ai/support (via topSpeed / accel), ai/tactics (via topSpeed / accel), ai/transition (via topSpeed / accel), sim/control/resolveMove (via topSpeed / accel), sim/control/resolveShared (via topSpeed / accel), sim/control/switching (via topSpeed / accel), sim/defend/tackle (via topSpeed / accel), sim/keeper/positioning (via topSpeed / accel), sim/keeper/saveKinematics (via topSpeed / accel), sim/keeper/setpieces (via topSpeed / accel), sim/keeper/sweeper (via topSpeed / accel), sim/kicks/aerial (via topSpeed / accel), sim/kicks/pass (via topSpeed / accel), sim/kicks/shot (via topSpeed / accel), sim/kicks/skills (via topSpeed / accel), sim/kicks/through (via topSpeed / accel), sim/players/bodies (via topSpeed / accel), sim/players/possession (via topSpeed / accel), sim/rules/penalty (via topSpeed / accel) | read (112 site(s)) |
-| sprintSpeed | ai/setpieces, sim/players/locomotion, ai/cpu/carrier (via topSpeed / accel), ai/cpu/defending (via topSpeed / accel), ai/cpu/passing (via topSpeed / accel), ai/cpu/shooting (via topSpeed / accel), ai/defshape (via topSpeed / accel), ai/jobs (via topSpeed / accel), ai/press (via topSpeed / accel), ai/runs (via topSpeed / accel), ai/steer (via topSpeed / accel), ai/support (via topSpeed / accel), ai/tactics (via topSpeed / accel), ai/transition (via topSpeed / accel), sim/control/resolveMove (via topSpeed / accel), sim/control/resolveShared (via topSpeed / accel), sim/control/switching (via topSpeed / accel), sim/defend/tackle (via topSpeed / accel), sim/keeper/positioning (via topSpeed / accel), sim/keeper/setpieces (via topSpeed / accel), sim/keeper/sweeper (via topSpeed / accel), sim/kicks/aerial (via topSpeed / accel), sim/kicks/pass (via topSpeed / accel), sim/kicks/shot (via topSpeed / accel), sim/kicks/skills (via topSpeed / accel), sim/players/bodies (via topSpeed / accel), sim/players/possession (via topSpeed / accel), sim/rules/penalty (via topSpeed / accel) | read (81 site(s)) |
-| agility | sim/defend/tackle, sim/kicks/aerial, sim/kicks/skills, sim/players/locomotion, sim/players/possession | read (7 site(s)) |
+| acceleration | sim/players/locomotion, ai/cpu/carrier (via topSpeed / accel), ai/cpu/defending (via topSpeed / accel), ai/cpu/passing (via topSpeed / accel), ai/cpu/shooting (via topSpeed / accel), ai/defshape (via topSpeed / accel), ai/jobs (via topSpeed / accel), ai/press (via topSpeed / accel), ai/runs (via topSpeed / accel), ai/setpieces (via topSpeed / accel), ai/steer (via topSpeed / accel), ai/support (via topSpeed / accel), ai/tactics (via topSpeed / accel), ai/transition (via topSpeed / accel), sim/control/resolveMove (via topSpeed / accel), sim/control/resolveShared (via topSpeed / accel), sim/control/switching (via topSpeed / accel), sim/defend/tackle (via topSpeed / accel), sim/keeper/positioning (via topSpeed / accel), sim/keeper/saveKinematics (via topSpeed / accel), sim/keeper/setpieces (via topSpeed / accel), sim/keeper/sweeper (via topSpeed / accel), sim/kicks/aerial (via topSpeed / accel), sim/kicks/pass (via topSpeed / accel), sim/kicks/shot (via topSpeed / accel), sim/kicks/skills (via topSpeed / accel), sim/kicks/through (via topSpeed / accel), sim/players/bodies (via topSpeed / accel), sim/players/firstTouch (via topSpeed / accel), sim/players/possession (via topSpeed / accel), sim/rules/penalty (via topSpeed / accel), sim/rules/restartCommon (via topSpeed / accel), sim/rules/throwin (via topSpeed / accel) | read (122 site(s)) |
+| sprintSpeed | ai/setpieces, sim/players/locomotion, ai/cpu/carrier (via topSpeed / accel), ai/cpu/defending (via topSpeed / accel), ai/cpu/passing (via topSpeed / accel), ai/cpu/shooting (via topSpeed / accel), ai/defshape (via topSpeed / accel), ai/jobs (via topSpeed / accel), ai/press (via topSpeed / accel), ai/runs (via topSpeed / accel), ai/steer (via topSpeed / accel), ai/support (via topSpeed / accel), ai/tactics (via topSpeed / accel), ai/transition (via topSpeed / accel), sim/control/resolveMove (via topSpeed / accel), sim/control/resolveShared (via topSpeed / accel), sim/control/switching (via topSpeed / accel), sim/defend/tackle (via topSpeed / accel), sim/keeper/positioning (via topSpeed / accel), sim/keeper/setpieces (via topSpeed / accel), sim/keeper/sweeper (via topSpeed / accel), sim/kicks/aerial (via topSpeed / accel), sim/kicks/pass (via topSpeed / accel), sim/kicks/shot (via topSpeed / accel), sim/kicks/skills (via topSpeed / accel), sim/kicks/through (via topSpeed / accel), sim/players/bodies (via topSpeed / accel), sim/players/possession (via topSpeed / accel), sim/rules/penalty (via topSpeed / accel), sim/rules/restartCommon (via topSpeed / accel), sim/rules/throwin (via topSpeed / accel) | read (87 site(s)) |
+| agility | sim/defend/tackle, sim/kicks/aerial, sim/kicks/skills, sim/kicks/through, sim/players/locomotion, sim/players/possession | read (9 site(s)) |
 | ballControl | ai/cpu/passing, sim/defend/tackle, sim/kicks/aerial, sim/kicks/skills, sim/players/firstTouch, sim/players/possession | read (10 site(s)) |
 | dribbling | ai/cpu/carrier, ai/setpieces, sim/defend/tackle, sim/kicks/skills, sim/players/possession | read (7 site(s)) |
 | shortPassing | ai/cpu/passing, ai/setpieces, sim/kicks/aerial, sim/kicks/pass, sim/rules/freekick | read (7 site(s)) |
@@ -147,7 +152,7 @@ the consuming modules are retuned, the assertions only require the direction and
 | interceptions | sim/defend/tackle | read (1 site(s)) |
 | strength | ai/cpu/carrier, sim/defend/tackle, sim/keeper/sweeper, sim/kicks/aerial, sim/players/bodies | read (16 site(s)) |
 | stamina | sim/players/locomotion | read (1 site(s)) |
-| composure | ai/cpu/shooting, sim/keeper/setpieces, sim/kicks/shot, sim/rules/penalty, sim/rules/restart, sim/rules/shootout | read (7 site(s)) |
+| composure | ai/cpu/carrier, ai/cpu/defending, ai/cpu/shooting, sim/keeper/setpieces, sim/kicks/shot, sim/rules/penalty, sim/rules/restart, sim/rules/shootout | read (9 site(s)) |
 | gkDiving | ai/cpu/shooting, sim/keeper/saveKinematics, sim/keeper/sweeper, sim/rules/subs | read (6 site(s)) |
 | gkHandling | sim/keeper/handling, sim/keeper/saves, sim/keeper/sweeper, sim/rules/subs | read (7 site(s)) |
 | gkReflexes | ai/cpu/shooting, sim/keeper/saveKinematics, sim/keeper/saves, sim/rules/subs | read (4 site(s)) |

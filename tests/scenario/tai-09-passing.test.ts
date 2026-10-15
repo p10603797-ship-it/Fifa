@@ -290,6 +290,20 @@ describe('TAI-09 scorePassOptions', () => {
     expect(lob.completion).toBeGreaterThan(ground.completion + 0.15);
   });
 
+  it('[QF-11] an open lob over a blocked lane is rated near what lobs complete since QF-9 (not the old 13% era)', () => {
+    // QF-9's lofted receiver meets the ball where it comes down: chosen CPU lobs completed 76% against a raw lane
+    // estimate of 72% (56 Professional matches), so aerialMin / aerialMax are 0.85 / 1.0 (were 0.4 / 0.6 when lobs
+    // reached the receiver about 13% of the time).
+    const s = scene();
+    sparse(s, [6, 9]);
+    place(s, 6, 0, 0); own(s, 6);
+    place(s, 9, 26, 0);
+    place(s, 17, 13, 0.2);
+    const lob = of(scan(s, 6), 9, [KickKind.LOB_PASS])[0]!;
+    expect(lob).toBeDefined();
+    expect(lob.completion).toBeGreaterThan(0.45); // 0.50 here; ~0.26 with the old 0.4 / 0.6 aerial factor
+  });
+
   it('a driven pass replaces a ground pass a slow ball would lose', () => {
     const s = scene();
     sparse(s, [6, 9]);

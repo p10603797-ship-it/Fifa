@@ -4,7 +4,7 @@
  *
  *   generateRoomCode(Math.random)            'K7QWMZ'      (randomRoomCode() uses crypto.getRandomValues when present)
  *   normaliseRoomCode(' k7q-wmz ')           'K7QWMZ'      (null for anything that is not a valid code)
- *   roomLink('K7QWMZ', location.href)        'https://dotkick.app/play/?room=K7QWMZ'
+ *   roomLink('K7QWMZ', location.href)        'http://localhost/play/?room=K7QWMZ'
  *   roomCodeFromUrl(location.href)           'K7QWMZ' or null (the app checks this on boot to auto-join)
  *   urlWithoutRoom(location.href)            the same page without ?room= (after leaving a room)
  *

@@ -33,7 +33,7 @@ import type { RngState } from '../src/contracts/state';
 import { getFormation } from '../src/data/formations';
 import { contrastRatio, deltaE, generateKits, isRgb, validateClubKits, type ClubKits } from '../src/data/kits';
 import { emblemHint, generateClubNames, isCodeAllowed, screenClubName, type ClubNameParts } from '../src/data/names';
-import { nameKey } from '../src/data/screen';
+import { applyPlayerNameFixes, nameKey } from '../src/data/screen';
 import { generateSquad, squadRating, validateSquad } from '../src/data/playerGen';
 import { num, parseArgs, str, bool } from './lib/args';
 import { createRng, mix32, rngFloat } from './lib/rand';
@@ -283,6 +283,7 @@ export function generateLeague(seed: number = DEFAULT_SEED): Club[] {
     const nm = names[id]!;
     const k = kits[id]!;
     const squad = generateSquad(stream(seed, STREAM.squads + id), { rating: ratings[id]!, formation: formations[id]!, style: styles[id]! }, { usedNames });
+    applyPlayerNameFixes(id, squad); // SGN-05: rename late-denylisted committed names (names only, no RNG draw)
     clubs.push({
       id, name: nm.name, code: nm.code, city: nm.city, rating: ratings[id]!, style: styles[id]!, formation: formations[id]!,
       home: k.home, away: k.away, keeper: k.keeper, keeper2: k.keeper2, crest: crests[id]!, squad,

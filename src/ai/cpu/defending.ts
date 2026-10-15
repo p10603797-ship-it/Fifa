@@ -567,7 +567,7 @@ function defendCarrier(
   const seed = s.config.seed | 0;
   const who = team * 64 + carrier;
   // [QF-11] A nervous defender lunges more, a calm one less (T_AI.composureNoise*).
-  const noisy = lv.decisionNoise * composureNoiseMul(s.attrs[slot]!.composure);
+  const noisy = lv.decisionNoise * composureNoiseMul(s.attrs[slot]!.composure, brain.level);
 
   // Standing tackle / shoulder (never from behind: that would be a push or pull).
   const kind = tackleKind(s, p, carrier);

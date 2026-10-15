@@ -344,7 +344,7 @@ export const T_AI = {
    *  tackles): x clamp(1 + composureNoiseSlope x (composureNoiseRef - composure) / 30, composureNoiseMin,
    *  composureNoiseMax). An average player (ref) keeps the level's noise; a calm one decides cleaner, a nervous one
    *  rushes (BRIEF section 15: ratings show through attributes). Unitless; ref attribute points. */
-  composureNoiseSlope: 0,
+  composureNoiseSlope: 0.65,
   composureNoiseRef: 72,
   composureNoiseMin: 0.4,
   composureNoiseMax: 1.8,
@@ -415,13 +415,13 @@ export const T_CPU = {
   // ---- passing.ts
   passGroundArriveMin: 7,
   passGroundArriveMax: 12,
-  passAerialMin: 0.4,
-  passAerialMax: 0.6,
+  passAerialMin: 0.85, // [QF-11] was 0.4 (0.6 max): QF-9's lofted receiver; 56 matches: chosen lobs 72% est. raw, 76% done
+  passAerialMax: 1.0,
   passLeadMaxS: 1.5,
-  passThroughGroundCompletionMul: 1,
-  passThroughLobCompletionMul: 0.25,
-  passCrossCompletionMul: 1.6,
-  passCrossCompletionAdd: 0.12,
+  passThroughGroundCompletionMul: 0.52, // [QF-11] was 1: ground through balls estimated 77%, completed 40% (143)
+  passThroughLobCompletionMul: 0.75, // [QF-11] was 0.25: lofted through balls 21% est. raw, 16% done (172)
+  passCrossCompletionMul: 0.4, // [QF-11] was 1.6 (+ 0.12): crosses estimated 24%, reached a teammate 6% (67)
+  passCrossCompletionAdd: 0,
   // ---- shooting.ts
   xgBlockRadiusNear: 1.0,
   xgBlockEffNear: 0.95,
@@ -436,33 +436,39 @@ export const T_CPU = {
 
 /** Per-difficulty AI parameters, indexed by Difficulty (0 Beginner .. 5 Legend). Never physics. */
 export const T_LEVEL = {
-  reactionTicks: [26, 20, 15, 11, 8, 5] as readonly number[],
-  decisionNoise: [0.45, 0.33, 0.24, 0.16, 0.1, 0.05] as readonly number[],
+  /** [QF-11] Ticks a CPU carrier keeps running the way he is going after he gets the ball, and a CPU defender after a
+   *  change of ball owner, before deciding (head down): measured the strongest lever below Professional. */
+  reactionTicks: [60, 42, 24, 11, 6, 1] as readonly number[],
+  /** [QF-11] Option noise (TAI-08 carrier utilities, TAI-11 rash / noisy tackles, TAI-13 set-piece targets, GKP-04
+   *  distribution): a noisy carrier picks the safe square pass among many near-equal ones and never makes the chance;
+   *  the strongest lever above Professional (Legend decides without noise). */
+  decisionNoise: [0.5, 0.38, 0.275, 0.16, 0.085, 0] as readonly number[],
   lookAheadTicks: [10, 16, 22, 30, 38, 46] as readonly number[],
   executionError: [1.6, 1.35, 1.15, 1.0, 0.85, 0.72] as readonly number[],
-  pressIntensity: [0.35, 0.5, 0.62, 0.75, 0.86, 0.95] as readonly number[],
+  /** [QF-11] was 0.35 .. 0.95: a harder press measured no better (slightly worse) in this sim, so the spread is small. */
+  pressIntensity: [0.6, 0.65, 0.7, 0.75, 0.78, 0.8] as readonly number[],
   tackleTimingTicks: [14, 11, 8, 6, 4, 3] as readonly number[],
   shotThresholdXg: [0.0018, 0.002, 0.0025, 0.003, 0.0035, 0.004] as readonly number[],
   /** [QF-2] Extra save-reaction ticks of a CPU team's keeper by level (GKP-02; 0 at Professional and for a human
    *  side): reaction time is one of the level differences (BRIEF §7), the keeper's included. Not in LevelParams
-   *  (contracts/systems.ts): GKP-02 reads it here. */
-  keeperReactTicks: [10, 6, 3, 0, -2, -3] as readonly number[],
+   *  (contracts/systems.ts): GKP-02 reads it here. [QF-11] was 10 / 6 / 3 / 0 / -2 / -3: a low level's keeper is
+   *  visibly slow to react (Beginner +30 ticks on top of his reflexes), a top level's sharper. */
+  keeperReactTicks: [30, 21, 10, 0, -3, -8] as readonly number[],
   /** [QF-11] Extra AI tables (read through ai/cpu/levels levelValue: a human side's AI always uses the Professional
-   *  entry, so Professional is the pre-QF-11 behaviour). CPU carrier re-decision period, ticks (TAI-08; the
-   *  pre-QF-11 T_AI.carrierEvalInterval was 5 for every level): a low level reacts to a closing presser late. */
-  carrierEvalTicks: [5, 5, 5, 5, 5, 5] as readonly number[],
-  /** [QF-11] Share of a pass's interception risk the CPU carrier sees (TAI-08 / TAI-09: completion c is judged as
-   *  1 - (1 - c) x this, clamped to 0..1), 0..3: below 1 a level under-rates the men in the lane, above 1 it over-rates
-   *  them and plays safe. */
-  passRiskSeen: [1, 1, 1, 1, 1, 1] as readonly number[],
-  /** [QF-11] Team shape update period of a CPU side, ticks (TAI-01; T_AI.shapeInterval was 6 for every side): a low
-   *  level's block shifts late after the ball. */
-  shapeIntervalTicks: [6, 6, 6, 6, 6, 6] as readonly number[],
+   *  entry, which is the pre-QF-11 behaviour). CPU carrier re-decision period, ticks (TAI-08; T_AI.carrierEvalInterval
+   *  for every level before): a top level is patient and carries the ball to the better option (re-deciding every few
+   *  ticks takes the first pass that edges ahead). */
+  carrierEvalTicks: [5, 5, 5, 5, 6, 12] as readonly number[],
   /** [QF-11] TAI-04 marking distance multiplier of a CPU side (markGap / markGapMid x this): a low level marks loose. */
-  markGapMul: [1, 1, 1, 1, 1, 1] as readonly number[],
+  markGapMul: [2.0, 1.6, 1.26, 1, 1, 1] as readonly number[],
   /** [QF-11] TAI-04 back-line speed multiplier of a CPU side (lineUpRate / lineDownRate x this): a low level's line
    *  steps and drops late. */
-  lineRateMul: [1, 1, 1, 1, 1, 1] as readonly number[],
+  lineRateMul: [0.5, 0.65, 0.8, 1, 1, 1] as readonly number[],
+  /** [QF-11] Weight of the player's composure on the level's decision noise (T_AI.composureNoise*, ai/cpu/levels
+   *  composureNoiseMul): rating gaps show through decisions at Professional (the balance level) and half at Semi-Pro.
+   *  0 elsewhere: a spread of noise round the level's noise narrows the gap to the neighbouring level (the cost of
+   *  noise is concave), measured 10-15 points of ladder win share at full weight everywhere. */
+  composureNoiseWeight: [0, 0, 0.5, 1, 0, 0] as readonly number[],
 } as const;
 
 export const T_INPUT = {

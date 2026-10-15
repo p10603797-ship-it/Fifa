@@ -4,6 +4,11 @@ DotKick is an original game (brief section 2). Everything you see or hear is gen
 parts listed here with their name, address and licence. There are no images, sounds, models, textures or fonts from
 anywhere else, and nothing from any commercial game.
 
+DotKick is not affiliated with, endorsed by or connected to FIFA, EA, any football league, club, player, broadcaster
+or sponsor. Every club, player, city, crest, kit, stadium and advertising-board brand in the game is invented. Only the
+control schemes follow familiar console football games (BRIEF sections 9 and 10). Controller names in Settings
+(PlayStation, Xbox, Switch) only say which button glyphs to draw for the player's own controller; no logos are used.
+
 Versions are the exact pinned versions in `package.json` / `package-lock.json`. When a dependency is added, removed or
 upgraded, update this page in the same change (`tests/unit/plt-06-docs.test.ts` checks that every runtime dependency is
 listed here with its pinned version and licence).
@@ -27,8 +32,11 @@ PeerJS brings these libraries with it; they are bundled into the game together w
 | @msgpack/msgpack | 2.8.0 | [github.com/msgpack/msgpack-javascript](https://github.com/msgpack/msgpack-javascript) | ISC | Copyright 2019 The MessagePack Community |
 | eventemitter3 | 4.0.7 | [github.com/primus/eventemitter3](https://github.com/primus/eventemitter3) | MIT | Copyright (c) 2014 Arnout Kazemier |
 
-The fonts are used unmodified apart from the Latin subsetting that the @fontsource packages ship. Their reserved font
-names are not used for anything else. The full licence texts are at the end of this page.
+The fonts are used unmodified apart from the Latin subsetting that the @fontsource packages ship. Neither font declares a
+Reserved Font Name, and their names are not used for anything else. The full licence texts are at the end of this page.
+
+Nothing else is bundled. The build tool adds only a few lines of its own glue (Vite's module-preload helper and
+Rolldown's module runtime, both MIT); the module preload helper never fires because the page has no preload links.
 
 ## Made in code (no outside source)
 
@@ -36,9 +44,12 @@ names are not used for anything else. The full licence texts are at the end of t
 |---|---|
 | App icons (`public/icons/*.png`) | `tools/gen-icons.mjs` draws the DotKick mark and encodes the PNG files |
 | Pitch, stadium, crowd, players, kits, numbers, ball, nets, effects | `src/render/` (geometry, colours and texture atlases generated at load) |
+| Club crests (geometric shapes, colour layouts and simple marks) | `src/render/kit/crest.ts` |
+| Advertising boards (invented brand words with abstract shapes; no real sponsor) | `src/render/stadium.ts` |
 | Menus, HUD, the dot-field background, button glyphs | `src/ui/` and `src/input/pad/glyphs.ts` (DOM, CSS, canvas and inline SVG drawn in code; controller glyphs are plain shapes and letters, no logos) |
 | All sound: crowd, whistles, kicks, voices, menu sounds | `src/audio/` (synthesised with the Web Audio API) |
 | Teams, players, names, kits, formations | `src/data/` (invented; `tools/gen-data.ts` generates the club list) |
+| Club, city and player names, 3-letter codes | Composed from word and syllable lists, then screened against about 1,700 famous footballers and managers (men's and women's football), 780 real club names, 880 club towns, stadiums and club words, 400 nicknames and 530 club and national-team codes: `src/data/screen.ts`, `src/data/names.ts`. The audit also checked the shipped names, and every surname the generator can form, against Wikidata (about 98,000 footballers and managers, 37,000 club names, aliases and nicknames) |
 
 ## Online services used by online 1v1 only
 
@@ -69,6 +80,38 @@ These run on a developer's computer or in CI and are not part of the game files.
 | tsx | 4.23.15 | MIT | [tsx.hirok.io](https://tsx.hirok.io/) |
 | `@types/node`, `@types/three` | 22.19.1, 0.186.0 | MIT | [github.com/DefinitelyTyped/DefinitelyTyped](https://github.com/DefinitelyTyped/DefinitelyTyped) |
 | PeerServer (`peer`), e2e only: local broker for the real-WebRTC online test | 1.0.2 | MIT | [github.com/peers/peerjs-server](https://github.com/peers/peerjs-server) |
+
+## Originality and licence audit
+
+The audit (assignment SGN-05, BRIEF section 2 and definition of done 9) is kept as tests, so it runs again with every
+change:
+
+- Names: `tests/unit/sgn-05-originality.test.ts` screens all 360 players, 20 clubs, cities and codes. A second pass
+  (`tests/unit/sgn-05-second-pass.test.ts`) used an independent source, Wikidata: all 360 display names and every
+  surname the generator can form against about 98,000 footballers and managers, and the clubs, cities and codes
+  against 37,000 club names, aliases and nicknames (no club hit). Four generated names had to go: Capello (Fabio
+  Capello), Šašić (Célia Šašić), Thornton (W. Thornton, the display name of Rangers and Scotland centre-forward Willie
+  Thornton) and Zanotti (one letter from Javier Zanetti); the lead also renamed Paletti (one letter from Gabriel
+  Paletta) and Mabuza (the display name of politician David Mabuza) to be safe. `PLAYER_NAME_FIXES` in `src/data/screen.ts` renames them
+  after generation, so no attribute or kit changes. Famous surnames the generator could form but the league does not
+  use are in `AUDIT_FAMOUS_PLAYERS`, checked on every shipped league. Accepted near misses: a few common surnames
+  carried by minor players with a different first initial (Morimoto, Kurobe, Yamazaki, Ishizaki, Morikawa, Corini,
+  Holmlund), and same-initial matches with players who are not famous (Y. Sakamoto, A. Aksoy). Club codes CAS and
+  ELD coincide with abbreviations of two Spanish second-tier clubs; a three-letter code alone does not identify a club,
+  so they stay. Two invented advertising-board brands that were one letter from real brands were renamed.
+- Visuals: crests are SVG polygons with no text or images; the only image files are the generated app icons; fonts
+  come only from the two OFL packages above. Nothing imitates a real crest, league or game identity.
+- Audio: everything is synthesised with the Web Audio API; no file is loaded or decoded, and the only note sequences
+  are three short original stings and the menu sounds.
+- Dependencies: every shipped package has a permissive licence, a row on this page and its licence text inside
+  `dist/index.html`; development packages (including the local PeerServer `peer`) are never imported by `src/`.
+- Network: `tests/e2e/sgn-05-network.spec.ts` logs every request of a real run (boot and install, menus, every
+  settings tab, credits, a full match, practice, the tutorial, an offline reload). `tests/e2e/sgn-05-proxylog.spec.ts`
+  checks again from outside the page: the browser sends everything through a logging proxy (local traffic included)
+  and Chromium's own NetLog is read afterwards, over other paths (controller play, same-iPad 1v1, a Cup tie, a
+  Shoot-out, Diagnostics, Join room, a friend's share link, an offline launch in a new tab). Nothing leaves the page's
+  origin; only Create room, Join room and opening a friend's room link (after "Tap to start") contact the PeerJS
+  broker. No analytics, tracking, font CDN or API key is anywhere in `src/` or the built page.
 
 ## Licence texts
 

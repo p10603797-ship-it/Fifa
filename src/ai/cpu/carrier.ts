@@ -333,7 +333,7 @@ const MODE_BUTTON = 3;
 /** Decision context (scratch, filled by fillContext at each decision). */
 const C = {
   team: 0, dir: 1, prog: 0, vHere: 0, pressure: 0, nearD: 1e9, nearOpp: -1, safetyMul: 1, noiseSd: 0, lookFrac: 0,
-  counter: 0, riskSeen: 1,
+  counter: 0,
 };
 
 /**
@@ -343,7 +343,7 @@ const C = {
  */
 export const CARRIER_DEBUG = {
   plan: 0, u: 0, shotU: -1e18, shotWhy: 0, shotClean: 0, shotClear: 1, prog: 0,
-  /** [QF-11] The chosen option's TAI-09 completion (before the level's risk perception; -1 for no pass), kick kind and
+  /** [QF-11] The chosen option's TAI-09 completion (-1 for no pass), kick kind and
    *  target slot (TAI-09 calibration tools). */
   passC: -1, passKind: 0, passSlot: -1,
 };
@@ -483,7 +483,14 @@ function emitCarry(s: SimState, p: Readonly<PlayerState>, out: InputFrame): void
   const v = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
   if (v < 0.5) return;
   const jog = s.attrs[p.slot]!.topSpeed * T_PLAYER.jogFraction;
-  SV[0] = p.vx; SV[1] = p.vz; SV[2] = jog > 0 ? v / jog : 1; stickOut(out);
+  // [QF-11] Within edgeMargin of a touchline / goal line he carries on along it instead of over it: a long reaction
+  // delay (low levels) ran the ball straight out of play.
+  let dx = p.vx, dz = p.vz;
+  const zl = HALF_WIDTH - LT.edgeMargin, xl = HALF_LENGTH - LT.edgeMargin;
+  if ((p.z > zl && dz > 0) || (p.z < -zl && dz < 0)) dz = 0;
+  if ((p.x > xl && dx > 0) || (p.x < -xl && dx < 0)) dx = 0;
+  if (dx === 0 && dz === 0) return;
+  SV[0] = dx; SV[1] = dz; SV[2] = jog > 0 ? v / jog : 1; stickOut(out);
 }
 
 // ---------------------------------------------------------------- decision
@@ -495,11 +502,9 @@ function fillContext(s: SimState, team: number, p: Readonly<PlayerState>, lv: Re
   C.prog = (t.dir * p.x) / HALF_LENGTH;
   C.safetyMul = LT.safetyLossMin + (LT.safetyLossMax - LT.safetyLossMin) * clamp01(sw.safety);
   C.vHere = posValue(C.prog, p.z);
-  C.noiseSd = clamp01(lv.decisionNoise) * LT.noiseScale * composureNoiseMul(s.attrs[p.slot]!.composure);
+  C.noiseSd = clamp01(lv.decisionNoise) * LT.noiseScale * composureNoiseMul(s.attrs[p.slot]!.composure, t.cpu.level);
   C.lookFrac = clamp01(lv.lookAheadTicks / LT.lookAheadRef);
   C.counter = t.phase === TeamPhase.TRANSITION_ATTACK ? 1 : 0;
-  const rs = levelValue(s, team, T_LEVEL.passRiskSeen);
-  C.riskSeen = !(rs > 0) ? 0 : rs > 3 ? 3 : rs;
   // Nearest opponent now, and the closest one after the look-ahead (both carrying on at their velocities).
   const la = (lv.lookAheadTicks > 0 ? lv.lookAheadTicks : 0) * DT;
   const px = p.x + p.vx * la, pz = p.z + p.vz * la;
@@ -576,8 +581,6 @@ function passOptionsInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<Sty
     if (!(ox === ox && oz === oz) || ox > HALF_LENGTH + 5 || ox < -HALF_LENGTH - 5 || oz > HALF_WIDTH + 5 || oz < -HALF_WIDTH - 5) continue;
     let c = clamp01(o.completion);
     CU[3] = c;
-    // [QF-11] A low level under-rates the interception risk (T_LEVEL.passRiskSeen) and plays the pass that is cut out.
-    c = clamp01(1 - (1 - c) * C.riskSeen);
     if (plan === CpuPlan.THROUGH) c *= 1 - LT.throughLookPenalty * (1 - C.lookFrac);
     const tprog = (dir * ox) / HALF_LENGTH;
     let vT = posValue(tprog, oz);

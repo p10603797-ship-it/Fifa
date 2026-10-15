@@ -14,6 +14,7 @@ import { AXIS_SCALE, Btn, clearInputFrame, createInputFrame, type InputFrame } f
 import { MoveMode, type SimState } from '../../src/contracts/state';
 import { T_LEVEL, T_SKILL, T_TACKLE } from '../../src/contracts/tuning';
 import { cpuDefend, DEFEND_TUNING as L, noise01, throughOnGoal } from '../../src/ai/cpu/defending';
+import { composureNoiseMul } from '../../src/ai/cpu/levels';
 import { NULL_SINK } from '../../src/sim/core/events';
 import { createInterceptEstimate, estimateIntercept } from '../../src/ai/steer';
 import { makeScenario } from '../harness/scenario';
@@ -327,7 +328,9 @@ describe('TAI-11 tackle timing', () => {
         if (has(think(s), Btn.SHOOT)) n++;
       }
       rate.push(n / N);
-      const want = T_LEVEL.decisionNoise[lv]! * L.rashLungeChance;
+      // [QF-11] The defender's composure scales the level's noise (T_AI.composureNoise*).
+      const comp = scene({ level: lv, c: { x: 30, z: 0 }, d: { x: 31.3, z: 0 } }).attrs[D]!.composure;
+      const want = T_LEVEL.decisionNoise[lv]! * L.rashLungeChance * composureNoiseMul(comp, lv);
       expect(Math.abs(n / N - want), `level ${lv}: ${n / N} vs ${want}`).toBeLessThan(0.025);
     }
     expect(rate[0]!).toBeGreaterThan(rate[1]!);
@@ -493,7 +496,9 @@ describe('TAI-11 reaction delay', () => {
       s.teams[1]!.cpu.seenOwner = 20; // the ball was someone else's: new carrier
       s.players[D]!.vz = 4;
       let n = 0;
-      for (; n < 60; n++) {
+      // [QF-11] Cap past the level's delay (Beginner's grew to 60+ ticks; a cap of 60 hid the end of the wait).
+      const cap = T_LEVEL.reactionTicks[lv]! + 30;
+      for (; n < cap; n++) {
         const f = n === 0 ? think(s) : thinkNext(s);
         if (has(f, Btn.SHIELD)) break;
         // Momentum: stick along his run (+z), no buttons.

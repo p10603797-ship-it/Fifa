@@ -15,6 +15,15 @@
  *
  * Generation-time only (tools/gen-data.ts via src/data/playerGen.ts); never imported by sim/ai code.
  * Korean names are listed given-name first so the family name sits in the surname position.
+ *
+ * [SGN-05] The originality audit broadened the lists (more legends, World Cup / Euro winners, current players,
+ * famous managers who played, women's football; ~1,700 full names). Every addition was checked with
+ * `npx tsx tools/gen-data.ts --check` (the committed league is unchanged). A second pass screened every surname the
+ * generator can form, and all 360 display names, against Wikidata's footballers and managers (about 98,000 people
+ * with 6+ Wikipedia language editions); the famous ones still missing are in AUDIT_FAMOUS_PLAYERS. The famous names
+ * the league had already drawn sit in LATE_FAMOUS_PLAYERS / LATE_ICONIC_SURNAMES. `screenShippedName` rejects all of
+ * them, `screenName` (the generator's screen) does not, and PLAYER_NAME_FIXES / `applyPlayerNameFixes` rename the
+ * committed players that hit the LATE lists without moving any RNG draw.
  */
 
 export type ScreenReason = 'full' | 'surname-initial' | 'iconic' | 'near-iconic' | 'famous-surname' | 'offensive';
@@ -138,6 +147,180 @@ export const FAMOUS_PLAYERS: readonly string[] = [
   'Takumi Minamino', 'Maya Yoshida', 'Mehdi Taremi', 'Sardar Azmoun', 'Salem Al-Dawsari', 'Roberto Firmino',
   'Gabriel Jesus', 'Gabriel Martinelli', 'Lucas Paqueta', 'Bruno Guimaraes', 'Alex Sandro', 'Gabriel Magalhaes',
   'Joao Pedro', 'Gabriel Barbosa', 'Gleison Bremer', 'Emerson Royal',
+  // ---- SGN-05 extension: Ballon d'Or names, World Cup and Euro winners, club legends (before ~1995)
+  'Raymond Kopa', 'Just Fontaine', 'Omar Sivori', 'Josef Masopust', 'Florian Albert', 'Allan Simonsen',
+  'Matthias Sammer', 'Tom Finney', 'Nat Lofthouse', 'Billy Wright', 'Duncan Edwards', 'Jimmy Greaves',
+  'Johnny Haynes', 'Geoff Hurst', 'Martin Peters', 'Nobby Stiles', 'Alan Ball', 'Roger Hunt', 'Jack Charlton',
+  'Ray Wilson', 'George Cohen', 'Ray Clemence', 'Trevor Brooking', 'Bryan Robson', 'Ray Wilkins', 'Glenn Hoddle',
+  'John Barnes', 'Chris Waddle', 'Peter Beardsley', 'Stuart Pearce', 'Tony Adams', 'David Platt', 'Paul Ince',
+  'Matt Le Tissier', 'Steve McManaman', 'Les Ferdinand', 'Andy Cole', 'Dwight Yorke', 'Jimmy Floyd Hasselbaink',
+  'Gianluca Pagliuca', 'Neville Southall', 'Mark Hughes', 'John Charles', 'Ivor Allchurch', 'Gary Speed',
+  'Graeme Souness', 'Gordon Strachan', 'Ally McCoist', 'Jimmy Johnstone', 'Jim Baxter', 'Billy McNeill',
+  'Billy Bremner', 'Alan Hansen', 'Paul McStay', 'Danny Blanchflower', 'Pat Jennings', 'Liam Brady', 'Paul McGrath',
+  'Steve Staunton', 'Ray Houghton', 'John Aldridge', 'Fritz Walter', 'Helmut Rahn', 'Wolfgang Overath', 'Berti Vogts',
+  'Uli Hoeness', 'Jupp Heynckes', 'Harald Schumacher', 'Felix Magath', 'Andreas Brehme', 'Jurgen Kohler',
+  'Pierre Littbarski', 'Thomas Hassler', 'Bodo Illgner', 'Klaus Augenthaler', 'Guido Buchwald', 'Stefan Reuter',
+  'Andreas Moller', 'Bernd Schuster', 'Giuseppe Meazza', 'Silvio Piola', 'Valentino Mazzola', 'Luigi Riva',
+  'Gigi Riva', 'Marco Tardelli', 'Bruno Conti', 'Claudio Gentile', 'Gaetano Scirea', 'Antonio Cabrini',
+  'Alessandro Altobelli', 'Giuseppe Bergomi', 'Cesare Maldini', 'Roberto Donadoni', 'Demetrio Albertini',
+  'Alessandro Costacurta', 'Giuseppe Signori', 'Salvatore Schillaci', 'Fabrizio Ravanelli', 'Roberto Di Matteo',
+  'Walter Zenga', 'Johnny Rep', 'Rob Rensenbrink', 'Wim van Hanegem', 'Arie Haan', 'Ronald Koeman', 'Erwin Koeman',
+  'Hans van Breukelen', 'Jan Wouters', 'Alain Giresse', 'Jean Tigana', 'Dominique Rocheteau', 'Maxime Bossis',
+  'Manuel Amoros', 'Luis Fernandez', 'Mario Coluna', 'Jose Torres', 'Fernando Chalana', 'Vitor Baia', 'Paulo Sousa',
+  'Joao Pinto', 'Jan Ceulemans', 'Eric Gerets', 'Marc Wilmots', "Michel Preud'homme", 'Sandor Kocsis',
+  'Nandor Hidegkuti', 'Kazimierz Deyna', 'Andrzej Szarmach', 'Gheorghe Popescu', 'Dan Petrescu', 'Krasimir Balakov',
+  'Yordan Letchkov', 'Emil Kostadinov', 'Robert Prosinecki', 'Slaven Bilic', 'Robert Jarni', 'Tomas Brolin',
+  'Martin Dahlin', 'Thomas Ravelli', 'Glenn Hysen', 'Preben Elkjaer', 'Morten Olsen', 'Flemming Povlsen',
+  'Nilton Santos', 'Djalma Santos', 'Mario Zagallo', 'Paulo Roberto Falcao', 'Claudio Taffarel', 'Mauro Silva',
+  'Leonardo Araujo', 'Osvaldo Ardiles', 'Ubaldo Fillol', 'Leopoldo Luque', 'Jorge Valdano', 'Jorge Burruchaga',
+  'Oscar Ruggeri', 'Sergio Batista', 'Juan Alberto Schiaffino', 'Alcides Ghiggia', 'Obdulio Varela', 'Ruben Sosa',
+  'Freddy Rincon', 'Andres Escobar', 'Alberto Spencer', 'Jose Luis Chilavert', 'Carlos Caszely', 'Julio Cesar Romero',
+  'Hector Chumpitaz', 'Abedi Ayew', 'Anthony Yeboah', 'Rashidi Yekini', 'Kalusha Bwalya', 'Lakhdar Belloumi',
+  'Thomas Nkono', 'Joseph-Antoine Bell', 'Hong Myung-bo', 'Kunishige Kamamoto', 'Ahn Jung-hwan', 'Saeed Al-Owairan',
+  'Kasey Keller', 'Claudio Reyna', 'Alexi Lalas', 'Eric Wynalda', 'Jorge Campos', 'Cuauhtemoc Blanco',
+  'Jared Borgetti', 'Paulo Wanchope', 'Shaka Hislop', 'Frank Leboeuf', 'Christophe Dugarry', "Stephane Guivarc'h",
+  // ---- SGN-05 extension: 1995-2015
+  'Marco Materazzi', 'Fabio Grosso', 'Mauro Camoranesi', 'Simone Perrotta', 'Vincenzo Iaquinta', 'Alberto Gilardino',
+  'Massimo Oddo', 'Angelo Peruzzi', 'Christian Panucci', 'Joan Capdevila', 'Carlos Marchena', 'Alvaro Arbeloa',
+  'Victor Valdes', 'Pepe Reina', 'Fernando Llorente', 'Michel Salgado', 'Ivan Helguera', 'Luis Enrique',
+  'Josep Guardiola', 'Ivan de la Pena', 'Joaquin Sanchez', 'Benedikt Howedes', 'Andre Schurrle', 'Julian Draxler',
+  'Christoph Kramer', 'Matthias Ginter', 'Roman Weidenfeller', 'Mehmet Scholl', 'Oliver Bierhoff', 'Jens Lehmann',
+  'Christian Ziege', 'Jens Jeremies', 'Dietmar Hamann', 'Torsten Frings', 'Bernd Schneider', 'Kevin Kuranyi',
+  'Marcel Schmelzer', 'Benjamin Pavard', 'Samuel Umtiti', 'Blaise Matuidi', 'Corentin Tolisso', 'Thomas Lemar',
+  'Nabil Fekir', 'Presnel Kimpembe', 'Benjamin Mendy', 'Steven Nzonzi', 'Adil Rami', 'Alphonse Areola',
+  'Steve Mandanda', 'Florian Thauvin', 'William Gallas', 'Willy Sagnol', 'Gregory Coupet', 'Eric Abidal',
+  'Dimitri Payet', 'Yohan Cabaye', 'Moussa Sissoko', 'Laurent Koscielny', 'Mamadou Sakho', 'Loic Remy',
+  'Kevin Gameiro', 'Alexandre Lacazette', 'Anthony Martial', 'Louis Saha', 'Sidney Govou', 'Djibril Sidibe',
+  'David Ginola', 'Fabio Coentrao', 'Bruno Alves', 'Renato Sanches', 'William Carvalho', 'Raphael Guerreiro',
+  'Cedric Soares', 'Jose Fonte', 'Joao Mario', 'Adrien Silva', 'Ricardo Pereira', 'Nelson Semedo', 'Andre Silva',
+  'Angelos Charisteas', 'Theodoros Zagorakis', 'Traianos Dellas', 'Giorgos Karagounis', 'Antonios Nikopolidis',
+  'Angelos Basinas', 'Kim Vilfort', 'John Jensen', 'Jon Dahl Tomasson', 'Ebbe Sand', 'Thomas Gravesen', 'Simon Kjaer',
+  'Andreas Christensen', 'Thomas Delaney', 'Yussuf Poulsen', 'Mikkel Damsgaard', 'Phillip Cocu', 'Boudewijn Zenden',
+  'Giovanni van Bronckhorst', 'Roy Makaay', 'Klaas-Jan Huntelaar', 'John Heitinga', 'Joris Mathijsen', 'Daley Blind',
+  'Danny Blind', 'Michael Reiziger', 'Winston Bogarde', 'Pierre van Hooijdonk', 'Eidur Gudjohnsen',
+  'Gylfi Sigurdsson', 'Tore Andre Flo', 'John Carew', 'Steffen Iversen', 'Mikael Silvestre', 'Olof Mellberg',
+  'Emil Forsberg', 'Zlatko Zahovic', 'Edin Dzeko', 'Miralem Pjanic', 'Vedad Ibisevic', 'Asmir Begovic',
+  'Sead Kolasinac', 'Karel Poborsky', 'Patrik Berger', 'Vladimir Smicer', 'Adrian Mutu', 'Cristian Chivu',
+  'Serhiy Rebrov', 'Anatoliy Tymoshchuk', 'Andriy Yarmolenko', 'Yevhen Konoplyanka', 'Roman Pavlyuchenko',
+  'Igor Akinfeev', 'Yuri Zhirkov', 'Alan Dzagoev', 'Aleksandr Golovin', 'Nihat Kahveci', 'Hamit Altintop',
+  'Tugay Kerimoglu', 'Alpay Ozalan', 'Bulent Korkmaz', 'Kamil Glik', 'Arkadiusz Milik', 'Grzegorz Krychowiak',
+  'Lukasz Fabianski', 'Didier Zokora', 'Wilfried Bony', 'Serge Aurier', 'Eric Bailly', 'Rigobert Song', 'Alex Song',
+  'Patrick Mboma', 'Pierre Webo', 'Eric Maxim Choupo-Moting', 'Vincent Aboubakar', 'Finidi George', 'Daniel Amokachi',
+  'Emmanuel Amunike', 'Sunday Oliseh', 'Taribo West', 'Celestine Babayaro', 'Obafemi Martins', 'Ahmed Musa',
+  'Odion Ighalo', 'Mahamadou Diarra', 'Adama Traore', 'Steven Pienaar', 'Mohamed Zidan', 'Essam El-Hadary',
+  'Sofiane Feghouli', 'Islam Slimani', 'Yacine Brahimi', 'Youssef Chippo', 'Mustapha Hadji', 'Marouane Chamakh',
+  'Younes Belhanda', 'Ki Sung-yueng', 'Lee Chung-yong', 'Seol Ki-hyeon', 'Eiji Kawashima', 'Makoto Hasebe',
+  'Yuto Nagatomo', 'Takashi Inui', 'Yuya Osako', 'Yasuhito Endo', 'Junichi Inamoto', 'Shinji Ono', 'Naohiro Takahara',
+  'Kengo Nakamura', 'Mark Bosnich', 'Lucas Neill', 'Mark Bresciano', 'Aaron Mooy', 'Mathew Leckie', 'Mat Ryan',
+  'Ali Karimi', 'Mehdi Mahdavikia', 'Alireza Jahanbakhsh', 'Alireza Beiranvand', 'Hao Haidong', 'Sun Jihai', 'Wu Lei',
+  'Ali Mabkhout', 'Almoez Ali', 'Akram Afif', 'Jozy Altidore', 'DaMarcus Beasley', 'Eddie Pope', 'Hector Herrera',
+  'Jesus Corona', 'Hector Moreno', 'Miguel Layun', 'Keylor Navas', 'Bryan Ruiz', 'Joel Campbell', 'Atiba Hutchinson',
+  'Dwayne De Rosario', 'Ivan Cordoba', 'Mario Yepes', 'Davinson Sanchez', 'Yerry Mina', 'Luis Muriel', 'Duvan Zapata',
+  'Cristian Zapata', 'Jefferson Lerma', 'Charles Aranguiz', 'Mauricio Isla', 'Eduardo Vargas', 'Jorge Valdivia',
+  'Jean Beausejour', 'David Pizarro', 'Humberto Suazo', 'Claudio Pizarro', 'Jefferson Farfan', 'Paolo Guerrero',
+  'Andre Carrillo', 'Christian Cueva', 'Agustin Delgado', 'Ivan Hurtado', 'Antonio Valencia', 'Enner Valencia',
+  'Felipe Caicedo', 'Carlos Gamarra', 'Roque Santa Cruz', 'Oscar Cardozo', 'Nelson Valdez', 'Salomon Rondon',
+  'Juan Arango', 'Marco Etcheverry', 'Fernando Redondo', 'Roberto Ayala', 'Javier Saviola', 'Diego Milito',
+  'Ezequiel Garay', 'Sergio Romero', 'Mauro Icardi', 'Fernando Muslera', 'Paolo Montero', 'Maxi Pereira',
+  'Alvaro Pereira', 'Luis Garcia', 'Xabi Prieto', 'Mikel Arteta', 'Emile Heskey', 'Ledley King', 'Owen Hargreaves',
+  'Gareth Barry', 'Scott Parker', 'Phil Neville', 'Nicky Butt', 'Wes Brown', 'Darren Fletcher', "John O'Shea",
+  'Joe Hart', 'Glen Johnson', 'Darren Bent', 'Kevin Phillips', 'Dion Dublin', 'Chris Sutton', 'Stan Collymore',
+  'David James', 'Jamie Redknapp', 'Dennis Wise', 'Ray Parlour', 'Martin Keown', 'Lee Dixon', 'Nigel Winterburn',
+  'Steve Bruce', 'Gary Pallister', 'Denis Irwin', 'Leighton Baines', 'Phil Jagielka', 'Seamus Coleman',
+  'Kevin Mirallas', 'Ross Barkley', 'Mark Noble', 'Michail Antonio', 'Paolo Di Canio', 'Carlton Cole', 'Wes Morgan',
+  'Danny Drinkwater', 'Andy Carroll', 'Daniel Sturridge', 'Adam Lallana', 'Lucas Leiva', 'James Milner', 'Joel Matip',
+  'Cesar Azpilicueta', 'Gary Cahill', 'Marcos Alonso', 'Ander Herrera', 'Jesse Lingard', 'Aaron Wan-Bissaka',
+  'Mason Greenwood', 'Hector Bellerin', 'Emile Smith Rowe', 'Mousa Dembele', 'Moussa Dembele', 'Christian Benteke',
+  'Yannick Carrasco', 'Divock Origi', 'Thomas Meunier', 'Michy Batshuayi', 'Timothy Castagne', 'Radja Nainggolan',
+  // ---- SGN-05 extension: current era (2015-2026)
+  'Alejandro Balde', 'Fermin Lopez', 'Marc Casado', 'Ansu Fati', 'Joan Garcia', 'Aymeric Laporte', 'Robin Le Normand',
+  'Marc Cucurella', 'Alex Baena', 'Dean Huijsen', 'Alvaro Carreras', 'Eder Militao', 'Franco Mastantuono',
+  'Marcos Llorente', 'Jose Gimenez', 'Giuliano Simeone', 'Alexander Sorloth', 'Saul Niguez', 'Filipe Luis',
+  'Leonardo Spinazzola', 'Giovanni Di Lorenzo', 'Manuel Locatelli', 'Matteo Pessina', 'Domenico Berardi',
+  'Emerson Palmieri', 'Federico Bernardeschi', 'Francesco Acerbi', 'Nicolo Zaniolo', 'Mattia Zaccagni',
+  'Matteo Politano', 'Stephan El Shaarawy', 'Bryan Cristante', 'Gianluca Mancini', 'Guglielmo Vicario', 'Alex Meret',
+  'Salvatore Sirigu', 'Andrea Cambiaso', 'Nahuel Molina', 'Nicolas Tagliafico', 'Marcos Acuna', 'Gonzalo Montiel',
+  'Angel Correa', 'German Pezzella', 'Geronimo Rulli', 'Franco Armani', 'Thiago Almada', 'Nicolas Gonzalez',
+  'Claudio Echeverri', 'Nico Paz', 'Valentin Barco', 'Leonardo Balerdi', 'Facundo Medina', 'Jonathan Tah',
+  'Nico Schlotterbeck', 'David Raum', 'Robert Andrich', 'Maximilian Mittelstadt', 'Deniz Undav',
+  'Aleksandar Pavlovic', 'Nick Woltemade', 'Karim Adeyemi', 'Julian Brandt', 'Christopher Nkunku', 'Ibrahima Konate',
+  'Youssouf Fofana', 'Wesley Fofana', 'Matteo Guendouzi', 'Jean-Philippe Mateta', 'Hugo Ekitike', 'Maghnes Akliouche',
+  'Lucas Digne', 'Ferland Mendy', 'Malo Gusto', 'Lucas Chevalier', 'Brice Samba', 'Manu Kone', 'Joao Palhinha',
+  'Francisco Conceicao', 'Sergio Conceicao', 'Francisco Trincao', 'Goncalo Inacio', 'Diogo Dalot', 'Pedro Neto',
+  'Danilo Pereira', 'Donyell Malen', 'Wout Weghorst', 'Teun Koopmeiners', 'Micky van de Ven', 'Jurrien Timber',
+  'Bart Verbruggen', 'Steven Bergwijn', 'Justin Kluivert', 'Ryan Gravenberch', 'Brian Brobbey', 'Sven Botman',
+  'Lois Openda', 'Charles De Ketelaere', 'Senne Lammens', 'Arthur Theate', 'Zeno Debast', 'Amadou Onana',
+  'Victor Boniface', 'Samuel Chukwueze', 'Paul Onuachu', 'Moses Simon', 'William Troost-Ekong', 'Joe Aribo',
+  'Stanley Nwabali', 'Simon Adingra', 'Evan Ndicka', 'Odilon Kossounou', 'Andre-Frank Zambo Anguissa',
+  'Antoine Semenyo', 'Mohammed Salisu', 'Alexander Djiku', 'Pape Matar Sarr', 'Lamine Camara', 'Habib Diarra',
+  'Krepin Diatta', 'Mahmoud Trezeguet', 'Ahmed Hegazi', 'Mohamed El Shenawy', 'Ismael Bennacer', 'Ramy Bensebaini',
+  'Rayan Ait-Nouri', 'Amine Gouiri', 'Mohamed Amoura', 'Youssef En-Nesyri', 'Sofiane Boufal', 'Noussair Mazraoui',
+  'Romain Saiss', 'Azzedine Ounahi', 'Abde Ezzalzouli', 'Nayef Aguerd', 'Eliesse Ben Seghir', 'Ritsu Doan',
+  'Junya Ito', 'Ko Itakura', 'Kyogo Furuhashi', 'Ayase Ueda', 'Daizen Maeda', 'Ao Tanaka', 'Zion Suzuki',
+  'Hidemasa Morita', 'Hiroki Ito', 'Cho Gue-sung', 'Bae Jun-ho', 'Saud Abdulhamid', 'Moises Caicedo',
+  'Piero Hincapie', 'Pervis Estupinan', 'Willian Pacho', 'Kendry Paez', 'Gonzalo Plata', 'Miguel Almiron',
+  'Julio Enciso', 'Gustavo Gomez', 'Richard Rios', 'Jhon Arias', 'Daniel Munoz', 'Rafael Borre', 'Mateus Uribe',
+  'Wilmar Barrios', 'Jhon Lucumi', 'Yunus Musah', 'Antonee Robinson', 'Sergino Dest', 'Tim Weah', 'Matt Turner',
+  'Folarin Balogun', 'Ricardo Pepi', 'Brenden Aaronson', 'Chris Richards', 'Malik Tillman', 'Cyle Larin',
+  'Tajon Buchanan', 'Stephen Eustaquio', 'Ismael Kone', 'Milan Borjan', 'Kerem Akturkoglu', 'Ferdi Kadioglu',
+  'Orkun Kokcu', 'Merih Demiral', 'Altay Bayindir', 'Filip Kostic', 'Luka Jovic', 'Strahinja Pavlovic',
+  'Danijel Subasic', 'Marko Pjaca', 'Ante Rebic', 'Nikola Vlasic', 'Borna Sosa', 'Luka Sucic', 'Martin Baturina',
+  'Josip Stanisic', 'Stanislav Lobotka', 'Vladimir Coufal', 'Peter Gulacsi', 'Roland Sallai', 'Artem Dovbyk',
+  'Andriy Lunin', 'Viktor Tsygankov', 'Georgiy Sudakov', 'Illia Zabarnyi', 'Sander Berge', 'Antonio Nusa',
+  'Oscar Bobb', 'Lukas Hradecky', 'Fredrik Aursnes', 'Anthony Elanga', 'Lucas Bergvall', 'Hugo Larsson',
+  'Morten Hjulmand', 'Patrick Dorgu', 'Rasmus Kristensen', 'Joachim Andersen', 'Remo Freuler', 'Breel Embolo',
+  'Gregor Kobel', 'Konrad Laimer', 'Marcel Sabitzer', 'Christoph Baumgartner', 'Adam Hlozek', 'Pierre Kalulu',
+  'Destiny Udogie', 'Federico Gatti', 'Samuele Ricci', 'Ezri Konsa', 'Levi Colwill', 'Adam Wharton', 'Noni Madueke',
+  'Myles Lewis-Skelly', 'Dan Burn', 'Dean Henderson', 'Aaron Ramsdale', 'Ethan Nwaneri', 'Elliot Anderson',
+  'Morgan Gibbs-White', 'Jarrad Branthwaite', 'Dominic Calvert-Lewin', 'Dominic Solanke', 'Callum Hudson-Odoi',
+  'Trevoh Chalobah', 'Liam Delap', 'Rico Lewis', 'Curtis Jones', 'Harvey Elliott', 'Conor Bradley', 'James Maddison',
+  'Harvey Barnes', 'Callum Wilson', 'Nick Pope', 'Tino Livramento', 'Lewis Hall', 'Jacob Murphy', 'Eddie Nketiah',
+  'Billy Gilmour', 'Che Adams', 'Craig Gordon', 'Angus Gunn', 'Lewis Ferguson', 'Ben Davies', 'Brennan Johnson',
+  'Harry Wilson', 'Daniel James', 'Neco Williams', 'Kieffer Moore', 'Evan Ferguson', 'Caoimhin Kelleher',
+  'Nathan Collins', 'Troy Parrott', 'Chiedozie Ogbene', 'Jonny Evans', 'Steven Davis', 'David Healy', 'Pedro Porro',
+  'Matheus Cunha', 'Igor Thiago', 'Luiz Henrique', 'Andre Trindade', 'Ederson Moraes', 'Alisson Becker',
+  'Jamie Gittens', 'Jobe Bellingham', 'Lewis Miley', 'Leny Yoro', 'Joshua Zirkzee', 'Cristhian Mosquera',
+  'Milos Kerkez', 'Vitor Roque',
+  // ---- SGN-05 extension: famous managers who were professional players
+  'Carlo Ancelotti', 'Antonio Conte', 'Giovanni Trapattoni', 'Marcello Lippi', 'Arrigo Sacchi',
+  'Claudio Ranieri', 'Massimiliano Allegri', 'Luciano Spalletti', 'Simone Inzaghi', 'Stefano Pioli',
+  'Gian Piero Gasperini', 'Maurizio Sarri', 'Cesare Prandelli', 'Nereo Rocco', 'Helenio Herrera', 'Jose Mourinho',
+  'Alex Ferguson', 'Arsene Wenger', 'Jurgen Klopp', 'Joachim Low', 'Ottmar Hitzfeld', 'Hansi Flick',
+  'Julian Nagelsmann', 'Thomas Tuchel', 'Rafael Benitez', 'Vicente del Bosque', 'Luis Aragones', 'Unai Emery',
+  'Luiz Felipe Scolari', 'Carlos Alberto Parreira', 'Marcelo Bielsa', 'Mauricio Pochettino', 'Cesar Luis Menotti',
+  'Carlos Bilardo', 'Rinus Michels', 'Ernst Happel', 'Louis van Gaal', 'Guus Hiddink', 'Dick Advocaat',
+  'Erik ten Hag', 'Arne Slot', 'Ruben Amorim', 'Gareth Southgate', 'Roy Hodgson', 'Harry Redknapp', 'Bill Shankly',
+  'Bob Paisley', 'Matt Busby', 'Brian Clough', 'Don Revie', 'Alf Ramsey', 'Bobby Robson', 'Terry Venables',
+  'Sven-Goran Eriksson', 'Ange Postecoglou', 'Sean Dyche', 'Eddie Howe', 'Steve Clarke', "Martin O'Neill",
+  'Gerard Houllier', 'Raymond Domenech', 'Aime Jacquet', 'Hugo Broos', 'Walid Regragui', 'Aliou Cisse',
+  'Hajime Moriyasu', 'Herve Renard', 'Luis de la Fuente', 'Lionel Scaloni', 'Marcelo Gallardo', 'Jorge Jesus',
+  'Roberto Martinez',
+  // ---- SGN-05 extension: women's football
+  'Mia Hamm', 'Michelle Akers', 'Kristine Lilly', 'Julie Foudy', 'Brandi Chastain', 'Briana Scurry', 'Abby Wambach',
+  'Hope Solo', 'Carli Lloyd', 'Megan Rapinoe', 'Alex Morgan', 'Tobin Heath', 'Christen Press', 'Becky Sauerbrunn',
+  'Julie Ertz', 'Crystal Dunn', 'Rose Lavelle', 'Lindsey Horan', 'Sophia Smith', 'Trinity Rodman', 'Mallory Swanson',
+  'Naomi Girma', 'Alyssa Naeher', "Kelley O'Hara", 'Sam Mewis', 'Birgit Prinz', 'Nadine Angerer', 'Steffi Jones',
+  'Silke Rottenberg', 'Inka Grings', 'Dzsenifer Marozsan', 'Alexandra Popp', 'Lena Oberdorf',
+  'Lea Schuller', 'Giulia Gwinn', 'Klara Buhl', 'Merle Frohms', 'Svenja Huth', 'Lina Magull', 'Almuth Schult',
+  'Ada Hegerberg', 'Caroline Graham Hansen', 'Maren Mjelde', 'Guro Reiten', 'Frida Maanum', 'Lotta Schelin',
+  'Hedvig Lindahl', 'Caroline Seger', 'Kosovare Asllani', 'Fridolina Rolfo', 'Stina Blackstenius',
+  'Magdalena Eriksson', 'Nathalie Bjorn', 'Pernille Harder', 'Nadia Nadim', 'Vivianne Miedema', 'Lieke Martens',
+  'Sherida Spitse', 'Danielle van de Donk', 'Jackie Groenen', 'Lineth Beerensteyn', 'Jill Roord', 'Lucy Bronze',
+  'Kelly Smith', 'Steph Houghton', 'Fara Williams', 'Jill Scott', 'Ellen White', 'Karen Carney', 'Alex Scott',
+  'Eniola Aluko', 'Rachel Yankey', 'Beth Mead', 'Leah Williamson', 'Millie Bright', 'Mary Earps', 'Alessia Russo',
+  'Lauren James', 'Lauren Hemp', 'Chloe Kelly', 'Georgia Stanway', 'Keira Walsh', 'Ella Toone', 'Rachel Daly',
+  'Hannah Hampton', 'Fran Kirby', 'Nikita Parris', 'Bethany England', 'Jordan Nobbs', 'Wendie Renard',
+  'Amandine Henry', 'Eugenie Le Sommer', 'Delphine Cascarino', 'Kadidiatou Diani', 'Marie-Antoinette Katoto',
+  'Sakina Karchaoui', 'Grace Geyoro', 'Selma Bacha', 'Louisa Necib', 'Camille Abily', 'Sarah Bouhaddi',
+  'Gaetane Thiney', 'Alexia Putellas', 'Aitana Bonmati', 'Jennifer Hermoso', 'Irene Paredes', 'Mapi Leon',
+  'Patri Guijarro', 'Salma Paralluelo', 'Olga Carmona', 'Ona Batlle', 'Mariona Caldentey', 'Cata Coll',
+  'Claudia Pina', 'Sam Kerr', 'Ellie Carpenter', 'Caitlin Foord', 'Mary Fowler', 'Steph Catley', 'Hayley Raso',
+  'Mackenzie Arnold', 'Lisa De Vanna', 'Christine Sinclair', 'Kadeisha Buchanan', 'Ashley Lawrence', 'Jessie Fleming',
+  'Janine Beckie', 'Stephanie Labbe', 'Homare Sawa', 'Saki Kumagai', 'Mana Iwabuchi', 'Yuki Nagasato', 'Aya Miyama',
+  'Hinata Miyazawa', 'Asisat Oshoala', 'Perpetua Nkwocha', 'Barbra Banda', 'Thembi Kgatlana', 'Rasheedat Ajibade',
+  'Chiamaka Nnadozie', 'Sun Wen', 'Wang Shuang', 'So-yun Ji', 'Barbara Bonansea', 'Cristiana Girelli', 'Sara Gama',
+  'Manuela Giugliano', 'Ramona Bachmann', 'Lia Walti', 'Tessa Wullaert', 'Linda Caicedo', 'Mayra Ramirez',
+  'Christiane Endler',
 ];
 
 /** Famous one-name players: rejected as ANY name part. */
@@ -148,6 +331,11 @@ export const FAMOUS_MONONYMS: readonly string[] = [
   'Rodrygo', 'Antony', 'Endrick', 'Richarlison', 'Vitinha', 'Pepe', 'Nani', 'Xavi', 'Isco', 'Pedri', 'Gavi',
   'Rodri', 'Koke', 'Careca', 'Denilson', 'Lucio', 'Rafinha', 'Savinho', 'Gervinho', 'Jairzinho', 'Rivelino',
   'Tostao', 'Kanu', 'Falcao',
+  // SGN-05 extension
+  'Didi', 'Vava', 'Gerson', 'Clodoaldo', 'Dunga', 'Branco', 'Aldair', 'Mazinho', 'Taffarel', 'Kleberson', 'Edmilson',
+  'Ramires', 'Marquinhos', 'Militao', 'Joelinton', 'Estevao', 'Pauleta', 'Maniche', 'Tite', 'Guti', 'Joselu',
+  'Juanfran', 'Luisao', 'Elano', 'Nilmar', 'Maicon', 'Paulinho', 'Formiga', 'Marta', 'Cristiane', 'Debinha',
+  'Kerolin', 'Geyse', 'Zagallo', 'Leonidas', 'Ademir', 'Friedenreich',
 ];
 
 /** Surnames so tied to one player that any initial is rejected (and near-misses of 5+ letters too). */
@@ -160,6 +348,12 @@ export const ICONIC_SURNAMES: readonly string[] = [
   'Kante', 'Lukaku', 'van Dijk', 'Kvaratskhelia', 'Yamal', 'Musiala', 'Wirtz', 'Foden', 'Valderrama', 'Higuita',
   'Okocha', 'Matthaus', 'Klinsmann', 'Rummenigge', 'Schmeichel', 'Laudrup', 'Stoichkov', 'Hagi', 'Nedved',
   'Ribery', 'Gascoigne', 'Shearer', 'Lineker', 'Dalglish', 'Eusebio', 'Pele', 'Kaka', 'Neymar', 'Ronaldinho',
+  // SGN-05 extension
+  'Ancelotti', 'Mourinho', 'Guardiola', 'Klopp', 'Wenger', 'Trapattoni', 'Garrincha', 'Kempes',
+  'Passarella', 'Francescoli', 'Forlan', 'Suker', 'Blokhin', 'Boniek', 'Scirea', 'Facchetti', 'Meazza', 'Del Piero',
+  'Inzaghi', 'Makelele', 'Deschamps', 'Desailly', 'Ballack', 'Klose', 'Hummels', 'Baresi', 'Vialli', 'Tardelli',
+  'Dasayev', 'Odegaard', 'Osimhen', 'Dybala', 'Higuain', 'Tevez', 'Mascherano', 'Di Maria', 'Hegerberg', 'Putellas',
+  'Bonmati', 'Rapinoe', 'Miedema', 'Masopust', 'Sivori', 'Seeler', 'Lofthouse',
 ];
 
 /** Fragments that must never appear inside a generated name part (letters only, lowercase). */
@@ -168,6 +362,69 @@ export const OFFENSIVE_FRAGMENTS: readonly string[] = [
   'dick', 'twat', 'wank', 'bitch', 'penis', 'vagin', 'anus', 'arse', 'kkk', 'jizz', 'tits', 'boob', 'homo',
   'retard', 'spic', 'kike', 'chink', 'gook', 'paki', 'coon', 'dyke', 'tranny', 'wog', 'wop', 'slag', 'bollock',
   'bastard', 'crap', 'turd', 'poop', 'sex', 'nude', 'kill', 'dead', 'satan', 'semen', 'scum', 'idiot', 'moron',
+  // SGN-05: infamous names the syllable lists could form ("Cap" + "one")
+  'capone', 'stalin', 'mussolini', 'pinochet', 'goebbels', 'himmler', 'mengele',
+];
+
+/**
+ * [SGN-05] Famous players added by the originality audit whose surname the committed league had already drawn. They
+ * are screened like FAMOUS_PLAYERS / ICONIC_SURNAMES by `screenShippedName` (tests, tools/gen-data.ts validation) but
+ * not by `screenName`, which the generator calls: a redraw there would shift that club's RNG stream and re-roll the
+ * attributes of every later player in the squad. Instead the generated names that hit them are replaced after
+ * generation from PLAYER_NAME_FIXES (names only; attributes, kits and every other name stay identical).
+ * Rule for later additions: a famous name goes into FAMOUS_PLAYERS (or the other lists) when
+ * `npx tsx tools/gen-data.ts --check` stays OK with it; only one that hits a committed name goes here, with a fix.
+ */
+export const LATE_FAMOUS_PLAYERS: readonly string[] = ['Fabio Capello', 'Celia Sasic', 'Willie Thornton'];
+
+/**
+ * Iconic surnames added the same way (any initial, and one-edit near-misses of 5+ letters). Zanetti (Javier Zanetti,
+ * Inter and Argentina) is as iconic as the Mascherano / Tevez tier of ICONIC_SURNAMES; the league had drawn "Zanotti".
+ */
+export const LATE_ICONIC_SURNAMES: readonly string[] = ['Capello', 'Zanetti'];
+
+/**
+ * [SGN-05 second pass] Famous footballers whose surname the generator can form: playerGen's whole surname space
+ * (every lastA x lastB of every origin, ~2,400) screened against Wikidata's footballers and managers with 20+ Wikipedia
+ * language editions. The committed league uses none of them. They are screened by `screenShippedName` only, not by the
+ * generator's `screenName`: there they would also reject candidates drawn for other seeds, which moves DAT-02's
+ * sample statistics (tests/unit/dat-02-playergen.test.ts) although the shipped league stays the same. If a
+ * regeneration ever draws one, the SGN-05 tests fail; then give it a PLAYER_NAME_FIXES entry, or move the list into
+ * FAMOUS_PLAYERS together with a DAT-02 re-baseline.
+ */
+export const AUDIT_FAMOUS_PLAYERS: readonly string[] = [
+  'Naoki Matsuda', 'Hiroaki Morishima', 'Paulo Ferreira', 'Kazuya Yamamura', 'Jungo Fujimoto', 'Taizo Kawamoto',
+  'Masakuni Yamamoto', 'Ikuo Matsumoto', 'Naohiro Ishikawa', 'Kazumi Takada', 'Naoki Yamada', 'Nobuo Fujishima',
+  'Tomislav Maric', 'Junji Kawano', 'Kuniharu Nakamoto', 'Heinz Lindner', 'Roberto Rosato', 'Ramazan Ozcan',
+  'Takaya Kurokawa', 'Julien Faubert', 'Dean Ashton', 'Lennart Skoglund', 'Michael Beauchamp', 'Gianpiero Marini',
+  'Naoki Ishihara', 'Takahiro Kawamura', 'Kazuhisa Kawahara', 'Takayuki Fujikawa', 'Takahiro Shimada',
+  'Aymore Moreira', 'Takeo Harada', 'Dorlan Pabon', 'Hiroyuki Ishida', 'Yuki Nakashima', 'Takao Yamauchi',
+  'Tomoaki Matsukawa', 'Emma Berglund', 'Hiroshi Nakano', 'Kenta Hoshihara', 'Rabah Saadane', 'Jose Carlos Serrao',
+  'Theodore Whitmore', 'Kota Morimura', 'Hitoshi Matsushima', 'Masashi Shimamura', 'Bruno Berner', 'Abdullah Ercan',
+  'Torsten Lindberg', 'Reinhard Hafner', 'Kenji Nakada', 'Gabriel Paletta',
+];
+
+/** A generated display name replaced after generation: club id, the generated name, its replacement. */
+export interface PlayerNameFix {
+  club: number;
+  from: string;
+  to: string;
+}
+
+/**
+ * Replacements for the committed names that collide with LATE_FAMOUS_PLAYERS / LATE_ICONIC_SURNAMES (same origin
+ * syllables as the generator; each passes `screenShippedName` and is unique in the league). Applied by
+ * `applyPlayerNameFixes` right after each squad is generated.
+ */
+export const PLAYER_NAME_FIXES: readonly PlayerNameFix[] = [
+  { club: 10, from: 'G. Sašić', to: 'G. Vulak' }, // Célia Šašić (2015 World Cup Golden Boot)
+  { club: 16, from: 'O. Capello', to: 'O. Nerozzi' }, // Fabio Capello (Italy, Roma, Juventus, Milan; England manager)
+  // SGN-05 second pass (Wikidata screen of all 360 display names):
+  { club: 14, from: 'S. Zanotti', to: 'S. Rosaldi' }, // one letter from Javier Zanetti (Inter, Argentina)
+  { club: 19, from: 'W. Thornton', to: 'W. Hartcroft' }, // Willie Thornton (Rangers and Scotland centre-forward)
+  // Lead, from the second pass's advisory list:
+  { club: 14, from: 'G. Paletti', to: 'G. Tolvane' }, // one letter from Gabriel Paletta (same initial)
+  { club: 16, from: 'D. Mabuza', to: 'D. Merrow' }, // display name of David Mabuza (former Deputy President of South Africa)
 ];
 
 /** Letters with no Unicode decomposition, mapped by hand. */
@@ -294,4 +551,69 @@ export function isNameAllowed(first: string, last: string, strict = false): bool
 /** Number of distinct famous full names indexed (tests / report). */
 export function denylistSize(): number {
   return INDEX.full.size;
+}
+
+interface LateIndex {
+  full: Set<string>;
+  /** Surname keys (whole surname and each non-particle word). */
+  surnames: Set<string>;
+  iconic: Set<string>;
+  iconicLong: string[];
+}
+
+function buildLateIndex(): LateIndex {
+  const idx: LateIndex = { full: new Set(), surnames: new Set(), iconic: new Set(), iconicLong: [] };
+  for (const full of [...LATE_FAMOUS_PLAYERS, ...AUDIT_FAMOUS_PLAYERS]) {
+    const words = normalizeName(full).split(' ');
+    idx.full.add(words.join(''));
+    if (words.length < 2) continue;
+    idx.surnames.add(words.slice(1).join(''));
+    for (let i = 1; i < words.length; i++) if (!PARTICLES.includes(words[i]!)) idx.surnames.add(words[i]!);
+  }
+  for (const s of LATE_ICONIC_SURNAMES) idx.iconic.add(nameKey(s));
+  for (const k of idx.iconic) if (k.length >= 5) idx.iconicLong.push(k);
+  return idx;
+}
+
+const LATE_INDEX = buildLateIndex();
+
+/**
+ * [SGN-05] Screen a name as shipped: `screenName` in strict mode, then the LATE_* and AUDIT_* lists (full name, iconic
+ * surname in any part, one-edit near-miss of a 5+ letter iconic surname, any listed famous surname whatever the
+ * initial). `first` may be just the initial of a committed display name. Returns null when the name may ship.
+ */
+export function screenShippedName(first: string, last: string): ScreenHit | null {
+  const hit = screenName(first, last, true);
+  if (hit !== null) return hit;
+  const firstParts = normalizeName(first).split(' ').filter((w) => w.length > 0);
+  const lastParts = surnameParts(last);
+  const fullKey = nameKey(first) + nameKey(last);
+  if (LATE_INDEX.full.has(fullKey)) return { reason: 'full', match: fullKey };
+  for (const part of [...firstParts, ...lastParts]) {
+    if (LATE_INDEX.iconic.has(part)) return { reason: 'iconic', match: part };
+  }
+  for (const part of lastParts) {
+    if (part.length < 4) continue;
+    for (const ic of LATE_INDEX.iconicLong) if (withinOneEdit(part, ic)) return { reason: 'near-iconic', match: ic };
+  }
+  for (const part of lastParts) if (LATE_INDEX.surnames.has(part)) return { reason: 'famous-surname', match: part };
+  return null;
+}
+
+/**
+ * [SGN-05] Replace the PLAYER_NAME_FIXES names of club `clubId` in a freshly generated squad (display name and short
+ * name; nothing else changes and no RNG is drawn). Returns how many players were renamed.
+ */
+export function applyPlayerNameFixes(clubId: number, squad: { name: string; short: string }[]): number {
+  let n = 0;
+  for (const f of PLAYER_NAME_FIXES) {
+    if (f.club !== clubId) continue;
+    for (const p of squad) {
+      if (p.name !== f.from) continue;
+      p.name = f.to;
+      p.short = f.to.slice(f.to.indexOf('. ') + 2);
+      n++;
+    }
+  }
+  return n;
 }

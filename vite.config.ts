@@ -12,6 +12,8 @@ export default defineConfig({
     emptyOutDir: true,
     assetsInlineLimit: 100_000_000,
     cssCodeSplit: false,
+    // The single-file build never preloads modules: drop the unused polyfill and its fetch() code (SGN-05).
+    modulePreload: { polyfill: false },
     reportCompressedSize: true,
     sourcemap: false,
   },

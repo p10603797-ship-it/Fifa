@@ -190,12 +190,15 @@ describe('TAI-08 CPU carrier: scripted situations', () => {
     const s = setup({ carrier: 6, at: { 6: [-20, 0] } });
     const x0 = s.players[6]!.x;
     const { recs } = run(s, 150);
-    const dr = recs.filter((r) => r.plan === CpuPlan.DRIBBLE);
-    expect(dr.length).toBeGreaterThan(130);
+    // [QF-11] Only the carrier's own frames: a sprint knock-on leaves the ball loose between touches for a few ticks,
+    // when TAI-11 (not TAI-08) drives him onto it.
+    const dr = recs.filter((r) => r.plan === CpuPlan.DRIBBLE && r.owner === 6);
+    expect(dr.length).toBeGreaterThan(120);
     for (const r of dr) expect(r.f.mx).toBeGreaterThan(50); // upfield (bestDribble may angle away from a presser)
     expect(dr.reduce((a, r) => a + r.f.mx, 0) / dr.length).toBeGreaterThan(95);
     expect(dr.filter((r) => (r.f.buttons & Btn.SPRINT) !== 0).length).toBeGreaterThan(dr.length * 0.7);
-    expect(s.ball.owner).toBe(6);
+    // Still his ball: at his feet, or knocked ahead and not touched by anyone else since.
+    expect(s.ball.owner === 6 || (s.ball.owner < 0 && s.ball.lastTouch === 6)).toBe(true);
     expect(s.players[6]!.x - x0).toBeGreaterThan(10);
   });
 
@@ -429,8 +432,8 @@ describe('TAI-08 CPU carrier: timing and commitment', () => {
       const s = setup({ carrier: 6, at: { 6: [-20, 0] }, level });
       s.players[6]!.vx = 4;
       const t0 = s.tick;
-      const { recs } = run(s, 40);
       const react = T_LEVEL.reactionTicks[level]!;
+      const { recs } = run(s, react + 20);
       expect(CTL.scoreCalls[0]! - t0, `level ${level}`).toBe(react + 1);
       for (const r of recs.slice(0, react)) {
         expect(r.f.buttons).toBe(0);

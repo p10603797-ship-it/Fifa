@@ -656,7 +656,7 @@ export function generateSeats(): SeatLayout {
 // ============================================================ advertising boards
 
 /** Invented brand words on the boards (original; no real sponsor). Panel order on the LED strip. */
-export const BOARD_BRANDS: readonly string[] = Object.freeze(['DOTKICK', 'BLIPPO', 'MOXARI', 'TREVLO', 'ZUBBO', 'GLIMRA', 'FLONDO', 'KWIRL']);
+export const BOARD_BRANDS: readonly string[] = Object.freeze(['DOTKICK', 'BLONKA', 'MOXARI', 'TRAVOSK', 'ZUBBO', 'GLIMRA', 'FLONDO', 'KWIRL']);
 /** Panel colours (CSS): background, word, logo accent. */
 const BOARD_STYLE: readonly (readonly [string, string, string])[] = [
   ['#ff6b35', '#ffffff', '#1b1b2a'],
