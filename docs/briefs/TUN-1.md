@@ -2,9 +2,9 @@
 
 BRIEF §4 rule 6: "Every gameplay constant sits in contracts/tuning.ts with its unit and a comment." Wave 1-4 agents
 added `LOCAL_TUNING` / `*_TUNING` blocks marked TUNING-CR inside their files. Move every gameplay constant in
-`src/sim/**` (except `src/sim/keeper/**`, which QF-11 holds right now) into `src/contracts/tuning.ts`.
-Area (exclusive for this run): `src/sim/**` except keeper, and `src/contracts/tuning.ts` (add new T_* blocks or entries;
-QF-11 edits T_LEVEL / T_AI / T_GK in parallel — use small Edit-tool edits, re-read before each edit).
+`src/sim/**` and `src/ai/**` into `src/contracts/tuning.ts`. Runs after QF-11, with no other agent editing the sim or AI
+(QF-12 may still be in the app layer), so hash comparisons are valid.
+Area (exclusive for this run): `src/sim/**`, `src/ai/**`, `src/contracts/tuning.ts`.
 Rules:
 - Values must not change: the move is behaviour-identical. Prove it: before you start, record `hashState` at the end of
   full headless matches for at least 8 seeds/configs (tools/headless.ts runMatch, both difficulty extremes, cup rules,
