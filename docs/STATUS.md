@@ -160,7 +160,7 @@ Total assignments: 201.
 | QA-16 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
 | QA-17 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
 | QA-18 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
-| QA-19 | 3 | running | QF-2: ladder 0/5 pairs at 65% (37.5-50% wins, 28-38% draws); balance top v bottom 43-62% -> QF-11 | |
+| QA-19 | 3 | running | QF-11: 19 defects fixed; ladder 5/5 pairs at 100 matches (68/68/81/66/66%), top pairs borderline across seeds (62.8-71%); balance top v bottom 80.5% seed 1 but ~77% over 800 -> QF-13 | |
 | QA-20 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
 | QA-21 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
 | QA-22 | 3 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
@@ -190,7 +190,7 @@ Total assignments: 201.
 | FIX-02 | 4 | done | QF-1: 16 defects fixed (12 + 4); soak 390 matches + fuzz ~600 --enforce all: 0 exceptions / invariant failures / watchdogs after fixes; fouls 8.5 in band; FULL_TIME skip gate | follow-up CRs -> QF-9/QF-10 |
 | FIX-03 | 4 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
 | FIX-04 | 4 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
-| FIX-05 | 4 | running | QF-2: ladder 0/5 pairs at 65% (37.5-50% wins, 28-38% draws); balance top v bottom 43-62% -> QF-11 | |
+| FIX-05 | 4 | running | QF-11: 19 defects fixed; ladder 5/5 pairs at 100 matches (68/68/81/66/66%), top pairs borderline across seeds (62.8-71%); balance top v bottom 80.5% seed 1 but ~77% over 800 -> QF-13 | |
 | FIX-06 | 4 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
 | FIX-07 | 4 | done | QF-3: 16 defects fixed (10 hunt + 6 second pass), each with a regression test that fails without the fix; input area 1284 tests; e2e 15 pass | |
 | FIX-08 | 4 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
@@ -212,9 +212,10 @@ Total assignments: 201.
 |---|---|---|
 | QF-9 | done (15 defects: lofted receiver 2/64 -> 24/48 lobs, keeper throws 15/15, switch fixes, body lock, shots blocked by bodies, sprint first touch; soak 60 PASS, fuzz 60 PASS) | sim control, bodies, receiving, defending CRs (lofted receiver, switch fixes, body lock, shot block, sprint first touch) |
 | QF-10 | done (17 defects: charged strike delay, kick reach, walked set-ups (D-008 revised), corner grace, dink model; soak 60 PASS, fuzz 60 PASS) | kicks, actions, restarts CRs (charged strike timing, kick reach, set-up walk, corner grace, bounce friction) |
-| QF-11 | running | difficulty ladder and club balance (D-022) |
+| QF-11 | done (19 defects; ladder 5/5 at 100/pair, top pairs borderline; balance ~77% over 800 vs 80%; 500-match Professional soak PASS: goals 3.27, shots 17.3, passes 78.3%, fouls 12.7, blow-outs 3.4%) | difficulty ladder and club balance (D-022) |
 | QF-12 | done (12 defects: records counting, cup final screen + Back, HUD kit chips match worn kits, Continue press kept, refuse benchmark/replay/tutorial mid-match, command queue overflow; full e2e 194 tests: 191 pass first run, the rest pass on rerun or are flaky test steps; monkey 15 seeds clean) | app/modes follow-up, full e2e suite run |
-| TUN-1 | queued (after QF-11) | gameplay constants into tuning.ts, hash-identical (BRIEF §4 rule 6) |
+| QF-13 | queued | header flick-on CR, Beginner delay chains, overhit lob receiver, robust balance >= 80% with the ladder kept |
+| TUN-1 | queued (after QF-13) | gameplay constants into tuning.ts, hash-identical (BRIEF §4 rule 6) |
 | QF-7 | queued (after TUN-1) | performance |
 | SGN-05 | done | originality and licence audit: names screened against ~1,700 famous names + Wikidata (98k footballers, 37k clubs); 6 player names renamed (names only, attributes identical); visuals, audio, dependencies, licence notices in dist, runtime network (proxy + NetLog logs: no request outside online 1v1) all PASS |
 | QF-8 | queued (last) | determinism, soak 2000, fuzz 500 |

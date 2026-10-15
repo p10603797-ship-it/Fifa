@@ -74,7 +74,10 @@ describe('GKP-05 catch -> hold -> release (with GKP-02 saves)', () => {
         const picks = ev.filter((e) => e.type === EventType.KEEPER_HANDS && e.a === KEEPER && e.b === 1).length;
         const drops = ev.filter((e) => e.type === EventType.KEEPER_HANDS && e.a === KEEPER && e.b === 0).length;
         catches += picks;
-        expect(drops, `seed ${seed}`).toBe(picks);
+        // [QF-11 skeptic] A catch of a later shot less than maxHoldTicks before the end of the run is still in his hands
+        // when the run stops (its hold limit is checked above): only that last one may be unreleased.
+        const lastHeld = pickTick >= 0 && s.tick - pickTick <= T_GK.maxHoldTicks ? 1 : 0;
+        expect(drops, `seed ${seed}`).toBe(picks - lastHeld);
         expect(heldMax, `seed ${seed}`).toBeLessThanOrEqual(T_GK.maxHoldTicks);
       }
       expect(catches).toBeGreaterThan(4);

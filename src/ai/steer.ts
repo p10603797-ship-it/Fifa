@@ -18,7 +18,9 @@
  *     reachable -> the last sample at max(horizon, arrival). No prediction (count 0) -> the ball's position.
  *     Score = interception tick (+ a sub-tick tie-break on the player's own arrival time).
  *  3. Candidates: active outfield players; controlled players (human or CPU brain, p.ctrl >= 0), with a bias of
- *     controlledBiasTicks while he is going for the ball (moving toward the interception point, or on it); the
+ *     controlledBiasTicks while he is going for the ball (moving toward the interception point, or on it) — [QF-11
+ *     skeptic] but a CPU-controlled player still in his brain's reaction delay whose run does not take him there
+ *     (reactionLeft) is later by the delay's remaining ticks and makes no near claim, so a teammate goes; the
  *     keeper only when GKP says he is going (act GK_RUSH) or he is controlled. [INT-A] A keeper on a USER rush
  *     (GKP-03 RushMode USER_HOLD / USER_TIMED: a human holds keeper-rush) counts as a controlled candidate: a held
  *     rush button sent him 60 m upfield after a ball while, as the claiming chaser, no outfield teammate chased it
@@ -58,7 +60,9 @@
  * Determinism: no Math.sin/cos/atan2..., no Map/Set, slot-order loops, allocation-free per tick. Module scratch is
  * either a pure cache (the prediction) or rebuilt every call (per-slot interception results).
  */
-import { BOARD_X, BOARD_Z, NUM_SLOTS, PLAYERS_PER_TEAM, TICK_HZ, teamFirstSlot } from '../contracts/constants';
+import {
+  BOARD_X, BOARD_Z, CPU_CONTROLLER_BASE, NUM_SLOTS, PLAYERS_PER_TEAM, TICK_HZ, teamFirstSlot,
+} from '../contracts/constants';
 import { ActionKind, AiJob, MatchPhase } from '../contracts/enums';
 import type { EventSink } from '../contracts/events';
 import { createBallState, MoveMode, type BallState, type PlayerState, type SimState } from '../contracts/state';
@@ -435,6 +439,34 @@ function ownReceiver(s: SimState, team: number, first: number, end: number): num
   return r;
 }
 
+/**
+ * [QF-11 skeptic] Ticks a CPU-controlled player of `team` will still keep his old run (his brain's reaction delay:
+ * TAI-11 branch 2 runs before the loose-ball chase, branch 6) when that run does not take him to the interception point
+ * (x, z): he cannot start for the ball before then, so he is that much later. 0 for a human / AI-driven player, after
+ * the delay, or when his run already approaches the point (controlledApproachSpeed) or he is on it (within
+ * T_AI.chaserReactNearDist and not running away). Without it a Beginner's 80-tick delay left the chase to a controlled
+ * player running the other way for up to 1.3 s (10 times a short match): nobody went for the ball.
+ */
+function reactionLeft(s: SimState, team: number, p: Readonly<PlayerState>, x: number, z: number): number {
+  if (p.ctrl < CPU_CONTROLLER_BASE) return 0;
+  const brain = s.teams[team]!.cpu;
+  const r = brain.reactT;
+  // A delay that ends within the chaser hysteresis cannot leave the ball unchased longer than the hysteresis allows
+  // anyway (Professional and above): only the long delays of the low levels count.
+  if (brain.active !== 1 || !(r > T_AI.chaserHysteresisTicks)) return 0;
+  // Our own pass in flight: TAI-11 branch 1 has no reaction delay (SIM-15 moves the receiver).
+  const b = s.ball;
+  const pt = b.passTarget;
+  if (pt >= 0 && pt < NUM_SLOTS && (pt | 0) === pt && b.lastTouchTeam === team && s.players[pt]!.team === team &&
+    s.players[pt]!.active === 1) return 0;
+  const dx = x - p.x, dz = z - p.z;
+  const d = Math.sqrt(dx * dx + dz * dz);
+  const approach = d > 1e-6 ? (p.vx * dx + p.vz * dz) / d : 0;
+  if (approach >= LT.controlledApproachSpeed) return 0;
+  if (d <= T_AI.chaserReactNearDist && approach > -LT.controlledApproachSpeed) return 0;
+  return r;
+}
+
 /** True if a controlled player is going for the interception point (moving toward it, or already on it). */
 function goingFor(p: Readonly<PlayerState>, x: number, z: number): boolean {
   const dx = x - p.x, dz = z - p.z;
@@ -473,10 +505,14 @@ export function assignChaser(s: SimState, team: number, ev: EventSink): void {
     evalIntercept(s, i);
     let sc = IT[i]! + 0.001 * (IP[i]! < 999 ? IP[i]! : 999);
     if (controlled) {
-      if (goingFor(p, IX[i]!, IZ[i]!)) sc -= LT.controlledBiasTicks;
+      // [QF-11 skeptic] A CPU-controlled player still keeping his old run arrives later (and claims nothing).
+      const late = reactionLeft(s, team, p, IX[i]!, IZ[i]!);
+      if (late > 0) sc += late;
+      else if (goingFor(p, IX[i]!, IZ[i]!)) sc -= LT.controlledBiasTicks;
       const dx = b.x - p.x, dz = b.z - p.z;
       const d = Math.sqrt(dx * dx + dz * dz);
-      if (d <= LT.controlledNearDist && b.y <= LT.chaseReachHeight && IT[i]! <= LT.controlledNearTicks && d < nearD) {
+      if (late === 0 && d <= LT.controlledNearDist && b.y <= LT.chaseReachHeight && IT[i]! <= LT.controlledNearTicks &&
+        d < nearD) {
         near = i;
         nearD = d;
       }

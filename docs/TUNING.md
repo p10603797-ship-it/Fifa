@@ -383,11 +383,33 @@ Every other table at Professional; "GD" = the first side's goals minus the secon
 | re-decision period (new) | 3 vs 15 ticks | -0.60 +-0.22 | Re-deciding often is worse: with noise more draws of the lottery, without noise the first pass that edges ahead is taken (noise 0: every 3 ticks +0.88, every 5 +1.60). |
 | marking gap x2.2, back line x0.4 speed, shape updates every 24 ticks, loose-ball chase delay 40, pass risk / loss cost perception (new, tried) | | -0.40 .. +0.15 | Alone, none measurable; marking and line together with a slow keeper decide the bottom pairs (below). The perception, shape and chase levers were removed again. |
 
+### Pair-by-pair follow-up (100 matches a variant, ladder seeds; "s2" = a second seed)
+
+| Pair | Variant | Wins (GD) | Kept |
+|---|---|---|---|
+| Amateur v Beginner | tables as below but Beginner reaction 60 | 56% (+0.65); s2 61% (+1.02) | - |
+| | Beginner marking x2.6, line x0.35 | 63% (+1.09) | - |
+| | Beginner keeper +40 | 60% (+0.98) | - |
+| | Beginner reaction 80 | 78% (+1.71); s2 75% (+1.52) | yes |
+| | Amateur reaction 36 | 61% (+1.24) | - (also lifts Amateur against Semi-Pro) |
+| World Class v Pro / Legend v World Class | as below, driven factor 1 | 67% / 74% (+1.14 / +1.33); s2 60% / 60% (+1.07 / +0.80) | - |
+| | World Class noise 0.072 | 73% / 51% | - |
+| | Legend re-decision every 16 ticks / Legend keeper -14 | - / 69%, 69% | - |
+| | driven-pass calibration (TAI-09 below) | 64% / 73% (+1.40 / +1.23); s2 67% / 63% (+1.23 / +1.09) | yes |
+| | + World Class / Legend marking x0.85 / x0.7, line x1.15 / x1.3 | 70% / 63%; s2 67% / 64% | - |
+| | + Professional noise 0.18, World Class 0.09 | 70% / 61%; s2 59% / 68% (Pro v Semi-Pro 73% / 69%) | - |
+| | + World Class re-decision every 8 ticks | 73% / 67%; s2 72% / 57% | - |
+
+Every World Class variant moves win share between its two pairs (the sum of the two goal differences stays at about
+2.4-2.5 goals): Legend decides without noise already and its other levers (patience, keeper, reaction) are saturated,
+and a noisier Professional does not widen the World Class v Professional gap measurably. The kept split is the most
+even one.
+
 ### Tables (`T_LEVEL`, Professional unchanged, so the section 7 bands keep their reference)
 
 | Table | Was | Now |
 |---|---|---|
-| reactionTicks | 26 / 20 / 15 / 11 / 8 / 5 | 60 / 42 / 24 / 11 / 6 / 1 |
+| reactionTicks | 26 / 20 / 15 / 11 / 8 / 5 | 80 / 42 / 24 / 11 / 6 / 1 |
 | decisionNoise | 0.45 / 0.33 / 0.24 / 0.16 / 0.1 / 0.05 | 0.5 / 0.38 / 0.275 / 0.16 / 0.085 / 0 |
 | pressIntensity | 0.35 .. 0.95 | 0.6 / 0.65 / 0.7 / 0.75 / 0.78 / 0.8 |
 | keeperReactTicks | 10 / 6 / 3 / 0 / -2 / -3 | 30 / 21 / 10 / 0 / -3 / -8 |
@@ -397,29 +419,149 @@ Every other table at Professional; "GD" = the first side's goals minus the secon
 | composureNoiseWeight (new) | - | 0 / 0 / 0.5 / 1 / 0 / 0 |
 
 lookAheadTicks, executionError, tackleTimingTicks and shotThresholdXg keep their values (monotonic, no measurable
-effect). What a player sees: a Beginner carrier runs on head-down for a second after he gets the ball and then
-plays the safe square pass; his team marks loose, its back line steps late, its keeper reacts a third of a second
-late. A Legend carrier decides without noise and carries the ball patiently to the better option; his keeper is
-sharp. None of it touches physics, attributes or stamina.
+effect). What a player sees: a Beginner carrier runs on head-down for over a second after he gets the ball and then
+plays the safe square pass; his defenders keep their runs as long after a turnover; his team marks loose, its back
+line steps late, its keeper reacts half a second late. Both runs turn along a touchline or goal line instead of over
+it (`carrier.ts edgeMargin`, `T_CPU.defendMomentumEdgeMargin`). A Legend carrier decides without noise and carries
+the ball patiently to the better option; his keeper is sharp. None of it touches physics, attributes or stamina.
+Beginner v Beginner is a low-event match (40-match soak: 1.9 goals, 8.9 shots, 81.7% passing; the section 7 bands
+are Professional's).
 
 ### Club balance (`T_AI.composureNoise*`)
 
 The player's composure scales the CPU's decision noise on him (`composureNoiseMul`: x clamp(1 + 0.65 x (72 -
 composure) / 30, 0.4, 1.8); the 88-rated MOS starters average 87, the 62-rated ROO 57), weighted by level
 (`composureNoiseWeight`). Top-bottom at Professional (40 matches each): slope 0 57.5% wins (GD +0.88), 0.5 72.5%,
-0.7 90%, 0.75 90%, 1.0 92.5%. Weighted at every level it narrowed the ladder at the top by 10-15 points (the cost of
-noise is concave, so a spread of noise round a level's noise shrinks the average gap to the next level), hence the
-weights.
+0.7 90%, 0.75 90%, 1.0 92.5%; kept 0.65 (100 matches: 80.0%; final 200: 82.5%). Weighted at every level it narrowed
+the ladder at the top by 10-15 points (the cost of noise is concave, so a spread of noise round a level's noise
+shrinks the average gap to the next level), hence the weights.
+
+### Final measurement (this tree, `tools/ladder.ts --matches 200`, `tools/balance.ts --matches 200`, seed 1)
+
+| Pair | n | W / D / L | Wins (95% CI) | Goals | Target 65% |
+|---|---|---|---|---|---|
+| Amateur v Beginner | 200 | 142 / 35 / 23 | 71.0% (64.4-76.8) | 2.18-0.76 | meets |
+| Semi-Pro v Amateur | 200 | 153 / 28 / 19 | 76.5% (70.2-81.8) | 2.50-0.81 | meets |
+| Professional v Semi-Pro | 200 | 147 / 34 / 19 | 73.5% (67.0-79.1) | 2.81-0.88 | meets |
+| World Class v Professional | 200 | 129 / 40 / 31 | 64.5% (57.7-70.8) | 2.35-1.15 | one win short |
+| Legend v World Class | 200 | 132 / 33 / 35 | 66.0% (59.2-72.2) | 2.21-1.13 | meets |
+
+Before QF-11 (40 a pair): 37.5 / 55 / 42.5 / 42.5 / 52.5%. The two top pairs share a fixed Legend-Professional gap
+(see the follow-up table). A second, independent run of the top pairs (`--pairs 3,4 --seed 2 --matches 200`): World
+Class v Professional 132 / 39 / 29 = 66.0% (59.2-72.2), Legend v World Class 131 / 42 / 27 = 65.5% (58.7-71.7); over
+both seeds (400 matches each) 65.3% and 65.8%.
+
+| Balance (Professional) | n | W / D / L | Result | Target |
+|---|---|---|---|---|
+| top-bottom MOS (88) v ROO (62) | 200 | 165 / 22 / 13 | 82.5% wins (76.6-87.1); goals 2.35-0.56, shots 11.2-3.5 | wins >= 80%: meets |
+| equal SND (76) v GLA (75) | 200 | 99 / 42 / 59 | 60.0% points (53.1-66.5) | 40-60%: meets (at the edge) |
+| mirror GLA v GLA | 200 | 66 / 46 / 88 | 44.5% home points (37.8-51.4) | 40-60%: meets |
+
+The "equal" pair is the closest by club rating, not by strength where it counts: SND's striker is 84-rated (finishing
+85, composure 83) against GLA's 70 (79 / 68), and SND out-shoot GLA 8.4 to 6.7 (on target 5.8 to 4.4) with even
+possession (49.9%) and pass completion (79-80%); before QF-11 the same pair measured 53.3% over 60 matches.
+
+### Section 7 bands across clubs and styles (QA-20; `tools/soak.ts --matches 500 --difficulty 3 --enforce all`)
+
+All 500 finished, 0 exceptions / invariant failures / watchdogs, determinism PASS. Bands: goals 3.39 (2-3.6), shots
+17.75 (14-26), dominant possession 56.6% (40-60), home possession 50.8%, pass completion 77.8% (70-88), fouls 13.55
+(6-16), offsides 0.16 (0-6), blow-outs 2.8% (< 5%). Split by the clubs in the match (random clubs and formations):
+
+| Matches with | n | Goals | Shots | Pass % | Fouls | Dominant possession |
+|---|---|---|---|---|---|---|
+| a COUNTER side | 187 | 3.34 | 17.9 | 77.1 | 12.8 | 57.3% |
+| a DIRECT side | 186 | 3.48 | 18.2 | 77.4 | 13.1 | 56.5% |
+| a HIGH_PRESS side | 168 | 3.05 | 17.7 | 78.2 | 13.5 | 56.4% |
+| a POSSESSION side | 177 | 3.56 | 17.2 | 78.7 | 13.5 | 57.2% |
+| a WING_PLAY side | 209 | 3.46 | 17.6 | 77.8 | 14.3 | 56.1% |
+| both clubs rated < 75 | 108 | 3.06 | 17.0 | 78.1 | 14.5 | 56.7% |
+| both >= 75 | 154 | 3.53 | 17.6 | 78.1 | 12.9 | 56.6% |
+| one of each | 238 | 3.45 | 18.2 | 77.5 | 13.5 | 56.6% |
+
+Per side: POSSESSION keeps 53.4% of the ball at 79.8% passing, COUNTER 47.3% at 76.0%, DIRECT shoots most (10.1 a
+match). The stronger club by rating wins 41.6% (gap < 6, 21% draws), 53.8% (6-11), 61.7% (12-17) and 74.6% (18+;
+goal difference +0.14 / +0.72 / +1.09 / +1.69).
+
+### Corners (round-2 question: does corner frequency feel low?)
+
+Yes. Professional bot matches (16, 4-minute halves) see 0.75 corners a match (soak: 0.6-0.9 by style) against 5.25
+goal kicks; of the corners 0.31 come off the keeper (parry / tip), the rest off defenders' blocks and deflections.
+The largest single cause of goal kicks (2.0 a match) is an attacker's contested header 10-35 m out flicked straight
+on over the goal line (SIM-12 aiChoose heads it at `dir` with no target): a CR to the kicks owner
+(`tests/scenario/qf-11-cr-header-flick-out.test.ts`). More corners would come from keepers parrying wide of the post
+(GKP-02 parry angles) and blocked crosses; neither was changed this round (they move the goal bands and rebound goals).
+At the corner kick the CPU now has 3-6 attackers in the box in 31 of 34 real corners (seeds 1-44); the other 3 went at
+the end of the wait (cpuRestartDelay + maxArrivalWait, just before RUL-04's CPU fallback) with the third runner still
+8-33 m away (`tests/scenario/qf-4-cr-corner-box.test.ts`).
 
 ### TAI-09 completion calibration (`T_CPU`, Professional, 56 matches with the lofted factors at 1)
 
 | Kind | Estimated | Completed (next touch by a teammate) | Change |
 |---|---|---|---|
 | Ground pass | 0.92 | 0.94 (4904) | - |
-| Driven pass | 0.80 | 0.70 (2016) | - (to the intended receiver 0.52) |
+| Driven pass | 0.80 | 0.70 (2016) | round 2: `passDrivenCompletionMul` 0.87 (to the intended receiver 0.52) |
 | Lob pass (chosen) | 0.72 raw | 0.76 (41) | `passAerialMin/Max` 0.4 / 0.6 -> 0.85 / 1.0 (QF-9's lofted receiver) |
 | Lofted through ball | 0.21 raw | 0.16 (172) | `passThroughLobCompletionMul` 0.25 -> 0.75 |
 | Ground through ball | 0.77 | 0.40 (143) | `passThroughGroundCompletionMul` 1 -> 0.52 |
 | Cross | 0.24 | 0.06 (67) | `passCrossCompletionMul` 1.6 -> 0.4, `passCrossCompletionAdd` 0.12 -> 0 |
+| Driven pass (round 2) | 0.80 (Professional) / 0.84 (Legend, 40 matches) | 0.70 / 0.73 (529 at Legend) | `passDrivenCompletionMul` (new) 0.87 |
 
 With the CPU's own 12-match run at the old factors, lobs were never chosen (0 in 12 matches).
+
+## QF-11 skeptic (Wave 4 round 2, second pass)
+
+Defects found from new angles and fixed (each with a regression test in `tests/scenario/qf-11-sk-*.test.ts`); all
+change sim behaviour (hashes). Each fix is kept to where the glitch lives: the first, broader versions (gather anywhere
+in the box, tip lift re-planned, a larger momentum margin, the chase penalty at every level) cost the top-bottom
+balance about 6 points (MOS v ROO 76.5% / 74.5% on seeds 1 / 2 against 82.5% / 80.5% with all five off: the weaker
+side's keeper, under far more pressure, profits most from a keeper who gathers everything).
+
+| Defect | Measured before | Fix | After |
+|---|---|---|---|
+| Loose ball at a low level: the chase was left to the CPU's controlled player still keeping his old run (reaction delay, TAI-11 branch 2) the other way | Beginner, 4 short matches: 34 stretches of 20-74 ticks (up to 1.2 s) with nobody going for the ball while a teammate would have got there sooner | TAI-07 `assignChaser` (`reactionLeft`): while more of his delay remains than the chaser hysteresis (so only below Professional), such a player is later by the remaining ticks and makes no near claim (`T_AI.chaserReactNearDist` 1.2 m: on the point counts as going); our own pass in flight has no delay | 0 stretches over 16 ticks |
+| Sprinting CPU defender in his reaction delay ran off the pitch (the first pass's fixed 2 m edge margin is shorter than his braking distance) | 9 m/s straight at a line: 2.2-2.4 m past it | `defending.ts momentum`: margin = max(2 m, v^2 / (2 x `T_PLAYER.decel`) + `T_CPU.defendMomentumBrakeSlack` 0.5 m) | stops on the pitch |
+| Idle AI keeper left a loose ball in his goal area (post rebound, ball dropping on his line) to SIM-07's outfield first touch, which follows his run back to his line into his own net | 2 own goals in 30 Professional matches (4-minute halves); constructed rebound: 12 own goals in 24 | GKP-02 gather (`saves.ts`, goal area only): hands within `T_GK.gatherReach` 1.15 m (>= SIM-07 receive reach) when he may handle it, it is catchable and he has reacted; else the reflex body block or nothing | 24 of 24 rebounds held |
+| A shot already past an unreacted keeper: the save decision freed him and SIM-07 gave him a heavy first touch on it from behind | it went in off him as an own goal (scorer lost) or was stopped by a keeper who never saw it: 12-18 touches, 4 own goals in 36 constructed shots | GKP-02 `passedHim`: he stays put (running GK_CATCH kept, idle keeper plants) while it is on its way in | 0 touches, 0 own goals |
+| Tip over from under the bar's footprint (contact closer to the line than ball radius + bar): the ball rose into the underside of the bar and dropped in | an own goal in a match; 12 of 72 constructed tips / parries at the line went in | `keeperContact`: no tip from closer than `T_GK.tipBarFront` 0.25 m; he parries it out | 0 of 72 |
+| A rushing keeper (GKP-03) taken into a set catch (GKP-02) for a slow ball at the edge of reaching his line dropped it 1-3 ticks later when the prediction flickered and rushed again (start / abort flip-flop; caught by the QF-2 keeper scan on a new trajectory) | 6 of 160 constructed slow balls | GKP-02: a set GK_CATCH is kept up to `T_GK.catchKeepTicks` 12 while the ball still comes at him (actB counts the ticks without a threat) | 0 of 160 |
+
+### Verification of the first pass's numbers (same tools, more seeds)
+
+The first pass's balance PASS rested on seed 1. On its own tree (the five fixes above switched off, which reproduces
+its seed-1 run hash for hash: 165 / 22 / 13) MOS (88) v ROO (62) wins 82.5 / 80.5 / 77.0 / 75.0% on seeds 1-4:
+**78.8% over 800, below the 80% target**. Its ladder top pairs were 65.3% / 65.8% over two seeds; Legend v World
+Class over three seeds on the fixed tree 57 / 66 / 62.5% (500 matches: 62.8%).
+
+### Club balance and the ladder's top pair (QA-19 / QA-20 trade-off)
+
+`T_AI.composureNoise*` alone could not move the top-bottom pair without moving the closest-rated pair (SND v GLA)
+with it: SND's striker is the composure gap (83 v 68), so slope 0.8 gave 80.5 / 77.5% top-bottom and 59.5 / 63.5%
+equal. Wider keeper ranges (`T_GK` react 4-24, reach 1.9-3.3, dive speed 4.0-7.2) helped the equal pair (GLA's
+keeper is better) but not top-bottom (77.5 / 79.5%): reverted. Vision is where MOS and ROO differ (78 v 52) and SND v
+GLA do not (63 v 66): `visionNoiseMul` (TAI-08 carrier option noise, weighted like composure). Its bonus side is what
+moves top-bottom (noise is cheapest to cut near none), but at Professional only it also brings a strong club's
+Professional towards World Class:
+
+| Levers (Professional; 200 a seed, mirror legs) | MOS v ROO wins (4 seeds, 800) | SND v GLA points (800) | World Class v Pro (2 seeds, 400) | Legend v WC (400) |
+|---|---|---|---|---|
+| composure 0.65 (first pass; with the five fixes) | 76.5% | ~59% (seed 1: 58.8) | 68.0% (300) | 62.8% (500) |
+| composure 0.45, vision +-0.7 (symmetric), WC noise 0.085 | 82.0% | 55.4% | 62% (seed 1, 100) | 63% (seed 1, 100) |
+| composure 0.45, vision penalty 1.2 / bonus 0.45, WC 0.095 | 81.5% | 54.3% | 62.8% | 65.5% |
+| composure 0.45, vision penalty 1.2 / bonus 0.25, WC 0.095 | 76.6% | - | 65.5% | 65.5% |
+| **kept: composure 0.45, vision penalty 1.2 / bonus 0, WC 0.095** | **76.9%** | **55.3%** | **69.3%** | **65.5%** |
+
+Kept: the ladder (what a player feels choosing a difficulty) over the last 3 points of top-bottom; the lead can trade
+with `T_AI.visionNoiseBonusSlope` (0.45 meets top-bottom and costs World Class v Professional, as the table shows).
+`T_LEVEL.decisionNoise` World Class 0.085 -> 0.095 splits the top two pairs.
+
+### Final measurement (this tree, seed 1)
+
+- `tools/ladder.ts --matches 100`: Amateur v Beginner 68%, Semi-Pro v Amateur 68%, Professional v Semi-Pro 81%,
+  World Class v Professional 66%, Legend v World Class 66% (5 of 5); the top pairs over seeds 2-3 (200 each, before
+  the catch hysteresis): 69.3% and 65.5%.
+- `tools/balance.ts --matches 200`: top-bottom MOS v ROO 80.5% wins (161 / 21 / 18), equal SND v GLA 60.0% points
+  (96 / 48 / 56), mirror GLA v GLA 51.5% home points. Seed 1 meets all three, but over seeds 1-4 (before the catch
+  hysteresis) top-bottom is 76.9% and equal 55.3%: the top-bottom target is not met robustly (see the table above).
+- `tools/soak.ts --matches 500 --difficulty 3 --enforce all`: PASS; goals 3.27, shots 17.30, dominant possession
+  56.98%, home possession 50.94%, pass completion 78.31%, fouls 12.71, offsides 0.13, blow-outs 3.4%; 0 exceptions,
+  invariant failures or watchdogs; determinism PASS.

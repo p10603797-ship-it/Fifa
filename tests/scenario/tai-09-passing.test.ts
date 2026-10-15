@@ -316,6 +316,33 @@ describe('TAI-09 scorePassOptions', () => {
     expect(g[0]!.completion).toBeGreaterThan(0.6);
   });
 
+  it('[QF-11] a driven pass is rated at drivenCompletionMul of its lane (calibration: estimated 0.80-0.84, completed 0.70-0.73)', () => {
+    // Chosen CPU driven passes completed 0.70 (Professional, 56 matches) / 0.73 (Legend, 40) against estimates of 0.80 /
+    // 0.84: a noiseless top level kept picking the over-rated hard pass. The lane estimate is scaled to what completes.
+    expect(LOCAL_TUNING.drivenCompletionMul).toBeGreaterThan(0.75);
+    expect(LOCAL_TUNING.drivenCompletionMul).toBeLessThan(1);
+    const build = (): SimState => {
+      const s = scene();
+      sparse(s, [6, 9]);
+      place(s, 6, 0, 0); own(s, 6);
+      place(s, 9, 26, 0);
+      place(s, 17, 15, 5);
+      return s;
+    };
+    const mul = LOCAL_TUNING.drivenCompletionMul;
+    let raw: PassOption | undefined;
+    try {
+      (LOCAL_TUNING as { drivenCompletionMul: number }).drivenCompletionMul = 1;
+      raw = of(scan(build(), 6), 9, GROUNDISH)[0];
+    } finally {
+      (LOCAL_TUNING as { drivenCompletionMul: number }).drivenCompletionMul = mul;
+    }
+    const cal = of(scan(build(), 6), 9, GROUNDISH)[0]!;
+    expect(raw!.kind).toBe(KickKind.DRIVEN_PASS);
+    expect(cal.kind).toBe(KickKind.DRIVEN_PASS);
+    expect(cal.completion).toBeCloseTo(raw!.completion * mul, 6);
+  });
+
   describe('through balls only to runners', () => {
     function runnerScene(vx: number, vz = 0, job = AiJob.HOLD_SHAPE): SimState {
       const s = scene();

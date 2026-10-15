@@ -29,11 +29,16 @@ Two halves, both re-runnable by QA:
   - **shotPower**: shot speed moves about 12% from 40 to 90 (25.7 to 28.7 m/s at 80% power; was 4% before Wave 4).
   - **composure**: in the sim it relieves the pressure part of the shot error (0.59 to 0.45 m under a 1 m press) and
     feeds penalties. [QF-11] It now also scales the CPU's decision noise on the player (`T_AI.composureNoise*`,
-    `ai/cpu/levels composureNoiseMul`: the carrier's option noise and a defender's rash / noisy tackles; x0.68 at 87,
-    x1.33 at 57 with slope 0.65, weighted by level: full at Professional, half at Semi-Pro, none elsewhere). That is
+    `ai/cpu/levels composureNoiseMul`: the carrier's option noise and a defender's rash / noisy tackles; x0.78 at 87,
+    x1.23 at 57 with slope 0.45 [QF-11 skeptic; 0.65 before], weighted by level: full at Professional, half at
+    Semi-Pro, none elsewhere; a carrier short of vision is penalised the same way, below). That is
     how a rating gap shows through decisions as well as the body: the 88-rated club beat the 62-rated one in 57.5% of
-    40 Professional matches without it and 90% with slope 0.7 (`tests/scenario/qf-11-defects.test.ts` pins that a calm
-    carrier makes the clean choice more often than a nervous one).
+    40 Professional matches without it, 78.8% of 800 (4 seeds) with composure 0.65 alone and 76.9% of 800 with the
+    kept composure 0.45 + vision penalty 1.2, the closest-rated pair splitting 55.3% of points (a vision bonus for
+    good carriers, `visionNoiseBonusSlope` 0.45, gives 81.5% but costs World Class v Professional 6.5 points of the
+    ladder; see docs/TUNING.md, QF-11 skeptic) (`tools/balance.ts`;
+    `tests/scenario/qf-11-defects.test.ts` pins that a calm carrier makes the clean choice more often than a nervous
+    one).
   - **finishing at close range**: with the Assisted aim a 40-finishing striker still puts 99% of 14 m shots on target;
     finishing moves placement (0.65 to 0.18 m from the aim point), so it shows as corners hit versus shots near the
     keeper rather than misses. Tuning is for SIM-11 / Wave 4.
@@ -61,7 +66,7 @@ dynamic micro-test (table further down has the exact numbers and levels).
 | shortPassing | pass accuracy up to 12 m (`passAccuracy`); volley / header passes; free-kick taker choice | CPU pass choice; set-piece short taker | 15 m ground pass direction spread 4.1 -> 1.3 deg | keep |
 | longPassing | pass accuracy from 35 m; lob error; clearance quality; free-kick taker choice | CPU pass choice | 38 m lob spread 4.5 -> 1.3 deg | keep |
 | crossing | cross error; corner taker choice; free-kick taker choice | CPU cross choice | cross spread 4.5 -> 1.3 deg | keep |
-| vision | through-ball accuracy (`visionShare`) | CPU pass option search (sees more runs) | through-ball spread 3.1 -> 1.6 deg | keep |
+| vision | through-ball accuracy (`visionShare`) | CPU pass option search (sees more runs); [QF-11 skeptic] CPU carrier option noise when short of vision (`T_AI.visionNoise*`, weighted like composure) | through-ball spread 3.1 -> 1.6 deg; CPU option noise x1.52 -> x1.0 (52 -> 65+) | keep |
 | finishing | shot accuracy up to 16 m; volley duel / shot accuracy; penalty accuracy; penalty-taker choice | CPU shot decision | 14 m shot placement error 0.65 -> 0.18 m (on target 99% -> 100%) | keep (see weak list) |
 | shotPower | shot speed (x0.92-1.0); header / volley shot speed; clearance speed; free-kick / penalty power and taker choice | set-piece shooter choice | launch speed at 80% power 27.8 -> 29.0 m/s | keep, **weak: tune** |
 | longShots | shot accuracy from 20 m; free-kick shot accuracy; free-kick taker choice | CPU shot range; set-piece shooter | 28 m shot on target 84% -> 100%, placement 1.29 -> 0.37 m | keep |
@@ -72,7 +77,7 @@ dynamic micro-test (table further down has the exact numbers and levels).
 | interceptions | interception chance (`interceptChance`) | - | passes cut out 0.75 m off the line 43% -> 58% | keep |
 | strength | body mass in collisions, shielding; shoulder / push duels; tackle resistance; clearance; aerial duel and the beaten jumper's stumble; keeper punch | CPU shielding | shoulder-challenge win rate 21% -> 81% | keep |
 | stamina | drain and recovery rate of the condition (which scales speed, acceleration and kick accuracy when low) | - | condition drained per minute of sprinting 0.51 -> 0.32 | keep |
-| composure | shot pressure relief; 40% of penalty accuracy; penalty-taker choice; penalty keeper's read | CPU shot decision; [QF-11] CPU decision noise (carrier options, rash / noisy tackles) | 14 m shot under a 1 m press: placement error 0.59 -> 0.45 m; CPU option noise x1.33 -> x0.68 (57 -> 87) | keep |
+| composure | shot pressure relief; 40% of penalty accuracy; penalty-taker choice; penalty keeper's read | CPU shot decision; [QF-11] CPU decision noise (carrier options, rash / noisy tackles) | 14 m shot under a 1 m press: placement error 0.59 -> 0.45 m; CPU option noise x1.23 -> x0.78 (57 -> 87) | keep |
 | gkDiving | dive speed, max reach, get-up time; claim jump height; best keeper for a sub | CPU shot placement against the keeper | save rate, hard corner shots 16-22 m: 36% -> 78% | keep |
 | gkHandling | catch-speed limit (catch vs parry), parry quality; throw accuracy; claim catch limit; punch speed | - | share of saves held 58% -> 92% | keep |
 | gkReflexes | reaction delay (`keeperReactTicks`); parry quality | CPU shot placement against the keeper | save rate, close-range shots 8-11 m: 67% -> 89% | keep |
@@ -141,7 +146,7 @@ height and gkDiving rows moved; every row still moves the right way.
 | shortPassing | ai/cpu/passing, ai/setpieces, sim/kicks/aerial, sim/kicks/pass, sim/rules/freekick | read (7 site(s)) |
 | longPassing | ai/cpu/passing, sim/defend/tackle, sim/kicks/lob, sim/kicks/pass, sim/rules/freekick | read (5 site(s)) |
 | crossing | ai/cpu/passing, sim/kicks/lob, sim/rules/corner, sim/rules/freekick | read (5 site(s)) |
-| vision | ai/cpu/passing, sim/kicks/through | read (2 site(s)) |
+| vision | ai/cpu/carrier, ai/cpu/passing, sim/kicks/through | read (3 site(s)) |
 | finishing | ai/cpu/shooting, sim/kicks/aerial, sim/kicks/shot, sim/rules/penalty, sim/rules/restart, sim/rules/shootout | read (11 site(s)) |
 | shotPower | ai/setpieces, sim/defend/tackle, sim/kicks/aerial, sim/kicks/shot, sim/rules/freekick, sim/rules/penalty, sim/rules/shootout | read (9 site(s)) |
 | longShots | ai/cpu/shooting, ai/setpieces, sim/kicks/shot, sim/rules/freekick | read (8 site(s)) |

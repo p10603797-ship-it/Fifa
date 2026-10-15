@@ -70,7 +70,7 @@ describe('QF-2 CPU corners: box runners', () => {
           kicks.push({ t: lastT, n });
           return true;
         }
-        return st.match.phase !== MatchPhase.CORNER;
+        return true; // the phase left CORNER without a kick this tick (e.g. a re-award): stop
       },
     });
   }

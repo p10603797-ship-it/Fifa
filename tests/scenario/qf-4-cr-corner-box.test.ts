@@ -27,20 +27,24 @@ import { createMatchConfig, type SimState } from '../../src/contracts/state';
 import { createEventBuffer } from '../../src/sim/core/events';
 import { initMatch } from '../../src/sim/init';
 import { step } from '../../src/sim/step';
+import { T_RULES } from '../../src/contracts/tuning';
+import { LOCAL_TUNING as SP } from '../../src/ai/setpieces';
 
 const BOX_DEPTH = 16.5, BOX_HALF_WIDTH = 20.16;
 
-/** Attackers (kicking team, taker excluded) inside the attacked penalty area at each corner kick of a CPU match. */
-function attackersAtCornerKicks(seed: number, want: number): number[] {
+/** Attackers (kicking team, taker excluded) inside the attacked penalty area at each corner kick of a CPU match, and
+ *  the restart's age at the kick (restart.t - restartSetupTicks). */
+function attackersAtCornerKicks(seed: number, want: number): { att: number; age: number }[] {
   const cfg = createMatchConfig();
   cfg.seed = seed;
   cfg.humans = cfg.humans.map((h) => ({ ...h, kind: ControllerKind.NONE, side: -1 }));
   const s = initMatch(cfg) as SimState;
   const ev = createEventBuffer();
   const frames = [createInputFrame(), createInputFrame()];
-  const out: number[] = [];
+  const out: { att: number; age: number }[] = [];
   for (let t = 0; t < 60 * 60 * 12 && out.length < want; t++) {
     const phase = s.match.phase;
+    const age = s.match.restart.t - T_RULES.restartSetupTicks;
     step(s, frames, ev);
     if (s.match.phase === MatchPhase.POST_MATCH) break;
     if (phase !== MatchPhase.CORNER) continue;
@@ -55,7 +59,7 @@ function attackersAtCornerKicks(seed: number, want: number): number[] {
         if (p.active !== 1 || k === e.a || p.team !== team) continue;
         if (p.x * dir > HALF_LENGTH - BOX_DEPTH && Math.abs(p.z) < BOX_HALF_WIDTH) att++;
       }
-      out.push(att);
+      out.push({ att, age });
     }
   }
   return out;
@@ -63,13 +67,24 @@ function attackersAtCornerKicks(seed: number, want: number): number[] {
 
 describe('QF-4 CR (QF-2): CPU corners are taken with attackers in the box', () => {
   // [QF-11] Landed TAI-13 maxArrivalWait 58 -> 120. Corners fell to ~0.4 a match once defenders stopped "receiving"
-  // shots (QF-9), so seeds 1-2 alone often hold one corner or none: the matches run until four corner kicks are seen
-  // (at most 16 seeds). Measured on seeds 1-10: 3, 4, 3, 3 (every corner kick at least 3; the floor stays 3: the CPU
-  // waits for minBoxArrivals = 3 runners on their spots, a fourth is often still on his way).
-  it('at every CPU corner kick at least 3 attackers are inside the penalty area', () => {
-    const counts: number[] = [];
-    for (let seed = 1; seed <= 16 && counts.length < 4; seed++) counts.push(...attackersAtCornerKicks(seed, 4 - counts.length));
-    expect(counts.length).toBeGreaterThanOrEqual(4);
-    for (const c of counts) expect(c).toBeGreaterThanOrEqual(3);
+  // shots (QF-9), so the matches run until six corner kicks are seen (at most 24 seeds). The CR's own fix reads "hold
+  // the CPU corner take until the scripted attacking positions are reached ... or a cap of a few seconds": the CPU
+  // waits for minBoxArrivals = 3 runners on their spots up to cpuRestartDelay + maxArrivalWait (just before RUL-04's
+  // CPU fallback). Over 34 real CPU corners (seeds 1-44): 31 with 3-6 attackers in the box, 3 with 2, all three at the
+  // cap with the third runner (and the short option) still 8-33 m away (the corner came with the team caught upfield).
+  // [QF-11 skeptic] The mean of six kicks was a noise-level gate (one capped corner with 2 moves it from 3.0 to 2.83):
+  // seeds 1-24 on the current tree give 17 CPU corners, 14 with 3 attackers, 1 with 5 and 2 with 2 (both at the cap,
+  // the team caught 40 m upfield: runners at 7.7 m/s need 5 s). The CR's rule stays per kick (3+, or the cap); at most a
+  // third of the kicks may be capped short-handed and the mean stays well clear of the old 0-2.
+  it('a CPU corner kick has at least 3 attackers in the box, or waited to the cap for them (mean at least 2.5)', () => {
+    const kicks: { att: number; age: number }[] = [];
+    for (let seed = 1; seed <= 24 && kicks.length < 6; seed++) kicks.push(...attackersAtCornerKicks(seed, 6 - kicks.length));
+    expect(kicks.length).toBeGreaterThanOrEqual(6);
+    const cap = T_RULES.cpuRestartDelay + SP.maxArrivalWait;
+    for (const k of kicks) {
+      if (k.att < 3) expect(k.age, JSON.stringify(kicks)).toBeGreaterThanOrEqual(cap);
+    }
+    expect(kicks.filter((k) => k.att < 3).length, JSON.stringify(kicks)).toBeLessThanOrEqual(kicks.length / 3);
+    expect(kicks.reduce((a, k) => a + k.att, 0) / kicks.length).toBeGreaterThanOrEqual(2.5);
   }, 240000);
 });

@@ -242,6 +242,16 @@ export const T_GK = {
   diveSpeedWorst: 4.6,
   /** Catch vs parry: catch if handling-scaled speed below this m/s. */
   catchSpeed: 18,
+  /** [QF-11 skeptic] GKP-02 gather: an idle AI keeper takes a loose ball he may handle into his hands when it comes
+   *  within this horizontal reach of his body axis (>= SIM-07 T_TOUCH.receiveRadius, so his hands get there before an
+   *  outfield-style first touch that followed his run back to his line into his own net), m. */
+  gatherReach: 1.15,
+  /** [QF-11 skeptic] GKP-02: no tip over from closer to the goal line than this (ball radius + bar diameter: the ball
+   *  is under the bar's footprint, a tip meets its underside and drops in); he parries it out instead, m. */
+  tipBarFront: 0.25,
+  /** [QF-11 skeptic] GKP-02: a set catch (GK_CATCH) is kept up to this many ticks after the shot stops looking like a
+   *  threat while the ball still comes at him (no GKP-02 / GKP-03 start / abort flip-flop), ticks. */
+  catchKeepTicks: 12,
   /** Max ticks a keeper may hold the ball (6 s). */
   maxHoldTicks: 360,
   /** Auto release for humans after this many ticks. */
@@ -344,10 +354,23 @@ export const T_AI = {
    *  tackles): x clamp(1 + composureNoiseSlope x (composureNoiseRef - composure) / 30, composureNoiseMin,
    *  composureNoiseMax). An average player (ref) keeps the level's noise; a calm one decides cleaner, a nervous one
    *  rushes (BRIEF section 15: ratings show through attributes). Unitless; ref attribute points. */
-  composureNoiseSlope: 0.65,
+  composureNoiseSlope: 0.45,
   composureNoiseRef: 72,
   composureNoiseMin: 0.4,
   composureNoiseMax: 1.8,
+  /** [QF-11 skeptic] The carrier's vision scales his option noise too (TAI-08: seeing the pass), weighted like composure
+   *  by T_LEVEL.composureNoiseWeight: x clamp(1 + slope x (visionNoiseRef - vision) / 30, visionNoiseMin,
+   *  visionNoiseMax), slope = visionNoiseSlope below the reference, visionNoiseBonusSlope above it (a strong club's
+   *  Professional must not come as close to World Class: the ladder's top pair). Unitless; ref attribute points. */
+  visionNoiseSlope: 1.2,
+  visionNoiseBonusSlope: 0,
+  visionNoiseRef: 65,
+  visionNoiseMin: 0.6,
+  visionNoiseMax: 1.8,
+  /** [QF-11 skeptic] TAI-07 chaser choice: a CPU-controlled player still in his brain's reaction delay (he keeps his old
+   *  run, TAI-11 branch 2) gets there that many ticks later unless his run already takes him to the interception point
+   *  (approaching it at controlledApproachSpeed, or within this distance of it and not running away), m. */
+  chaserReactNearDist: 1.2,
 } as const;
 
 /**
@@ -420,6 +443,7 @@ export const T_CPU = {
   passLeadMaxS: 1.5,
   passThroughGroundCompletionMul: 0.52, // [QF-11] was 1: ground through balls estimated 77%, completed 40% (143)
   passThroughLobCompletionMul: 0.75, // [QF-11] was 0.25: lofted through balls 21% est. raw, 16% done (172)
+  passDrivenCompletionMul: 0.87, // [QF-11] TAI-09 calibration: chosen driven passes est. 0.80 / 0.84, done 0.70 / 0.73
   passCrossCompletionMul: 0.4, // [QF-11] was 1.6 (+ 0.12): crosses estimated 24%, reached a teammate 6% (67)
   passCrossCompletionAdd: 0,
   // ---- shooting.ts
@@ -432,17 +456,21 @@ export const T_CPU = {
   // ---- defending.ts
   defendRashLungeChance: 0.5,
   defendKeeperLaneClear: 2.0,
+  /** [QF-11] Reaction delay: within this of a touchline / goal line the kept run turns along the line, not over it, m.
+   *  [QF-11 skeptic] Or within his braking distance toward the line (v^2 / (2 x T_PLAYER.decel)) + brake slack, m. */
+  defendMomentumEdgeMargin: 2,
+  defendMomentumBrakeSlack: 0.5,
 } as const;
 
 /** Per-difficulty AI parameters, indexed by Difficulty (0 Beginner .. 5 Legend). Never physics. */
 export const T_LEVEL = {
   /** [QF-11] Ticks a CPU carrier keeps running the way he is going after he gets the ball, and a CPU defender after a
    *  change of ball owner, before deciding (head down): measured the strongest lever below Professional. */
-  reactionTicks: [60, 42, 24, 11, 6, 1] as readonly number[],
+  reactionTicks: [80, 42, 24, 11, 6, 1] as readonly number[],
   /** [QF-11] Option noise (TAI-08 carrier utilities, TAI-11 rash / noisy tackles, TAI-13 set-piece targets, GKP-04
    *  distribution): a noisy carrier picks the safe square pass among many near-equal ones and never makes the chance;
    *  the strongest lever above Professional (Legend decides without noise). */
-  decisionNoise: [0.5, 0.38, 0.275, 0.16, 0.085, 0] as readonly number[],
+  decisionNoise: [0.5, 0.38, 0.275, 0.16, 0.095, 0] as readonly number[],
   lookAheadTicks: [10, 16, 22, 30, 38, 46] as readonly number[],
   executionError: [1.6, 1.35, 1.15, 1.0, 0.85, 0.72] as readonly number[],
   /** [QF-11] was 0.35 .. 0.95: a harder press measured no better (slightly worse) in this sim, so the spread is small. */

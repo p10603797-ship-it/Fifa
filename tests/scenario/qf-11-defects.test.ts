@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { ActionKind, Difficulty, GestureKind, MatchPhase } from '../../src/contracts/enums';
 import { Btn, clearInputFrame, createInputFrame, type InputFrame } from '../../src/contracts/input';
 import { MoveMode, type SimState } from '../../src/contracts/state';
-import { CPU_CONTROLLER_BASE, HALF_WIDTH } from '../../src/contracts/constants';
+import { CPU_CONTROLLER_BASE, HALF_LENGTH, HALF_WIDTH } from '../../src/contracts/constants';
 import { CARRIER_DEBUG, cpuCarrier } from '../../src/ai/cpu/carrier';
 import { rngSeed } from '../../src/sim/core/rng';
 import { T_AI } from '../../src/contracts/tuning';
@@ -121,6 +121,38 @@ describe('QF-11 CPU carrier reaction delay', () => {
       cpuCarrier(s, 0, g, NULL_SINK);
       expect(g.mz * side).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('QF-11 CPU defender reaction delay', () => {
+  it('a reacting CPU defender near a touchline / goal line keeps his run along it, never over it (ran 1.5 m off the pitch)', () => {
+    // Beginner's 80-tick delay kept a defender's run going straight off the pitch: 13 times in 6 short Beginner matches.
+    for (const side of [1, -1]) {
+      const s = scene();
+      const d = s.players[D]!;
+      d.x = 0; d.z = side * (HALF_WIDTH - 1); d.vx = 3; d.vz = side * 4; d.fx = 0.6; d.fz = side * 0.8;
+      const brain = s.teams[1]!.cpu;
+      brain.level = Difficulty.BEGINNER;
+      brain.seenOwner = -5; // the ball changed hands: the reaction delay starts
+      const f = think(s);
+      expect(brain.reactT, 'in the reaction delay').toBeGreaterThan(0);
+      expect(f.mx, 'keeps running along the line').toBeGreaterThan(0);
+      expect(f.mz * side, 'not over the touchline').toBeLessThanOrEqual(0);
+      // In open space the same run is kept whole (both components).
+      d.z = 0;
+      brain.seenOwner = -5;
+      const g = think(s);
+      expect(g.mz * side).toBeGreaterThan(0);
+    }
+    // Team 1 defends +x: running at its own goal line from 1 m inside it, he does not run on behind the goal.
+    const s = scene();
+    const d = s.players[D]!;
+    d.x = HALF_LENGTH - 1; d.z = 12; d.vx = 5; d.vz = 0; d.fx = 1; d.fz = 0;
+    s.teams[1]!.cpu.level = Difficulty.BEGINNER;
+    s.teams[1]!.cpu.seenOwner = -5;
+    const f = think(s);
+    expect(s.teams[1]!.cpu.reactT).toBeGreaterThan(0);
+    expect(f.mx, 'stick released toward the goal line').toBeLessThanOrEqual(0);
   });
 });
 

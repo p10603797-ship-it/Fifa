@@ -38,8 +38,9 @@
  *   - GROUND_PASS to his feet, led along his run over the travel time (SIM-08's model). Speed = SIM-01 groundPassSpeed
  *     (same inline roll model) for the distance and the arrival speed a CPU tap plays (groundArriveMin..Max by
  *     distance), clamped to T_PASS.groundMin..groundMax. The lane ends where he meets the ball (min(meetBackMax,
- *     meetBackFrac x distance) in front of him). Below drivenTrigger a DRIVEN_PASS (x T_PASS.drivenMul) is tried too
- *     and the better one kept (a hard arrival above T_TOUCH.hardBallSpeed costs up to hardLoss).
+ *     meetBackFrac x distance) in front of him). Below drivenTrigger a DRIVEN_PASS (x T_PASS.drivenMul; completion x
+ *     drivenCompletionMul [QF-11]) is tried too and the better one kept (a hard arrival above T_TOUCH.hardBallSpeed
+ *     costs up to hardLoss).
  *   - LOB_PASS over a blocked lane (ground completion < lobTrigger, at least lobMinDist, carrier outside the crossing
  *     zone where a lob becomes a cross): lofted lane at T_PASS.lobAngle, led over the flight, aerial control
  *     lerp(aerialMin, aerialMax, ballControl).
@@ -198,6 +199,8 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-09): move into T_AI as pass* (ti
   /** Completion multipliers for ground / lofted through balls (calibration, see throughBall) [INT-A]. */
   throughGroundCompletionMul: T_CPU.passThroughGroundCompletionMul, // [QF-2] was 0.6 (with the shorter lead the estimate holds)
   throughLobCompletionMul: T_CPU.passThroughLobCompletionMul,
+  /** Completion multiplier for a DRIVEN_PASS (calibration: the hard pass is rated as the ground lane says) [QF-11]. */
+  drivenCompletionMul: T_CPU.passDrivenCompletionMul,
   // ---- crosses
   /** Own cross targets: near / far post depth from the goal line and |z|; penalty spot |z| toward the ball side, m. */
   nearPostDepth: 4.5,
@@ -1200,7 +1203,8 @@ export function scorePassOptions(s: SimState, slot: number, out: PassOption[]): 
     const gd = Math.sqrt(gdx * gdx + gdz * gdz);
     if (gc < LT.drivenTrigger && gd >= LT.drivenMinDist) {
       groundPass(q, 1);
-      if (F[O_C]! > gc) { gc = F[O_C]!; gx = F[O_X]!; gz = F[O_Z]!; kind = KickKind.DRIVEN_PASS; }
+      const dc = F[O_C]! * LT.drivenCompletionMul;
+      if (dc > gc) { gc = dc; gx = F[O_X]!; gz = F[O_Z]!; kind = KickKind.DRIVEN_PASS; }
     }
     const gp = dir * (gx - bx);
     F[E_X] = gx; F[E_Z] = gz; F[E_C] = gc; F[E_PROG] = gp; F[E_WD] = F[C_WD]!;

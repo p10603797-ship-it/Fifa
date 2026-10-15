@@ -74,7 +74,7 @@ import {
 } from '../data/tactics';
 import { otherTeam, teamEnd, teamStart } from '../sim/core/query';
 import { assignJob, isJobDriven } from './jobs';
-import { levelValue } from './cpu/levels';
+import { teamLevel } from './cpu/levels';
 
 export const LOCAL_TUNING = {
   // ---- line height (team frame u, m from the centre spot toward the opposition goal)
@@ -195,8 +195,11 @@ export const LOCAL_TUNING = {
 const LT = LOCAL_TUNING;
 const N = PLAYERS_PER_TEAM;
 /** [QF-11] Level multipliers of the team being evaluated (T_LEVEL.markGapMul / lineRateMul; 1 for a human side at
- *  Professional), set at the top of assignDefensiveShape. */
-const LVL = { markMul: 1, rateMul: 1 };
+ *  Professional) applied to the marking gaps and the line's step rates, set at the top of assignDefensiveShape (typed
+ *  scratch: no double crosses a call or lands in an object field on the per-tick path). */
+const LVL = new Float64Array(5);
+/** LVL slots: marking gap behind the line / in midfield (m), line step up / trap step up / step down per tick (m). */
+const LVL_GAP_BACK = 0, LVL_GAP_MID = 1, LVL_UP = 2, LVL_UP_TRAP = 3, LVL_DOWN = 4;
 const BIG = 1e9;
 
 // ---------------------------------------------------------------- formation tables (built once at load)
@@ -614,8 +617,8 @@ function lineRunners(s: SimState, team: number, dir: number, trapOn: boolean): v
 function lineFinish(): void {
   const floor = EVAL.floor, ceil = EVAL.ceil, cur = EVAL.cur;
   const target = clamp(EVAL.target, floor, ceil);
-  const up = (EVAL.trapStep === 1 ? LT.trapUpRate : LT.lineUpRate) * DT * LVL.rateMul;
-  const down = LT.lineDownRate * DT * LVL.rateMul;
+  const up = EVAL.trapStep === 1 ? LVL[LVL_UP_TRAP]! : LVL[LVL_UP]!;
+  const down = LVL[LVL_DOWN]!;
   const next = target > cur ? (target < cur + up ? target : cur + up) : (target > cur - down ? target : cur - down);
   EVAL.target = target;
   EVAL.next = clamp(next, floor, ceil);
@@ -643,9 +646,16 @@ export function assignDefensiveShape(s: SimState, team: number, ev: EventSink): 
   const t = s.teams[team]!;
   const dir = t.dir < 0 ? -1 : 1;
   const flags = teamFlags(s, team);
-  const mm = levelValue(s, team, T_LEVEL.markGapMul), rm = levelValue(s, team, T_LEVEL.lineRateMul);
-  LVL.markMul = mm > 0 ? mm : 1;
-  LVL.rateMul = rm > 0 ? rm : 1;
+  // Read the tables inline by the (small-integer) level: a double returned from a call is boxed on the per-tick path.
+  const lv = teamLevel(s, team);
+  const mm = T_LEVEL.markGapMul[lv], rm = T_LEVEL.lineRateMul[lv];
+  const markMul = mm !== undefined && mm > 0 && mm < 1e3 ? mm : 1;
+  const rateMul = rm !== undefined && rm > 0 && rm < 1e3 ? rm : 1;
+  LVL[LVL_GAP_BACK] = LT.markGap * markMul;
+  LVL[LVL_GAP_MID] = LT.markGapMid * markMul;
+  LVL[LVL_UP] = LT.lineUpRate * DT * rateMul;
+  LVL[LVL_UP_TRAP] = LT.trapUpRate * DT * rateMul;
+  LVL[LVL_DOWN] = LT.lineDownRate * DT * rateMul;
   resolveTactics(t.focus, flags, TP);
   collectMembers(s, team, dir, flags);
   if (!isDefending(s, team)) {
@@ -772,7 +782,7 @@ function markOne(s: SimState, dir: number, i: number, slot: number, back: boolea
   const qu = dir * q.x, qv = dir * q.z;
   const gx = -HALF_LENGTH - qu, gz = -qv;
   const gl = Math.sqrt(gx * gx + gz * gz);
-  const gap = (back ? LT.markGap : LT.markGapMid) * LVL.markMul;
+  const gap = back ? LVL[LVL_GAP_BACK]! : LVL[LVL_GAP_MID]!;
   let tu = gl > 1e-6 ? qu + (gx / gl) * gap : qu;
   let tv = gl > 1e-6 ? qv + (gz / gl) * gap : qv;
   if (back) {

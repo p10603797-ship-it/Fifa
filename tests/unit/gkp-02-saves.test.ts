@@ -81,14 +81,17 @@ describe('GKP-02 saves: physical reach', () => {
   it('dive kinematics: reach and timing come from gkDiving', () => {
     const s = keeperScenario({});
     const a = s.attrs[KEEPER]!;
+    // The ends come from T_GK.
+    const d = T_GK.reachWorst - 0.1; // within both keepers' reach
     a.gkDiving = 99;
-    const best = keeperMaxReach(a), bestT = keeperDiveTicks(a, 2.2);
+    const best = keeperMaxReach(a), bestT = keeperDiveTicks(a, d);
     a.gkDiving = 1;
-    const worst = keeperMaxReach(a), worstT = keeperDiveTicks(a, 2.2);
-    expect(best).toBeCloseTo(3.2, 6);
-    expect(worst).toBeCloseTo(2.2, 6);
+    const worst = keeperMaxReach(a), worstT = keeperDiveTicks(a, d);
+    expect(best).toBeCloseTo(T_GK.reachBest, 6);
+    expect(worst).toBeCloseTo(T_GK.reachWorst, 6);
     expect(bestT).toBeLessThan(worstT);
-    expect(keeperDiveTicks(a, 2.3)).toBeGreaterThan(1e6); // beyond reach: never
+    expect(worstT).toBeLessThan(1e6);
+    expect(keeperDiveTicks(a, T_GK.reachWorst + 0.1)).toBeGreaterThan(1e6); // beyond reach: never
   });
 });
 

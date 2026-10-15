@@ -198,6 +198,10 @@ export const LOCAL_TUNING = {
   keeperLaneClear: T_CPU.defendKeeperLaneClear,
   /** Reaction delay: keep running along the current velocity when faster than this, m/s. */
   momentumMinSpeed: 0.3,
+  /** [QF-11] ... but within this of a touchline / goal line only along it (a low level's long delay ran him off), m. */
+  momentumEdgeMargin: T_CPU.defendMomentumEdgeMargin,
+  /** [QF-11 skeptic] ... or his braking distance toward it + this, whichever is more, m. */
+  momentumBrakeSlack: T_CPU.defendMomentumBrakeSlack,
 } as const; // TUNING-CR
 
 const L = LOCAL_TUNING;
@@ -262,8 +266,21 @@ function momentum(s: SimState, p: Readonly<PlayerState>): void {
   const sp = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
   if (!(sp > L.momentumMinSpeed)) return;
   const jog = s.attrs[p.slot]!.topSpeed * T_PLAYER.jogFraction;
-  stX = p.vx / sp;
-  stZ = p.vz / sp;
+  // [QF-11] Near a line he keeps the run along it, never over it (Beginner's 80-tick delay sent defenders 1.5 m off
+  // the pitch, 13 times in 6 short matches); running straight at it, he lets the stick go and slows. [QF-11 skeptic]
+  // "Near" is at least his braking distance toward the line (T_PLAYER.decel) + momentumBrakeSlack: a fixed 2 m let a
+  // sprinter (9 m/s, 4 m to stop) run 2.3 m off the pitch.
+  let dx = p.vx, dz = p.vz;
+  const brake = 0.5 / T_PLAYER.decel;
+  const ez = dz * dz * brake + L.momentumBrakeSlack, ex = dx * dx * brake + L.momentumBrakeSlack;
+  const zl = HALF_WIDTH - (ez > L.momentumEdgeMargin ? ez : L.momentumEdgeMargin);
+  const xl = HALF_LENGTH - (ex > L.momentumEdgeMargin ? ex : L.momentumEdgeMargin);
+  if ((p.z > zl && dz > 0) || (p.z < -zl && dz < 0)) dz = 0;
+  if ((p.x > xl && dx > 0) || (p.x < -xl && dx < 0)) dx = 0;
+  const dl = Math.sqrt(dx * dx + dz * dz);
+  if (!(dl > L.momentumMinSpeed)) return;
+  stX = dx / dl;
+  stZ = dz / dl;
   stM = jog > EPS && sp < jog ? sp / jog : 1;
   if (p.sprinting === 1) wantSprint = 1;
 }

@@ -150,6 +150,23 @@ export function composureNoiseMul(composure: number, level: Difficulty = Difficu
 }
 
 /**
+ * [QF-11 skeptic] Option-noise multiplier for a carrier of vision `vision` under a CPU of difficulty `level`
+ * (T_AI.visionNoise*, weighted by T_LEVEL.composureNoiseWeight like composureNoiseMul): 1 at the reference, larger for
+ * a player who does not see the pass (visionNoiseSlope), smaller for one who does (the gentler visionNoiseBonusSlope),
+ * clamped; 1 for a non-finite attribute or a zero weight.
+ */
+export function visionNoiseMul(vision: number, level: Difficulty = Difficulty.PROFESSIONAL): number {
+  if (!Number.isFinite(vision)) return 1;
+  const wt = T_LEVEL.composureNoiseWeight[validIndex(level, LEVEL_COUNT) ? level : Difficulty.PROFESSIONAL];
+  const w = wt !== undefined && Number.isFinite(wt) ? wt : 1;
+  // A carrier who does not see the pass is penalised more steeply than a good one is helped: a large bonus would bring
+  // a strong club's Professional as close to World Class (the ladder's top pair) as the penalty pushes a weak club away.
+  const short = T_AI.visionNoiseRef - vision;
+  const m = 1 + (w * (short > 0 ? T_AI.visionNoiseSlope : T_AI.visionNoiseBonusSlope) * short) / 30;
+  return m < T_AI.visionNoiseMin ? T_AI.visionNoiseMin : m > T_AI.visionNoiseMax ? T_AI.visionNoiseMax : m;
+}
+
+/**
  * `value` plus deterministic execution noise for team `team`'s CPU: rngGauss(s.rng) x scale x executionError of the
  * team's brain level (scale = sd at Professional, in the value's units). Always consumes exactly one rngGauss
  * (4 draws); touches nothing but s.rng; finite output for any input (see the header).

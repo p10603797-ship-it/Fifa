@@ -76,7 +76,7 @@ import type { LevelParams, StyleWeights } from '../../contracts/systems';
 import { T_CPU, T_DRIBBLE, T_LEVEL, T_PASS, T_PLAYER, T_SKILL } from '../../contracts/tuning';
 import { rngGauss } from '../../sim/core/rng';
 import { inPenaltyArea } from '../../sim/pitch/geometry';
-import { composureNoiseMul, levelParams, levelValue, styleWeights } from './levels';
+import { composureNoiseMul, levelParams, levelValue, styleWeights, visionNoiseMul } from './levels';
 import { createPassOptions, scorePassOptions, type PassOption } from './passing';
 import { bestDribble, chooseSkill, estimateXg, lastXgBlock, shotLaneClear, SKILL_CHOICE } from './shooting';
 
@@ -343,10 +343,13 @@ const C = {
  */
 export const CARRIER_DEBUG = {
   plan: 0, u: 0, shotU: -1e18, shotWhy: 0, shotClean: 0, shotClear: 1, prog: 0,
-  /** [QF-11] The chosen option's TAI-09 completion (-1 for no pass), kick kind and
-   *  target slot (TAI-09 calibration tools). */
-  passC: -1, passKind: 0, passSlot: -1,
+  /** [QF-11] The chosen option's kick kind and target slot (TAI-09 calibration tools; its completion is in
+   *  CARRIER_PASS_C). */
+  passKind: 0, passSlot: -1,
 };
+/** [QF-11] The chosen option's TAI-09 completion, -1 for no pass (typed: a double kept in an object field churned V8's
+ *  field representation on the per-decision path and made the TAI-08 allocation budget flaky). */
+export const CARRIER_PASS_C = new Float64Array(1);
 /** CARRIER_DEBUG.shotWhy codes. */
 export const SHOT_OFFERED = 0, SHOT_NOT_ATTACKING = 1, SHOT_NO_XG = 2, SHOT_OUT_OF_RANGE = 3, SHOT_BELOW_THRESHOLD = 4, SHOT_FAILED = 5;
 
@@ -354,7 +357,9 @@ export const SHOT_OFFERED = 0, SHOT_NOT_ATTACKING = 1, SHOT_NO_XG = 2, SHOT_OUT_
 const SHOT = { side: 1, valid: 0 };
 
 /** Best option so far (scratch). */
-const BEST = { plan: CpuPlan.NONE as CpuPlan, u: -1e18, slot: -1, x: 0, z: 0, mode: MODE_NONE, kind: KickKind.NONE as number, c: -1 };
+const BEST = { plan: CpuPlan.NONE as CpuPlan, u: -1e18, slot: -1, x: 0, z: 0, mode: MODE_NONE, kind: KickKind.NONE as number };
+/** TAI-09 completion of BEST (-1: not a pass). */
+const BEST_C = new Float64Array(1);
 
 // ---------------------------------------------------------------- small helpers
 
@@ -502,7 +507,9 @@ function fillContext(s: SimState, team: number, p: Readonly<PlayerState>, lv: Re
   C.prog = (t.dir * p.x) / HALF_LENGTH;
   C.safetyMul = LT.safetyLossMin + (LT.safetyLossMax - LT.safetyLossMin) * clamp01(sw.safety);
   C.vHere = posValue(C.prog, p.z);
-  C.noiseSd = clamp01(lv.decisionNoise) * LT.noiseScale * composureNoiseMul(s.attrs[p.slot]!.composure, t.cpu.level);
+  const pa = s.attrs[p.slot]!;
+  C.noiseSd = clamp01(lv.decisionNoise) * LT.noiseScale * composureNoiseMul(pa.composure, t.cpu.level) *
+    visionNoiseMul(pa.vision, t.cpu.level);
   C.lookFrac = clamp01(lv.lookAheadTicks / LT.lookAheadRef);
   C.counter = t.phase === TeamPhase.TRANSITION_ATTACK ? 1 : 0;
   // Nearest opponent now, and the closest one after the look-ahead (both carrying on at their velocities).
@@ -544,7 +551,7 @@ function consider(plan: CpuPlan, slot: number, mode: number, kind: number): void
   CU[3] = -1; // set by pass options only
   if (!(u > BEST.u)) return;
   BEST.plan = plan; BEST.u = u; BEST.slot = slot; BEST.x = CU[1]!; BEST.z = CU[2]!; BEST.mode = mode; BEST.kind = kind;
-  BEST.c = c;
+  BEST_C[0] = c;
 }
 
 function planOfPass(kind: number): CpuPlan {
@@ -780,7 +787,7 @@ function decide(s: SimState, team: number, brain: CpuBrainState, p: Readonly<Pla
   sw: Readonly<StyleWeights>): void {
   fillContext(s, team, p, lv, sw);
   BEST.plan = CpuPlan.NONE; BEST.u = -1e18; BEST.slot = -1; BEST.x = 0; BEST.z = 0; BEST.mode = MODE_NONE; BEST.kind = 0;
-  BEST.c = -1; CU[3] = -1;
+  BEST_C[0] = -1; CU[3] = -1;
   const cur = brain.plan;
   const shieldAge = cur === CpuPlan.SHIELD ? brain.planT : 0;
   if (shieldAge >= LT.shieldMaxTicks) {
@@ -802,7 +809,7 @@ function decide(s: SimState, team: number, brain: CpuBrainState, p: Readonly<Pla
   setP1(brain, stepOf(brain), modeOf(brain), startedOf(brain), left > 0 ? failMaskOf(brain) : 0, left);
   const chosen = BEST.plan as CpuPlan; // (cast: the option scorers above wrote it; TS narrowed it to the reset value)
   CARRIER_DEBUG.plan = chosen; CARRIER_DEBUG.u = BEST.u;
-  CARRIER_DEBUG.passC = BEST.c; CARRIER_DEBUG.passKind = BEST.kind; CARRIER_DEBUG.passSlot = BEST.slot;
+  CARRIER_PASS_C[0] = BEST_C[0]!; CARRIER_DEBUG.passKind = BEST.kind; CARRIER_DEBUG.passSlot = BEST.slot;
   if (cur === CpuPlan.SHIELD && chosen !== CpuPlan.SHIELD && shieldAge >= LT.shieldRestMinTicks && failEvalsOf(brain) < LT.shieldRestEvals) {
     // [INT-A] A long shield that ends on its own rests too, so the carrier does not cycle shield / dribble / shield.
     setP1(brain, stepOf(brain), modeOf(brain), startedOf(brain), failMaskOf(brain) | (1 << CpuPlan.SHIELD), LT.shieldRestEvals);

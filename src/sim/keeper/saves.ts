@@ -20,7 +20,14 @@
  *     gets the hands there (commitSlackTicks), then GK_DIVE toward that point (the nearest reachable sample).
  *   - nothing reachable -> he moves toward the ball's path (GK_CATCH, re-planning every tick) and, close to the
  *     ball's arrival, makes a despairing GK_DIVE toward the closest approach timed to full stretch (beaten).
- *  Never a new save action once the ball is planeBackReach behind his plane (it has passed him).
+ *  Never a new save action once the ball is planeBackReach behind his plane (it has passed him). [QF-11 skeptic] While
+ *  such a ball is still on its way into the mouth at threat speed (passedHim) he stays put (a running GK_CATCH is kept,
+ *  an idle keeper plants), so SIM-07 never gives him a first touch on it from behind.
+ *  [QF-11 skeptic] Gather: an idle AI keeper (not human-controlled) whose hands a loose ball he may handle (canHandle)
+ *  reaches within T_GK.gatherReach in his goal area catches it (keeperPickUp) when it is slow enough and he has reacted
+ *  to it; otherwise the reflex body block (if eligible) or nothing (a catch or nothing: never a parry of a harmless
+ *  ball). A set catch (not the planted stance) is kept up to T_GK.catchKeepTicks after the threat flickers off while
+ *  the ball still comes at him, and no tip over is made from closer to the line than T_GK.tipBarFront (a parry).
  *  Dive kinematics (saveKinematics.ts): load (diveWindupTicks, arms extend), then the hip accelerates along the
  *  dive line to keeperDiveSpeed(gkDiving) (diveAccelTicks) and flies on for the planned travel, hands beyond the
  *  hip; touch distance from the start = hip travel + hand offset + handRadius + BALL_RADIUS <= keeperMaxReach
@@ -52,22 +59,24 @@ export { catchHandler, diveHandler } from './saveKinematics';
 import {
   armExt, CAP_TOL, createKeeperKin, depthOf, diveHandOffset, diveTargetDist, diveTop, diveTravelFor, flightTicks,
   getUpTicks, heightM, hipTravel, keeperMaxReach, keeperReactTicks, kinDiveTicks, kinDiveTop, kinStandReach,
-  loadKeeperKin, LOCAL_TUNING, NEVER, STAND_AXIS_LOW, standAxisTop, xOfDepth,
+  loadKeeperKin, LOCAL_TUNING, NEVER, STAND_AXIS_LOW, standAxisTop, standTop, xOfDepth,
 } from './saveKinematics';
 // actions/dispatch (-> registry) before keeper/handling so the registry never meets a half-evaluated handler module.
 import { beginAction, endAction } from '../actions/dispatch';
 import {
-  BALL_RADIUS, GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, NUM_SLOTS, PENALTY_AREA_DEPTH, PENALTY_AREA_HALF_WIDTH,
+  BALL_RADIUS, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, NUM_SLOTS,
+  PENALTY_AREA_DEPTH, PENALTY_AREA_HALF_WIDTH,
 } from '../../contracts/constants';
 import { ActionKind, CrossKind, KickKind, MatchPhase, SaveKind, isFootPassKind } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
-import { createBallState, MoveMode, type BallState, type SimState } from '../../contracts/state';
+import { createBallState, MoveMode, type BallState, type PlayerAttrs, type SimState } from '../../contracts/state';
 import { createKickLaunch, MAX_PREDICT_TICKS } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
 import { T_BALL, T_GK, T_LEVEL } from '../../contracts/tuning';
 import { ballStepTick } from '../ball/contact';
 import { attr, clamp, clamp01, dcos, dsin, lerp } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
+import { isHumanSlot } from '../core/query';
 import { rngRange } from '../core/rng';
 import { canHandle, keeperPickUp } from './handling';
 
@@ -108,12 +117,15 @@ const CATCH_PLANTED = 2;
 
 /** Segment-segment closest points. */
 const SEG = { s: 0, t: 0, d2: 0, ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0 };
-/** Keeper contact volume: capsule A -> B with radius r; kind 0 none, 1 dive, 2 stand, 3 body. */
-const VOL = { kind: 0, ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0, r: 0 };
+/** Keeper contact volume: capsule A -> B with radius r; kind 0 none, 1 dive, 2 stand, 3 body, 4 gather (reflex = 1:
+ *  a reflex body block applies when the gather cannot catch). */
+const VOL = { kind: 0, ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0, r: 0, reflex: 0 };
 const VOL_NONE = 0;
 const VOL_DIVE = 1;
 const VOL_STAND = 2;
 const VOL_BODY = 3;
+/** [QF-11 skeptic] Idle AI keeper gathering a loose ball he may handle (hands; a catch or nothing). */
+const VOL_GATHER = 4;
 
 // ---------------------------------------------------------------- geometry helpers
 
@@ -282,6 +294,33 @@ function goalSample(dir: number, margin: number, start: number, count: number): 
     return i;
   }
   return -1;
+}
+
+/** [QF-11 skeptic] Is the free ball moving toward keeper k (closing on him faster than threatMinSpeed)? */
+function ballComing(s: SimState, k: number): boolean {
+  const b = s.ball;
+  if (b.heldBy >= 0 || b.owner >= 0) return false;
+  const p = s.players[k]!;
+  const dx = p.x - b.x, dz = p.z - b.z;
+  const d = Math.sqrt(dx * dx + dz * dz);
+  return d > EPS && (b.vx * dx + b.vz * dz) / d >= L.threatMinSpeed;
+}
+
+/**
+ * [QF-11 skeptic] Has the free ball got past keeper k (behind his plane by more than planeBackReach, not yet wholly
+ * over the line) on its way into the goal mouth at threat speed?
+ */
+function passedHim(s: SimState, team: number, k: number): boolean {
+  const b = s.ball;
+  if (b.heldBy >= 0 || b.owner >= 0) return false;
+  const dir = s.teams[team]!.dir;
+  const u = depthOf(dir, b.x);
+  const vg = -dir * b.vx;
+  if (!(vg >= L.threatMinSpeed) || u < -BALL_RADIUS) return false;
+  if (u >= depthOf(dir, s.players[k]!.x) - L.planeBackReach) return false;
+  const zl = b.z + (b.vz * (u > 0 ? u : 0)) / vg;
+  return zl <= GOAL_HALF_WIDTH + L.mouthMargin && zl >= -GOAL_HALF_WIDTH - L.mouthMargin &&
+    b.y <= GOAL_HEIGHT + L.mouthMargin;
 }
 
 /** Prediction horizon (ticks) for a ball at depth u moving toward the goal at vg m/s. */
@@ -500,7 +539,25 @@ export function keeperSaveDecision(s: SimState, team: number, ev: EventSink): vo
   if (act !== ActionKind.NONE && act !== ActionKind.GK_CATCH && act !== ActionKind.GK_RUSH) return;
   if (act === ActionKind.GK_CATCH && p.actDone === 1) return; // played the ball: let the window run out
   if (!evaluateThreat(s, team, k)) {
-    if (act === ActionKind.GK_CATCH) endAction(s, k, 1);
+    // [QF-11 skeptic] A fast ball already past him into the goal: he stays put (the running GK_CATCH, or a planted
+    // stance) until it is in or away, so SIM-07 never gives him a first touch on it from behind (a shot that had beaten
+    // him went in off his heavy touch as an own goal, the scorer lost).
+    if (passedHim(s, team, k)) {
+      if (act === ActionKind.GK_CATCH) { if (p.actDur < p.actT + 2) p.actDur = p.actT + 2; }
+      else if (act === ActionKind.NONE) setCatch(s, team, k, p.x, s.ball.y, p.z, 1, CATCH_PLANTED);
+      return;
+    }
+    if (act === ActionKind.GK_CATCH) {
+      // [QF-11 skeptic] A flicker of the prediction (a slow ball at the edge of reaching his line) does not end a set
+      // catch at once while the ball still comes at him: GKP-03 took the keeper back into its rush 3 ticks later and
+      // GKP-02 out again (a start / abort flip-flop). actB counts the ticks without a threat (setCatch resets it).
+      if (p.actA !== CATCH_PLANTED && p.actB < T_GK.catchKeepTicks && ballComing(s, k)) {
+        p.actB++;
+        if (p.actDur < p.actT + 2) p.actDur = p.actT + 2;
+        return;
+      }
+      endAction(s, k, 1);
+    }
     return;
   }
   if (!reacted(s, k)) {
@@ -565,7 +622,7 @@ function reflexEligible(s: SimState, team: number): boolean {
 function buildVolume(s: SimState, team: number, k: number): void {
   const p = s.players[k]!;
   const a = s.attrs[k]!;
-  VOL.kind = VOL_NONE;
+  VOL.kind = VOL_NONE; VOL.reflex = 0;
   const act = p.act;
   if (act === ActionKind.GK_DIVE) {
     if (p.actDone === 1 || p.actT > p.actContact + L.diveStretchTicks) return;
@@ -597,13 +654,71 @@ function buildVolume(s: SimState, team: number, k: number): void {
     return;
   }
   if (act === ActionKind.NONE || act === ActionKind.GK_RUSH) {
-    if (!reflexEligible(s, team)) return;
-    const h = heightM(a);
-    VOL.kind = VOL_BODY;
-    VOL.ax = p.x; VOL.ay = 0.3; VOL.az = p.z;
-    VOL.bx = p.x; VOL.by = h - 0.3; VOL.bz = p.z;
-    VOL.r = L.bodyRadius;
+    const reflex = reflexEligible(s, team);
+    // [QF-11 skeptic] Gather: an idle AI keeper takes a loose ball that reaches his hands into them (a post rebound,
+    // a dropping ball, a cross or a shot going wide along his line) instead of leaving it to SIM-07's outfield first
+    // touch, which settles it along his run (back to his line) and put it in his own net (2 own goals in 30
+    // matches). A ball he cannot catch falls back to the reflex body block (keeperContact).
+    if (act === ActionKind.NONE && inGatherZone(s, team) && !isHumanSlot(s, k) && canHandle(s, k)) {
+      const top = standTop(a) - T_GK.gatherReach - BALL_RADIUS;
+      VOL.kind = VOL_GATHER;
+      VOL.ax = p.x; VOL.ay = STAND_AXIS_LOW; VOL.az = p.z;
+      VOL.bx = p.x; VOL.by = top > STAND_AXIS_LOW ? top : STAND_AXIS_LOW; VOL.bz = p.z;
+      VOL.r = T_GK.gatherReach;
+      VOL.reflex = reflex ? 1 : 0;
+      return;
+    }
+    if (reflex) bodyVolume(s, k);
   }
+}
+
+/**
+ * [QF-11 skeptic] The gather is for his goal area (GOAL_AREA_DEPTH x GOAL_AREA_HALF_WIDTH, lines included), where an
+ * outfield-style first touch back toward his line can put the ball in his own net; elsewhere in the box the ball is
+ * received / claimed as before.
+ */
+function inGatherZone(s: SimState, team: number): boolean {
+  const b = s.ball;
+  const u = depthOf(s.teams[team]!.dir, b.x);
+  return u <= GOAL_AREA_DEPTH + BALL_RADIUS && b.z <= GOAL_AREA_HALF_WIDTH + BALL_RADIUS &&
+    b.z >= -GOAL_AREA_HALF_WIDTH - BALL_RADIUS;
+}
+
+/** Keeper k's body-only volume (unready keeper / reflex block). */
+function bodyVolume(s: SimState, k: number): void {
+  const p = s.players[k]!;
+  const h = heightM(s.attrs[k]!);
+  VOL.kind = VOL_BODY;
+  VOL.ax = p.x; VOL.ay = 0.3; VOL.az = p.z;
+  VOL.bx = p.x; VOL.by = h - 0.3; VOL.bz = p.z;
+  VOL.r = L.bodyRadius;
+}
+
+/**
+ * [QF-11 skeptic] Does the gather volume in VOL take this tick's ball into keeper k's hands (reach, inside the area,
+ * slow enough to catch at that height, canHandle, reacted)? Leaves the closest points in SEG.
+ */
+function gatherCatches(s: SimState, team: number, k: number): boolean {
+  const b = s.ball;
+  segSeg(b.px, b.py, b.pz, b.x, b.y, b.z, VOL.ax, VOL.ay, VOL.az, VOL.bx, VOL.by, VOL.bz);
+  const rr = VOL.r + BALL_RADIUS;
+  if (SEG.d2 > rr * rr) return false;
+  const p = s.players[k]!;
+  const dir = s.teams[team]!.dir;
+  if (depthOf(dir, SEG.ax) < -BALL_RADIUS) return false;
+  if (!inOwnArea(dir, SEG.ax, SEG.az, BALL_RADIUS) || !inOwnArea(dir, p.x, p.z, L.standArm) || teammateFootPass(s, team)) {
+    return false;
+  }
+  const sp = Math.sqrt(b.vx * b.vx + b.vy * b.vy + b.vz * b.vz);
+  // He has to have seen it coming (GKP-02's reaction delay, the level part included: a slow keeper stays slow).
+  return sp <= catchLimit(s.attrs[k]!, 0, SEG.ay) && canHandle(s, k) && reacted(s, k);
+}
+
+/** Hands catch limit of a keeper with attributes a at dive stretch 0..1 and contact height cy, m/s. */
+function catchLimit(a: Readonly<PlayerAttrs>, stretch: number, cy: number): number {
+  let limit = T_GK.catchSpeed * attr(a.gkHandling, L.catchMulWorst, L.catchMulBest) * (1 - L.stretchCatchPenalty * stretch);
+  if (cy > L.headHeight) limit *= 1 - L.highCatchPenalty;
+  return limit;
 }
 
 /** Was the ball (at the contact point, with its current velocity) going into team's goal? */
@@ -727,6 +842,11 @@ function keeperContact(s: SimState, team: number, ev: EventSink): number {
   const b = s.ball;
   if (b.lastTouch === k && b.lastTouchTick >= 0 && s.tick - b.lastTouchTick < L.recontactTicks) return 0;
   buildVolume(s, team, k);
+  if (VOL.kind === VOL_GATHER && !gatherCatches(s, team, k)) {
+    // [QF-11 skeptic] A gather is a catch or nothing: else the reflex body block (a fast ball at goal) or no contact.
+    if (VOL.reflex !== 1) return 0;
+    bodyVolume(s, k);
+  }
   if (VOL.kind === VOL_NONE) return 0;
   segSeg(b.px, b.py, b.pz, b.x, b.y, b.z, VOL.ax, VOL.ay, VOL.az, VOL.bx, VOL.by, VOL.bz);
   const rr = VOL.r + BALL_RADIUS;
@@ -736,11 +856,11 @@ function keeperContact(s: SimState, team: number, ev: EventSink): number {
   if (depthOf(dir, cx) < -BALL_RADIUS) return 0; // whole ball already over the line: the goal stands
   const vx = b.vx, vy = b.vy, vz = b.vz;
   const sp = Math.sqrt(vx * vx + vy * vy + vz * vz);
-  const onTarget = wasOnTarget(s, team, cx, cy, cz);
   const a = s.attrs[k]!;
   const isDive = VOL.kind === VOL_DIVE;
   const hands = VOL.kind !== VOL_BODY && (!isDive || SEG.t >= L.handsFrom) &&
     inOwnArea(dir, cx, cz, BALL_RADIUS) && inOwnArea(dir, p.x, p.z, L.standArm) && !teammateFootPass(s, team);
+  const onTarget = wasOnTarget(s, team, cx, cy, cz);
   let stretch = 0;
   if (isDive) {
     // How far out he is: hip travel + hand offset as a fraction of his max reach.
@@ -754,10 +874,7 @@ function keeperContact(s: SimState, team: number, ev: EventSink): number {
   placeBall(s, cx, cy, cz);
   let kind: SaveKind;
   if (hands) {
-    let limit = T_GK.catchSpeed * attr(a.gkHandling, L.catchMulWorst, L.catchMulBest) *
-      (1 - L.stretchCatchPenalty * stretch);
-    if (cy > L.headHeight) limit *= 1 - L.highCatchPenalty;
-    if (sp <= limit && canHandle(s, k)) {
+    if (sp <= catchLimit(a, stretch, cy) && canHandle(s, k)) {
       b.vx = 0; b.vy = 0; b.vz = 0; b.sx = 0; b.sy = 0; b.sz = 0;
       if (p.act === ActionKind.GK_DIVE || p.act === ActionKind.GK_CATCH) endAction(s, k, 1);
       keeperPickUp(s, k, ev);
@@ -769,7 +886,10 @@ function keeperContact(s: SimState, team: number, ev: EventSink): number {
       b.vx = vx; b.vy = vy; b.vz = vz;
     }
     const u = depthOf(dir, cx);
-    if (cy >= GOAL_HEIGHT - L.tipBand && u <= L.tipMaxDepth && sp >= L.tipMinSpeed && -dir * vx > 0) {
+    // [QF-11 skeptic] Not under the bar's footprint: a ball tipped up from closer than tipBarFront to the line meets the
+    // underside of the bar and drops in (12 of 70 test tips at the line went in as own goals); he pushes it out.
+    if (cy >= GOAL_HEIGHT - L.tipBand && u <= L.tipMaxDepth && sp >= L.tipMinSpeed && -dir * vx > 0 &&
+      u >= T_GK.tipBarFront) {
       tipOver(s, team, k, ev);
       kind = SaveKind.TIP_OVER;
     } else {
