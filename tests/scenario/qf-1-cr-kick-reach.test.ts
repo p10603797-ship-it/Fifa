@@ -50,7 +50,7 @@ function outOfReachKicks(seed: number, ticks: number): { kicks: number; out: num
 }
 
 describe('QF-1 CR (QF-2) foot kicks only within reach', { timeout: 600_000 }, () => {
-  it.fails('qf-1-cr: no KICK / SHOT action plays a ball beyond reachRadius / reachHeight in CPU play (3 seeds)', () => {
+  it('qf-1-cr: no KICK / SHOT action plays a ball beyond reachRadius / reachHeight in CPU play (3 seeds)', () => {
     let kicks = 0, out = 0;
     for (const seed of [3, 4, 20261014]) {
       const r = outOfReachKicks(seed, 4500);

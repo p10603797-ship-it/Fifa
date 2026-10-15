@@ -15,13 +15,18 @@
  *    T_PASS.powerFillTicks + LT.chargeWaitExtraTicks past the planned contact, then is released here (no stuck
  *    power bar even if the button never comes up).
  *  - dispossessed (someone else owns / holds the ball) at any time before contact: whiff at once and recover.
+ *  - [QF-10] released charge: the first tick after the power bar is released the contact moves to
+ *    T_PASS.releaseStrikeTicks after it (kickCommon.ts releaseStrike; not for a first-time kick of a ball arriving).
  *  - contact (first tick with actT >= actContact and not charging): the phase must be live for him (IN_PLAY; a restart
  *    phase as its taker or once taken; the shoot-out kicker), the ball untouched by anyone else this tick and in reach
- *    (his own ball, or within LT.reachRadius horizontally and at most LT.reachHeight high). A loose ball still
- *    arriving (first-time kicks), or his own ball still above reach height, may delay the contact up to
- *    LT.contactGraceTicks. Then KICK_SOLVERS[actKick] fills the launch and core/kick.ts applyKick plays it (KICK
- *    event, possession / pass-target / restart bookkeeping). Anything else is a whiff. Either way actContact moves to
- *    the actual contact tick and actDur keeps the planned recovery after it (actDone = 1). Pass and go
+ *    of his foot ([QF-10] kickCommon.ts footCanStrike: within LT.reachRadius of his body, at most LT.reachHeight high
+ *    and within KICK_TUNING.spotReach of his kicking spot, also for his own ball). His own ball out of reach (a touch
+ *    ahead, still dropping, behind him) delays the contact up to LT.ownReachWaitTicks while SIM-06 holds it onto the
+ *    kicking spot; a loose ball still arriving (first-time kicks) up to LT.contactGraceTicks; a restart taker's dead
+ *    ball not at his kicking spot: he side-steps round it first (kickCommon.ts lineUpOnDeadBall). Then
+ *    KICK_SOLVERS[actKick] fills the launch and core/kick.ts applyKick plays it (KICK event, possession / pass-target /
+ *    restart bookkeeping). Anything else is a whiff. Either way actContact moves to the actual contact tick and actDur
+ *    keeps the planned recovery after it (actDone = 1). Pass and go
  *    (ReqFlag.PASS_AND_GO on a pass): team.passGoSlot = passer, team.passGoT = LT.passGoTicks (TAI-03 makes the run).
  *  - recovery: MoveMode.LOCKED for LT.contactLockTicks from the contact (follow-through; SIM-04 applies its locked
  *    friction), then STOP for a tick (the resolver / AI write the intent again) and the stick cap ramps back to 1.
@@ -43,10 +48,10 @@
  *    power)); Semi blends LT.semiPowerBlend of the power-only speed lerp(groundMin, groundMax, power) into it; Manual
  *    uses the power-only speed and the request direction only. Clamped to T_PASS.groundMin..groundMax. Driven =
  *    the ground speed x T_PASS.drivenMul (range x drivenMul too): faster and flat. Dinked = launched at
- *    T_PASS.dinkedAngle with the speed found by bisection over an open-field model of the sim's ball physics (SIM-01
- *    air step for the first flight, SIM-02's bounce rule and roll model in closed form; see dinkTrial) so the ball
- *    first reaches the target with lerp(dinkArriveMin, dinkArriveMax, power) m/s: it lifts over a defender's legs,
- *    bounces and rolls on.
+ *    T_PASS.dinkedAngle (+ LT.dinkAngleOffsets when a bounce would meet the target: see solveDink) with the speed found
+ *    by bisection over an open-field model of the sim's ball physics (SIM-01 air steps for every flight, SIM-02's
+ *    bounce rule at its substep timing, the roll model in closed form; see dinkTrial) so the ball first reaches the
+ *    target with lerp(dinkArriveMin, dinkArriveMax, power) m/s: it lifts over a defender's legs, bounces and rolls on.
  *  - No receiver: Assisted / Semi pass into space along the request direction over the power-implied distance;
  *    Manual at the power-only speed. A teammate within LT.laneReceiverWidth of that line (before the ball stops)
  *    becomes the pass target so he still collects it.
@@ -73,8 +78,9 @@
  *
  * Determinism / cost: plain arithmetic, Math.sqrt and dmath (dcos/dsin/dlog/dexp), s.rng only in the solver, slot-order
  * scans with strict tie breaks, module scratch only (no per-tick allocation). Per tick per kicker: a few flops of
- * movement capping. At contact: O(11 x 11) receiver scoring, a few closed-form roll solves; a dinked pass adds one
- * or two bisections of <= LT.dinkIters + 2 model trials (a first flight of ~20 three-tick air steps + O(hops) each).
+ * movement capping. At contact: O(11 x 11) receiver scoring, a few closed-form roll solves; a dinked pass adds model
+ * trials (bisections of <= LT.dinkIters + 2 per launch angle, at most LT.dinkMaxTrials + one bisection + nudges; each
+ * trial <= LT.dinkMaxTicks / 3 three-tick air steps: p50 ~32, max ~54 trials per solve).
  */
 // Re-export the registry-facing shells FIRST: see passHooks.ts (import-cycle safety with actions/registry).
 export { kickHandler, solveGroundPass } from './passHooks';
@@ -88,13 +94,14 @@ import { createBallState, MoveMode, type BallState, type PlayerState, type SimSt
 import { createKickLaunch, ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
 import { T_BALL, T_PASS, T_PLAYER } from '../../contracts/tuning';
-import { BALL_CONTACT_TUNING } from '../ball/contact';
-import { ballAirStep, DRAG_K, groundPassSpeed, groundRollTime } from '../ball/flight';
+import { BALL_CONTACT_TUNING, MAX_SUBSTEPS } from '../ball/contact';
+import { ballAirStep, groundPassSpeed, groundRollTime } from '../ball/flight';
 import { dcos, dexp, dlog, dsin } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
 import { pressureOn } from '../core/query';
 import { rngGauss } from '../core/rng';
 import { staminaFactor } from '../players/locomotion';
+import { footCanStrike, isDeadBallTaker, KICK_TUNING, lineUpOnDeadBall, noteCharging, releaseStrike } from './kickCommon';
 
 /** TUNING-CR (SIM-08): proposed additions to T_PASS (units in the comments). */
 export const LOCAL_TUNING = { // TUNING-CR
@@ -108,6 +115,9 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** A loose ball still arriving (first-time kicks), or his own ball still above reachHeight, may delay the contact by
    *  up to this many ticks, ticks. */
   contactGraceTicks: 6,
+  /** [QF-10] His own ball out of reach at the contact tick (a sprint touch ahead, still dropping, behind him): the contact
+   *  waits up to this many ticks while SIM-06 pulls it onto the kicking spot, ticks. */
+  ownReachWaitTicks: 14,
   /** The ball can be kicked within this horizontal distance of the body centre, m ... */
   reachRadius: 1.2,
   /** ... with its centre at or below this height, m. */
@@ -190,6 +200,20 @@ export const LOCAL_TUNING = { // TUNING-CR
   dinkBracketHi: 1.05,
   /** Receivers moving faster than this get a second dinked solve with the flight's own arrival time, m/s. */
   dinkReleadSpeed: 0.5,
+  /** [QF-10] The dinked arrival speed jumps by T_BALL.bounceFriction at every bounce, and the bisection tends to settle
+   *  exactly where a bounce meets the target (the sim's tick then shows the ball 1-1.7 m/s off the plan with
+   *  bounceFriction 0.2): launch angles T_PASS.dinkedAngle + these offsets are tried in order until the solution
+   *  reaches the target at least dinkBounceMargin from a bounce, rad / s. */
+  dinkAngleOffsets: [0, 0.06, -0.06, 0.12, -0.1] as readonly number[],
+  dinkBounceMargin: 0.04,
+  /** ... a solution with a bounce nearer the target is nudged by dinkNudge (fraction of the speed, up to dinkNudgeSteps
+   *  times, down and up) until it is that clear; the first angle whose model arrival speed is then within dinkArriveTol
+   *  of the plan is taken, else the closest, m/s. */
+  dinkNudge: 0.01,
+  dinkNudgeSteps: 4,
+  dinkArriveTol: 0.3,
+  /** Work cap of one dinked solve: no further angle is tried after this many model trials (~0.3 ms in Node). */
+  dinkMaxTrials: 40,
   /** Power-only (Manual) dinked launch speed at power 0 and 1, m/s. */
   dinkPowerSpeedMin: 6,
   dinkPowerSpeedMax: 20,
@@ -218,6 +242,9 @@ export const LOCAL_TUNING = { // TUNING-CR
 
 const LT = LOCAL_TUNING;
 
+/** [QF-10] Model trials run by the current solveDink (bounded by LT.dinkMaxTrials). */
+let dinkTrials = 0;
+
 // Hot-path copies of imported constants (module-level locals: no import-binding lookups per tick).
 const NS = NUM_SLOTS;
 const PPT = PLAYERS_PER_TEAM;
@@ -234,6 +261,14 @@ const ROLL_A = T_BALL.rollDecel;
 const ROLL_C = T_BALL.rollDamping;
 const DINK_COS = dcos(T_PASS.dinkedAngle);
 const DINK_SIN = dsin(T_PASS.dinkedAngle);
+/** [QF-10] Dinked launch angle candidates (T_PASS.dinkedAngle + offset, rad; see solveDink). */
+const DINK_ANGLES = LT.dinkAngleOffsets.length;
+const DINK_ANGLE_COS = new Float64Array(DINK_ANGLES);
+const DINK_ANGLE_SIN = new Float64Array(DINK_ANGLES);
+for (let k = 0; k < DINK_ANGLES; k++) {
+  DINK_ANGLE_COS[k] = dcos(T_PASS.dinkedAngle + LT.dinkAngleOffsets[k]!);
+  DINK_ANGLE_SIN[k] = dsin(T_PASS.dinkedAngle + LT.dinkAngleOffsets[k]!);
+}
 const COS_CONE_ASSISTED = dcos(T_PASS.coneHalfAngle * LT.assistedConeMul);
 const COS_CONE_SEMI = dcos(T_PASS.coneHalfAngle * LT.semiConeMul);
 const DEFAULT_REC = T_PASS.contact + T_PASS.recovery;
@@ -247,8 +282,6 @@ const DINK_DT = 3 / TICK_HZ;
 const DINK_FLIGHT_STEPS = Math.ceil(LT.dinkMaxTicks / 3);
 /** SIM-02: ground impacts slower than this (vertical, m/s) grip only partly. */
 const FULL_GRIP = BALL_CONTACT_TUNING.fullGripImpactSpeed;
-/** Hop cap of the dinked model (the restitution ends the hops long before). */
-const DINK_MAX_HOPS = 24;
 
 /** 1 for restart phases (index = MatchPhase). */
 const RESTART_PHASE = new Uint8Array(MatchPhase.POST_MATCH + 1);
@@ -260,7 +293,7 @@ const LAUNCH = createKickLaunch();
 /** Scratch ball for the dinked-pass model's first flight. */
 const DINK = createBallState();
 /** Solver scratch (numbers handed between helpers; V8 boxes doubles passed to / returned from non-inlined calls). */
-const F = new Float64Array(16);
+const F = new Float64Array(26);
 /** Target point (x, z), its distance from the ball and the travel time of the last speed solve (s). */
 const F_TX = 0, F_TZ = 1, F_D = 2, F_T = 3;
 /** Unit aim (x, z). */
@@ -272,6 +305,11 @@ const F_LX = 8, F_LZ = 9;
 /** Lead: receiver position and velocity, the travel-time ratio of the real kick to the ground model, and the arrival
  *  speed floor (the receiver's speed away from the ball along the aim + LT.leadArriveMargin; 0 = none). */
 const F_QX = 10, F_QZ = 11, F_QVX = 12, F_QVZ = 13, F_RATIO = 14, F_AMIN = 15;
+/** [QF-10] Dinked launch angle in trial (cos, sin), the last trial's bounce margin (s: time from the target to the
+ *  nearest bounce), the accepted speed's margin, and the chosen launch angle (cos, sin). */
+const F_CA = 16, F_SA = 17, F_TRIAL_M = 18, F_OK_M = 19, F_DCA = 20, F_DSA = 21;
+/** [QF-10] Arrival speed of the last trial and of the accepted speed, m/s. */
+const F_TRIAL_V = 22, F_OK_V = 23;
 
 // ---------------------------------------------------------------- small helpers
 
@@ -584,28 +622,35 @@ function groundSpeed(kind: KickKind, power: number, assist: number): number {
 
 /**
  * One dinked trial at launch speed v from height y0: 1 if the ball first reaches F[F_D] metres along the aim with at
- * least `arrive` m/s of horizontal speed; F[F_TRIAL_T] = the time it gets there (s; -1 if it does not). Open-field
- * model of the sim's own physics for a spinless ball: the first flight integrates SIM-01 ballAirStep (gravity + drag,
- * as SIM-02 does in the air) in 3-tick steps; the hops after it apply SIM-02's ground-impact rule
- * (restitution, bounceFriction scaled by grip below fullGripImpactSpeed, rolling below rollThresholdVy) with
- * quadratic drag on the horizontal speed (vh / (1 + k vh t)); the roll uses the SIM-02 roll model in closed form
- * (SIM-01 groundRollTime). A spinless ball never speeds up horizontally, so a trial fails as soon as it is slower
- * than `arrive`. Tests check the model against ballStepTick.
+ * least `arrive` m/s of horizontal speed; F[F_TRIAL_T] = the time it gets there (s; -1 if it does not), F[F_TRIAL_V]
+ * its speed there, F[F_TRIAL_M] the time from there to the nearest bounce (s). Open-field model of the sim's own
+ * physics for a spinless ball launched at the angle F_CA / F_SA: every flight integrates SIM-01 ballAirStep (gravity +
+ * drag, as SIM-02 does in the air) in 3-tick steps; each ground impact applies SIM-02's rule (restitution,
+ * bounceFriction scaled by grip below fullGripImpactSpeed, rolling below rollThresholdVy) at the end of the SIM-02
+ * substep in which the ball went below the ground ([QF-10]: the hops stay in step with the sim's); the roll uses the
+ * SIM-02 roll model in closed form (SIM-01 groundRollTime). A spinless ball never speeds up horizontally, so a trial
+ * fails as soon as it is slower than `arrive`. Tests check the model against ballStepTick.
  */
 function dinkTrial(y0: number, v: number, arrive: number): number {
+  dinkTrials++;
   const d = DINK;
   const D = F[F_D]!;
+  const G = T_BALL.gravity;
   d.x = 0; d.y = y0 < BALL_RADIUS ? BALL_RADIUS : y0; d.z = 0;
-  d.vx = v * DINK_COS; d.vy = v * DINK_SIN; d.vz = 0;
+  d.vx = v * F[F_CA]!; d.vy = v * F[F_SA]!; d.vz = 0;
   d.sx = 0; d.sy = 0; d.sz = 0;
   F[F_TRIAL_T] = -1;
+  F[F_TRIAL_M] = 0;
+  F[F_TRIAL_V] = 0;
   let t = 0;
-  // 1. First flight (tick steps of the sim's air physics) until the ball comes down to the ground.
-  let landed = false;
-  let x = 0;
-  let vh = 0;
-  let vi = 0;
-  for (let i = 0; i < DINK_FLIGHT_STEPS; i++) {
+  /** Time of the last ground impact (s; -1e9 none yet). */
+  let tb = -1e9;
+  // 1. Flights (3-tick steps of the sim's air physics, SIM-01 ballAirStep: gravity + quadratic drag on the whole
+  //    velocity) and ground impacts (SIM-02's rule: friction scaled by grip, restitution, rolling below the threshold).
+  let steps = 0;
+  let rolling = false;
+  while (steps < DINK_FLIGHT_STEPS) {
+    steps++;
     const px = d.x, py = d.y, pvx = d.vx, pvy = d.vy;
     ballAirStep(d, DINK_DT);
     // Landing inside this step: interpolate to the ground contact (y = BALL_RADIUS).
@@ -616,49 +661,57 @@ function dinkTrial(y0: number, v: number, arrive: number): number {
     const lx = px + (d.x - px) * f;
     if (lx >= D) {
       const g = lx > px ? (D - px) / (lx - px) * f : f;
-      F[F_TRIAL_T] = t + DINK_DT * g;
-      return pvx + (d.vx - pvx) * g >= arrive ? 1 : 0;
+      const ta = t + DINK_DT * g;
+      F[F_TRIAL_T] = ta;
+      // Margin: time from the target to the nearest ground impact (the last one, or the landing of this flight, from
+      // the height and vertical speed there).
+      const ya = py + (d.y - py) * g, vya = pvy + (d.vy - pvy) * g;
+      const h = ya - BALL_RADIUS;
+      const tl = (vya + Math.sqrt(vya * vya + 2 * G * (h > 0 ? h : 0))) / G;
+      F[F_TRIAL_M] = tl < ta - tb ? tl : ta - tb;
+      const va = pvx + (d.vx - pvx) * g;
+      F[F_TRIAL_V] = va;
+      return va >= arrive ? 1 : 0;
     }
-    if (down) {
-      t += DINK_DT * f;
-      x = lx;
-      vh = pvx + (d.vx - pvx) * f;
-      vi = -(pvy + (d.vy - pvy) * f);
-      landed = true;
-      break;
+    if (!down) {
+      t += DINK_DT;
+      if (d.vx < arrive) return 0; // a spinless ball never speeds up horizontally
+      continue;
     }
-    t += DINK_DT;
-    if (d.vx < arrive) return 0;
-  }
-  if (!landed) return 0;
-  // 2. Hops.
-  for (let n = 0; n < DINK_MAX_HOPS; n++) {
+    // Ground impact. SIM-02 applies it at the end of the substep in which the ball went below the ground (the tick's
+    // substeps: SIM-02 ballSubsteps from the speed), with the vertical speed of that moment: emulated here, so the hops
+    // stay in step with the sim's (the plain landing point drifts ~0.3 m behind it by the fourth bounce).
+    const tl = t + DINK_DT * f;
+    const vh = pvx + (d.vx - pvx) * f;
+    const vl = -(pvy + (d.vy - pvy) * f);
+    const tk = Math.floor(tl * HZ + 1e-9) / HZ;
+    let nsub = Math.ceil(Math.sqrt(vh * vh + vl * vl) / (HZ * T_BALL.maxStep));
+    if (nsub < 1) nsub = 1; else if (nsub > MAX_SUBSTEPS) nsub = MAX_SUBSTEPS;
+    const hs = 1 / (HZ * nsub);
+    let te = tk + Math.ceil((tl - tk) / hs - 1e-9) * hs;
+    if (te < tl) te = tl;
+    t = te;
+    tb = t;
+    const vi = vl + G * (te - tl);
     const grip = vi >= FULL_GRIP ? 1 : vi / FULL_GRIP;
-    vh *= 1 - T_BALL.bounceFriction * grip;
-    if (vh < arrive) return 0;
+    d.x = lx + vh * (te - tl); d.y = BALL_RADIUS;
+    d.vx = vh * (1 - T_BALL.bounceFriction * grip);
+    if (d.vx < arrive) return 0;
     const vy = vi * T_BALL.restitution;
-    if (vy < T_BALL.rollThresholdVy) break;
-    const ft = 2 * vy / T_BALL.gravity;
-    const kv = DRAG_K * vh * ft;
-    const hop = dlog(1 + kv) / DRAG_K;
-    if (x + hop >= D) {
-      const tn = (dexp(DRAG_K * (D - x)) - 1) / (DRAG_K * vh);
-      F[F_TRIAL_T] = t + tn;
-      return vh / (1 + DRAG_K * vh * tn) >= arrive ? 1 : 0;
-    }
-    x += hop;
-    t += ft;
-    vh /= 1 + kv;
-    if (vh < arrive) return 0;
-    vi = vy;
+    if (vy < T_BALL.rollThresholdVy) { rolling = true; break; }
+    d.vy = vy;
   }
-  // 3. Roll.
-  const rem = D - x;
-  if (!(rem > 0)) { F[F_TRIAL_T] = t; return 1; }
-  const tr = groundRollTime(vh, rem);
+  if (!rolling) return 0;
+  // 2. Roll (SIM-02 roll model in closed form).
+  const rem = D - d.x;
+  if (!(rem > 0)) { F[F_TRIAL_T] = t; F[F_TRIAL_V] = d.vx; return 1; }
+  const tr = groundRollTime(d.vx, rem);
   if (!(tr >= 0)) return 0;
   F[F_TRIAL_T] = t + tr;
-  return rollSpeedAfter(vh, tr) >= arrive ? 1 : 0;
+  F[F_TRIAL_M] = tr; // the last (small) bounce was tr before the target
+  const va = rollSpeedAfter(d.vx, tr);
+  F[F_TRIAL_V] = va;
+  return va >= arrive ? 1 : 0;
 }
 
 /** Speed of a ground ball t seconds after rolling off at v0 (SIM-02 roll model), m/s. */
@@ -670,18 +723,20 @@ function rollSpeedAfter(v0: number, t: number): number {
 }
 
 /**
- * Dinked launch speed (m/s) at T_PASS.dinkedAngle so the ball first reaches F[F_D] m along the aim with `arrive` m/s
- * (bisection over dinkTrial, LT.dinkIters, inside a bracket around the ground-pass speed for the same distance,
+ * Dinked launch speed (m/s) at the angle in F_CA / F_SA so the ball first reaches F[F_D] m along the aim with `arrive`
+ * m/s (bisection over dinkTrial, LT.dinkIters, inside a bracket around the ground-pass speed for the same distance,
  * dinkBracketLo..Hi x it, widened to dinkSpeedMin..Max when it does not hold). F[F_T] = its arrival time (s;
- * LT.leadMaxSec when out of reach).
+ * LT.leadMaxSec when out of reach), F[F_OK_M] = its bounce margin (s).
  */
-function solveDink(y0: number, arrive: number): number {
+function solveDinkAt(y0: number, arrive: number): number {
   const vg = groundPassSpeed(F[F_D]!, arrive);
   let lo: number = vg * LT.dinkBracketLo;
   let hi: number = vg * LT.dinkBracketHi;
   if (lo < LT.dinkSpeedMin) lo = LT.dinkSpeedMin;
   if (hi > LT.dinkSpeedMax) hi = LT.dinkSpeedMax;
   if (!(hi > lo)) { lo = LT.dinkSpeedMin; hi = LT.dinkSpeedMax; }
+  F[F_OK_M] = 0;
+  F[F_OK_V] = 1e9;
   if (dinkTrial(y0, hi, arrive) === 0) {
     lo = hi;
     hi = LT.dinkSpeedMax;
@@ -692,20 +747,70 @@ function solveDink(y0: number, arrive: number): number {
     }
   }
   F[F_OK_T] = F[F_TRIAL_T]!;
+  F[F_OK_M] = F[F_TRIAL_M]!; F[F_OK_V] = F[F_TRIAL_V]!;
   if (dinkTrial(y0, lo, arrive) === 1) {
-    if (lo <= LT.dinkSpeedMin) { F[F_T] = F[F_TRIAL_T]!; return lo; }
+    if (lo <= LT.dinkSpeedMin) { F[F_T] = F[F_TRIAL_T]!; F[F_OK_M] = F[F_TRIAL_M]!; F[F_OK_V] = F[F_TRIAL_V]!; return lo; }
     hi = lo;
     F[F_OK_T] = F[F_TRIAL_T]!;
+    F[F_OK_M] = F[F_TRIAL_M]!; F[F_OK_V] = F[F_TRIAL_V]!;
     lo = LT.dinkSpeedMin;
   }
   for (let it = 0; it < LT.dinkIters; it++) {
     const mid = 0.5 * (lo + hi);
-    if (dinkTrial(y0, mid, arrive) === 1) { hi = mid; F[F_OK_T] = F[F_TRIAL_T]!; } else lo = mid;
+    if (dinkTrial(y0, mid, arrive) === 1) { hi = mid; F[F_OK_T] = F[F_TRIAL_T]!; F[F_OK_M] = F[F_TRIAL_M]!; F[F_OK_V] = F[F_TRIAL_V]!; } else lo = mid;
   }
   let t = F[F_OK_T]!;
   if (!(t >= 0) || t > LT.leadMaxSec) t = LT.leadMaxSec;
   F[F_T] = t;
   return hi;
+}
+
+/**
+ * [QF-10] Dinked launch: speed and angle (F_DCA / F_DSA) so the ball first reaches the target with `arrive` m/s.
+ * The arrival speed jumps at every bounce (by T_BALL.bounceFriction), so a speed found right where a bounce meets the
+ * target arrives too fast or too slow in the sim's ticks: the angles T_PASS.dinkedAngle + DINK_ANGLE_OFF[k] are tried
+ * in order and the first whose solution reaches the target at least LT.dinkBounceMargin away from a bounce is used
+ * (else the one with the largest margin). F[F_T] = its arrival time.
+ */
+function solveDink(y0: number, arrive: number, full: number): number {
+  let bestV = 0, bestE = 1e18, bestT = 0, bestC = DINK_COS, bestS = DINK_SIN;
+  dinkTrials = 0;
+  const nA = full === 1 ? DINK_ANGLES : 1;
+  for (let k = 0; k < nA && dinkTrials < LT.dinkMaxTrials; k++) {
+    F[F_CA] = DINK_ANGLE_COS[k]!;
+    F[F_SA] = DINK_ANGLE_SIN[k]!;
+    const v = solveDinkAt(y0, arrive);
+    const t0 = F[F_T]!;
+    let e = F[F_OK_V]! - arrive;
+    if (e < 0) e = -e;
+    if (F[F_OK_M]! >= LT.dinkBounceMargin) {
+      if (e < bestE) { bestE = e; bestV = v; bestT = t0; bestC = F[F_CA]!; bestS = F[F_SA]!; }
+    } else {
+      // A bounce at the target: nudge the speed down / up until the ball reaches the target dinkBounceMargin clear of
+      // it (just after the bounce, a little slower than planned, or just before it, a little faster).
+      for (let sg = -1; sg <= 1 && full === 1; sg += 2) {
+        for (let j = 1; j <= LT.dinkNudgeSteps; j++) {
+          let vn = v * (1 + sg * j * LT.dinkNudge);
+          if (vn < LT.dinkSpeedMin) vn = LT.dinkSpeedMin; else if (vn > LT.dinkSpeedMax) vn = LT.dinkSpeedMax;
+          dinkTrial(y0, vn, arrive);
+          if (!(F[F_TRIAL_M]! >= LT.dinkBounceMargin) || !(F[F_TRIAL_T]! >= 0)) continue;
+          let en = F[F_TRIAL_V]! - arrive;
+          if (en < 0) en = -en;
+          if (en < bestE) {
+            bestE = en; bestV = vn; bestC = F[F_CA]!; bestS = F[F_SA]!;
+            bestT = F[F_TRIAL_T]! < LT.leadMaxSec ? F[F_TRIAL_T]! : LT.leadMaxSec;
+          }
+          break;
+        }
+      }
+      if (bestE >= 1e17) { bestE = 1e17; bestV = v; bestT = t0; bestC = F[F_CA]!; bestS = F[F_SA]!; } // nothing clear
+    }
+    if (bestE <= LT.dinkArriveTol) break;
+  }
+  F[F_T] = bestT;
+  F[F_DCA] = bestC;
+  F[F_DSA] = bestS;
+  return bestV;
 }
 
 /** Unit aim (F_UX, F_UZ) and distance F_D from the ball to the target (F_TX, F_TZ); false if on top of it. */
@@ -720,16 +825,18 @@ function aimAtTarget(b: Readonly<BallState>): boolean {
 }
 
 /** Launch speed for the current target (F_D, F_UX/UZ) of kind; F[F_T] = travel time. */
-function speedForTarget(s: SimState, kind: KickKind, power: number, assist: number): number {
+function speedForTarget(s: SimState, kind: KickKind, power: number, assist: number, full = 1): number {
   if (kind !== KickKind.DINKED_PASS) return groundSpeed(kind, power, assist);
   const pv = powerSpeed(kind, power);
   if (assist === AssistLevel.MANUAL) {
     F[F_T] = LT.leadMaxSec;
+    F[F_DCA] = DINK_COS;
+    F[F_DSA] = DINK_SIN;
     return pv;
   }
   let arrive = LT.dinkArriveMin + (LT.dinkArriveMax - LT.dinkArriveMin) * power;
   if (arrive < F[F_AMIN]!) arrive = F[F_AMIN]!;
-  let v = solveDink(s.ball.y, arrive);
+  let v = solveDink(s.ball.y, arrive, full);
   if (assist === AssistLevel.SEMI) v += (pv - v) * LT.semiPowerBlend;
   return v;
 }
@@ -824,6 +931,8 @@ function solvePass(s: SimState, slot: number, out: KickLaunch): number {
   const p = s.players[slot]!;
   const b = s.ball;
   F[F_AMIN] = 0;
+  F[F_DCA] = DINK_COS; // dinked launch angle (solveDink may pick another, see there)
+  F[F_DSA] = DINK_SIN;
   const kind = isPassKind(p.actKick) ? p.actKick : KickKind.GROUND_PASS;
   const meta = fin(p.actB) | 0;
   let assist = meta & 3;
@@ -856,7 +965,7 @@ function solvePass(s: SimState, slot: number, out: KickLaunch): number {
       if (aimed && dinked && F[F_QVX]! * F[F_QVX]! + F[F_QVZ]! * F[F_QVZ]! > LT.dinkReleadSpeed * LT.dinkReleadSpeed) {
         // A moving receiver: re-lead with the dinked flight's own travel time (as a ratio to the ground model's).
         const tg = F[F_T]!;
-        speedForTarget(s, kind, power, assist);
+        speedForTarget(s, kind, power, assist, 0); // travel time only: one angle, no nudges
         if (tg > 0) F[F_RATIO] = F[F_T]! / tg;
         leadSolve(s, modelKind, power, assist);
         aimed = F[F_D]! > AIM_MIN_DIST;
@@ -893,7 +1002,7 @@ function solvePass(s: SimState, slot: number, out: KickLaunch): number {
       F[F_TZ] = clampZ(b.z + uz * along);
     } else {
       // How far the ball runs (a dinked ball: its roll after landing, from the power-implied / stop distance).
-      const run = rollStopDist(dinked ? v * DINK_COS : v);
+      const run = rollStopDist(dinked ? v * F[F_DCA]! : v);
       r = laneReceiver(s, slot, ux, uz, run > F[F_D]! ? run : F[F_D]!);
       if (r >= 0) { F[F_TX] = F[F_LX]!; F[F_TZ] = F[F_LZ]!; }
     }
@@ -908,8 +1017,8 @@ function solvePass(s: SimState, slot: number, out: KickLaunch): number {
   const ax = ax0 * ce - az0 * se;
   const az = ax0 * se + az0 * ce;
   if (dinked) {
-    const vh = v * DINK_COS;
-    out.vx = ax * vh; out.vy = v * DINK_SIN; out.vz = az * vh;
+    const vh = v * F[F_DCA]!;
+    out.vx = ax * vh; out.vy = v * F[F_DSA]!; out.vz = az * vh;
   } else {
     out.vx = ax * v; out.vz = az * v;
   }
@@ -922,9 +1031,12 @@ function solvePass(s: SimState, slot: number, out: KickLaunch): number {
 
 // ---------------------------------------------------------------- KICK action handler
 
-/** Contact done (kicked or whiffed) at the current tick: actContact = now, the planned recovery follows. */
+/**
+ * Contact done (kicked or whiffed) at the current tick: actContact = now, the planned recovery follows. While the
+ * contact waits past its tick (waitContact) actDur - actT keeps the planned recovery, before it actDur - actContact.
+ */
 function finishContact(p: PlayerState): void {
-  let rec = p.actDur - p.actContact;
+  let rec = p.actDur - (p.actT > p.actContact ? p.actT : p.actContact);
   if (!(rec >= 1)) rec = DEFAULT_REC;
   p.actDone = 1;
   p.actCharging = 0;
@@ -1008,28 +1120,52 @@ function kickUpdate(s: SimState, slot: number, ev: EventSink): void {
     kickMove(s, p);
     return;
   }
-  if (p.actT < p.actContact) { kickMove(s, p); return; }
-  const waited = p.actT - p.actContact;
+  // [QF-10] A restart taker kicking the dead ball lines up behind it along his kick first (kickCommon.ts).
+  const taker = isDeadBallTaker(s, slot);
   if (p.actCharging === 1) {
-    if (waited < CHARGE_WAIT) { kickMove(s, p); return; }
+    noteCharging(s, slot);
+    if (taker) lineUpOnDeadBall(s, slot);
+    if (p.actT < p.actContact || p.actT - p.actContact < CHARGE_WAIT) { kickMove(s, p); return; }
     p.actCharging = 0; // backstop: the power bar never stays stuck
   }
+  // [QF-10] A released power bar strikes T_PASS.releaseStrikeTicks later (kickCommon.ts).
+  releaseStrike(s, slot);
+  if (p.actT < p.actContact) {
+    if (taker) lineUpOnDeadBall(s, slot);
+    kickMove(s, p);
+    return;
+  }
+  const waited = p.actT - p.actContact;
   if (!liveFor(s, slot) || (ballTouchedThisTick(s) && b.lastTouch !== slot)) {
     finishContact(p);
     kickMove(s, p);
     return;
   }
-  if (!ballInReach(s, slot)) {
-    // Grace: a loose ball still arriving, or his own ball still dropping (e.g. after a chest trap).
-    const rec = p.actDur - p.actContact;
-    const left = LT.contactGraceTicks - waited;
-    if (left > 0 && waited < rec - 1 && (b.owner === slot || ballArriving(s, slot, left, LT.reachRadius))) {
+  // [QF-10] The dead ball not at his kicking spot yet: keep lining up (the contact moves on a tick at a time).
+  if (taker && p.actT < KICK_TUNING.takerLineUpMaxTicks && lineUpOnDeadBall(s, slot) === 0) {
+    p.actContact = p.actT + 1;
+    p.actDur += 1;
+    kickMove(s, p);
+    return;
+  }
+  if (!footCanStrike(s, slot, LT.reachRadius, REACH_H)) {
+    // Grace: his own ball until SIM-06 has it back on the kicking spot (a sprint touch ahead, a ball dropping from a
+    // chest trap or behind him) for up to LT.ownReachWaitTicks, or a loose ball still arriving (first time) for up to
+    // LT.contactGraceTicks. The planned recovery is kept after the late contact (actDur moves on with the wait).
+    if (!taker) {
+      if (b.owner === slot ? waited < LT.ownReachWaitTicks
+        : waited < LT.contactGraceTicks && ballArriving(s, slot, LT.contactGraceTicks - waited, LT.reachRadius)) {
+        p.actDur += 1;
+        kickMove(s, p);
+        return;
+      }
+    }
+    // A taker who could not line up in time still takes the restart when the ball is near him; anyone else whiffs.
+    if (!taker || !ballInReach(s, slot)) {
+      finishContact(p); // whiff
       kickMove(s, p);
       return;
     }
-    finishContact(p); // whiff
-    kickMove(s, p);
-    return;
   }
   contact(s, slot, ev);
   kickMove(s, p);

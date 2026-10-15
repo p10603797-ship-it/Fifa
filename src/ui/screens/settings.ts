@@ -31,6 +31,7 @@ import {
   createToggle, h, injectStyle, openModal, showToast,
 } from '../components';
 import { attachDotField, sharedDotField } from '../dotfield';
+import { refuseWhileMatch } from './diagnostics';
 
 export type SettingsTab = 'controls' | 'camera' | 'match' | 'audio' | 'graphics' | 'access' | 'data' | 'diagnostics';
 
@@ -447,6 +448,9 @@ export function createSettingsScreen(): Screen {
   }
 
   function confirmReset(c: AppContext): void {
+    // [QF-12] Settings is reachable from the pause menu: a reset under a paused cup tie was undone when the tie ended
+    // (the cup saves itself again), so a match in progress must be quit first.
+    if (refuseWhileMatch(c)) return;
     openModal(c, {
       title: 'Reset all data?',
       body: 'Every setting goes back to its default and cup progress, records and tutorial progress are deleted. This cannot be undone.',

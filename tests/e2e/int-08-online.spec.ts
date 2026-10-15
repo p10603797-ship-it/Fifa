@@ -38,12 +38,13 @@ test('online 1v1 end to end: share link, lockstep match, mirrored pause, rejoin 
   await expect(a.getByTestId('net-room-link')).toContainText(`?room=${ROOM_CODE}`);
   const link = (await a.getByTestId('net-room-link').textContent())!;
 
-  // Guest opens the share link.
-  await bootToMain(b, new URL(link).pathname + new URL(link).search);
-  await b.evaluate(() => {
-    window.__dotkick!.ctx.settings.update((s) => { s.nickname = 'Ben'; });
-    window.__dotkick!.ctx.router.go('online-lobby');
-  });
+  // Guest opens the share link: the splash tap opens the room by itself (NET-B CR, splash.ts shareLinkRoom). [QF-12
+  // refit: the spec predates that change and expected the main menu.]
+  await b.goto(new URL(link).pathname + new URL(link).search);
+  await expect(b.getByTestId('splash-start')).toBeVisible();
+  await b.evaluate(() => window.__dotkick!.ctx.settings.update((s) => { s.nickname = 'Ben'; }));
+  await b.getByTestId('splash-start').click();
+  await expect.poll(() => route(b)).toBe('online-lobby');
   await expect(b.getByTestId('net-lobby')).toBeVisible({ timeout: 15_000 });
   await expect(a.getByTestId('net-peer')).toContainText('Ben', { timeout: 10_000 });
 

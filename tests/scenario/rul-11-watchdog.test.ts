@@ -20,7 +20,7 @@ import { createEventBuffer } from '../../src/sim/core/events';
 import { recordTouch } from '../../src/sim/core/kick';
 import { INVARIANT_NAMES, createInvariantChecker } from '../../src/sim/debug/invariants';
 import { periodLength } from '../../src/sim/init';
-import { awardRestart, isLegalRestartPosition } from '../../src/sim/rules/restart';
+import { awardRestart, isLegalRestartPosition, LOCAL_TUNING as RESTART_LT } from '../../src/sim/rules/restart';
 import { LOCAL_TUNING, watchdogTick } from '../../src/sim/rules/watchdog';
 import { step } from '../../src/sim/step';
 import { makeScenario } from '../harness/scenario';
@@ -110,7 +110,8 @@ function watchdogs(ev: readonly SimEvent[]): number[][] {
 
 /** After an award: run to ready and check every position is legal, then let the restart finish back in IN_PLAY. */
 function expectRecovers(s: SimState): void {
-  run(s, T_RULES.restartSetupTicks);
+  // [QF-10] Throw-ins and free kicks away from goal are walked set-ups: ready once everyone is in place (capped).
+  run(s, T_RULES.restartSetupTicks + RESTART_LT.setupExtendMaxTicks, (st) => st.match.restart.ready === 1);
   expect(s.match.restart.ready).toBe(1);
   for (let i = 0; i < NUM_SLOTS; i++) expect(isLegalRestartPosition(s, i), `slot ${i}`).toBe(true);
   expect([s.ball.x, s.ball.y, s.ball.z]).toEqual([s.match.restart.x, BALL_RADIUS, s.match.restart.z]);

@@ -52,6 +52,10 @@ test('pads join on a press, are labelled in press order, and a bound pad reconne
   await page.addInitScript(MOCK_PADS);
   await page.goto('/');
   await page.waitForFunction(() => !!window.__dotkick && !!window.__dotkickFrameStats);
+  // [QF-12 refit] Any pad button starts the game from the splash (UIX-02: "a button outside the menu map starts"),
+  // so the "L3 / R3 never drive the menus" check runs on the main menu, reached by a touch tap.
+  await page.touchscreen.tap(40, 410);
+  await page.waitForFunction(() => window.__dotkick!.ctx.router.current === 'main');
   await waitFrames(page, 5);
   const screen0 = await page.evaluate(() => window.__dotkick!.ctx.router.current);
 

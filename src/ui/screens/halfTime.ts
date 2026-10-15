@@ -16,7 +16,8 @@
  */
 import type { AppContext, MatchSummary, Screen } from '../../contracts/app';
 import type { Club } from '../../contracts/data';
-import { Command, ModeId, Period } from '../../contracts/enums';
+import { Command, MatchPhase, ModeId, Period } from '../../contracts/enums';
+import { T_RULES } from '../../contracts/tuning';
 import type { ReadonlySimState } from '../../contracts/state';
 import { uiHumanOf } from '../../app/session';
 import { crestDataUrl } from '../../render/kits';
@@ -32,10 +33,56 @@ export function scoreLine(ctx: AppContext): string {
   return `${home?.code ?? 'HOM'}  ${s.teams[0]!.goals} - ${s.teams[1]!.goals}  ${away?.code ?? 'AWY'}`;
 }
 
-/** Skip the current cut-scene (half-time, full-time interim) for the acting human. */
-export function sendSkip(ctx: AppContext): void {
+/**
+ * True when the sim takes a SKIP in the current break on the next tick (sim/rules/machine.ts phaseTimers: never on a
+ * phase's first tick, and the final whistle not before T_RULES.fullTimeMinTicks). Pure.
+ */
+export function skipAccepted(s: ReadonlySimState): boolean {
+  const m = s.match;
+  return m.phaseT > 0 && (m.phase !== MatchPhase.FULL_TIME || m.phaseT >= T_RULES.fullTimeMinTicks);
+}
+
+/** A Continue pressed before the sim takes a SKIP: sent by pumpSkip once it does, while the same break shows. */
+let pendingSkip: { state: ReadonlySimState; phase: number } | null = null;
+
+function queueSkip(ctx: AppContext): void {
   const h0 = uiHumanOf(ctx);
   ctx.session.queueCommand(h0 >= 0 ? h0 : 0, Command.SKIP, 0);
+}
+
+/**
+ * Skip the current cut-scene (half-time, full-time interim) for the acting human. [QF-12] A press the sim would
+ * ignore (the full-time interim's first 1.5 s, T_RULES.fullTimeMinTicks) is kept and sent once the break accepts it
+ * (pumpSkip, every frame from the break screens): Continue used to do nothing at all then, and the full-time screen sat
+ * out its whole 4 s (much longer on a slow device).
+ */
+export function sendSkip(ctx: AppContext): void {
+  const s = ctx.session.getState();
+  if (s && !skipAccepted(s)) {
+    pendingSkip = { state: s, phase: s.match.phase };
+    return;
+  }
+  pendingSkip = null;
+  queueSkip(ctx);
+}
+
+/** Per frame on the break screens: send a kept Continue once the sim takes it; drop it when the break is over. */
+export function pumpSkip(ctx: AppContext): void {
+  const p = pendingSkip;
+  if (!p) return;
+  const s = ctx.session.getState();
+  if (!s || s !== p.state || s.match.phase !== p.phase) {
+    pendingSkip = null;
+    return;
+  }
+  if (!skipAccepted(s)) return;
+  pendingSkip = null;
+  queueSkip(ctx);
+}
+
+/** A kept Continue is waiting (tests). */
+export function skipPending(): boolean {
+  return pendingSkip !== null;
 }
 
 // ============================================================ stats helpers (pure)
@@ -410,6 +457,9 @@ export function createHalfTimeScreen(): Screen {
     onBack() {
       if (ctxRef) sendSkip(ctxRef);
       return true;
+    },
+    onFrame() {
+      if (ctxRef) pumpSkip(ctxRef);
     },
   };
 }

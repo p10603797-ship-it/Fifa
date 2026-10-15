@@ -14,6 +14,7 @@ import { KitSlot, MatchPhase, ModeId, Period, PracticeKind } from '../../contrac
 import type { EventBuffer } from '../../contracts/events';
 import type { CameraProjector } from '../../contracts/input';
 import type { ReadonlySimState, SimState } from '../../contracts/state';
+import { resolveMatchKits } from '../../render/kits';
 import { displayClock } from '../../sim/rules/machine';
 import { h, injectStyle } from '../components';
 import { HUD_SHARED_CSS, bindLargerHud } from './hudShared';
@@ -128,10 +129,36 @@ export function kitHex(rgb: number): string {
   return '#' + ((rgb >>> 0) & 0xffffff).toString(16).padStart(6, '0');
 }
 
-/** The kit a team wears (team.kit slot; keeper kits never apply to the team chip). */
+/** The club kit of a team.kit slot (the REQUESTED kit; keeper kits never apply to the team chip). */
 export function teamKit(club: Club | undefined, slot: number): Kit | null {
   if (!club) return null;
   return slot === KitSlot.AWAY ? club.away : club.home;
+}
+
+/**
+ * [QF-12] The outfield shirt colour each team actually wears on the pitch: the renderer's kits (render/kits
+ * resolveMatchKits: the requested slots through the clash check, built-in fallback kits, high-contrast kits), not the
+ * requested slot. A config whose requested kits clash (Play now after Settings > Match changed a club, every online
+ * match: the lobby requests HOME / AWAY) is drawn with the other kit, and the scoreboard chip, radar dots and toast
+ * chip showed the clashing one: 93 of the 380 club pairings. Allocates (call on setMatch / settings change only);
+ * null when the kits cannot be resolved.
+ */
+export function wornShirts(state: ReadonlySimState, clubs: readonly Club[], highContrast = false): [number, number] | null {
+  try {
+    const k = resolveMatchKits(state, clubs, highContrast);
+    return [k.outfield[0].shirt, k.outfield[1].shirt];
+  } catch {
+    return null;
+  }
+}
+
+/** The high-contrast kits setting (false without a context or when settings cannot be read). */
+export function highContrastOn(ctx: Pick<AppContext, 'settings'> | null): boolean {
+  try {
+    return ctx?.settings.get().accessibility?.highContrastKits === true;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================================ part
@@ -151,7 +178,22 @@ export function createScoreboard(): HudPart {
   let tallyAway: Text | null = null;
   let addedEl: HTMLElement | null = null;
   let unbindLarge: (() => void) | null = null;
+  let ctxRef: AppContext | null = null;
+  let unSettings: (() => void) | null = null;
+  let matchState: ReadonlySimState | null = null;
+  let matchClubs: readonly Club[] = [];
+  let paintedHc: boolean | null = null;
   const clock = { min: 0, sec: 0, added: 0, period: 0 };
+
+  /** Kit chips = the shirts worn on the pitch (wornShirts); repainted when the high-contrast setting flips. */
+  function paintKits(): void {
+    if (!matchState) return;
+    const hc = highContrastOn(ctxRef);
+    paintedHc = hc;
+    const worn = wornShirts(matchState, matchClubs, hc);
+    if (homeKit) homeKit.style.background = worn ? kitHex(worn[0]) : 'var(--text-3)';
+    if (awayKit) awayKit.style.background = worn ? kitHex(worn[1]) : 'var(--text-3)';
+  }
   const bctx: BoardContext = { period: 0, phase: 0, mode: 0, practice: 0, shootoutActive: 0 };
   let shownHome = -1;
   let shownAway = -1;
@@ -170,6 +212,7 @@ export function createScoreboard(): HudPart {
 
   return {
     mount(parent: HTMLElement, ctx: AppContext) {
+      ctxRef = ctx;
       injectStyle('hud-shared', HUD_SHARED_CSS);
       injectStyle('hud-scoreboard', CSS);
       homeKit = h('span', { class: 'sb-kit', testId: 'sb-home-kit' });
@@ -194,6 +237,13 @@ export function createScoreboard(): HudPart {
         homeKit, homeCode, score, awayCode, awayKit, periodEl, clockEl, tally, addedEl);
       parent.append(root);
       unbindLarge = bindLargerHud(ctx, root);
+      try {
+        unSettings = ctx.settings.subscribe(() => {
+          if (matchState && highContrastOn(ctxRef) !== paintedHc) paintKits();
+        });
+      } catch {
+        unSettings = null;
+      }
     },
     setMatch(state: ReadonlySimState, clubs: readonly Club[]) {
       const t0 = state.teams[0]!;
@@ -202,10 +252,9 @@ export function createScoreboard(): HudPart {
       const away = clubs[t1.clubIdx];
       if (homeCode) homeCode.textContent = home?.code ?? 'HOM';
       if (awayCode) awayCode.textContent = away?.code ?? 'AWY';
-      const hk = teamKit(home, t0.kit);
-      const ak = teamKit(away, t1.kit);
-      if (homeKit) homeKit.style.background = hk ? kitHex(hk.shirt) : 'var(--text-3)';
-      if (awayKit) awayKit.style.background = ak ? kitHex(ak.shirt) : 'var(--text-3)';
+      matchState = state;
+      matchClubs = clubs;
+      paintKits();
       if (root) root.setAttribute('aria-label', `${home?.name ?? 'Home'} v ${away?.name ?? 'Away'}`);
       resetShown();
     },
@@ -279,6 +328,9 @@ export function createScoreboard(): HudPart {
     dispose() {
       unbindLarge?.();
       unbindLarge = null;
+      unSettings?.();
+      unSettings = null;
+      matchState = null;
       root?.remove();
       root = homeCode = awayCode = homeKit = awayKit = periodEl = addedEl = null;
       homeGoals = awayGoals = minText = secText = tallyHome = tallyAway = null;

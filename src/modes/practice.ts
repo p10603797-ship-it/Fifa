@@ -13,13 +13,15 @@
  *  - TUTORIAL: full teams, CPU at Beginner; the tutorial screen (UIX-12) drives a TutorialDriver over the session.
  * modeData is a PracticeData { kind, spot, device }.
  *
- * SIM HOOKS (pending lead wiring, see the MOD-04 report): preparePracticeState must run once on the fresh state
- * (end of sim/init initMatch, or session load right after initMatch) and practiceRulesTick once per tick after
- * rulesTick. Both are written to the sim rules (deterministic, no allocation, slot-index loops), so they can move
- * into src/sim unchanged. The chosen spot travels as config.practiceSpot (proposed MatchConfig field; read through
- * practiceSpotOf until the contract has it).
+ * SIM HOOKS [QF-12]: one implementation, in the sim (src/sim/rules/practice.ts, moved there by QF-1). sim/init
+ * initMatch runs preparePracticeState on the fresh state and sim/step runs practiceRulesTick once per tick after
+ * rulesTick, so the app loop is a plain sim step (replays and headless runs play the same game). This module
+ * re-exports those hooks (practiceSide / practiceAttemptOver / practiceSpotWorld are MOD-04's names for practiceTeam /
+ * practiceAttemptDone / practiceSpotPoint). The chosen spot travels as config.practiceSpot (proposed MatchConfig
+ * field; read through practiceSpotOf = the sim's practiceSpotIndex). PRACTICE_SPOTS (labels for the practice screen)
+ * mirrors the sim's spot geometry; tests/scenario/qf-12-practice.test.ts keeps the two equal.
  *
- * Attempt rules (practiceRulesTick, set-piece kinds only): the practice restart is (kind, your side, spot). In any
+ * Attempt rules (sim practiceRulesTick, set-piece kinds only): the practice restart is (kind, your side, spot). In any
  * other restart phase (a goal kick, throw-in, the kick-off after a goal, a free kick for the defenders) the pending
  * restart is cancelled through IN_PLAY and the practice restart is awarded instead. In IN_PLAY the attempt ends when
  * the defending side owns the ball (keeper catch included) or after LOCAL_TUNING.attemptTicks (penalties:
@@ -31,21 +33,22 @@
  * events for the given human; next() / skip() advance, onTick() returns true on the tick a step completes.
  */
 import type { AppContext, DeviceRegistry, MatchSetup } from '../contracts/app';
-import { HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PENALTY_SPOT_DIST, PLAYERS_PER_TEAM } from '../contracts/constants';
-import { ControllerKind, Difficulty, KickKind, MatchPhase, ModeId, PracticeKind, RestartKind } from '../contracts/enums';
-import { EventType, type EventBuffer, type EventSink } from '../contracts/events';
-import type { MatchConfig, ReadonlySimState, SimState } from '../contracts/state';
-import { setPhase } from '../sim/rules/machine';
-import { awardRestart } from '../sim/rules/restart';
-import { sendOff } from '../sim/rules/subs';
+import { HALF_WIDTH, NUM_SLOTS, PENALTY_SPOT_DIST } from '../contracts/constants';
+import { Difficulty, KickKind, MatchPhase, ModeId, PracticeKind, type RestartKind } from '../contracts/enums';
+import { EventType, type EventBuffer } from '../contracts/events';
+import type { MatchConfig, ReadonlySimState } from '../contracts/state';
+import {
+  LOCAL_TUNING as SIM_PRACTICE_TUNING, practiceAttemptDone as simPracticeAttemptDone, practiceSpotIndex as simPracticeSpotIndex,
+  practiceSpotPoint as simPracticeSpotPoint, practiceTeam as simPracticeTeam,
+} from '../sim/rules/practice';
 import { buildSetup, type HumanChoice } from './setup';
 
-/** TUNING-CR (MOD-04): practice attempt timing (ticks at 60 Hz). */
+/** TUNING-CR (MOD-04): tutorial thresholds; the attempt timing is the sim's (sim/rules/practice LOCAL_TUNING). */
 export const LOCAL_TUNING = { // TUNING-CR
-  /** Live play allowed after a free kick or corner is taken before the attempt is over, ticks (6 s). */
-  attemptTicks: 360,
-  /** Live play allowed after a penalty kick before the attempt is over, ticks (3 s). */
-  penaltyAttemptTicks: 180,
+  /** Live play allowed after a free kick or corner is taken before the attempt is over, ticks (sim value). */
+  attemptTicks: SIM_PRACTICE_TUNING.attemptTicks,
+  /** Live play allowed after a penalty kick before the attempt is over, ticks (sim value). */
+  penaltyAttemptTicks: SIM_PRACTICE_TUNING.penaltyAttemptTicks,
   /** Tutorial: metres the controlled player must move for the Move step. */
   tutorialMoveM: 6,
   /** Tutorial: consecutive sprinting ticks for the Sprint step (0.75 s). */
@@ -77,14 +80,6 @@ export const PRACTICE_SPOTS: Readonly<Record<number, readonly PracticeSpot[]>> =
   ],
   [PracticeKind.PENALTIES]: [{ id: 'penalty', label: 'Penalty spot', dist: PENALTY_SPOT_DIST, right: 0 }],
 };
-
-/** Restart kind practised by a practice kind (NONE for free play / tutorial). */
-export function practiceRestartKind(kind: PracticeKind): RestartKind {
-  if (kind === PracticeKind.FREE_KICKS) return RestartKind.FREE_KICK;
-  if (kind === PracticeKind.CORNERS) return RestartKind.CORNER;
-  if (kind === PracticeKind.PENALTIES) return RestartKind.PENALTY;
-  return RestartKind.NONE;
-}
 
 /** Number of spots for a kind (0 when it has none). */
 export function practiceSpotCount(kind: PracticeKind): number {
@@ -118,9 +113,9 @@ export interface PracticeOptions {
 
 type ConfigWithSpot = MatchConfig & { practiceSpot?: number };
 
-/** Spot index carried by a config (proposed MatchConfig.practiceSpot), 0 when absent. */
+/** Spot index carried by a config (proposed MatchConfig.practiceSpot), 0 when absent: the index the sim uses. */
 export function practiceSpotOf(config: Readonly<MatchConfig>): number {
-  return clampSpot(config.practice, (config as Readonly<ConfigWithSpot>).practiceSpot);
+  return simPracticeSpotIndex(config);
 }
 
 /** Tutorial device for the device used last (touch when unknown). */
@@ -156,107 +151,29 @@ export function buildPracticeSetup(ctx: AppContext, kind: PracticeKind = Practic
   return setup;
 }
 
-// ================================================================ sim hooks (sim-safe)
-
-const NULL_SINK: EventSink = { emit() { /* discarded */ } };
-
-function isPracticeState(s: ReadonlySimState): boolean {
-  return s.config.mode === ModeId.PRACTICE && s.config.practice !== PracticeKind.NONE;
-}
-
-/** Side the human(s) play (home preferred); 0 when nobody does. */
-export function practiceSide(config: Readonly<MatchConfig>): number {
-  let side = -1;
-  for (let h = 0; h < config.humans.length; h++) {
-    const c = config.humans[h]!;
-    if (c.kind === ControllerKind.HUMAN && (c.side === 0 || c.side === 1) && (side < 0 || c.side < side)) side = c.side;
-  }
-  return side < 0 ? 0 : side;
-}
+// ================================================================ sim hooks (one copy, in the sim)
 
 /**
- * Practice layout on a fresh state (once, before the first tick). FREE_PLAY: every opponent outfield player leaves
- * the pitch (sendOff), so your team faces the keeper alone. Other kinds: no change. Returns the players removed.
+ * [QF-12] The practice hooks live in the sim (src/sim/rules/practice.ts, QF-1): sim/init initMatch applies the layout
+ * and sim/step runs the per-tick rule, so the app loop is a plain step and a replay or headless run plays the same
+ * game. These are re-exports of that one implementation (the names MOD-04 shipped are kept as aliases).
  */
-export function preparePracticeState(s: SimState): number {
-  if (!isPracticeState(s) || s.config.practice !== PracticeKind.FREE_PLAY) return 0;
-  const opp = 1 - practiceSide(s.config);
-  const first = opp === 0 ? 0 : PLAYERS_PER_TEAM;
-  let removed = 0;
-  for (let i = 0; i < PLAYERS_PER_TEAM; i++) {
-    const slot = first + i;
-    const p = s.players[slot]!;
-    if (p.active !== 1 || p.isKeeper === 1 || s.teams[opp]!.keeperSlot === slot) continue;
-    sendOff(s, slot, NULL_SINK);
-    if (s.players[slot]!.active !== 1) removed++;
-  }
-  return removed;
-}
+export {
+  practiceAttemptDone, practiceRestartKind, practiceRulesTick, practiceSpotIndex, practiceSpotPoint, practiceSpotTotal,
+  practiceTeam, preparePracticeState,
+} from '../sim/rules/practice';
 
-const SPOT_OUT = { x: 0, z: 0 };
+/** Side the human(s) play (home preferred); 0 when nobody does. Alias of the sim's practiceTeam. */
+export const practiceSide: (config: Readonly<MatchConfig>) => number = simPracticeTeam;
 
-/** World position of a practice spot for `team` attacking `dir` (+1 / -1). Pure. */
+/** True when the current set-piece attempt is over. Alias of the sim's practiceAttemptDone. Pure. */
+export const practiceAttemptOver: (s: ReadonlySimState, team: number, kind: RestartKind) => boolean =
+  simPracticeAttemptDone as (s: ReadonlySimState, team: number, kind: RestartKind) => boolean;
+
+/** World position of a practice spot for a team attacking `dir` (+1 / -1), through the sim's practiceSpotPoint. Pure. */
 export function practiceSpotWorld(kind: PracticeKind, spot: number, dir: number, out: { x: number; z: number }): { x: number; z: number } {
-  const list = PRACTICE_SPOTS[kind];
-  const sp = list ? list[clampSpot(kind, spot)] : undefined;
-  const d = dir < 0 ? -1 : 1;
-  if (!sp) {
-    out.x = 0;
-    out.z = 0;
-    return out;
-  }
-  out.x = d * (HALF_LENGTH - sp.dist);
-  out.z = d * sp.right;
+  simPracticeSpotPoint(kind, spot, dir, out);
   return out;
-}
-
-function isRestartPhase(p: number): boolean {
-  return p === MatchPhase.KICK_OFF || (p >= MatchPhase.THROW_IN && p <= MatchPhase.PENALTY);
-}
-
-const RESTART_PHASE: readonly number[] = [
-  MatchPhase.IN_PLAY, MatchPhase.KICK_OFF, MatchPhase.THROW_IN, MatchPhase.GOAL_KICK, MatchPhase.CORNER, MatchPhase.FREE_KICK,
-  MatchPhase.PENALTY,
-];
-
-function ownerTeam(s: ReadonlySimState): number {
-  const o = s.ball.owner;
-  return o >= 0 && o < NUM_SLOTS ? (o < PLAYERS_PER_TEAM ? 0 : 1) : -1;
-}
-
-/** True when the current set-piece attempt (live play after the practice restart) is over. Pure. */
-export function practiceAttemptOver(s: ReadonlySimState, team: number, kind: RestartKind): boolean {
-  const m = s.match;
-  if (m.phase !== MatchPhase.IN_PLAY) return false;
-  if (m.prevPhase !== RESTART_PHASE[kind]) return true;
-  const ot = ownerTeam(s);
-  if (ot >= 0 && ot !== team) return true;
-  const limit = kind === RestartKind.PENALTY ? LOCAL_TUNING.penaltyAttemptTicks : LOCAL_TUNING.attemptTicks;
-  return m.phaseT >= limit;
-}
-
-/**
- * Per tick after rulesTick (set-piece practice only): award the practice restart again when an attempt is over or
- * another restart is pending (see header). Returns 1 when it awarded the restart this tick.
- */
-export function practiceRulesTick(s: SimState, ev: EventSink): number {
-  if (!isPracticeState(s)) return 0;
-  const kind = practiceRestartKind(s.config.practice);
-  if (kind === RestartKind.NONE) return 0;
-  const m = s.match;
-  if (m.finished === 1 || m.phase === MatchPhase.POST_MATCH) return 0;
-  const team = practiceSide(s.config);
-  const r = m.restart;
-  if (isRestartPhase(m.phase)) {
-    if (r.taken === 1) return 0;
-    if (r.kind === kind && r.team === team) return 0;
-    setPhase(s, MatchPhase.IN_PLAY, ev);
-  } else if (m.phase !== MatchPhase.IN_PLAY || !practiceAttemptOver(s, team, kind)) {
-    return 0;
-  }
-  practiceSpotWorld(s.config.practice, practiceSpotOf(s.config), s.teams[team]!.dir, SPOT_OUT);
-  awardRestart(s, kind, team, SPOT_OUT.x, SPOT_OUT.z, ev);
-  return m.phase === RESTART_PHASE[kind] ? 1 : 0;
 }
 
 // ================================================================ tutorial driver

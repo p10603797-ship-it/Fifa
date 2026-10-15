@@ -31,7 +31,7 @@ import { triggerRun } from '../../ai/runs';
 import { callSupport } from '../../ai/support';
 import { canManualSwitch } from './switching';
 import {
-  BI, Ctx, LT, PR, PressFlag, Res, SeqFlag, ballEta, bitIndex, chargeSlotOf, clearCharge, controlContext,
+  BI, Ctx, LT, PR, PressFlag, Res, SeqFlag, ballEta, ballReachEta, bitIndex, chargeSlotOf, clearCharge, controlContext,
   fillTicks, inOwnThird, isDoubleTap, isLobKind, isReceiver, oppCarrier, optionalSlotFn, prepReq, setCharge, stickDirInto,
   unpackPress, validSlot, windupOf,
 } from './resolveShared';
@@ -222,10 +222,11 @@ function attackFace(s: SimState, ctl: ControllerState, slot: number, bi: number,
     return launch(s, ctl, slot, bi, kind, flags, ev);
   }
   if (b.owner >= 0 || b.heldBy >= 0) return pending ? Res.DROP : Res.RETRY;
-  // Loose ball: clearance / aerial, else a first-time kick when it arrives.
+  // Loose ball: clearance / aerial, else a first-time kick when it arrives ([QF-9 skeptic] timed to its reach, with
+  // his run: ballReachEta).
   const sp = looseSpecial(s, ctl, slot, bi, Ctx.ATTACK, ev);
   if (sp !== NA) return sp;
-  const eta = ballEta(s, slot);
+  const eta = ballReachEta(s, slot);
   if (eta < 0) {
     if (isReceiver(s, slot)) return Res.PENDING;
     return pending ? Res.DROP : Res.RETRY;

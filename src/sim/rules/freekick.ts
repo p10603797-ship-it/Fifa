@@ -34,6 +34,9 @@
  *    taking side, the controller holding the taker while he waits:
  *      SPRINT press = choose the taker: the next of the takerChoices best takers (cycling, wraps); the new taker and the
  *        old one swap places (the new one onto RUL-11's taker spot, in SET_PIECE; SIM-16 hands him the controller).
+ *        [QF-10] At a walked free kick (RUL-11 isWalkedSetup: on the main camera, takers within takerWalkMaxDist) nobody
+ *        is teleported: the old taker is released where he stands and the new one runs to the spot (restartCommon
+ *        SET_PIECE_RUN); kick inputs wait until he is there (aim and curl still follow the sticks).
  *      Left stick (|stick| >= aimStickMin) aims by direction from the ball: a ray that meets the attacked goal line
  *        within GOAL_HALF_WIDTH + aimGoalSlack aims there (restart.aimX/aimZ on the goal line; only from within
  *        aimGoalMaxDist of the goal), otherwise the aim is the pitch point aimPassDist along it. The stick at rest keeps
@@ -138,8 +141,8 @@ import { startPass } from '../kicks/pass';
 import { startShot } from '../kicks/shot';
 import { startThrough } from '../kicks/through';
 import { bodyRadiusOf } from '../players/bodies';
-import { COMMON_TUNING, restartLookPoint } from './restartCommon';
-import { LOCAL_TUNING as RESTART_TUNING, isValidTaker, prepareTakerKick, restartTakerSpot } from './restart';
+import { COMMON_TUNING, SET_PIECE_RUN, restartLookPoint, takerRunning } from './restartCommon';
+import { LOCAL_TUNING as RESTART_TUNING, isValidTaker, isWalkedSetup, prepareTakerKick, restartTakerSpot } from './restart';
 
 /** TUNING-CR (RUL-05): proposed T_FREEKICK block (units in comments). */
 export const LOCAL_TUNING = { // TUNING-CR
@@ -215,6 +218,11 @@ export const LOCAL_TUNING = { // TUNING-CR
   // ---------------------------------------------------------------- taker
   /** "Choose the taker" cycles through this many best takers. */
   takerChoices: 3,
+  /** [QF-10] A free kick shown on the main camera goes to the best taker within this distance of the ball (he runs
+   *  there during the set-up), else to the nearest player, m. */
+  takerWalkMaxDist: 18,
+  /** [QF-10] The ball is placed at least this far from a player lying on the foul spot (the fouled player), m. */
+  downClear: 1.3,
   /** The waiting taker slides toward his spot behind the ball along the aim at most this far per tick, m/tick. */
   lineUpStep: 0.05,
   // ---------------------------------------------------------------- aim
@@ -282,7 +290,7 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** Default forward pass power with nobody to aim at, 0..1. */
   forwardPower: 0.6,
   /** CPU fallback: Default this many ticks after T_RULES.cpuRestartDelay past ready (1.25 s) ... */
-  cpuGraceTicks: 75,
+  cpuGraceTicks: 140, // [QF-10] was 75: TAI-13 waits for its box runners (QF-2 CR); due 200 < RUL-11's 240-tick CPU watchdog
   /** ... retried every this many ticks while the kick has not started, ticks. */
   cpuRetryTicks: 30,
   // ---------------------------------------------------------------- preview
@@ -878,13 +886,19 @@ function rankTakers(s: SimState, max: number): void {
   const shooting = freeKickWallCount(s, team, r.x, r.z) > 0;
   const keeperOk = inArea(r.x, r.z, -dir, 0);
   let n = 0;
-  for (let pass = 0; pass < 2 && n === 0; pass++) {
+  // [QF-10] A free kick shown on the main camera (RUL-11 isWalkedSetup) is taken by someone who can walk there during
+  // the set-up: first the best within takerWalkMaxDist of the ball, else the nearest (no 40-60 m teleport, D-008).
+  const walked = isWalkedSetup(s);
+  const wd2 = LT.takerWalkMaxDist * LT.takerWalkMaxDist;
+  for (let pass = walked ? -1 : 0; pass < 2 && n === 0; pass++) {
     for (let slot = first; slot < first + PLAYERS_PER_TEAM; slot++) {
       const p = s.players[slot]!;
       if (p.active !== 1) continue;
-      if (p.isKeeper === 1 && !keeperOk && pass === 0) continue;
-      if (pass === 0 && isDown(p)) continue;
-      const sc = freeKickTakerScore(s, slot, shooting);
+      if (p.isKeeper === 1 && !keeperOk && pass <= 0) continue;
+      if (pass <= 0 && isDown(p)) continue;
+      const dx = p.x - r.x, dz = p.z - r.z;
+      if (pass < 0 && dx * dx + dz * dz > wd2) continue;
+      const sc = walked && pass >= 0 ? -(dx * dx + dz * dz) : freeKickTakerScore(s, slot, shooting);
       // insertion into the ranked list (descending score, ties lower slot first: slots arrive in order)
       let j = n < max ? n : max - 1;
       if (n >= max && !(sc > RANK_S[max - 1]!)) continue;
@@ -909,7 +923,8 @@ export function pickFreeKickTaker(s: SimState): number {
 
 /**
  * "Choose the taker" (SPRINT): the next of the takerChoices best takers after the current one (wrapping). The new
- * taker goes onto RUL-11's taker spot (SET_PIECE), the old one to where the new one stood. Returns the new taker or -1.
+ * taker goes onto RUL-11's taker spot (SET_PIECE), the old one to where the new one stood; [QF-10] at a walked free
+ * kick the old one stays where he is and the new one runs to the spot (SET_PIECE_RUN). Returns the new taker or -1.
  */
 export function cycleFreeKickTaker(s: SimState): number {
   if (!fkLive(s)) return -1;
@@ -924,6 +939,14 @@ export function cycleFreeKickTaker(s: SimState): number {
   if (next === cur || !isValidTaker(s, next)) return -1;
   const np = s.players[next]!;
   if (np.act !== ActionKind.NONE || np.stunT > 0) return -1;
+  if (isWalkedSetup(s)) {
+    // [QF-10] On the main camera: the old taker is released where he stands, the new one runs to the spot.
+    r.taker = next;
+    if (cur >= 0 && cur < NUM_SLOTS && s.players[cur]!.act === ActionKind.SET_PIECE) endAction(s, cur, 1);
+    beginAction(np, ActionKind.SET_PIECE, COMMON_TUNING.setPieceWaitTicks, -1);
+    np.actA = SET_PIECE_RUN;
+    return next;
+  }
   const ox = np.x, oz = np.z;
   r.taker = next;
   if (cur >= 0 && cur < NUM_SLOTS) {
@@ -1371,6 +1394,7 @@ function attackInput(s: SimState, c: Readonly<{ kind: ControllerKind; assist: As
   if ((pressed & Btn.SPRINT) !== 0 && cycleFreeKickTaker(s) >= 0) return;
   aimFromStick(s, f);
   curlFromRightStick(s, f);
+  if (takerRunning(s.players[t]!)) return; // [QF-10] a swapped-in taker still running to the ball
   const g = f.gesture;
   if (g === GestureKind.TAP || g === GestureKind.DOUBLE_TAP) {
     if (tapKick(s, c, t, f, ev) === 1) return;
@@ -1942,6 +1966,47 @@ function lineUp(s: SimState, p: PlayerState): void {
 
 // ---------------------------------------------------------------- restart API
 
+/** No active player who is down (falling, lying, getting up) within LT.downClear of (x, z). */
+function clearOfDown(s: SimState, x: number, z: number): boolean {
+  const c2 = LT.downClear * LT.downClear;
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    const q = s.players[i]!;
+    if (q.active !== 1 || !isDown(q)) continue;
+    const dx = q.x - x, dz = q.z - z;
+    if (dx * dx + dz * dz < c2) return false;
+  }
+  return true;
+}
+
+/**
+ * [QF-10] Move the free-kick spot in PT clear of players who are down there (the fouled player lies on the foul spot):
+ * LT.downClear (then twice that) across the pitch toward its centre line, then toward the touchline, then back toward
+ * the kicking team's own goal; inside the lines (mx / mz) and never into the attacked goal area. Unchanged when the
+ * spot is clear or no candidate is.
+ */
+function clearOfDownPlayers(s: SimState, dir: number, mx: number, mz: number): void {
+  const x0 = PT.x, z0 = PT.z;
+  if (clearOfDown(s, x0, z0)) return;
+  // [QF-10 skeptic] Never across a penalty-area line: a foul just outside the box must not become a free kick inside
+  // it (or the reverse; the area decides the wall, the legal zones and the keeper's hands).
+  const inAtt = inArea(x0, z0, dir, 0), inOwn = inArea(x0, z0, -dir, 0);
+  const inward = z0 > 0 ? -1 : 1;
+  for (let k = 1; k <= 2; k++) {
+    const d = LT.downClear * k;
+    for (let c = 0; c < 3; c++) {
+      let x = x0, z = z0;
+      if (c === 0) z = z0 + inward * d;
+      else if (c === 1) z = z0 - inward * d;
+      else x = x0 - dir * d;
+      x = clamp(x, -mx, mx);
+      z = clamp(z, -mz, mz);
+      if (inGoalArea(x, z, dir)) continue;
+      if (inArea(x, z, dir, 0) !== inAtt || inArea(x, z, -dir, 0) !== inOwn) continue;
+      if (clearOfDown(s, x, z)) { PT.x = x; PT.z = z; return; }
+    }
+  }
+}
+
 /** Called once when this restart is awarded (after RUL-11 fills s.match.restart). Choose taker, place ball. */
 export function freeKickSetup(s: SimState, ev: EventSink): void {
   const r = s.match.restart;
@@ -1950,8 +2015,13 @@ export function freeKickSetup(s: SimState, ev: EventSink): void {
   const dir = attackDir(s, team);
   const mx = HALF_LENGTH - LT.spotInset, mz = HALF_WIDTH - LT.spotInset;
   let x = clamp(finiteOr(r.x, finiteOr(s.ball.x, 0)), -mx, mx);
-  const z = clamp(finiteOr(r.z, finiteOr(s.ball.z, 0)), -mz, mz);
+  let z = clamp(finiteOr(r.z, finiteOr(s.ball.z, 0)), -mz, mz);
   if (inGoalArea(x, z, dir)) x = dir * (HALF_LENGTH - GOAL_AREA_DEPTH);
+  // [QF-10] The foul spot is where the victim stood, and he is lying there (falls finish through the award): the ball
+  // goes beside him, not under his body.
+  PT.x = x; PT.z = z;
+  clearOfDownPlayers(s, dir, mx, mz);
+  x = PT.x; z = PT.z;
   r.x = x;
   r.z = z;
   placeBall(s, x, z, ev);
@@ -1977,8 +2047,7 @@ export function freeKickTick(s: SimState, ev: EventSink): void {
   const t = r.taker;
   if (!isValidTaker(s, t)) return; // RUL-11 re-picks
   const p = s.players[t]!;
-  if (p.act === ActionKind.SET_PIECE) lineUp(s, p);
-  else if (p.actCharging === 1 && isKickAct(p.act)) r.aimPower = clamp(p.actPower, 0, 1);
+  if (p.act === ActionKind.SET_PIECE) { if (!takerRunning(p)) lineUp(s, p); } else if (p.actCharging === 1 && isKickAct(p.act)) r.aimPower = clamp(p.actPower, 0, 1);
   // A side without a human: the CPU brain (TAI-13) normally takes it after cpuRestartDelay; fall back to the Default.
   if (!teamHasHuman(s, r.team)) {
     const waited = r.t - T_RULES.restartSetupTicks;

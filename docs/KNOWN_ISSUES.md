@@ -31,6 +31,18 @@ open; those are fixed with a regression test. Each line names the area and where
   head reach (head 0.4-0.5 m from the ball at contact).
 - The night look is subtle (lighting only).
 
+## Match engine (QF-1, QF-9, QF-10)
+- A tall player can visually overlap a goal post by up to about 4 cm (the goal-box confine uses the standard body
+  radius); never inside the frame.
+- A goal-line free-kick wall member whose slot is where the keeper stands is pushed a body-width off his slot, leaving a
+  small gap at the end of the wall.
+- At free kicks within 35 m of goal, "choose the taker" swaps the two players instantly (set-piece camera).
+- If the 12 s restart timeout fires while a newly chosen taker is still running in, he is placed on his spot.
+- A taker whose kick goes a different way from his line-up can side-step round the ball in a frozen kick pose for
+  6-14 ticks before the strike.
+- A dribbler who turns sharply and passes can draw the ball through his own body to the kicking spot (reads like a
+  drag-back).
+
 ## Not verified in this environment
 - WebKit (iPad Safari) and Firefox are not installed in the build container; every end-to-end run used Chromium. The
   iPad-specific behaviours (audio suspend timing, Low Power Mode, controller pairing, real WebRTC between devices) are in

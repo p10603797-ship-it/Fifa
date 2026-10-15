@@ -19,8 +19,10 @@ export const T_BALL = {
   spinDecayAir: 0.25,
   /** Vertical restitution on grass (bounce height ~halves: sqrt(0.5) ~ 0.7). */
   restitution: 0.68,
-  /** Tangential friction on bounce (fraction of horizontal speed lost per bounce). */
-  bounceFriction: 0.12,
+  /** Tangential friction on bounce (fraction of horizontal speed lost per bounce). [QF-10] 0.12 -> 0.18: long balls
+   *  skipped on 37-47 m after their first bounce (now 31-41 m); 0.18 is as far as SIM-08's dinked-pass model keeps its
+   *  arrival speed within 0.6 m/s of the plan (0.19-0.2 miss on a few short dinks; docs/TUNING.md). */
+  bounceFriction: 0.18,
   /** Rolling resistance deceleration on grass, m/s^2. */
   rollDecel: 2.2,
   /** Extra speed-proportional rolling damping, 1/s. */
@@ -83,7 +85,7 @@ export const T_PLAYER = {
   arriveStop: 0.25,
   /** [INT-A, moved by QF-2] Stamina rates are per this half length (rates x staminaRefHalfMinutes / halfMinutes), so a
    *  match tires players the same whatever its length (4-minute halves emptied every player by half-time), min.
-   *  Read by SIM-04 locomotion (its LOCAL_TUNING.staminaRefHalfMinutes until QF-1 switches it over). */
+   *  Read by SIM-04 locomotion (switched over from its LOCAL_TUNING by QF-9). */
   staminaRefHalfMinutes: 4,
 } as const;
 
@@ -120,7 +122,7 @@ export const T_TOUCH = {
   /** [INT-A, moved by QF-2] SIM-15 receiver of a pass rolling away from him (faster than meetOvershootMinSpeed m/s):
    *  the meeting target is pushed meetOvershootSec x ball speed (at least meetOvershootMin, at most meetOvershootMax m)
    *  on along its path, and while more than meetCatchDist m behind it he runs at top speed. m/s, s, m, m, m. Read by
-   *  sim/control/resolveShared (its LOCAL_TUNING until QF-1 / QF-3 switch it over). */
+   *  sim/control/resolveMove (switched over from resolveShared's LOCAL_TUNING by QF-9). */
   meetOvershootMinSpeed: 1,
   meetOvershootSec: 0.6,
   meetOvershootMin: 3.5,
@@ -164,6 +166,10 @@ export const T_PASS = {
   /** [QF-2] SIM-08 / TAI-09: a receiver's run is led only until it comes within this of a touchline / goal line (wide
    *  men's runs extrapolated out of the pitch sent ~3 passes a match out for throw-ins), m. */
   leadLineMargin: 4,
+  /** [QF-10] A charged foot kick (pass, lob, cross, through ball, shot) strikes the ball this many ticks after its power
+   *  bar is released (the clip swings from its backswing top to the contact pose; was 0: struck on the release tick, so
+   *  the render showed the strike after the ball had gone). First-time kicks of an arriving ball keep their tick. */
+  releaseStrikeTicks: 2,
 } as const;
 
 export const T_SHOT = {

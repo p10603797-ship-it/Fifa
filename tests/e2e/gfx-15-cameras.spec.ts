@@ -56,7 +56,8 @@ async function pose(page: Page, sh: Shot): Promise<ShotResult> {
     const from = s.match.phase;
     s.match.phase = shot.phase;
     const r = s.match.restart;
-    r.kind = shot.kind; r.team = shot.team; r.x = sx; r.z = sz; r.ready = 0; r.taken = 0;
+    // [QF-12 refit] QF-4: the set-piece cameras cut once the restart is set up (match.restart.ready), not at the award.
+    r.kind = shot.kind; r.team = shot.team; r.x = sx; r.z = sz; r.ready = shot.phase >= 3 && shot.phase <= 7 ? 1 : 0; r.taken = 0;
     const b = s.ball;
     b.x = sx; b.y = 0.11; b.z = sz; b.vx = 0; b.vy = 0; b.vz = 0; b.owner = -1; b.heldBy = -1; b.shotBy = -1; b.inNet = 0;
     // Aim: the attacked goal (goal kicks: up-field).

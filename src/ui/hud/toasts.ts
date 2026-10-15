@@ -21,7 +21,7 @@ import type { ReadonlySimState, SimState } from '../../contracts/state';
 import { displayClock } from '../../sim/rules/machine';
 import { h, injectStyle } from '../components';
 import { HUD_SHARED_CSS, bindLargerHud, minuteLabel } from './hudShared';
-import { kitHex, teamKit } from './scoreboard';
+import { highContrastOn, kitHex, wornShirts } from './scoreboard';
 
 /** HUD presentation constants (UI timing, not gameplay; no TUNING-CR needed). */
 export const TOAST_TUNING = {
@@ -306,6 +306,10 @@ export function createToasts(): HudPart {
   let unbindLarge: (() => void) | null = null;
   let clubs: readonly Club[] = [];
   let teamColor: [string, string] = ['', ''];
+  let ctxRef: AppContext | null = null;
+  let matchState: ReadonlySimState | null = null;
+  /** High-contrast setting teamColor was resolved for (null = not resolved yet). */
+  let colorHc: boolean | null = null;
   /** Roster index per slot as of the last frame (names the player going off when the event lacks it). */
   const rosterBySlot: number[] = [];
   const queue = new ToastQueue<ToastSpec>();
@@ -318,6 +322,21 @@ export function createToasts(): HudPart {
     el.className = v;
   }
 
+  /**
+   * [QF-12] Chip colours = the shirts worn on the pitch (wornShirts: clash check, fallback kits), with the high-contrast
+   * kits when that setting is on (the renderer swaps kits live, so it is read when a toast shows). Allocates only when
+   * the setting differs from the last resolve.
+   */
+  function teamColors(): [string, string] {
+    const hc = highContrastOn(ctxRef);
+    if (colorHc !== hc && matchState) {
+      colorHc = hc;
+      const worn = wornShirts(matchState, clubs, hc);
+      teamColor = [worn ? kitHex(worn[0]) : '', worn ? kitHex(worn[1]) : ''];
+    }
+    return teamColor;
+  }
+
   function show(t: ToastSpec): void {
     if (!el) return;
     if (titleEl) titleEl.textContent = t.title;
@@ -325,7 +344,7 @@ export function createToasts(): HudPart {
     if (lineEl) lineEl.textContent = t.line;
     if (subEl) subEl.textContent = t.sub;
     if (minEl) minEl.textContent = t.minute;
-    if (chip) chip.style.background = t.team === 0 || t.team === 1 ? teamColor[t.team] || '' : '';
+    if (chip) chip.style.background = t.team === 0 || t.team === 1 ? teamColors()[t.team] || '' : '';
     el.dataset.kind = t.kind;
     // The queue always fades a toast out before the next one starts, so the class goes is-out -> is-in and the
     // animation-name change restarts the slide-in.
@@ -335,6 +354,7 @@ export function createToasts(): HudPart {
 
   return {
     mount(parent: HTMLElement, ctx: AppContext) {
+      ctxRef = ctx;
       injectStyle('hud-shared', HUD_SHARED_CSS);
       injectStyle('hud-toasts', CSS);
       chip = h('span', { class: 'ht-chip' });
@@ -351,9 +371,10 @@ export function createToasts(): HudPart {
     },
     setMatch(state: ReadonlySimState, cl: readonly Club[]) {
       clubs = cl;
-      const c0 = teamKit(cl[state.teams[0]!.clubIdx], state.teams[0]!.kit);
-      const c1 = teamKit(cl[state.teams[1]!.clubIdx], state.teams[1]!.kit);
-      teamColor = [c0 ? kitHex(c0.shirt) : '', c1 ? kitHex(c1.shirt) : ''];
+      // [QF-12] The shirts the players wear (clash check, fallback kits, high contrast), not the requested kit slots.
+      matchState = state;
+      colorHc = null;
+      teamColors();
       rosterBySlot.length = state.players.length;
       for (let i = 0; i < state.players.length; i++) rosterBySlot[i] = state.players[i]!.rosterIdx;
       queue.clear();
@@ -398,6 +419,9 @@ export function createToasts(): HudPart {
       queue.clear();
       root?.remove();
       root = el = chip = titleEl = codeEl = lineEl = subEl = minEl = null;
+      ctxRef = null;
+      matchState = null;
+      colorHc = null;
     },
   };
 }

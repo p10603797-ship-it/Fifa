@@ -56,7 +56,7 @@ function chargedStrikeGaps(seed: number, ticks: number): number[] {
 }
 
 describe('QF-4 CR (QF-2): a charged kick strikes the ball after its release, not on the release tick', () => {
-  it.fails('every charged foot kick makes contact at least 2 ticks after the power bar is released', () => {
+  it('every charged foot kick makes contact at least 2 ticks after the power bar is released', () => {
     const gaps = chargedStrikeGaps(20261014, 2100);
     expect(gaps.length).toBeGreaterThan(0);
     for (const g of gaps) expect(g).toBeGreaterThanOrEqual(2);

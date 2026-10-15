@@ -1,8 +1,10 @@
 /**
  * MOD-04: Practice arena and set-piece practice. Setups valid for every kind; free play fields only the opponent
- * keeper and runs without a clock through the real pipeline with the invariants on; set-piece repetition (the
- * practice hook stepped after every tick, the way the sim wiring will call it) re-awards the same restart at the
- * chosen spot; the tutorial driver advances on the actions it observes.
+ * keeper and runs without a clock through the real pipeline with the invariants on; set-piece repetition re-awards
+ * the same restart at the chosen spot; the tutorial driver advances on the actions it observes.
+ * [QF-12 refit] The practice hooks run inside the sim since QF-1 (initMatch lays out free play, step re-awards the
+ * practice restart), so these cases check the layout after initMatch and count RESTART_AWARDED events of the plain
+ * step instead of the old app hook's return values.
  */
 import { describe, expect, it } from 'vitest';
 import { PLAYERS_PER_TEAM } from '../../src/contracts/constants';
@@ -22,8 +24,9 @@ import { DEVICES, fakeCtx, pad } from '../unit/mod-01-fakes';
 
 const KINDS = [PracticeKind.FREE_PLAY, PracticeKind.FREE_KICKS, PracticeKind.CORNERS, PracticeKind.PENALTIES, PracticeKind.TUTORIAL];
 
-/** Step the real pipeline (+ the practice hook, as wired) with the core invariants; returns phase entries. */
-function run(s: SimState, ticks: number, hook = true): { entries: { phase: number; team: number; x: number; z: number }[]; awards: number } {
+/** Step the real pipeline (practice rules inside `step`) with the core invariants; returns phase entries and the
+ *  RESTART_AWARDED events of `kind` for the home side. */
+function run(s: SimState, ticks: number, kind: RestartKind = RestartKind.NONE): { entries: { phase: number; team: number; x: number; z: number }[]; awards: number } {
   const ev = createEventBuffer();
   const frames = [createInputFrame(), createInputFrame()];
   const checker = createInvariantChecker('core');
@@ -32,7 +35,10 @@ function run(s: SimState, ticks: number, hook = true): { entries: { phase: numbe
   for (let i = 0; i < ticks; i++) {
     const before = s.match.phase;
     step(s, frames, ev);
-    if (hook) awards += practiceRulesTick(s, ev);
+    for (let k = 0; k < ev.count; k++) {
+      const e = ev.get(k);
+      if (e.type === EventType.RESTART_AWARDED && e.a === kind && e.b === 0) awards++; // the practice restart, practising side
+    }
     const fails = checker.check(s, ev);
     if (fails.length > 0) throw new Error(`invariants at t=${s.tick}:\n${fails.join('\n')}`);
     if (s.match.phase !== before) entries.push({ phase: s.match.phase, team: s.match.restart.team, x: s.match.restart.x, z: s.match.restart.z });
@@ -98,15 +104,15 @@ describe('MOD-04 practice setups', () => {
 describe('MOD-04 free play', () => {
   it('your team against the opponent keeper only, no clock, invariants hold through the real pipeline', () => {
     const s = initMatch(botConfig(PracticeKind.FREE_PLAY));
-    expect(preparePracticeState(s)).toBe(PLAYERS_PER_TEAM - 1);
-    expect(preparePracticeState(s)).toBe(0); // idempotent
+    // initMatch already applied the layout (QF-1); the re-exported hook is idempotent.
+    expect(preparePracticeState(s)).toBe(0);
     let active = 0;
     for (let i = 0; i < PLAYERS_PER_TEAM; i++) active += s.players[PLAYERS_PER_TEAM + i]!.active;
     expect(active).toBe(1);
     expect(s.players[s.teams[1]!.keeperSlot]!.active).toBe(1);
     expect(s.teams[1]!.onPitch).toBe(1);
     expect(s.teams[0]!.onPitch).toBe(PLAYERS_PER_TEAM);
-    run(s, 1800, false);
+    run(s, 1800);
     expect(s.match.forfeitTeam).toBe(-1);
     expect(s.match.periodT).toBe(0);
     expect(s.match.clockRunning).toBe(0);
@@ -122,7 +128,7 @@ describe('MOD-04 free play', () => {
   });
 });
 
-describe('MOD-04 set-piece repetition (practice hook)', () => {
+describe('MOD-04 set-piece repetition (practice rules inside the sim step)', () => {
   const cases: [PracticeKind, MatchPhase, number][] = [
     [PracticeKind.CORNERS, MatchPhase.CORNER, 1],
     [PracticeKind.FREE_KICKS, MatchPhase.FREE_KICK, 0],
@@ -133,7 +139,7 @@ describe('MOD-04 set-piece repetition (practice hook)', () => {
       const cfg = botConfig(kind, spot);
       const s = initMatch(cfg);
       preparePracticeState(s);
-      const { entries, awards } = run(s, 3000);
+      const { entries, awards } = run(s, 3000, practiceRestartKind(kind));
       const restarts = entries.filter((e) => e.phase >= MatchPhase.THROW_IN && e.phase <= MatchPhase.PENALTY);
       const practice = restarts.filter((e) => e.phase === phase);
       expect(awards).toBeGreaterThanOrEqual(3);

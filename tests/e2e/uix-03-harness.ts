@@ -16,7 +16,8 @@ const GPU_ENVIRONMENT_NOISE = [/GL Driver Message/, /Automatic fallback to softw
 export function collectConsole(page: Page): string[] {
   const out: string[] = [];
   page.on('console', (m) => {
-    if (m.type() !== 'error') return;
+    // [QF-12] BRIEF §14 item 7: zero console errors OR warnings on every menu path.
+    if (m.type() !== 'error' && m.type() !== 'warning') return;
     const text = m.text();
     if (GPU_ENVIRONMENT_NOISE.some((re) => re.test(text))) return;
     out.push(`${m.type()}: ${text}`);

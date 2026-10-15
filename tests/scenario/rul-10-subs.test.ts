@@ -26,7 +26,7 @@ import { hashState } from '../../src/sim/core/hash';
 import { createInvariantChecker } from '../../src/sim/debug/invariants';
 import { copyAttrs } from '../../src/sim/init';
 import { rulesTick } from '../../src/sim/rules/machine';
-import { awardRestart } from '../../src/sim/rules/restart';
+import { awardRestart, LOCAL_TUNING as RESTART_LT } from '../../src/sim/rules/restart';
 import { ThrowState } from '../../src/sim/rules/throwin';
 import { T_RULES } from '../../src/contracts/tuning';
 import {
@@ -508,7 +508,14 @@ describe('RUL-10 substituting the throw-in taker', () => {
     awardRestart(s, RestartKind.THROW_IN, team, -8, NEAR * HALF_WIDTH, EV);
     expect(s.match.phase).toBe(MatchPhase.THROW_IN);
     const frames = [createInputFrame(), createInputFrame()];
-    for (let i = 0; i < ticks; i++) step(s, frames, EV);
+    // [QF-10] Throw-ins are walked set-ups (ready once the taker holds the ball, capped): `ticks` past restartSetupTicks
+    // count from the ready tick.
+    const extra = ticks - T_RULES.restartSetupTicks;
+    if (extra < 0) for (let i = 0; i < ticks; i++) step(s, frames, EV);
+    else {
+      for (let i = 0; i < T_RULES.restartSetupTicks + RESTART_LT.setupExtendMaxTicks && s.match.restart.ready === 0; i++) step(s, frames, EV);
+      for (let i = 0; i < extra; i++) step(s, frames, EV);
+    }
     expect(s.match.phase).toBe(MatchPhase.THROW_IN);
     return s;
   }

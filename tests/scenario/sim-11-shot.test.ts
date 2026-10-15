@@ -111,7 +111,8 @@ describe('SIM-11 SHOT action timing', () => {
       if (p.actCharging === 1) p.actPower = Math.min(1, t / 40);
       if (t === 24) p.actCharging = 0; // released
     });
-    expect(kickTicks(steps)).toEqual([24]);
+    // [QF-10] The strike follows the release by T_PASS.releaseStrikeTicks; the power is the one at the release.
+    expect(kickTicks(steps)).toEqual([24 + T_PASS.releaseStrikeTicks]);
     expect(eventOf(steps, EventType.KICK)!.c).toBeCloseTo(24 / 40, 9);
   });
 
@@ -119,8 +120,8 @@ describe('SIM-11 SHOT action timing', () => {
     const s = shootScene(36, 0);
     start(s, KickKind.SHOT_NORMAL, { power: 0.5, charging: 1 });
     const wait = T_PASS.powerFillTicks + LT.chargeWaitExtraTicks;
-    const steps = actTicks(s, W + wait + 3);
-    expect(kickTicks(steps)).toEqual([W + wait]);
+    const steps = actTicks(s, W + wait + T_PASS.releaseStrikeTicks + 3);
+    expect(kickTicks(steps)).toEqual([W + wait + T_PASS.releaseStrikeTicks]);
   });
 });
 
@@ -259,7 +260,7 @@ describe('SIM-11 starting a shot', () => {
     b.x = 36.3; b.z = 3.9; b.px = b.x; b.pz = b.z; b.y = 0.11; b.vy = 0; b.grounded = 1;
     b.vx = 0; b.vz = -8;
     start(s, KickKind.SHOT_NORMAL, { power: 0.7 });
-    const steps = actTicks(s, W + LT.startArriveTicks + REC, undefined, true);
+    const steps = actTicks(s, W + LT.contactGraceTicks + REC, undefined, true);
     const kt = kickTicks(steps);
     expect(kt).toHaveLength(1);
     expect(kt[0]!).toBeGreaterThan(W);

@@ -23,8 +23,16 @@
  *    picked if the Setup left none, setPhase(kind phase).
  *  - restartTick (RUL-01 calls it first in every restart phase): t++; taker re-picked whenever invalid (inactive,
  *    other team, keeper at a throw-in); ball re-placed on the spot whenever it strays, moves, rises, goes out of play
- *    or is owned by anyone but the taker (the throw-in taker holding it is RUL-02's). At t = restartSetupTicks:
- *    legalizePositions (teleport, hidden by the restart camera cut; D-008), taker into SET_PIECE (THROW_IN for
+ *    or is owned by anyone but the taker (the throw-in taker holding it is RUL-02's). [QF-10] Walked set-ups
+ *    (isWalkedSetup: throw-ins and free kicks further than cutFreeKickGoalDist from the attacked goal, which GFX-15
+ *    shows on the main camera): from the award the free-kick taker runs to his spot in SET_PIECE (RUL-02 walks the
+ *    throw-in taker) and every illegal player walks out (his velocity away from his nearest legal spot raised to
+ *    setupWalkSpeed); ready once the taker is in place (holding the ball at a throw-in) and everyone is legal, at the
+ *    earliest at restartSetupTicks and at the latest setupStragglerMaxTicks later, or setupExtendMaxTicks later while the
+ *    taker is still running in ([QF-10 skeptic] takerRunningIn) (restart.t is then set back to
+ *    restartSetupTicks, so "ticks past ready" readings keep their meaning). Other set-ups (camera cut) at
+ *    t = restartSetupTicks. At ready: legalizePositions (teleports whoever is still not there: with a camera cut,
+ *    D-008, or a walked straggler at the cap), taker into SET_PIECE (THROW_IN for
  *    throw-ins), ready = 1, timeoutT = 12 s (human side) or 4 s (CPU side). While ready: taker kept on his spot and in
  *    his waiting action; illegal players are pushed toward the nearest legal spot (a slide of at most pushMaxStep per
  *    tick with their velocity away from it removed, so nobody blocks for more than ~1 s and no mid-view teleport is
@@ -43,20 +51,21 @@ export { setPieceHandler } from './restartCommon';
 import {
   BALL_RADIUS, CENTRE_CIRCLE_RADIUS, CORNER_ARC_RADIUS, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, GOAL_HALF_WIDTH,
   HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PENALTY_ARC_RADIUS, PENALTY_AREA_DEPTH, PENALTY_AREA_HALF_WIDTH,
-  PENALTY_SPOT_DIST, PLAYERS_PER_TEAM, RESTART_DISTANCE, THROW_IN_DISTANCE, teamFirstSlot,
+  PENALTY_SPOT_DIST, PLAYERS_PER_TEAM, POST_RADIUS, RESTART_DISTANCE, THROW_IN_DISTANCE, teamFirstSlot,
 } from '../../contracts/constants';
 import { ActionKind, CardKind, KickKind, MatchPhase, RestartKind, WatchdogReason } from '../../contracts/enums';
 import { EventType, WhistleKind, type EventSink } from '../../contracts/events';
 import type { PlayerState, SimState } from '../../contracts/state';
 import { createKickLaunch, type SetPieceInputFn } from '../../contracts/systems';
 import { isLegalTransition } from '../../contracts/transitions';
-import { T_BALL, T_PASS, T_RULES } from '../../contracts/tuning';
+import { T_BALL, T_PASS, T_PLAYER, T_RULES } from '../../contracts/tuning';
 import { beginAction, endAction } from '../actions/dispatch';
 import { NULL_SINK } from '../core/events';
 import { applyKick, releasePossession } from '../core/kick';
 import { dcos, dsin } from '../core/dmath';
 import { teamHasHuman } from '../core/query';
 import { rngInt } from '../core/rng';
+import { bodyRadiusOf } from '../players/bodies';
 import { kickOffDefault, kickOffInput, setPhase, setupKickOff } from './machine';
 import { throwInDefault, throwInInput, throwInSetup } from './throwin';
 import { goalKickDefault, goalKickInput, goalKickSetup } from './goalkick';
@@ -66,6 +75,7 @@ import { penaltyDefault, penaltyInput, penaltySetup } from './penalty';
 import { showCard } from './fouls';
 import {
   COMMON_TUNING, KIND_PHASE, PHASE_KIND, isRestartPhase, logWatchdog, restartForward, restartLookPoint, restartPending,
+  takerRunning,
 } from './restartCommon';
 
 export { isRestartPhase, isRestartTaker, restartPending, restartForward, restartLookPoint } from './restartCommon';
@@ -77,7 +87,7 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** After the Default was due, the restart kick is forced directly this many ticks later, ticks (2 s). */
   defaultGraceTicks: 120,
   /** The taker stands this far behind the ball (opposite the default kick direction), m. */
-  takerBehind: 0.6,
+  takerBehind: COMMON_TUNING.takerBehind,
   /** A waiting taker further than this from the ball spot is put back on his spot, m (kicks reach ~1.2 m). */
   takerReach: 1.0,
   /** The throw-in taker stands this far outside the touchline, m. */
@@ -121,6 +131,21 @@ export const LOCAL_TUNING = { // TUNING-CR
   forcedAheadDist: 15,
   /** Forced kick power reported in the KICK event, 0..1. */
   forcedPower: 0.5,
+  /** [QF-10] Walked set-ups (throw-ins; free kicks further than cutFreeKickGoalDist from the attacked goal centre, which
+   *  GFX-15 shows on the main camera: render/camera/cinematic.ts fkNearGoal): illegal players walk out at least at this
+   *  speed (their velocity away from the nearest legal spot is raised to it each tick), m/s ... */
+  setupWalkSpeed: 4.5,
+  /** ... and the set-up waits past restartSetupTicks for them and the taker, at most this many ticks; then whoever is
+   *  still not there is placed (teleport). [QF-10 skeptic] 180 -> 270: this cap only applies while the taker is still
+   *  running in (not in place, closing on his spot at setupTakerRunMinSpeed m/s or more; a throw-in taker 25-30 m away
+   *  was placed 6-25 m at 180, in view); otherwise stragglers are placed at setupStragglerMaxTicks. 270 keeps ready +
+   *  the human timeout (720) + the Default grace (120) inside T_RULES.phaseMaxTicks for throw-ins (1200), ticks. */
+  setupExtendMaxTicks: 270,
+  setupStragglerMaxTicks: 180,
+  setupTakerRunMinSpeed: 2,
+  /** Free kicks within this distance of the attacked goal centre cut to the set-piece camera at ready (teleports
+   *  hidden, D-008), m. */
+  cutFreeKickGoalDist: 35,
 } as const;
 
 // ---------------------------------------------------------------- module scratch (no allocation per tick)
@@ -151,6 +176,8 @@ const ctx = {
   /** Penalty: the defending keeper (on his line), -1 = none; x of that goal line. */
   defKeeper: -1,
   keeperLineX: 0,
+  /** [QF-10] 1 when the whole body must be clear of the area and the arc (penalty): judged with the body radius. */
+  bodyClear: 0,
 };
 
 /** Unit directions for the ring search of legal spots (built once at module load, deterministic dmath). */
@@ -378,17 +405,19 @@ function beginTakerAction(s: SimState, slot: number): void {
     beginAction(p, ActionKind.THROW_IN, T_RULES.phaseMaxTicks[MatchPhase.THROW_IN]! + COMMON_TUNING.setPieceWaitTicks, -1);
   } else {
     beginAction(p, ActionKind.SET_PIECE, COMMON_TUNING.setPieceWaitTicks, -1);
+    p.actA = 0;
   }
 }
 
-/** Ready and waiting: taker on his spot and in his waiting action (never while he is kicking or down). */
+/** Ready and waiting: taker on his spot and in his waiting action (never while he is kicking or down). [QF-10] A taker
+ *  swapped in at a walked free kick runs there (restartCommon takerRunning) and is placed only if the run overruns. */
 function settleTaker(s: SimState): void {
   const r = s.match.restart;
   const t = r.taker;
   if (t < 0) return;
   const p = s.players[t]!;
   if (!isWaitingAct(p.act)) return;
-  if (!takerInPlace(s, t)) placeTakerOnSpot(s, t);
+  if (!takerInPlace(s, t) && !takerRunning(p)) placeTakerOnSpot(s, t);
   if (p.act === ActionKind.NONE) beginTakerAction(s, t);
 }
 
@@ -401,6 +430,8 @@ export function prepareTakerKick(s: SimState, slot: number): number {
   const r = s.match.restart;
   if (!isRestartPhase(s.match.phase) || r.taken === 1 || slot < 0 || slot !== r.taker) return 0;
   const p = s.players[slot]!;
+  // [QF-10] Kicked (a Default / the CPU) while still running in after a walked taker swap: onto his spot first.
+  if (takerRunning(p)) placeTakerOnSpot(s, slot);
   if (p.act === ActionKind.SET_PIECE) endAction(s, slot, 0);
   return p.act === ActionKind.NONE ? 1 : 0;
 }
@@ -425,6 +456,7 @@ function buildCtx(s: SimState): void {
   ctx.goalLineEnd = 0;
   ctx.defKeeper = -1;
   ctx.keeperLineX = 0;
+  ctx.bodyClear = r.kind === RestartKind.PENALTY ? 1 : 0;
   if (r.kind === RestartKind.GOAL_KICK) {
     ctx.paEnd = -dir;
   } else if (r.kind === RestartKind.FREE_KICK) {
@@ -452,15 +484,35 @@ function onGoalLine(x: number, z: number, end: number): boolean {
  */
 const PT = { x: 0, z: 0 };
 
+/** [QF-10] Goal-frame clearance of outfield bodies (see ptInGoalFrame), m. */
+const FRAME_FRONT = HALF_LENGTH - T_PLAYER.bodyRadius;
+const FRAME_SIDE = GOAL_HALF_WIDTH + POST_RADIUS + T_PLAYER.bodyRadius;
+
 function ptInField(): boolean {
   const x = PT.x, z = PT.z;
   return x >= -HALF_LENGTH && x <= HALF_LENGTH && z >= -HALF_WIDTH && z <= HALF_WIDTH;
 }
 
-function ptInArea(end: number): boolean {
+/**
+ * [QF-10] PT where an outfield body would overlap a goal frame: within FRAME_FRONT of a goal line and within FRAME_SIDE
+ * of the goal's centre line (SIM-04/05 keep outfield bodies a body radius in front of the goal line; a legal spot there
+ * was a body pushed into the post or net, e.g. a player behind the goal line placed at 0.3 m inside the pitch).
+ */
+function ptInGoalFrame(): boolean {
+  const ax = PT.x < 0 ? -PT.x : PT.x, az = PT.z < 0 ? -PT.z : PT.z;
+  return ax > FRAME_FRONT && az < FRAME_SIDE;
+}
+
+/** PT inside the penalty area of `end`, the area grown by `grow` m on its pitch sides (a body of that radius touching it). */
+function ptInArea(end: number, grow: number): boolean {
   const ex = end * PT.x, z = PT.z;
-  return ex >= HALF_LENGTH - PENALTY_AREA_DEPTH && ex <= HALF_LENGTH && z >= -PENALTY_AREA_HALF_WIDTH &&
-    z <= PENALTY_AREA_HALF_WIDTH;
+  return ex >= HALF_LENGTH - PENALTY_AREA_DEPTH - grow && ex <= HALF_LENGTH && z >= -PENALTY_AREA_HALF_WIDTH - grow &&
+    z <= PENALTY_AREA_HALF_WIDTH + grow;
+}
+
+/** Body radius counted for slot's legality (ctx must be built): his SIM-05 radius when the body must be clear, else 0. */
+function clearRadius(s: SimState, slot: number): number {
+  return ctx.bodyClear === 1 ? bodyRadiusOf(s, slot) : 0;
 }
 
 function ptOnGoalLine(end: number): boolean {
@@ -479,21 +531,24 @@ function legalPt(s: SimState, slot: number): boolean {
   }
   if (!ptInField()) return false;
   const p = s.players[slot]!;
+  if (p.isKeeper !== 1 && ptInGoalFrame()) return false;
   const opp = p.team !== ctx.team;
   const dx = x - ctx.cx, dz = z - ctx.cz;
-  const rr = ctx.r - LOCAL_TUNING.legalSlack;
+  const br = clearRadius(s, slot);
+  const rr = ctx.r + br - LOCAL_TUNING.legalSlack;
   const inDisc = dx * dx + dz * dz < rr * rr;
   switch (ctx.kind) {
     case RestartKind.KICK_OFF:
       if (s.teams[p.team]!.dir * x > 0) return false;
       return !(opp && inDisc);
     case RestartKind.PENALTY:
-      return !inDisc && !ptInArea(ctx.paEnd);
+      // [QF-10] Outside the area and the arc with the whole body (a centre on the line leaves half of him inside).
+      return !inDisc && !ptInArea(ctx.paEnd, br > LOCAL_TUNING.legalSlack ? br - LOCAL_TUNING.legalSlack : 0);
     case RestartKind.GOAL_KICK:
-      return !opp || (!inDisc && !ptInArea(ctx.paEnd));
+      return !opp || (!inDisc && !ptInArea(ctx.paEnd, 0));
     case RestartKind.FREE_KICK:
       if (!opp) return true;
-      if (ctx.paEnd !== 0 && ptInArea(ctx.paEnd)) return false;
+      if (ctx.paEnd !== 0 && ptInArea(ctx.paEnd, 0)) return false;
       if (!inDisc) return true;
       return ctx.goalLineEnd !== 0 && ptOnGoalLine(ctx.goalLineEnd);
     default: // THROW_IN, CORNER
@@ -540,7 +595,8 @@ function distSq(ax: number, az: number, bx: number, bz: number): number {
  * legal, and a ring search around the ball as a guaranteed fallback.
  */
 function nearestLegal(s: SimState, slot: number, out: { x: number; z: number }): void {
-  const m = LOCAL_TUNING.placeMargin;
+  const br = clearRadius(s, slot);
+  const m = LOCAL_TUNING.placeMargin + br;
   const p = s.players[slot]!;
   const x = p.x, z = p.z;
   const pdir = s.teams[p.team]!.dir;
@@ -556,6 +612,8 @@ function nearestLegal(s: SimState, slot: number, out: { x: number; z: number }):
   for (let it = 0; it < 3; it++) {
     if (px < -HALF_LENGTH) px = -HALF_LENGTH + m; else if (px > HALF_LENGTH) px = HALF_LENGTH - m;
     if (pz < -HALF_WIDTH) pz = -HALF_WIDTH + m; else if (pz > HALF_WIDTH) pz = HALF_WIDTH - m;
+    PT.x = px; PT.z = pz;
+    if (p.isKeeper !== 1 && ptInGoalFrame()) px = (px < 0 ? -1 : 1) * (FRAME_FRONT - LOCAL_TUNING.placeMargin);
     if (ctx.kind === RestartKind.KICK_OFF && pdir * px > 0) px = -pdir * m;
     if (discApplies(s, slot) && !(ctx.goalLineEnd !== 0 && onGoalLine(px, pz, ctx.goalLineEnd))) {
       const dx = px - ctx.cx, dz = pz - ctx.cz;
@@ -567,7 +625,8 @@ function nearestLegal(s: SimState, slot: number, out: { x: number; z: number }):
         pz = ctx.cz + uz * (ctx.r + m);
       }
     }
-    if (areaApplies(s, slot) && inPenaltyArea(px, pz, ctx.paEnd)) {
+    PT.x = px; PT.z = pz;
+    if (areaApplies(s, slot) && ptInArea(ctx.paEnd, br)) {
       const e = ctx.paEnd;
       const frontX = e * (HALF_LENGTH - PENALTY_AREA_DEPTH - m);
       const sideZ = (pz < 0 ? -1 : 1) * (PENALTY_AREA_HALF_WIDTH + m);
@@ -880,6 +939,90 @@ function becomeReady(s: SimState): void {
   settleTaker(s);
 }
 
+// ---------------------------------------------------------------- walked set-ups (QF-10)
+
+/**
+ * True when the current restart's set-up is shown on the main camera (no camera cut at ready hides a teleport):
+ * throw-ins, and free kicks further than cutFreeKickGoalDist from the attacked goal centre.
+ */
+export function isWalkedSetup(s: SimState): boolean {
+  const r = s.match.restart;
+  if (r.kind === RestartKind.THROW_IN) return true;
+  if (r.kind !== RestartKind.FREE_KICK) return false;
+  const gx = s.teams[r.team === 1 ? 1 : 0]!.dir * HALF_LENGTH - r.x;
+  const d = LOCAL_TUNING.cutFreeKickGoalDist;
+  return gx * gx + r.z * r.z > d * d;
+}
+
+/** Free kick taker of a walked set-up: into SET_PIECE (its handler runs him to his spot) unless he is down / busy. */
+function approachTaker(s: SimState): void {
+  const r = s.match.restart;
+  if (r.kind !== RestartKind.FREE_KICK) return; // throw-ins: RUL-02's THROW_IN APPROACH
+  const t = r.taker;
+  if (t < 0 || !isValidTaker(s, t)) return;
+  const p = s.players[t]!;
+  if (p.act !== ActionKind.NONE || isDown(p)) return;
+  beginTakerAction(s, t);
+}
+
+/** Every illegal non-taker player walks out: his velocity away from his nearest legal spot is raised to setupWalkSpeed. */
+function walkOutIllegal(s: SimState): void {
+  buildCtx(s);
+  const w = LOCAL_TUNING.setupWalkSpeed;
+  for (let slot = 0; slot < NUM_SLOTS; slot++) {
+    if (slot === ctx.taker) continue;
+    const p = s.players[slot]!;
+    if (p.active !== 1 || isDown(p) || legalNow(s, slot)) continue;
+    nearestLegal(s, slot, SPOT2);
+    const dx = SPOT2.x - p.x, dz = SPOT2.z - p.z;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    if (d < 1e-9) continue;
+    const ux = dx / d, uz = dz / d;
+    const vu = p.vx * ux + p.vz * uz;
+    if (vu < w) { p.vx += (w - vu) * ux; p.vz += (w - vu) * uz; }
+  }
+}
+
+/** Walked set-up settled: the taker in place (holding the ball at a throw-in) and every other player legal. */
+function setupSettled(s: SimState): boolean {
+  const r = s.match.restart;
+  const t = r.taker;
+  if (t >= 0) {
+    const p = s.players[t]!;
+    if (r.kind === RestartKind.THROW_IN) {
+      if (p.act !== ActionKind.THROW_IN || s.ball.owner !== t) return false;
+    } else if (!takerInPlace(s, t)) return false;
+  }
+  buildCtx(s);
+  for (let slot = 0; slot < NUM_SLOTS; slot++) {
+    if (slot === t) continue;
+    const p = s.players[slot]!;
+    if (p.active === 1 && !legalNow(s, slot)) return false;
+  }
+  return true;
+}
+
+/**
+ * [QF-10 skeptic] Walked set-up: the taker is still running in (not in place, or a throw-in taker not yet holding the
+ * ball) and closing on his spot at setupTakerRunMinSpeed or more. The set-up then waits up to setupExtendMaxTicks
+ * instead of placing him from afar at setupStragglerMaxTicks.
+ */
+function takerRunningIn(s: SimState): boolean {
+  const r = s.match.restart;
+  const t = r.taker;
+  if (t < 0 || t >= NUM_SLOTS) return false;
+  const p = s.players[t]!;
+  if (p.active !== 1 || isDown(p)) return false;
+  if (r.kind === RestartKind.THROW_IN) {
+    if (p.act === ActionKind.THROW_IN && s.ball.owner === t) return false;
+  } else if (takerInPlace(s, t)) return false;
+  restartTakerSpot(s, CAND);
+  const dx = CAND.x - p.x, dz = CAND.z - p.z;
+  const d = Math.sqrt(dx * dx + dz * dz);
+  if (!(d > 1e-6)) return false;
+  return (p.vx * dx + p.vz * dz) / d >= LOCAL_TUNING.setupTakerRunMinSpeed;
+}
+
 /** Per tick during a restart phase (RUL-01 calls it before the kind's tick). */
 export function restartTick(s: SimState, ev: EventSink): void {
   const m = s.match;
@@ -896,7 +1039,19 @@ export function restartTick(s: SimState, ev: EventSink): void {
   }
   keepBallOnSpot(s, ev);
   const setup = T_RULES.restartSetupTicks;
-  if (r.t === setup || (r.ready === 0 && r.t > setup)) {
+  // [QF-10] Main-camera set-ups walk everybody into place instead of teleporting them at the set-up tick (D-008): the
+  // taker runs to his spot, illegal players walk out, and the set-up waits for them (capped).
+  const walked = r.ready === 0 && isWalkedSetup(s);
+  if (walked) {
+    approachTaker(s);
+    walkOutIllegal(s);
+  }
+  if ((!walked && r.t === setup) ||
+    (r.ready === 0 && r.t >= setup && (!walked || setupSettled(s) || (r.t >= setup + LOCAL_TUNING.setupStragglerMaxTicks &&
+      (r.t >= setup + LOCAL_TUNING.setupExtendMaxTicks || !takerRunningIn(s)))))) {
+    // A set-up that ran long is counted as restartSetupTicks: every "ticks past ready" reading (r.t - setup: the kind
+    // modules' CPU fallbacks, TAI-13's cpuRestartDelay) keeps its meaning.
+    if (r.t > setup) r.t = setup;
     becomeReady(s);
     return;
   }

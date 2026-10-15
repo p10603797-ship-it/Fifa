@@ -19,7 +19,7 @@ import { deserializeState } from '../../src/sim/core/serialize';
 import { runTicks } from '../harness/scenario';
 
 describe('QF-2 CR (SIM-16): a face press is resolved for the player it was meant for', () => {
-  it.fails('the CPU\'s clearance press for defender 15 is not turned into a header shot from his own half by the player SIM-16 switched to', () => {
+  it('the CPU\'s clearance press for defender 15 is not turned into a header shot from his own half by the player SIM-16 switched to', () => {
     const s = deserializeState(readFileSync(new URL('./fixtures/qf-2-switch-press.state.json', import.meta.url), 'utf8'));
     expect(s.ctrl[3]!.slot).toBe(15);
     const ev = runTicks(s, 60, undefined, { check: 'core' });

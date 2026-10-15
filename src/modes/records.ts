@@ -158,22 +158,33 @@ export function recordMatch(settings: SettingsStore, setup: Pick<MatchSetup, 'co
   return recordResult(settings, summary, side, club, opp);
 }
 
-/** Wrap a setup's onFinish so the finished match is recorded first (idempotent: wrapping twice records once). */
+type OnFinish = NonNullable<MatchSetup['onFinish']>;
+
+/** Records wrapper (withRecords' onFinish) -> the onFinish it wraps (null for none). */
+const RECORDS_INNER = new WeakMap<OnFinish, OnFinish | null>();
+
+/**
+ * Wrap a setup's onFinish so the finished match is recorded first (idempotent: wrapping twice records once).
+ * [QF-12] Also across copies: a copy of a wrapped setup (matchFlow cloneSetup, full-time Change teams -> team select ->
+ * Start, which wraps again) carries the old wrapper as its onFinish, while the non-enumerable tag is lost. The old
+ * wrapper is unwrapped, so the match counts once (it counted 2, then 3 times: once per Change teams) and is recorded
+ * with the config actually played (the old wrapper read the previous match's clubs and sides).
+ */
 export function withRecords<T extends MatchSetup>(settings: SettingsStore, setup: T): T {
   const tagged = setup as T & { __records?: boolean };
   if (tagged.__records) return setup;
-  const inner = setup.onFinish;
-  const wrapped: T & { __records?: boolean } = {
-    ...setup,
-    onFinish: (summary: MatchSummary | null, quit: boolean) => {
-      try {
-        recordMatch(settings, wrapped, summary, quit);
-      } catch {
-        /* records never break the end of a match */
-      }
-      inner?.(summary, quit);
-    },
+  let inner: OnFinish | null | undefined = setup.onFinish;
+  if (inner && RECORDS_INNER.has(inner)) inner = RECORDS_INNER.get(inner);
+  const onFinish: OnFinish = (summary: MatchSummary | null, quit: boolean) => {
+    try {
+      recordMatch(settings, wrapped, summary, quit);
+    } catch {
+      /* records never break the end of a match */
+    }
+    inner?.(summary, quit);
   };
+  RECORDS_INNER.set(onFinish, inner ?? null);
+  const wrapped: T & { __records?: boolean } = { ...setup, onFinish };
   Object.defineProperty(wrapped, '__records', { value: true, enumerable: false });
   return wrapped;
 }

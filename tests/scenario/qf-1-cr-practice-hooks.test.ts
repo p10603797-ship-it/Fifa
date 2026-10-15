@@ -25,7 +25,7 @@ import * as modes from '../../src/modes/practice';
 import * as sim from '../../src/sim/rules/practice';
 
 describe('QF-1 CR (QF-5 / lead) one implementation of the practice hooks, inside the sim', () => {
-  it.fails('qf-1-cr: modes/practice re-exports the sim practice hooks instead of a second copy', () => {
+  it('qf-1-cr: modes/practice re-exports the sim practice hooks instead of a second copy', () => {
     expect(modes.practiceRulesTick).toBe(sim.practiceRulesTick);
     expect(modes.preparePracticeState).toBe(sim.preparePracticeState);
     expect(modes.practiceRestartKind).toBe(sim.practiceRestartKind);

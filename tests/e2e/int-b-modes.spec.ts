@@ -223,7 +223,8 @@ test.describe('INT-B local modes', () => {
     while ((await route(page)) !== 'cup' && Date.now() < end) {
       const r = await route(page);
       if (r === 'half-time' || r === 'full-time') {
-        const id = r === 'half-time' ? 'ht-continue' : 'ft-continue';
+        // [QF-12] A finished cup tie shows the final full-time screen; its Continue (ft-cup) returns to the cup.
+        const id = r === 'half-time' ? 'ht-continue' : (await page.getByTestId('ft-cup').isVisible()) ? 'ft-cup' : 'ft-continue';
         if (await page.getByTestId(id).isVisible()) await padActivate(page, 0, id);
       }
       await playUntil(page, 'cup', sideTakers, 3000).catch(() => undefined);

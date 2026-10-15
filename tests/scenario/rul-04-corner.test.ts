@@ -988,9 +988,13 @@ describe('RUL-04 timeout default and CPU fallback', () => {
 
   it('CPU fallback retries every cpuRetryTicks while the start is refused (RUL-11 safety nets stay behind it)', () => {
     const s = cornerState(0, { humans: 0 }, (st) => layoutCorner(st, 0, 1));
-    run(s, SETUP + T_RULES.cpuRestartDelay + LOCAL_TUNING.cpuGraceTicks + 3 * LOCAL_TUNING.cpuRetryTicks + 5);
+    // [QF-10] cpuGraceTicks 60 -> 140 (TAI-13 may wait for its box runners): the fallback and its first retry come
+    // before RUL-11's 4 s CPU timeout (cpuTakeTimeoutTicks past ready), which then backs it up.
     const due = SETUP + T_RULES.cpuRestartDelay + LOCAL_TUNING.cpuGraceTicks;
-    expect(calls().map((c) => c.rt)).toEqual([0, 1, 2, 3].map((k) => due + k * LOCAL_TUNING.cpuRetryTicks));
+    const rul11 = SETUP + RESTART_TUNING.cpuTakeTimeoutTicks;
+    expect(due + LOCAL_TUNING.cpuRetryTicks).toBeLessThan(rul11);
+    run(s, rul11 - 1);
+    expect(calls().map((c) => c.rt)).toEqual([0, 1].map((k) => due + k * LOCAL_TUNING.cpuRetryTicks));
     expect(s.match.phase).toBe(MatchPhase.CORNER);
     expect(s.players[s.match.restart.taker]!.act).toBe(ActionKind.SET_PIECE); // RUL-11 put him back to wait
   });

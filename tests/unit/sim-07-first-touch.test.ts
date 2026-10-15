@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { ActionKind, KickKind, MatchPhase } from '../../src/contracts/enums';
 import { EventType } from '../../src/contracts/events';
 import { MoveMode } from '../../src/contracts/state';
-import { T_BALL, T_DRIBBLE, T_TOUCH } from '../../src/contracts/tuning';
+import { T_BALL, T_DRIBBLE, T_PLAYER, T_TOUCH } from '../../src/contracts/tuning';
 import { ACTION_HANDLERS } from '../../src/sim/actions/registry';
 import { actionsTick } from '../../src/sim/actions/dispatch';
 import { createEventBuffer } from '../../src/sim/core/events';
@@ -82,7 +82,10 @@ describe('SIM-07 receiveContacts: clean traps', () => {
     expect(s.ball.sx === 0 && s.ball.sy === 0 && s.ball.sz === 0).toBe(true);
   });
 
-  it('the settled ball reaches the spot ahead of him when the window ends (rolling model)', () => {
+  it('[QF-9] the settled ball rolls toward his line ahead of him, no faster than he may run (rolling model)', () => {
+    // Was: "reaches the spot ahead of him exactly when the window ends" -- which fired a ball from the side across his
+    // line at ~6 m/s (and a sprinter's ball 2.6 m clear). Now a sideways ball is rolled to rest on his line, ahead of
+    // him, within the trap lead of where his capped run takes him (it came in 0.9 m off his line at 10 m/s).
     const s = baseState(6);
     control(s, RECV);
     const p = s.players[RECV]!;
@@ -90,10 +93,12 @@ describe('SIM-07 receiveContacts: clean traps', () => {
     incoming(s, RECV, { speed: 10, fromX: 0, fromZ: 1 });
     contactTick(s);
     expect(outcome(s, RECV)).toBe('clean');
-    // Integrate the ground roll for the window (SIM-02 rolling: rollDecel + rollDamping * v).
+    // Integrate the ground roll to rest (SIM-02 rolling: rollDecel + rollDamping * v).
     const b = s.ball;
     let x = b.x, z = b.z, vx = b.vx, vz = b.vz;
-    for (let t = 0; t < p.actDur; t++) {
+    let atEnd = { x, z };
+    for (let t = 0; t < 600; t++) {
+      if (t === p.actDur) atEnd = { x, z };
       const v = Math.hypot(vx, vz);
       if (v < 1e-9) break;
       let nv = v - (T_BALL.rollDecel + T_BALL.rollDamping * v) * DT;
@@ -101,8 +106,13 @@ describe('SIM-07 receiveContacts: clean traps', () => {
       x += (vx / v) * 0.5 * (v + nv) * DT; z += (vz / v) * 0.5 * (v + nv) * DT;
       vx *= nv / v; vz *= nv / v;
     }
-    expect(Math.hypot(x - p.actX, z - p.actZ)).toBeLessThan(0.15);
-    expect(p.actX - RX).toBeCloseTo(T_DRIBBLE.touchAheadClose, 6);
+    expect(Math.abs(z - RZ)).toBeLessThan(0.5); // comes to rest near his line (z = RZ, running +x), not rolled across it
+    expect(x - RX).toBeGreaterThan(0); // ahead of him
+    // Along his run it is no faster than the FIRST_TOUCH window lets him run: it never runs away from him.
+    expect(s.ball.vx).toBeLessThanOrEqual(maxSpeed(s, RECV, true) * T_PLAYER.jogFraction * L.slowFraction + 1e-9);
+    // At the end of the window it is still within his reach of the spot (SIM-06 takes over from there).
+    expect(Math.hypot(atEnd.x - p.actX, atEnd.z - p.actZ)).toBeLessThan(T_DRIBBLE.controlRadius);
+    expect(p.actX - RX).toBeGreaterThan(T_DRIBBLE.touchAheadClose - 1e-9);
   });
 
   it('trap lead grows with speed: close standing, jog lead at a jog, sprint lead at top speed', () => {

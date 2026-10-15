@@ -15,7 +15,7 @@ import { deserializeState } from '../../src/sim/core/serialize';
 import { runTicks } from '../harness/scenario';
 
 describe('QF-2 CR (switching): never away from the player about to receive a loose ball', () => {
-  it.fails('the CPU controller stays on the man the loose ball rolls into', () => {
+  it('the CPU controller stays on the man the loose ball rolls into', () => {
     const s = deserializeState(readFileSync(new URL('./fixtures/qf-2-switch-receiver.state.json', import.meta.url), 'utf8'));
     expect(s.ctrl[2]!.slot).toBe(7);
     const away: number[] = [];

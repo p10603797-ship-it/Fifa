@@ -52,7 +52,7 @@ function shotThroughTwo(): { touched: number; a: number; b: number; bCtrl: numbe
 }
 
 describe('QF-2 CR (QF-1): shots and the bodies in their path', () => {
-  it.fails('a shot fired straight through a defender who is neither controlled nor the chaser is stopped by his body', () => {
+  it('a shot fired straight through a defender who is neither controlled nor the chaser is stopped by his body', () => {
     const r = shotThroughTwo();
     expect(r.bCtrl).toBe(-1);
     expect(r.bChaser).toBe(false);

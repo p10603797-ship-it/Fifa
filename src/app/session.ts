@@ -23,8 +23,9 @@
  * matches. A load still in flight when the match is quit or restarted is abandoned via a generation counter.
  *
  * [INT-B] Hooks: deps.onTick(rt) runs first in afterTick (the app's replay recorder); deps.onPause / deps.onMatchEnd
- * (rumble stop) run when a pause starts and when the match ends or is torn down. deps.prepareState runs once on the
- * fresh state right after initMatch (default: the practice layout, modes/practice preparePracticeState).
+ * (rumble stop) run when a pause starts and when the match ends or is torn down. deps.prepareState (optional, tests)
+ * runs once on the fresh state right after initMatch; [QF-12] there is no default any more: the practice layout is
+ * applied by sim/init initMatch itself (QF-1), so a replay or headless run starts from the same state.
  * setHumanDevice(human, ids | 'cpu') (D-019, PAD-03 reconnect card): 'cpu' queues Command.HAND_TO_CPU into that
  * human's frame and drops his local sources (his binding stays in the setup, so a rematch gets his devices back); a
  * device list rebinds him for the rest of the match (setup bindings updated, sources of dropped devices disposed, new
@@ -38,11 +39,10 @@ import type {
 } from '../contracts/app';
 import { MAX_HUMANS } from '../contracts/constants';
 import type { Club } from '../contracts/data';
-import { Command, ControllerKind, MatchPhase, ModeId } from '../contracts/enums';
+import { Command, ControllerKind, MatchPhase } from '../contracts/enums';
 import type { EventBuffer } from '../contracts/events';
 import { createInputFrame, type CameraProjector, type InputFrame } from '../contracts/input';
 import type { MatchConfig, SimState } from '../contracts/state';
-import { preparePracticeState } from '../modes/practice';
 import { createStatsTracker } from '../modes/stats';
 import { cloneState as simCloneState } from '../sim/core/clone';
 import { createEventBuffer as simCreateEventBuffer } from '../sim/core/events';
@@ -85,13 +85,8 @@ export interface SessionDeps {
   onPause?(byHuman: number): void;
   /** The match ended (POST_MATCH) or was torn down (quit, restart, dispose) after it loaded (rumble stop). */
   onMatchEnd?(): void;
-  /** Once on the fresh state right after initMatch. Default: prepareModeState (practice layout). */
+  /** Once on the fresh state right after initMatch (tests). No default: sim/init applies the practice layout. */
   prepareState?(s: SimState): void;
-}
-
-/** Mode-specific layout of a fresh match state (practice free play takes the opponent's outfield players off). */
-export function prepareModeState(s: SimState): void {
-  if (s.config && s.config.mode === ModeId.PRACTICE) preparePracticeState(s);
 }
 
 let seedCounter = 0;
@@ -216,7 +211,7 @@ export function createSession(deps: SessionDeps): AppSession {
   const yieldFrame = deps.yieldFrame ?? defaultYield;
   const newSeed = deps.newSeed ?? newMatchSeed;
   const now = deps.now ?? (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()));
-  const prepareState = deps.prepareState ?? prepareModeState;
+  const prepareState = deps.prepareState ?? null;
   const onError = (err: unknown, where: string): void => {
     if (deps.onError) deps.onError(err, where);
     else diagnostics.log('error', `${where}: ${String(err)}`, err);
@@ -407,7 +402,7 @@ export function createSession(deps: SessionDeps): AppSession {
       await yieldFrame();
       if (gen !== myGen) return;
       const curr = initMatch(s.config, clubs);
-      prepareState(curr);
+      if (prepareState) prepareState(curr);
       const prev = cloneState(curr);
       const events = createEvents();
       const stats = createStats();

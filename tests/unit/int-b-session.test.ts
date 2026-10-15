@@ -8,7 +8,8 @@
  *  - SessionDeps.onTick runs first in afterTick (replay recorder); errors are reported once per match.
  *  - onPause / onMatchEnd hooks (rumble stop); pause releases every source synchronously and a pause while paused is
  *    ignored (PAD-02 CR 2).
- *  - prepareState: the practice free-play layout is applied to the fresh state (MOD-04 hook).
+ *  - prepareState: an injected hook runs once on the fresh state; [QF-12] by default the session adds nothing (the
+ *    practice free-play layout comes from sim/init initMatch itself).
  */
 import { describe, expect, it, vi } from 'vitest';
 import type {
@@ -21,7 +22,7 @@ import { createMatchConfig, type MatchConfig, type SimState } from '../../src/co
 import { CLUBS } from '../../src/data/clubs';
 import { createNullRenderer } from '../../src/app/nullRenderer';
 import { createRouter } from '../../src/app/router';
-import { cleanDeviceIds, createSession, prepareModeState, withBinding, type SessionDeps } from '../../src/app/session';
+import { cleanDeviceIds, createSession, withBinding, type SessionDeps } from '../../src/app/session';
 import { ANY_DEVICE, createLocalInputProvider, type LocalInputProvider } from '../../src/app/localInput';
 import type { AppSession, MatchRuntime } from '../../src/app/types';
 import { initMatch } from '../../src/sim/init';
@@ -326,27 +327,37 @@ describe('INT-B session hooks', () => {
     expect(onMatchEnd).toHaveBeenCalledTimes(1);
   });
 
-  it('prepareState runs once on the fresh state (practice free play: the opponents leave, the keeper stays)', async () => {
+  it('prepareState runs once on the fresh state, before prev is cloned', async () => {
     const seen: SimState[] = [];
-    const h = harness(undefined, { prepareState: (s) => { seen.push(s); prepareModeState(s); } });
-    const cfg = config({ mode: ModeId.PRACTICE, practice: PracticeKind.FREE_PLAY });
-    await start(h, [{ human: 0, deviceIds: ['touch'] }], cfg);
+    const h = harness(undefined, { prepareState: (s) => { seen.push(s); s.players[3]!.x = 7.25; } });
+    await start(h, [{ human: 0, deviceIds: ['touch'] }]);
     expect(seen).toHaveLength(1);
     const s = h.rt().curr;
     expect(seen[0]).toBe(s);
+    expect(s.players[3]!.x).toBe(7.25);
+    // prev was cloned after the hook, so interpolation never shows the state before it.
+    expect(h.rt().prev.players[3]!.x).toBe(7.25);
+  });
+
+  it('qf-12: practice free play through the default session (no prepare hook): initMatch alone fields only the keeper', async () => {
+    const h = harness();
+    const cfg = config({ mode: ModeId.PRACTICE, practice: PracticeKind.FREE_PLAY });
+    await start(h, [{ human: 0, deviceIds: ['touch'] }], cfg);
+    const s = h.rt().curr;
     let away = 0;
     for (let i = PLAYERS_PER_TEAM; i < NUM_SLOTS; i++) if (s.players[i]!.active === 1) away++;
     expect(away).toBe(1);
     expect(s.players[s.teams[1]!.keeperSlot]!.active).toBe(1);
-    // prev was cloned after the layout, so interpolation never shows the removed players.
     expect(h.rt().prev.players[PLAYERS_PER_TEAM + 5]!.active).toBe(s.players[PLAYERS_PER_TEAM + 5]!.active);
   });
 
-  it('prepareModeState leaves every non-practice match untouched', () => {
-    const s = initMatch(config());
-    const before = s.players.map((p) => p.active);
-    prepareModeState(s);
-    expect(s.players.map((p) => p.active)).toEqual(before);
+  it('qf-12: a non-practice match through the default session is exactly initMatch (nothing added after it)', async () => {
+    const h = harness();
+    const cfg = config();
+    await start(h, [{ human: 0, deviceIds: ['touch'] }], cfg);
+    const fresh = initMatch(cfg, CLUBS);
+    expect(h.rt().curr.players.map((p) => p.active)).toEqual(fresh.players.map((p) => p.active));
+    expect(h.rt().curr.players.map((p) => p.x)).toEqual(fresh.players.map((p) => p.x));
   });
 
   it('MatchHooks (online pause rules): allowPause can refuse a pause or a resume; onPauseChange / onQuit are told', async () => {

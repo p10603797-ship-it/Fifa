@@ -16,7 +16,7 @@ import { deserializeState } from '../../src/sim/core/serialize';
 import { runTicks } from '../harness/scenario';
 
 describe('QF-2 CR (SIM-07): a clean first touch at a sprint keeps the ball within his reach', () => {
-  it.fails('the sprinting receiver still has the ball at his feet when the FIRST_TOUCH window ends', () => {
+  it('the sprinting receiver still has the ball at his feet when the FIRST_TOUCH window ends', () => {
     const s = deserializeState(readFileSync(new URL('./fixtures/qf-2-first-touch-sprint.state.json', import.meta.url), 'utf8'));
     expect(s.ball.owner).toBe(-1);
     let touched = false;

@@ -227,7 +227,9 @@ function runProbe(): Probe {
   states.forEach(layout);
   settle(16);
   const chest = curr.players.map((p, i) => proj(p.x, 0.95 * (curr.attrs[i]!.height > 0 ? curr.attrs[i]!.height / 180 : 1), p.z));
-  const slotsA = chest.map((c) => read(c.x, c.y));
+  // [QF-12 refit] A 7x7 block: halves / stripes / hoops kits (club 1's away kit is white | orange HALVES) average to one
+  // team colour; a 3x3 block on the halves' seam read 92-93 from the team mean (limit 90) as the pose swayed.
+  const slotsA = chest.map((c) => read(c.x, c.y, 3));
   const ballS = proj(curr.ball.x, curr.ball.y, curr.ball.z);
   const ballA = read(ballS.x, ballS.y);
   // Camera geometry (frame A camera).
@@ -244,7 +246,7 @@ function runProbe(): Probe {
     s.ball.y = -3;
   });
   settle(2);
-  const slotsB = chest.map((c) => read(c.x, c.y));
+  const slotsB = chest.map((c) => read(c.x, c.y, 3));
   const ballB = read(ballS.x, ballS.y);
   const grass = [proj(-10, 0, -15), proj(10, 0, -15), proj(-10, 0, 15), proj(10, 0, 15)].map((g) => read(g.x, g.y, 2));
   const line = proj(0, 0, -20);
@@ -291,6 +293,8 @@ test.describe('FND-INT walking skeleton', () => {
 
     await test.step('boot -> splash -> main', async () => {
       await page.goto('/');
+      // [QF-12 refit] The input steps follow one player: auto-switch off.
+      await page.evaluate(() => window.__dotkick!.ctx.settings.update((s) => { s.controls.autoSwitch = 0; }));
       await expect(page.locator('canvas#game')).toHaveCount(1);
       for (const id of ['hud', 'touch', 'ui']) await expect(page.locator(`div#${id}`)).toHaveCount(1);
       const start = page.getByTestId('splash-start');
@@ -350,6 +354,13 @@ test.describe('FND-INT walking skeleton', () => {
     });
 
     await test.step('render probes: pitch, 22 capsules, ball, broadcast camera', async () => {
+      // [QF-12 refit] The match opens with the PRE_MATCH establishing shot (GFX-15 / QF-4): probe the broadcast camera
+      // once the intro is over (main camera, no cinematic shot), not 10 ticks in.
+      await page.waitForFunction(() => {
+        const s = window.__dotkick!.ctx.session.getState();
+        const c = (window as unknown as { __dotkickCinematic?: { active: boolean } }).__dotkickCinematic;
+        return !!s && s.match.phase !== 0 && (!c || c.active === false);
+      }, null, { timeout: 60_000 });
       await page.evaluate(() => window.__dotkick!.ctx.session.pause(-1));
       expect(await page.evaluate(() => window.__dotkick!.ctx.session.paused)).toBe(true);
       const p = await page.evaluate(runProbe);
@@ -403,6 +414,17 @@ test.describe('FND-INT walking skeleton', () => {
 
       await page.evaluate(() => window.__dotkick!.ctx.session.resume(-1));
       expect(await page.evaluate(() => window.__dotkick!.ctx.session.paused)).toBe(false);
+      // [QF-12 refit] The input steps below need open play: the kick-off taker stands at the ball until it is taken.
+      // The sim's own restart timeout takes it (whichever side has it); auto-switch is off (set at boot).
+      await page.waitForFunction(() => {
+        const st = (window.__dotkick!.ctx.session as unknown as { runtime(): { curr: { match: { phase: number; restart: Record<string, number> } } } | null }).runtime()?.curr;
+        if (!st) return false;
+        const r = st.match.restart;
+        if (st.match.phase === 1 && r.ready === 1 && r.taken === 0) r.timeoutT = 1;
+        return st.match.phase === 2;
+      }, null, { timeout: 60_000 });
+      const openTick = await tick(page);
+      await page.waitForFunction((t) => window.__dotkick!.ctx.session.getState()!.tick >= t + 30, openTick, { timeout: 30_000 });
     });
 
     await test.step('keyboard: holding D moves the controlled player toward +x, release stops', async () => {

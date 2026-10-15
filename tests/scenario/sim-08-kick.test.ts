@@ -107,12 +107,14 @@ describe('SIM-08 KICK action timing', () => {
     startAt(s, KickKind.GROUND_PASS, { power: 0.02, charging: 1 });
     const p = s.players[PASSER]!;
     const release = 25;
-    const steps = actTicks(s, release + REC + 2, (t) => {
-      if (p.act !== ActionKind.KICK || p.actDone === 1) return;
+    // [QF-10] The strike follows the release by T_PASS.releaseStrikeTicks (the clip swings from its backswing top).
+    const strike = release + T_PASS.releaseStrikeTicks;
+    const steps = actTicks(s, strike + REC + 2, (t) => {
+      if (p.act !== ActionKind.KICK || p.actDone === 1 || p.actCharging !== 1) return;
       p.actPower = Math.min(1, t / T_PASS.powerFillTicks); // the resolver's power bar
       if (t === release) p.actCharging = 0;
     });
-    expect(kickTicks(steps)).toEqual([release]);
+    expect(kickTicks(steps)).toEqual([strike]);
     expect(kickEvent(steps)!.c).toBeCloseTo(release / T_PASS.powerFillTicks, 12);
     const s2 = scene();
     startAt(s2, KickKind.GROUND_PASS, { charging: 1 });
@@ -122,9 +124,13 @@ describe('SIM-08 KICK action timing', () => {
     expect(s2.ball.owner).toBe(PASSER);
     q.actCharging = 0;
     actTicks(s2, 1);
+    expect(q.actDone).toBe(0);
+    expect(q.actContact).toBe(strike);
+    expect(q.actDur).toBe(strike + REC);
+    actTicks(s2, T_PASS.releaseStrikeTicks);
     expect(q.actDone).toBe(1);
-    expect(q.actContact).toBe(release);
-    expect(q.actDur).toBe(release + REC);
+    expect(q.actContact).toBe(strike);
+    expect(q.actDur).toBe(strike + REC);
   });
 
   it('a charge released during the wind-up still contacts at the wind-up tick', () => {
@@ -140,8 +146,8 @@ describe('SIM-08 KICK action timing', () => {
     const p = s.players[PASSER]!;
     const cap = W + T_PASS.powerFillTicks + LT.chargeWaitExtraTicks;
     let charged = 0;
-    const steps = actTicks(s, cap + REC + 2, () => { if (p.actCharging === 1) charged++; });
-    expect(kickTicks(steps)).toEqual([cap]);
+    const steps = actTicks(s, cap + T_PASS.releaseStrikeTicks + REC + 2, () => { if (p.actCharging === 1) charged++; });
+    expect(kickTicks(steps)).toEqual([cap + T_PASS.releaseStrikeTicks]);
     expect(charged).toBeLessThan(INVARIANT_LIMITS.maxChargeTicks);
     expect(p.act).toBe(ActionKind.NONE);
     expect(p.actCharging).toBe(0);
@@ -216,10 +222,10 @@ describe('SIM-08 KICK whiffs', () => {
     expect(k).toHaveLength(1);
     expect(k[0]!).toBeGreaterThan(W);
     expect(k[0]!).toBeLessThan(W + LT.contactGraceTicks);
-    // Held up there for good: whiff when the grace runs out.
+    // Held up there for good: whiff when the grace runs out ([QF-10] his own ball: LT.ownReachWaitTicks).
     const s2 = scene();
     startAt(s2);
-    const steps2 = actTicks(s2, W + LT.contactGraceTicks + REC + 1, (t, st) => { if (t >= W) { st.ball.y = 1.5; st.ball.vy = 0; } });
+    const steps2 = actTicks(s2, W + LT.ownReachWaitTicks + REC + 1, (t, st) => { if (t >= W) { st.ball.y = 1.5; st.ball.vy = 0; } });
     expect(kickTicks(steps2)).toEqual([]);
     expect(s2.players[PASSER]!.act).toBe(ActionKind.NONE);
   });
@@ -260,7 +266,9 @@ describe('SIM-08 KICK movement', () => {
   it('slowed during the wind-up, LOCKED at contact, then handed back with a ramp', () => {
     const caps: number[] = [];
     const modes: number[] = [];
-    const release = 12;
+    const rel = 12;
+    // [QF-10] The contact follows the release by T_PASS.releaseStrikeTicks (still slowed until then).
+    const release = rel + T_PASS.releaseStrikeTicks;
     // Record what locomotion would see after each action stage.
     const s2 = scene();
     startAt(s2, KickKind.GROUND_PASS, { charging: 1 });
@@ -272,7 +280,7 @@ describe('SIM-08 KICK movement', () => {
       if (!(q.act !== ActionKind.NONE && q.moveMode === MoveMode.LOCKED)) {
         q.moveMode = MoveMode.DIRECT; q.ix = 0.6; q.iz = 0.8; q.wantSprint = 1;
       }
-      if (t === release) q.actCharging = 0;
+      if (t === rel) q.actCharging = 0;
       actionsTick(s2, ev);
       modes.push(q.moveMode);
       caps.push(q.moveMode === MoveMode.DIRECT ? Math.hypot(q.ix, q.iz) : -1);

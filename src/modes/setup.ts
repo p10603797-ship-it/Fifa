@@ -229,10 +229,22 @@ export function buildSetup(ctx: Pick<AppContext, 'settings' | 'devices' | 'clubs
   return { config: c, bindings: hb.bindings };
 }
 
-/** The default local match: human 0 at home on every local device vs the CPU (recorded in the lifetime records). */
+/**
+ * The default local match: human 0 at home on every local device vs the CPU (recorded in the lifetime records).
+ * [QF-12] The saved kit slots go through the GFX-08 clash check like every other setup (buildSetup): Settings > Match
+ * can change a club without touching the saved kits, and Play now then requested a clashing pair (93 of the 380
+ * pairings for HOME / AWAY), which the HUD and the main menu card showed while the players wore the other kit.
+ */
 export function defaultSetup(ctx: AppContext): MatchSetup {
   const settings = ctx.settings.get();
   const config = configFromSettings(settings, ModeId.KICK_OFF);
+  const clubs = (ctx as Partial<Pick<AppContext, 'clubs'>>).clubs;
+  if (clubs && clubs.length > 0) {
+    config.homeClub = clampClub(clubs, config.homeClub, 0);
+    config.awayClub = clampClub(clubs, config.awayClub, clubs.length > 1 ? 1 : 0);
+    [config.homeKit, config.awayKit] = resolveKitSlots(clubs, config.homeClub, config.awayClub, config.homeKit, config.awayKit,
+      settings.accessibility?.highContrastKits === true);
+  }
   config.humans[0] = humanController(settings, 0);
   const bindings: HumanBinding[] = [{ human: 0, deviceIds: allLocalDevices(ctx) }];
   return withRecords(ctx.settings, { config, bindings });

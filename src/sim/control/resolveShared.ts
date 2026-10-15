@@ -58,15 +58,13 @@ export const LOCAL_TUNING = {
   volleyMaxHeight: 1.2,
   /** The receiver auto-collecting a pass meets the ball's track at most this far ahead, s. */
   receiveLookAheadSec: 2,
-  /** [INT-A] Receiver of a pass rolling away from him: overshoot of the meeting target and catch-up sprint (moved to
-   *  T_TOUCH by QF-2; see there). m/s, s, m, m, m. */
-  meetOvershootMinSpeed: T_TOUCH.meetOvershootMinSpeed,
-  meetOvershootSec: T_TOUCH.meetOvershootSec,
-  meetOvershootMin: T_TOUCH.meetOvershootMin,
-  meetOvershootMax: T_TOUCH.meetOvershootMax,
-  meetCatchDist: T_TOUCH.meetCatchDist,
   /** Sampling step along the ball track for the receiver's meeting point, s. */
   meetStepSec: 0.125,
+  /** [QF-9] The receiver's meeting point skips the part of an airborne ball's track above this height (it flies over
+   *  him there) and meets it where it comes down through it: SIM-07's chest-trap height, so he can take it on the chest
+   *  or thigh with no button pressed (2.0 m, head height, left a CPU receiver waiting under a ball that passed at 1.9 m
+   *  with no header started, and a human's idle stick never heads), m. */
+  meetMaxHeight: T_TOUCH.trapHeight,
   /** Contain (PASS held in defence): shadow distance goal-side of the carrier, m. */
   containDist: 2.0,
   /** Sprint held with the stick idle presses a carrier within this distance, m. */
@@ -426,13 +424,75 @@ export function ballEta(s: SimState, slot: number): number {
   return eta > 0 ? eta : 0;
 }
 
+/**
+ * [QF-9 skeptic] First-time kick timing: ticks until the loose ball comes within LT.reachRadius of `slot` (the kick's
+ * reach: where the foot meets it), with his own run along its track (a receiver stepping onto the pass closes the gap
+ * faster); 0 = in reach now, -1 = not arriving (as ballEta: lane, rolling deceleration). ballEta counts to his centre
+ * and ignores his run: for a receiver running onto the pass it read 10-13 ticks while the ball was 1-2 ticks from his
+ * reach, so the first-time press fired late and the kick whiffed, or SIM-07 trapped the ball first. (ballEta keeps
+ * timing the own-third clearance decision and TCH-04's CLEAR label: the clearance launches at once and its kick needs
+ * the extra lead to line up.) Pure, O(1).
+ */
+export function ballReachEta(s: SimState, slot: number): number {
+  const b = s.ball;
+  if (b.owner >= 0 || b.heldBy >= 0) return -1;
+  const p = s.players[slot]!;
+  const dx = p.x - b.x, dz = p.z - b.z;
+  const reach = LT.reachRadius;
+  if (dx * dx + dz * dz <= reach * reach) return 0;
+  const vx = b.vx, vz = b.vz;
+  const v2 = vx * vx + vz * vz;
+  if (v2 < LT.arriveMinSpeed * LT.arriveMinSpeed) return -1;
+  const v = Math.sqrt(v2);
+  const ux = vx / v, uz = vz / v;
+  const along = dx * ux + dz * uz; // his distance ahead of the ball along its track
+  if (!(along > 0)) return -1;
+  let lat = dx * uz - dz * ux;
+  if (lat < 0) lat = -lat;
+  const target = b.passTarget === slot && b.lastTouchTeam === p.team;
+  const lane = target ? LT.receiveLaneTarget : LT.receiveLane;
+  if (lat > lane) return -1;
+  // Gap to close: to where the track enters his reach (to the closest approach when it passes outside it).
+  const gap = lat < reach ? along - Math.sqrt(reach * reach - lat * lat) : along;
+  const w = v - (p.vx * ux + p.vz * uz); // closing speed along the track (his run toward the ball adds)
+  if (!(w > 0)) return -1;
+  let sec = gap / w;
+  if (b.grounded === 1) {
+    const a = T_BALL.rollDecel + T_BALL.rollDamping * v;
+    const disc = w * w - 2 * a * gap;
+    if (disc <= 0) return -1; // stops short of him
+    sec = (w - Math.sqrt(disc)) / a;
+  }
+  const eta = Math.ceil(sec * TICK_HZ);
+  return eta > 0 ? eta : 0;
+}
+
 /** Meeting point written by meetPoint (scratch, read right after the call) and the run speed it planned (m/s). */
 export const MEET = { x: 0, z: 0, speed: 0 };
 
 /**
+ * meetPoint scratch (doubles cross the helper call through a typed array, never as arguments): [0] t (s), [1..2] ball
+ * x / z now, [3..4] unit track direction, [5] horizontal speed, [6] rolling deceleration (0 in the air), [7..8] player
+ * x / z, [9] his planned speed, [10] the reach radius.
+ */
+const MT = new Float64Array(11);
+
+/** MEET = the ball's track point at time MT[0]; 1 when the player gets within reach of it by then. */
+function meetEval(): number {
+  const t = MT[0]!, v = MT[5]!, a = MT[6]!;
+  let d = v * t - 0.5 * a * t * t;
+  if (a > 0 && t > v / a) d = (v * v) / (2 * a);
+  MEET.x = MT[1]! + MT[3]! * d;
+  MEET.z = MT[2]! + MT[4]! * d;
+  const dx = MEET.x - MT[7]!, dz = MEET.z - MT[8]!;
+  return Math.sqrt(dx * dx + dz * dz) <= MT[9]! * t + MT[10]! ? 1 : 0;
+}
+
+/**
  * Earliest point on the loose ball's ground track that `slot` can reach in time (at top speed when sprint = 1, else
- * jog speed or his current speed when faster; samples every LT.meetStepSec up to LT.receiveLookAheadSec, grounded balls decelerating) into MEET; the
- * last sample if none. Takes no double arguments (V8 boxes doubles across calls).
+ * jog speed or his current speed when faster; samples every LT.meetStepSec up to LT.receiveLookAheadSec, grounded balls
+ * decelerating) into MEET; the last sample if none. [QF-9] A lofted ball's track is skipped where it is above
+ * LT.meetMaxHeight (see below). Takes no double arguments (V8 boxes doubles across calls).
  */
 export function meetPoint(s: SimState, slot: number, sprint: number): void {
   const b = s.ball;
@@ -448,18 +508,49 @@ export function meetPoint(s: SimState, slot: number, sprint: number): void {
   MEET.x = b.x;
   MEET.z = b.z;
   if (v < 0.5) return;
-  const ux = b.vx / v, uz = b.vz / v;
-  const a = b.grounded === 1 ? T_BALL.rollDecel + T_BALL.rollDamping * v : 0;
-  const n = Math.floor(LT.receiveLookAheadSec / LT.meetStepSec);
-  for (let k = 1; k <= n; k++) {
-    const t = k * LT.meetStepSec;
-    let d = v * t - 0.5 * a * t * t;
-    if (a > 0 && t > v / a) d = (v * v) / (2 * a);
-    MEET.x = b.x + ux * d;
-    MEET.z = b.z + uz * d;
-    const dx = MEET.x - p.x, dz = MEET.z - p.z;
-    if (Math.sqrt(dx * dx + dz * dz) <= speed * t + LT.reachRadius) return;
+  const air = b.grounded !== 1;
+  MT[1] = b.x; MT[2] = b.z; MT[3] = b.vx / v; MT[4] = b.vz / v; MT[5] = v;
+  MT[6] = air ? 0 : T_BALL.rollDecel + T_BALL.rollDamping * v;
+  MT[7] = p.x; MT[8] = p.z; MT[9] = speed; MT[10] = LT.reachRadius;
+  // [QF-9] A lofted ball (lob, keeper throw, cross) is over his head between tUp and tDown (its flight parabola above
+  // LT.meetMaxHeight; none when it stays below): no meeting point there (the ground-track point he could reach first was
+  // 4-10 m under the ball, which landed behind him; LOB_PASS reached a teammate 2 times in 64). The exact crossing
+  // points are candidates themselves, so the target does not jump with the sampling grid as the ball flies.
+  let tUp = -1, tDown = -1;
+  if (air) {
+    const g = T_BALL.gravity;
+    const disc = b.vy * b.vy + 2 * g * (b.y - LT.meetMaxHeight);
+    if (disc > 0) {
+      const r = Math.sqrt(disc);
+      tDown = (b.vy + r) / g;
+      tUp = (b.vy - r) / g; // < 0 when it is above head height already
+    }
   }
+  // [QF-9 skeptic] The samples sit on a grid of absolute match time (every meetStepSec of s.tick / TICK_HZ), not of
+  // time from now: then they are the same points of the ball's track tick after tick, and the target stays put while
+  // the ball comes (a grid from now moved the target on with the ball by 0.2 m a tick and threw it back by v x
+  // meetStepSec every 7-8 ticks: an idle receiver of a 17-20 m/s pass shuffled to and fro in that sawtooth).
+  const step = LT.meetStepSec;
+  const now = s.tick / TICK_HZ;
+  const phase = now - Math.floor(now / step) * step; // 0 <= phase < step
+  const n = Math.floor(LT.receiveLookAheadSec / step);
+  let prev = 0;
+  for (let k = 1; k <= n; k++) {
+    const tk = k * step - phase;
+    for (let e = 0; e < 3; e++) {
+      // e 0 / 1: the crossing up / down when it falls in (prev, tk]; e 2: the sample itself unless over his head.
+      const t = e === 0 ? tUp : e === 1 ? tDown : tk;
+      if (e < 2 && !(t > prev && t <= tk)) continue;
+      if (e === 2 && tk > tUp && tk < tDown) continue;
+      MT[0] = t;
+      if (meetEval() === 1) return;
+    }
+    prev = tk;
+  }
+  // None reachable within the look-ahead: the last sample (or the landing point when it is still over his head then).
+  const tLast = n * step - phase;
+  MT[0] = tDown > tLast ? tDown : tLast;
+  meetEval();
 }
 
 /** True while slot is the intended receiver of a teammate's pass in flight. */

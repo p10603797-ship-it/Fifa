@@ -15,6 +15,7 @@
 import { MenuAction, type AppContext, type FrameInfo, type Screen, type ScreenParams } from '../../contracts/app';
 import { PadFamily, PracticeKind } from '../../contracts/enums';
 import { buildPracticeSetup } from '../../modes/practice';
+import { refuseWhileMatch } from './diagnostics';
 import { effectiveFamily } from '../../input/pad/glyphs';
 import { attachDotField, sharedDotField } from '../dotfield';
 import { closeTopModal, createBackButton, createButton, createSegmented, h, injectStyle, setSelected, type Selector } from '../components';
@@ -189,7 +190,7 @@ export function createTutorialScreen(): Screen {
 
   function start(): void {
     const ctx = ctxRef;
-    if (!ctx || ctx.session.active) return;
+    if (!ctx || refuseWhileMatch(ctx)) return;
     ctx.audio.unlock().catch(() => undefined);
     const setup = buildPracticeSetup(ctx, PracticeKind.TUTORIAL, { device: device.kind });
     const base = setup.modeData && typeof setup.modeData === 'object' ? (setup.modeData as Record<string, unknown>) : {};

@@ -57,7 +57,9 @@ function run(r: TouchRig, n = 45): Result {
   const skillEv = r.events.find((e) => e.type === EventType.SKILL && e.a === P);
   const out = first ?? { act: ActionKind.NONE, kind: KickKind.NONE, flags: 0, skill: SkillMove.NONE, lastKick: KickKind.NONE };
   if (skillEv && out.skill === SkillMove.NONE) out.skill = skillEv.b as SkillMove;
-  out.lastKick = r.s.ball.lastKickKind;
+  // #9's own last kick (an opponent may head a dink before the window ends since QF-9's lofted-receiver fix).
+  const own = r.events.filter((e) => e.type === EventType.KICK && e.a === P);
+  out.lastKick = own.length > 0 ? (own[own.length - 1]!.b as KickKind) : r.s.ball.lastKickKind;
   return out;
 }
 

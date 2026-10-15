@@ -24,10 +24,14 @@
  *  - low driven (markLowDriven, called by the SIM-15 resolver for a second SHOOT press during the power-up): actKick
  *    becomes SHOT_LOW_DRIVEN with the power held so far (a power shot's longer wind-up shrinks to T_SHOT.windup).
  *  - dispossessed before contact (someone else owns / holds the ball): whiff at once, recover.
+ *  - [QF-10] released charge: the first tick after the power bar is released the contact moves to
+ *    T_PASS.releaseStrikeTicks after it (kickCommon.ts releaseStrike; not for a first-time shot of a ball arriving).
  *  - contact (first tick with actT >= actContact, not charging): the phase must be live for him, the ball untouched by
- *    anyone else this tick and in reach (his own ball, or within LT.reachRadius and LT.reachHeight). A loose ball still
- *    arriving (first-time shot: on a path within LT.startArriveLane, the same window startShot accepted) or his own ball
- *    still dropping may delay the contact up to LT.contactGraceTicks (the recovery bounds it too). Then
+ *    anyone else this tick and in reach of his foot ([QF-10] kickCommon.ts footCanStrike: LT.reachRadius, LT.reachHeight
+ *    and the kicking spot, also for his own ball). A loose ball still arriving (first-time shot: on a path within
+ *    LT.startArriveLane, the same window startShot accepted) may delay the contact up to LT.contactGraceTicks, his own
+ *    ball out of reach up to LT.ownReachWaitTicks (the planned recovery follows the late contact); a restart taker's
+ *    dead ball not at his kicking spot: he side-steps round it first (kickCommon.ts lineUpOnDeadBall). Then
  *    solveShot fills the launch and core/kick.ts applyKick plays it (KICK + SHOT events, ball.shotBy / shotOnTarget,
  *    restart.taken). Anything else is a whiff. actContact moves to the actual contact tick and the planned recovery
  *    follows it (actDone = 1). Recovery: MoveMode.LOCKED for LT.contactLockTicks (follow-through), STOP for a tick, then
@@ -95,6 +99,7 @@ import { applyKick, ballTouchedThisTick } from '../core/kick';
 import { pressureOn } from '../core/query';
 import { rngGauss } from '../core/rng';
 import { staminaFactor } from '../players/locomotion';
+import { footCanStrike, isDeadBallTaker, KICK_TUNING, lineUpOnDeadBall, noteCharging, releaseStrike } from './kickCommon';
 
 /** TUNING-CR (SIM-11): proposed additions to T_SHOT (units in the comments). */
 export const LOCAL_TUNING = { // TUNING-CR
@@ -105,9 +110,13 @@ export const LOCAL_TUNING = { // TUNING-CR
   contactLockTicks: 5,
   /** A held charge waits at most T_PASS.powerFillTicks + this many ticks past the planned contact, ticks. */
   chargeWaitExtraTicks: 20,
-  /** A loose ball still arriving, or his own ball still above reachHeight, may delay the contact by up to, ticks
-   *  (= startArriveTicks: a first-time shot startShot accepted never whiffs only because the ball is late). */
-  contactGraceTicks: 14,
+  /** A loose ball still arriving may delay the contact by up to, ticks (startArriveTicks + 6: a first-time shot
+   *  startShot accepted never whiffs only because the ball is late; [QF-10] +6 for it to come from his lane to the
+   *  kicking spot, kickCommon.ts footCanStrike). */
+  contactGraceTicks: 20,
+  /** [QF-10] His own ball out of reach at the contact tick (a touch ahead, still dropping, behind him): the contact waits
+   *  up to this many ticks while SIM-06 pulls it onto the kicking spot, ticks. */
+  ownReachWaitTicks: 14,
   /** The ball can be struck within this horizontal distance of the body centre, m ... */
   reachRadius: 1.2,
   /** ... with its centre at or below this height, m. */
@@ -1016,9 +1025,12 @@ function solveShotImpl(s: SimState, slot: number, out: KickLaunch): number {
 
 // ---------------------------------------------------------------- SHOT action handler
 
-/** Contact done (struck or whiffed) at the current tick: actContact = now, the planned recovery follows. */
+/**
+ * Contact done (struck or whiffed) at the current tick: actContact = now, the planned recovery follows. While the
+ * contact waits past its tick actDur - actT keeps the planned recovery, before it actDur - actContact.
+ */
 function finishContact(p: PlayerState): void {
-  let rec = p.actDur - p.actContact;
+  let rec = p.actDur - (p.actT > p.actContact ? p.actT : p.actContact);
   if (!(rec >= 1)) rec = DEFAULT_REC;
   p.actDone = 1;
   p.actCharging = 0;
@@ -1096,28 +1108,51 @@ function shotUpdate(s: SimState, slot: number, ev: EventSink): void {
     shotMove(s, p);
     return;
   }
-  if (p.actT < p.actContact) { shotMove(s, p); return; }
-  const waited = p.actT - p.actContact;
+  // [QF-10] A restart taker kicking the dead ball lines up behind it along his kick first (kickCommon.ts).
+  const taker = isDeadBallTaker(s, slot);
   if (p.actCharging === 1) {
-    if (waited < CHARGE_WAIT) { shotMove(s, p); return; }
+    noteCharging(s, slot);
+    if (taker) lineUpOnDeadBall(s, slot);
+    if (p.actT < p.actContact || p.actT - p.actContact < CHARGE_WAIT) { shotMove(s, p); return; }
     p.actCharging = 0; // backstop: the power bar never stays stuck
   }
+  // [QF-10] A released power bar strikes T_PASS.releaseStrikeTicks later (kickCommon.ts).
+  releaseStrike(s, slot);
+  if (p.actT < p.actContact) {
+    if (taker) lineUpOnDeadBall(s, slot);
+    shotMove(s, p);
+    return;
+  }
+  const waited = p.actT - p.actContact;
   if (!liveFor(s, slot) || (ballTouchedThisTick(s) && b.lastTouch !== slot)) {
     finishContact(p);
     shotMove(s, p);
     return;
   }
-  if (!ballInReach(s, slot)) {
-    // Grace: a loose ball still arriving (first time), or his own ball still dropping.
-    const rec = p.actDur - p.actContact;
-    const left = LT.contactGraceTicks - waited;
-    if (left > 0 && waited < rec - 1 && (b.owner === slot || ballArriving(s, slot, left, LT.startArriveLane))) {
+  // [QF-10] The dead ball not at his kicking spot yet: keep lining up (the contact moves on a tick at a time).
+  if (taker && p.actT < KICK_TUNING.takerLineUpMaxTicks && lineUpOnDeadBall(s, slot) === 0) {
+    p.actContact = p.actT + 1;
+    p.actDur += 1;
+    shotMove(s, p);
+    return;
+  }
+  if (!footCanStrike(s, slot, LT.reachRadius, REACH_H)) {
+    // Grace: his own ball until SIM-06 has it back on the kicking spot for up to LT.ownReachWaitTicks, or a loose ball
+    // still arriving (first time) for up to LT.contactGraceTicks. The planned recovery is kept after the late contact.
+    if (!taker) {
+      if (b.owner === slot ? waited < LT.ownReachWaitTicks
+        : waited < LT.contactGraceTicks && ballArriving(s, slot, LT.contactGraceTicks - waited, LT.startArriveLane)) {
+        p.actDur += 1;
+        shotMove(s, p);
+        return;
+      }
+    }
+    // A taker who could not line up in time still takes the restart when the ball is near him; anyone else whiffs.
+    if (!taker || !ballInReach(s, slot)) {
+      finishContact(p); // whiff
       shotMove(s, p);
       return;
     }
-    finishContact(p); // whiff
-    shotMove(s, p);
-    return;
   }
   contact(s, slot, ev);
   shotMove(s, p);

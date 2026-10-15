@@ -8,9 +8,9 @@
  *    Make the draw -> createCup (saved at once) -> bracket.
  *  - Bracket (a saved cup = Continue): a mirrored bracket (left half flows right, right half flows left, the final in
  *    the middle; results, shoot-outs, winners, human clubs marked), and the next-tie strip: the round, both clubs and
- *    Play match, which starts the tie (MOD-02 nextMatch). When the tie ends, the cup records it, the session is
- *    released and this screen returns with the result card (params.result = { round, tie }); a quit returns with the
- *    tie still to play. When the cup is over the strip shows the champion (and where the human went out) with New
+ *    Play match, which starts the tie (MOD-02 nextMatch). When the tie ends, the cup records it and the final
+ *    full-time screen shows the match (stats, player of the match); its Continue releases the session and this screen
+ *    returns with the result card (params.result = { round, tie }); a quit returns with the tie still to play. When the cup is over the strip shows the champion (and where the human went out) with New
  *    cup.
  * Back: New cup -> the bracket when a cup exists, else the previous screen. Every control is a [data-focus] button of at
  * least 60 pt, so the screen works by touch alone and by controller alone (focus ring, spatial order, Back).
@@ -187,6 +187,16 @@ export function exitRound(state: Readonly<CupState>, club: number): number {
   return -1;
 }
 
+/**
+ * [QF-12] End of a cup tie (after the cup recorded it, MOD-02 nextMatch onFinished). A finished tie stays on the final
+ * full-time screen (score, stats, player of the match; BRIEF §12), whose Continue releases the match and comes back to
+ * the cup with the result card (fullTime.ts cupResultOf). It used to come straight back here, so a cup tie never showed
+ * its stats. A quit returns to the cup at once with the tie still to play.
+ */
+export function cupTieFinished(router: Pick<AppContext['router'], 'go'>, quit: boolean): void {
+  if (quit) router.go('cup', {});
+}
+
 export function createCupScreen(): Screen {
   let ctxRef: AppContext | null = null;
   let rootRef: HTMLElement | null = null;
@@ -198,21 +208,7 @@ export function createCupScreen(): Screen {
 
   function play(ctx: AppContext): void {
     if (!run) return;
-    const at = run.pendingTie();
-    const setup = run.nextMatch({
-      onFinished: (_summary, quit) => {
-        if (!quit) {
-          // Release the finished match (renderer, HUD, inputs); quit() also resets the router to main...
-          try {
-            ctx.session.quit();
-          } catch {
-            /* already released */
-          }
-        }
-        // ...and the cup comes back on top of it, with the result of the tie just played.
-        ctx.router.go('cup', quit ? {} : { result: at });
-      },
-    });
+    const setup = run.nextMatch({ onFinished: (_summary, quit) => cupTieFinished(ctx.router, quit) });
     if (!setup) {
       render();
       return;

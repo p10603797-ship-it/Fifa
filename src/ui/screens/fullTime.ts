@@ -10,9 +10,9 @@
  *  - the player of the match card (the tracker's pick; while the tracker does not rate players, the best scorer /
  *    assister is shown and labelled as derived from goals);
  *  - Rematch (session.restart(): same setup, new seed), Change Teams (team select in the same mode, starting from this
- *    match's setup with a fresh seed), Quit (main menu). Back = Quit. A custom input provider (online) cannot restart,
- *    so Rematch is hidden there and Change Teams leads to the online lobby; the cup continues to the cup screen
- *    (normally setup.onFinish already navigated there and this screen is not shown at all).
+ *    match's setup with a fresh seed), Quit (main menu). Back = Quit (a cup tie: Continue). A custom input provider (online) cannot restart,
+ *    so Rematch is hidden there and Change Teams leads to the online lobby; a cup tie (already recorded by the cup at
+ *    POST_MATCH) offers Continue, back to the cup screen with the tie's result card (params.result).
  * Without a summary (tests, a tracker failure) the score from the state is shown and the table is left out.
  */
 import type { AppContext, MatchSummary, Screen, ScreenParams } from '../../contracts/app';
@@ -21,7 +21,7 @@ import { newMatchSeed } from '../../app/session';
 import { createButton, h, injectStyle } from '../components';
 import {
   clubOf, createScoreHeader, createScorers, createStatList, injectBreakStyle, liveSummary, pickPlayerOfMatch, playerName,
-  scoreLine, sendSkip, statRows, FULL_STAT_KEYS,
+  pumpSkip, scoreLine, sendSkip, statRows, FULL_STAT_KEYS,
 } from './halfTime';
 import { cloneSetup, isFlowMode } from './matchFlow';
 
@@ -72,6 +72,13 @@ export function finalActions(mode: ModeId | null, customProvider: boolean): Fina
   return { rematch: true, changeTeams: 'team-select', cup: false };
 }
 
+/** The cup tie a setup's mode payload names (modes/cup CupMatchData), as the cup screen's `result` param, or null. Pure. */
+export function cupResultOf(modeData: unknown): { round: number; tie: number } | null {
+  const md = modeData as { kind?: unknown; round?: unknown; tie?: unknown } | null | undefined;
+  if (!md || md.kind !== 'cup' || !Number.isInteger(md.round) || !Number.isInteger(md.tie)) return null;
+  return { round: md.round as number, tie: md.tie as number };
+}
+
 /** Team select again in the same mode, from this match's setup (fresh seed), after leaving the session. */
 export function changeTeams(ctx: AppContext, target: 'team-select' | 'online-lobby' = 'team-select'): void {
   const setup = ctx.session.getSetup();
@@ -109,9 +116,17 @@ function potmCard(ctx: AppContext, summary: MatchSummary): HTMLElement | null {
   );
 }
 
+/** Leave a finished cup tie for the cup screen with its result card (Continue; Back on a cup tie's final screen). */
+export function backToCup(ctx: Pick<AppContext, 'session' | 'router'>, result: { round: number; tie: number } | null): void {
+  ctx.session.quit();
+  ctx.router.go('cup', result ? { result } : {});
+}
+
 export function createFullTimeScreen(): Screen {
   let ctxRef: AppContext | null = null;
   let final = false;
+  /** Continue of a cup tie's final screen (null otherwise): Back does the same. */
+  let toCup: (() => void) | null = null;
   return {
     id: 'full-time',
     mount(root: HTMLElement, ctx: AppContext, params: ScreenParams) {
@@ -152,10 +167,10 @@ export function createFullTimeScreen(): Screen {
       const acts = finalActions(setup ? setup.config.mode : null, !!setup?.inputProvider);
       const row = h('div', { class: 'brk-actions' });
       if (acts.cup) {
-        row.append(createButton('Continue', () => {
-          ctx.session.quit();
-          ctx.router.go('cup');
-        }, { testId: 'ft-cup', variant: 'primary', autofocus: true, ctx }));
+        // [QF-12] Back to the cup with the result card of the tie just played (its CupMatchData names it).
+        const result = cupResultOf(setup?.modeData);
+        toCup = () => backToCup(ctx, result);
+        row.append(createButton('Continue', toCup, { testId: 'ft-cup', variant: 'primary', autofocus: true, ctx, hint: 'Back to the cup' }));
       }
       if (acts.rematch) {
         row.append(createButton('Rematch', () => ctx.session.restart(), { testId: 'ft-rematch', variant: 'primary', autofocus: true, ctx, hint: 'Same teams, new kick-off' }));
@@ -172,13 +187,20 @@ export function createFullTimeScreen(): Screen {
     },
     unmount() {
       ctxRef = null;
+      toCup = null;
     },
     onBack() {
       const ctx = ctxRef;
       if (!ctx) return false;
-      if (final) ctx.session.quit();
+      // [QF-12] A finished cup tie goes back to the cup (with its result card), like Continue: Back used to quit to the
+      // main menu, so the cup's result card and bracket were skipped (before QF-12 a tie returned to the cup by itself).
+      if (final && toCup) toCup();
+      else if (final) ctx.session.quit();
       else sendSkip(ctx);
       return true;
+    },
+    onFrame() {
+      if (ctxRef && !final) pumpSkip(ctxRef);
     },
   };
 }

@@ -20,9 +20,9 @@ import { BOARD_X, BOARD_Z, HALF_LENGTH } from '../../contracts/constants';
 import { ActionKind } from '../../contracts/enums';
 import { Btn } from '../../contracts/input';
 import { MoveMode, type ControllerState, type PlayerState, type SimState } from '../../contracts/state';
-import { T_PLAYER } from '../../contracts/tuning';
+import { T_PLAYER, T_TOUCH } from '../../contracts/tuning';
 import { canManualSwitch } from './switching';
-import { Ctx, LT, MEET, SeqFlag, meetPoint, oppCarrier, validSlot } from './resolveShared';
+import { Ctx, LT, MEET, SeqFlag, ballEta, meetPoint, oppCarrier, validSlot } from './resolveShared';
 
 const TGT_MAX_X = BOARD_X - 1;
 const TGT_MAX_Z = BOARD_Z - 1;
@@ -83,6 +83,16 @@ export function moveTick(s: SimState, c: number, ctl: ControllerState, p: Player
     // receiver of our pass keeps his meet run below).
     arrive = true;
     tx = b.x; tz = b.z; tsp = jog;
+  } else if (idle && b.owner < 0 && b.heldBy < 0 && (p.act === ActionKind.KICK || p.act === ActionKind.SHOT) &&
+    p.actDone === 0 && !(b.passTarget === slot && b.lastTouchTeam === p.team) && ballEta(s, slot) >= 0) {
+    // [QF-9 skeptic] A first-time kick (a clearance, a shot or pass of a loose ball) wound up for a ball still on its
+    // way, the stick left alone: meet the ball's path as the idle receiver of our pass does (below). He used to coast on
+    // his last run (DIRECT, no intent) off the ball's line while it came, and the kick whiffed (a defender running
+    // diagonally onto a 14-20 m/s ball, SHOOT pressed to clear: the ball passed 0.96 m from his kicking spot).
+    meetPoint(s, slot, 0);
+    arrive = true;
+    tx = MEET.x; tz = MEET.z; tsp = MEET.speed;
+    look = true; lx = b.x; lz = b.z; // facing the ball, so it comes to the kicking spot in front of him
   } else if (cls === Ctx.ATTACK) {
     if (b.owner === slot && b.heldBy < 0) {
       if ((btn & Btn.SHIELD) !== 0) {
@@ -108,13 +118,13 @@ export function moveTick(s: SimState, c: number, ctl: ControllerState, p: Player
       // short of it) and run at least at the ball's pace (sprinting when that is above jog speed).
       const bv = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
       const ahead = (b.x - p.x) * b.vx + (b.z - p.z) * b.vz;
-      if (bv > LT.meetOvershootMinSpeed && ahead > 0) {
-        let o = bv * LT.meetOvershootSec;
-        if (o < LT.meetOvershootMin) o = LT.meetOvershootMin;
-        if (o > LT.meetOvershootMax) o = LT.meetOvershootMax;
+      if (bv > T_TOUCH.meetOvershootMinSpeed && ahead > 0) {
+        let o = bv * T_TOUCH.meetOvershootSec;
+        if (o < T_TOUCH.meetOvershootMin) o = T_TOUCH.meetOvershootMin;
+        if (o > T_TOUCH.meetOvershootMax) o = T_TOUCH.meetOvershootMax;
         tx += (b.vx / bv) * o;
         tz += (b.vz / bv) * o;
-        if (ahead / bv > LT.meetCatchDist) { tsp = top; want = 1; }
+        if (ahead / bv > T_TOUCH.meetCatchDist) { tsp = top; want = 1; }
       }
       ctl.receiver = slot;
     }

@@ -94,6 +94,7 @@ test.describe('FND-05 fixes', () => {
     // Quit: back to the menu, the message goes away with the match.
     await page.evaluate(() => window.__dotkick!.ctx.session.pause(0));
     await page.getByTestId('pause-quit').click();
+    await page.getByTestId('pause-quit-confirm').click(); // UIX-08 quit confirmation (QF-12 refit: the spec predates it)
     await page.waitForFunction(() => window.__dotkick!.ctx.router.current === 'main');
     await expect(msg).toBeHidden();
     expect(errors).toEqual([]);
@@ -138,7 +139,21 @@ test.describe('FND-05 fixes', () => {
 
   test('keyboard: D + ArrowRight held, ArrowRight released -> still running right', async ({ page }) => {
     const errors = collectErrors(page);
+    // [QF-12 refit] The match opens with PRE_MATCH and a KICK_OFF whose taker stands at the ball, so the stick does
+    // nothing until open play: the kick-off is taken by the sim's own restart timeout (whichever side has it), with
+    // auto-switch off so the human keeps the same player for the check.
+    await page.goto('/');
+    await page.evaluate(() => window.__dotkick!.ctx.settings.update((s) => { s.controls.autoSwitch = 0; }));
     await startMatch(page);
+    await page.waitForFunction(() => {
+      const st = (window.__dotkick!.ctx.session as unknown as { runtime(): { curr: { match: { phase: number; restart: Record<string, number> } } } | null }).runtime()?.curr;
+      if (!st) return false;
+      const r = st.match.restart;
+      if (st.match.phase === 1 && r.ready === 1 && r.taken === 0) r.timeoutT = 1;
+      return st.match.phase === 2;
+    }, null, { timeout: 60_000 });
+    const k = await controlled(page);
+    await waitTicks(page, k.tick, 30);
     await page.keyboard.down('KeyD');
     await page.keyboard.down('ArrowRight');
     const a = await controlled(page);

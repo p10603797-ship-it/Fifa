@@ -16,6 +16,7 @@ import { hashState } from '../../src/sim/core/hash';
 import { INVARIANT_NAMES } from '../../src/sim/debug/invariants';
 import { findEvents, runTicks } from '../harness/scenario';
 import { challenge, foulScene, give, putU } from './rul-09-setup';
+import { LOCAL_TUNING as RESTART_LT } from '../../src/sim/rules/restart';
 
 const H = vi.hoisted(() => ({
   hook: null as null | ((s: unknown, ev: unknown) => void),
@@ -77,7 +78,9 @@ describe('RUL-09 through step()', () => {
   it('foul -> FOUL + free kick: RUL-01 phase FREE_KICK, RUL-11 restart flow becomes ready', () => {
     const s = scene(-35); // own third: no advantage
     setHook((st, ev, k) => foulAt1(st, k));
-    const ev = runTicks(s, T_RULES.restartSetupTicks + 5, undefined, { check: 'core' });
+    // [QF-10] A free kick away from goal is a walked set-up: ready once everyone is in place (capped).
+    const ev = runTicks(s, T_RULES.restartSetupTicks + RESTART_LT.setupExtendMaxTicks + 5, undefined,
+      { check: 'core', until: (st) => st.match.restart.ready === 1 });
     expect(findEvents(ev, EventType.FOUL).map((e) => [e.a, e.b, e.d])).toEqual([[TAC, VIC, 0]]);
     expect(findEvents(ev, EventType.CARD).map((e) => [e.a, e.b])).toEqual([[TAC, CardKind.YELLOW]]);
     const r = findEvents(ev, EventType.RESTART_AWARDED)[0]!;

@@ -38,6 +38,29 @@ export function lastReplayCheck(): Readonly<ReplayCheck> | null {
   return lastCheck;
 }
 
+function matchActive(ctx: Pick<AppContext, 'session'>): boolean {
+  try {
+    return ctx.session.active === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Note shown when a screen reachable from the pause menu would start a new session over a match in progress. */
+export const MATCH_IN_PROGRESS_NOTE = 'A match is in progress: quit it from the pause menu first.';
+
+/**
+ * [QF-12] Settings (and so Diagnostics and the Tutorial) can be opened from the pause menu. Starting the benchmark, a
+ * replay or the tutorial from there used to end the paused match without a word (session.start tears it down) or, for
+ * the tutorial, do nothing at all. Returns true (and says why) when a match is in progress, so the caller does not
+ * start anything.
+ */
+export function refuseWhileMatch(ctx: Pick<AppContext, 'session'>): boolean {
+  if (!matchActive(ctx)) return false;
+  showToast(MATCH_IN_PROGRESS_NOTE, { kind: 'warning', testId: 'match-in-progress' });
+  return true;
+}
+
 /** Parse and validate a replay file's text: the replay, or the problem in words. Pure. */
 export function readReplayText(text: string): { replay: Replay } | { problem: string } {
   let raw: unknown;
@@ -167,6 +190,7 @@ export function createDiagnosticsScreen(): Screen {
 
       // ---------------------------------------------------------------- actions
       const benchBtn = createButton('Run benchmark', () => {
+        if (refuseWhileMatch(ctx)) return;
         ctx.diagnostics.log('bench', 'benchmark started from Diagnostics');
         startBench(ctx);
       }, { testId: 'diagnostics-bench', ctx, hint: '90 s bot match' });
@@ -200,10 +224,14 @@ export function createDiagnosticsScreen(): Screen {
             ctx.diagnostics.log('warn', `replay load refused: ${res.problem}`);
             return;
           }
+          if (refuseWhileMatch(ctx)) return;
           playReplayInSession(ctx, res.replay);
         }, (err: unknown) => say(`Cannot read the file: ${String(err)}`));
       });
-      const loadBtn = createButton('Load replay', () => fileInput.click(), { testId: 'diagnostics-replay-load', ctx });
+      const loadBtn = createButton('Load replay', () => {
+        if (refuseWhileMatch(ctx)) return;
+        fileInput.click();
+      }, { testId: 'diagnostics-replay-load', ctx });
 
       const copyBtn = createButton('Copy report', () => {
         refresh();

@@ -33,7 +33,7 @@ import { createEventBuffer } from '../../src/sim/core/events';
 import { hashState } from '../../src/sim/core/hash';
 import { INVARIANT_NAMES, createInvariantChecker } from '../../src/sim/debug/invariants';
 import { bodyRadiusOf } from '../../src/sim/players/bodies';
-import { awardRestart, isLegalRestartPosition } from '../../src/sim/rules/restart';
+import { awardRestart, isLegalRestartPosition, LOCAL_TUNING as RESTART_LT } from '../../src/sim/rules/restart';
 import {
   LOCAL_TUNING as LT, WallMode, freeKickDefault, freeKickSetup, freeKickWallCount, goalMouthAngle, isWallMember,
   previewFlight, wallCoverSide, wallIndexOf, wallLift, wallSlot,
@@ -231,7 +231,8 @@ function award(team: number, x: number, z: number, humans: ScenarioHuman[] | num
 
 /** Run to ready (players legal, wall snapped onto its slots). */
 function toReady(s: SimState): void {
-  run(s, T_RULES.restartSetupTicks + 5, undefined, (st) => st.match.restart.ready === 1);
+  // [QF-10] Free kicks away from goal are walked set-ups (ready once everyone is in place, capped).
+  run(s, T_RULES.restartSetupTicks + RESTART_LT.setupExtendMaxTicks + 5, undefined, (st) => st.match.restart.ready === 1);
   expect(s.match.restart.ready).toBe(1);
 }
 

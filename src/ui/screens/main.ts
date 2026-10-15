@@ -29,6 +29,7 @@ import type { Club } from '../../contracts/data';
 import { Difficulty, KitSlot, ModeId } from '../../contracts/enums';
 import type { Settings } from '../../contracts/settings';
 import { defaultSetup } from '../../modes/setup';
+import { resolveKits } from '../../render/kits';
 import { createButton, h, injectStyle } from '../components';
 import { attachDotField, sharedDotField } from '../dotfield';
 
@@ -105,11 +106,25 @@ export function rgbToCss(rgb: number): string {
   return `#${v.toString(16).padStart(6, '0')}`;
 }
 
-function teamOf(clubs: readonly Club[], idx: number, kit: KitSlot, fallback: string): QuickPlayTeam {
+function teamOf(clubs: readonly Club[], idx: number, kit: KitSlot, fallback: string, worn: number | null = null): QuickPlayTeam {
   const c = Number.isInteger(idx) && idx >= 0 ? clubs[idx] : undefined;
   if (!c) return { code: fallback.slice(0, 3).toUpperCase(), name: fallback, color: rgbToCss(NaN) };
   const k = kit === KitSlot.AWAY ? c.away : c.home;
-  return { code: c.code, name: c.name, color: rgbToCss(k ? k.shirt : NaN) };
+  return { code: c.code, name: c.name, color: rgbToCss(worn ?? (k ? k.shirt : NaN)) };
+}
+
+/** [QF-12] Shirts the two clubs will wear for the saved kit slots (the GFX-08 clash check), or null. */
+function wornPair(settings: Readonly<Settings>, clubs: readonly Club[]): [number, number] | null {
+  const m = settings.match;
+  const home = Number.isInteger(m.homeClub) && m.homeClub >= 0 ? clubs[m.homeClub] : undefined;
+  const away = Number.isInteger(m.awayClub) && m.awayClub >= 0 ? clubs[m.awayClub] : undefined;
+  if (!home || !away) return null;
+  try {
+    const k = resolveKits(home, away, m.homeKit, m.awayKit, settings.accessibility?.highContrastKits === true);
+    return [k.outfield[0].shirt, k.outfield[1].shirt];
+  } catch {
+    return null;
+  }
 }
 
 /** Clamp a half length the way modes/setup.ts configFromSettings does (2..10 whole minutes). */
@@ -123,9 +138,10 @@ export function quickPlaySummary(settings: Readonly<Settings>, clubs: readonly C
   const halfMinutes = clampHalfMinutes(m.halfMinutes);
   const difficulty = DIFFICULTY_LABELS[m.difficulty] ?? DIFFICULTY_LABELS[Difficulty.PROFESSIONAL];
   const night = m.night === true;
+  const worn = wornPair(settings, clubs);
   return {
-    home: teamOf(clubs, m.homeClub, m.homeKit, 'Home'),
-    away: teamOf(clubs, m.awayClub, m.awayKit, 'Away'),
+    home: teamOf(clubs, m.homeClub, m.homeKit, 'Home', worn ? worn[0] : null),
+    away: teamOf(clubs, m.awayClub, m.awayKit, 'Away', worn ? worn[1] : null),
     halfMinutes,
     difficulty,
     night,

@@ -15,6 +15,13 @@ import type { EventSink } from '../../contracts/events';
 import type { SimState } from '../../contracts/state';
 import type { ActionHandler } from '../../contracts/systems';
 
+/**
+ * [QF-9] Thigh / chest reach radius as a fraction of T_TOUCH.receiveRadius (SIM-07 LOCAL_TUNING.chestReachMul reads it):
+ * here so that SIM-16 switching can use SIM-07's receive reach without importing firstTouch.ts (whose dispatcher import
+ * would close a cycle through actions/registry and rules/subs).
+ */
+export const CHEST_REACH_MUL = 0.65;
+
 /** The real implementation, provided by players/firstTouch.ts. */
 export interface FirstTouchImpl {
   update(s: SimState, slot: number, ev: EventSink): void;

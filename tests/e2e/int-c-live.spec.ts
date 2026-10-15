@@ -263,6 +263,14 @@ test.describe('INT-C live match render integration', () => {
     await startCpuMatch(page, 0, 20261014);
     console.log(`match ready in ${Math.round((Date.now() - t0) / 1000)} s`);
     const h = driver(page);
+    /**
+     * [QF-12 refit] QF-4: the set-piece cameras cut in once the restart is set up (match.restart.ready); since QF-10 the
+     * players walk to their spots first, which can take longer than the frames played before each scene.
+     */
+    const untilReady = async (): Promise<void> => {
+      for (let i = 0; i < 80 && !(await page.evaluate(() => window.__dotkick!.ctx.session.getState()!.match.restart.ready === 1)); i++) await h.play(5);
+      await h.play(2);
+    };
     const report: Record<string, Res> = {};
     let tLast = Date.now();
     const scene = async (name: string, frames = 3): Promise<Res> => {
@@ -318,6 +326,7 @@ test.describe('INT-C live match render integration', () => {
     await h.corner();
     await h.run(300, PHASE.CORNER, 0, 99, false);
     await h.play(10);
+    await untilReady();
     const ca = await scene('corner-award');
     expect(ca.phase).toBe(PHASE.CORNER);
     expect(ca.shot).toBe(SHOT.CORNER);
@@ -333,6 +342,7 @@ test.describe('INT-C live match render integration', () => {
     await h.goalKick();
     await h.run(300, PHASE.GOAL_KICK, 0, 99, false);
     await h.play(40);
+    await untilReady();
     const gk = await scene('goal-kick');
     expect(gk.phase).toBe(PHASE.GOAL_KICK);
     expect(gk.shot).toBe(SHOT.BEHIND_TAKER);
@@ -347,6 +357,7 @@ test.describe('INT-C live match render integration', () => {
     }
     expect(awarded, 'a free kick was awarded').toBe(true);
     await h.play(40);
+    await untilReady();
     const fk = await scene('free-kick');
     expect(fk.phase).toBe(PHASE.FREE_KICK);
     expect(fk.shot).toBe(SHOT.BEHIND_TAKER);

@@ -24,7 +24,7 @@ import { hashState } from '../../src/sim/core/hash';
 import { INVARIANT_NAMES, createInvariantChecker } from '../../src/sim/debug/invariants';
 import { BALL_OUT_Z } from '../../src/sim/pitch/geometry';
 import { isOffsidePosition } from '../../src/sim/rules/offside';
-import { awardRestart, forceRestartKick, restartTakerSpot } from '../../src/sim/rules/restart';
+import { awardRestart, forceRestartKick, LOCAL_TUNING as RESTART_LT, restartTakerSpot } from '../../src/sim/rules/restart';
 import {
   LOCAL_TUNING, ThrowFlag, ThrowState, throwHandsHeight, throwInDefault,
 } from '../../src/sim/rules/throwin';
@@ -118,7 +118,8 @@ const throws = (ev: readonly SimEvent[]): SimEvent[] => ev.filter((e) => e.type 
 
 /** Run until the restart is ready; returns the tick it became ready. */
 function toReady(s: SimState, inputs?: Inputs): number {
-  run(s, T_RULES.restartSetupTicks + 10, inputs, (st) => st.match.restart.ready === 1);
+  // [QF-10] Throw-ins are walked set-ups: ready once the taker holds the ball and everyone is legal (capped).
+  run(s, T_RULES.restartSetupTicks + RESTART_LT.setupExtendMaxTicks + 10, inputs, (st) => st.match.restart.ready === 1);
   expect(s.match.restart.ready).toBe(1);
   return s.tick;
 }
@@ -256,7 +257,7 @@ describe('RUL-02 setup: team, spot and taker', () => {
       const spot = { x: 0, z: 0 };
       restartTakerSpot(s, spot);
       const d0 = Math.hypot(s.players[t]!.x - spot.x, s.players[t]!.z - spot.z);
-      run(s, 20);
+      run(s, 40); // [QF-10] he accelerates into his run (approachAccel) instead of starting at full speed
       expect(Math.hypot(s.players[t]!.x - spot.x, s.players[t]!.z - spot.z)).toBeLessThan(d0 - 1);
       toReady(s);
       // Ready: taker on the spot outside the line, ball in his hands above his head (never heldBy), at rest.
@@ -609,9 +610,9 @@ describe('RUL-02 glitch list', () => {
 
   it('the half ends during a throw-in: the taker\'s throw is abandoned cleanly (ball dropped, action ended)', () => {
     const s = scene({ humans: [{ side: 0 }] });
-    s.match.periodT = s.match.periodLen - 100; // the half runs out ~50 ticks after the throw-in is ready
     award(s, 0, 10, HALF_WIDTH);
     toReady(s);
+    s.match.periodT = s.match.periodLen - 50; // [QF-10] (set once ready: the walked set-up's length varies)
     const t = s.match.restart.taker;
     expect(s.ball.owner).toBe(t);
     run(s, 600, undefined, (st) => st.match.phase === MatchPhase.HALF_TIME);

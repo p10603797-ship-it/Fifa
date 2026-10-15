@@ -18,6 +18,7 @@ import { MenuAction, UiSound } from '../../contracts/app';
 import { CameraType, ControllerKind, Difficulty, ModeId } from '../../contracts/enums';
 import type { Settings } from '../../contracts/settings';
 import type { MatchConfig } from '../../contracts/state';
+import { withRecords } from '../../modes/records';
 import { crestDataUrl } from '../../render/kits';
 import { createButton, createSegmented, createSelector, createSlider, createToggle, h, injectStyle } from '../components';
 import { attachDotField, sharedDotField } from '../dotfield';
@@ -136,6 +137,15 @@ export function buildMatchSetup(flowSetup: MatchSetup, o: MatchOptions, mode: Fl
   const s = cloneSetup(flowSetup);
   applyMatchOptions(s.config, o, mode);
   return s;
+}
+
+/**
+ * [QF-12] The setup Start hands to the session: buildMatchSetup with the lifetime records hooked to onFinish (MOD-05
+ * withRecords, as modes/kickoff buildKickOffSetup and modes/shootout buildShootoutSetup do). Kick-Off, Play a Friend
+ * and Shoot-out matches started through this flow used to finish unrecorded: only Play now and cup ties counted.
+ */
+export function startSetup(ctx: Pick<AppContext, 'settings'>, flowSetup: MatchSetup, o: MatchOptions, mode: FlowMode): MatchSetup {
+  return withRecords(ctx.settings, buildMatchSetup(flowSetup, o, mode));
 }
 
 const CSS = `
@@ -274,7 +284,7 @@ export function createMatchSettingsScreen(): Screen {
       const start = (): void => {
         if (started) return;
         started = true;
-        const setup = buildMatchSetup(flow.setup, opts, mode);
+        const setup = startSetup(ctx, flow.setup, opts, mode);
         try {
           ctx.settings.update((s) => persistOptions(s, opts, setup.config, mode));
           if (!shootout) ctx.settings.saveProgress(CUP_RULES_KEY, opts.cupRules);

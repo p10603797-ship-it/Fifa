@@ -115,8 +115,8 @@ export const LOCAL_TUNING = { // TUNING-CR
   highCrossMin: 0.8,
   /** The waiting taker slides toward his spot behind the ball along the aim at most this far per tick, m/tick. */
   lineUpStep: 0.05,
-  /** CPU fallback: Default this many ticks after T_RULES.cpuRestartDelay past ready (ticks, 1 s) ... */
-  cpuGraceTicks: 60,
+  /** CPU fallback: Default this many ticks after T_RULES.cpuRestartDelay past ready (ticks, 2.3 s) ... */
+  cpuGraceTicks: 140, // [QF-10] was 60: TAI-13 waits for its box runners (QF-2 CR); due 200 < RUL-11's 240-tick CPU watchdog
   /** ... retried every this many ticks while the kick has not started, ticks. */
   cpuRetryTicks: 30,
 } as const;

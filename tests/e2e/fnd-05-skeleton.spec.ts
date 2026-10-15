@@ -24,8 +24,12 @@ function collectErrors(page: Page): string[] {
   return errors;
 }
 
-async function startMatch(page: Page): Promise<void> {
+async function startMatch(page: Page, live = false): Promise<void> {
   await page.goto('/');
+  // [QF-12 refit] A live-input check needs open play: the match opens with PRE_MATCH (~1.7 s) and a KICK_OFF whose
+  // taker stands at the ball until it is taken, and auto-switch can hand the human another player. So: auto-switch
+  // off, and the kick-off taken by the sim's own restart timeout (device-agnostic, no input from the tested device).
+  if (live) await page.evaluate(() => window.__dotkick!.ctx.settings.update((s) => { s.controls.autoSwitch = 0; }));
   await page.getByTestId('splash-start').click();
   await page.getByTestId('main-kickoff').click();
   await page.waitForFunction(() => {
@@ -37,6 +41,15 @@ async function startMatch(page: Page): Promise<void> {
     const s = window.__dotkick!.ctx.session.getState();
     return !!s && s.tick > 10 && s.ctrl[0]!.slot >= 0;
   }, null, { timeout: 10_000 });
+  if (!live) return;
+  await page.waitForFunction(() => {
+    const st = window.__dotkick!.ctx.session.getState()!;
+    const r = st.match.restart as unknown as { ready: number; taken: number; timeoutT: number };
+    if (st.match.phase === 1 && r.ready === 1 && r.taken === 0) r.timeoutT = 1;
+    return st.match.phase === 2;
+  }, null, { timeout: 60_000 });
+  const t = await page.evaluate(() => window.__dotkick!.ctx.session.getState()!.tick);
+  await page.waitForFunction((t0) => window.__dotkick!.ctx.session.getState()!.tick >= t0 + 30, t, { timeout: 30_000 });
 }
 
 async function controlled(page: Page): Promise<Controlled> {
@@ -91,7 +104,7 @@ test.describe('FND-05 skeleton', () => {
 
   test('keyboard: holding D for 1 s moves the controlled player toward +x', async ({ page }) => {
     const errors = collectErrors(page);
-    await startMatch(page);
+    await startMatch(page, true);
     const before = await controlled(page);
     await page.keyboard.down('KeyD');
     await holdFor(page, before.tick);
@@ -111,7 +124,7 @@ test.describe('FND-05 skeleton', () => {
 
   test('touch: a drag in the left half moves the player; pointer release stops it', async ({ page }) => {
     const errors = collectErrors(page);
-    await startMatch(page);
+    await startMatch(page, true);
     const cdp = await page.context().newCDPSession(page);
     const before = await controlled(page);
     await touch(cdp, 'touchStart', 300, 520);
@@ -137,7 +150,7 @@ test.describe('FND-05 skeleton', () => {
   test('controller: a mocked pad joins after a button press and moves the player', async ({ page }) => {
     await page.addInitScript(MOCK_PAD_SCRIPT);
     const errors = collectErrors(page);
-    await startMatch(page);
+    await startMatch(page, true);
     // Not listed before a press.
     const listed0 = await page.evaluate(() => window.__dotkick!.ctx.devices.list().some((d) => d.kind === 'pad'));
     expect(listed0).toBe(false);
@@ -213,7 +226,8 @@ test.describe('FND-05 skeleton', () => {
     await page.keyboard.press('ArrowDown');
     await expect.poll(focused).not.toBe('main-kickoff');
     const target = await focused();
-    expect(target === 'main-modes' || target === 'main-practice').toBe(true);
+    // [QF-12 refit] UIX-02 main menu: Down from Play now enters the mode list at its top (Kick-Off).
+    expect(target).toBe('main-mode-kickoff');
     await page.keyboard.press('Enter');
     await expect.poll(() => page.evaluate(() => window.__dotkick!.ctx.router.current)).not.toBe('main');
     await page.keyboard.press('Escape');

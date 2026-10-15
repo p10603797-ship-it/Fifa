@@ -78,6 +78,11 @@ export const LOCAL_TUNING = { // TUNING-CR
   slideVelBias: 0.5,
   /** |side preference| below this falls back to the deterministic default side (the pusher's right). */
   slideSideEps: 0.05,
+  /** [QF-9] A pusher gives way behind a body moving across his push faster than this (along the contact tangent), m/s:
+   *  his speed along its run is capped slideSpeed below its own (see resolvePairs). At least slideSpeed, so the cap is
+   *  never negative: giving way only ever slows him, it never reverses him (a lower 1.0 alternated with the world-frame
+   *  slide against a marker drifting across at 1.0-1.3 m/s: 6+ velocity reversals in 2 s). */
+  slideBehindSpeed: 1.6,
   // ---- BODY_CONTACT events
   /** Closing speed for a bump event, and above which it is a shove (b = 1), m/s. */
   bumpSpeed: 1.5,
@@ -141,6 +146,8 @@ const TICK_DT = DT;
 const BODY_R = T_PLAYER.bodyRadius;
 const OVERLAP_TOL = T_PLAYER.overlapTolerance;
 const ARRIVE_STOP = T_PLAYER.arriveStop;
+/** [QF-9] Largest speed change of a give-way in one tick: his braking (T_PLAYER.decel) over a tick, m/s. */
+const BRAKE_DV = T_PLAYER.decel * DT;
 const SHIELD_SPEED_FRAC = T_PLAYER.shieldSpeedFraction;
 const JOG_FRAC = T_PLAYER.jogFraction;
 const KEEPER_MIN_DEPTH = HALF_LENGTH - GOAL_AREA_DEPTH - L.keeperAreaSlack;
@@ -563,14 +570,54 @@ function resolvePairs(s: SimState, first: boolean, ev: EventSink): void {
         const slideB = pb && (kB === 2 || mates || pa);
         if (slideA || slideB) {
           const tx = -nz, tz = nx; // a's right when facing b (b's right is -t)
+          // [QF-9] Give way behind a body that moves across the push (along t faster than slideBehindSpeed): the
+          // pusher's speed along the other's tangential run is capped slideSpeed below it, so he drops in behind and
+          // goes round its back. The world-frame slide (below) against a body running alongside the same way set the
+          // pusher's tangential speed to slideSpeed on whichever side the per-tick preferences gave, and when the
+          // other body pushed back for a tick ("opposite ways") it reversed him: a runner and a defender running
+          // together stayed locked at 0.75 m for 80 ticks with 14 velocity flips (QF-2 CR qf-2-cr-body-lock). Two
+          // bodies running the same way that both push: only the one behind (the slower along t; ties: the higher
+          // slot) gives way, so they part along their run instead of both braking.
+          const vat = a.vx * tx + a.vz * tz, vbt = b.vx * tx + b.vz * tz;
+          const wayMin = L.slideBehindSpeed > L.slideSpeed ? L.slideBehindSpeed : L.slideSpeed;
+          let wayA = slideA && (vbt > wayMin || vbt < -wayMin);
+          let wayB = slideB && (vat > wayMin || vat < -wayMin);
+          if (wayA && wayB && vat * vbt > 0) {
+            const aFaster = vat > 0 ? vat > vbt : vat < vbt;
+            if (aFaster || vat === vbt) wayA = false; else wayB = false;
+          }
+          // He brakes toward the cap at most at his braking rate (T_PLAYER.decel): giving way is a deceleration, not an
+          // instant stop (cutting 4-5 m/s in one tick changed TAI-07's chaser on a header in front of the box).
+          const brake = BRAKE_DV;
+          if (wayA) {
+            const ux = vbt > 0 ? tx : -tx, uz = vbt > 0 ? tz : -tz;
+            const cap = (vbt > 0 ? vbt : -vbt) - L.slideSpeed;
+            const va = a.vx * ux + a.vz * uz;
+            if (va > cap) {
+              const dv = va - cap < brake ? va - cap : brake;
+              a.vx -= dv * ux; a.vz -= dv * uz;
+              a.x -= dv * ux * TICK_DT; a.z -= dv * uz * TICK_DT;
+            }
+          }
+          if (wayB) {
+            const ux = vat > 0 ? tx : -tx, uz = vat > 0 ? tz : -tz;
+            const cap = (vat > 0 ? vat : -vat) - L.slideSpeed;
+            const vb = b.vx * ux + b.vz * uz;
+            if (vb > cap) {
+              const dv = vb - cap < brake ? vb - cap : brake;
+              b.vx -= dv * ux; b.vz -= dv * uz;
+              b.x -= dv * ux * TICK_DT; b.z -= dv * uz * TICK_DT;
+            }
+          }
           // Side preference along t: intent plus the current tangential velocity (keeps a slide going one way).
           const spA = Math.sqrt(a.vx * a.vx + a.vz * a.vz), spB = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
           const prefA = sUx[i]! * tx + sUz[i]! * tz + L.slideVelBias * (a.vx * tx + a.vz * tz) / (spA > 1 ? spA : 1);
           const prefB = sUx[j]! * tx + sUz[j]! * tz + L.slideVelBias * (b.vx * tx + b.vz * tz) / (spB > 1 ? spB : 1);
           let sgA = 0, sgB = 0; // slide direction along t: +1 / -1, 0 = none
-          if (slideA && slideB) { sgA = prefA - prefB < -L.slideSideEps ? -1 : 1; sgB = -sgA; } // opposite ways
-          else if (slideA) sgA = prefA < -L.slideSideEps ? -1 : 1; // default: a's right
-          else sgB = prefB > L.slideSideEps ? 1 : -1; // default: b's right (-t)
+          const wsA = slideA && !wayA, wsB = slideB && !wayB; // world-frame slides
+          if (wsA && wsB) { sgA = prefA - prefB < -L.slideSideEps ? -1 : 1; sgB = -sgA; } // opposite ways
+          else if (wsA) sgA = prefA < -L.slideSideEps ? -1 : 1; // default: a's right
+          else if (wsB) sgB = prefB > L.slideSideEps ? 1 : -1; // default: b's right (-t)
           const ds = L.slideSpeed * TICK_DT;
           if (sgA !== 0) {
             const ux = sgA * tx, uz = sgA * tz;

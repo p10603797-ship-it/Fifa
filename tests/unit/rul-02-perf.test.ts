@@ -26,6 +26,7 @@ interface Solution { speed: number; angle: number; flightT: number; range: numbe
 interface Bundle {
   awardRestart: (s: SimState, kind: RestartKind, team: number, x: number, z: number, ev: EventBuffer) => void;
   restartTick: (s: SimState, ev: EventBuffer) => void;
+  RESTART_LT: { setupExtendMaxTicks: number };
   throwInTick: (s: SimState, ev: EventBuffer) => void;
   throwInInput: (s: SimState, c: number, f: InputFrame, ev: EventBuffer) => void;
   throwInHandler: ActionHandler;
@@ -46,7 +47,7 @@ beforeAll(async () => {
   const src = (f: string): string => JSON.stringify(join(ROOT, f));
   const entry = join(dir, 'entry.ts');
   writeFileSync(entry, [
-    `export { awardRestart, restartTick } from ${src('src/sim/rules/restart')};`,
+    `export { awardRestart, restartTick, LOCAL_TUNING as RESTART_LT } from ${src('src/sim/rules/restart')};`,
     `export { throwInTick, throwInInput, throwInHandler, solveThrow, createThrowSolution, ThrowState } from ${src('src/sim/rules/throwin')};`,
     `export { initMatch } from ${src('src/sim/init')};`,
     `export { createMatchConfig } from ${src('src/contracts/state')};`,
@@ -78,7 +79,9 @@ function holding(ev: EventBuffer): { s: SimState; t: number } {
   }
   ev.begin(0);
   m.awardRestart(s, RestartKind.THROW_IN, 0, 10, 34, ev);
-  for (let i = 0; i <= T_RULES.restartSetupTicks; i++) {
+  // [QF-10] Throw-in set-ups are walked: without the action stage the taker never walks in, so the set-up runs to its
+  // cap (restartSetupTicks + setupExtendMaxTicks) and places him then.
+  for (let i = 0; i <= T_RULES.restartSetupTicks + m.RESTART_LT.setupExtendMaxTicks && s.match.restart.ready === 0; i++) {
     ev.begin(i);
     s.match.phaseT++;
     m.restartTick(s, ev);

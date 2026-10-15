@@ -18,7 +18,7 @@ import type { CameraProjector } from '../../contracts/input';
 import type { ReadonlySimState } from '../../contracts/state';
 import { h, injectStyle } from '../components';
 import { HUD_LARGE_SCALE, HUD_SHARED_CSS, bindLargerHud, onRadarPref, radarEnabled } from './hudShared';
-import { kitHex, teamKit } from './scoreboard';
+import { kitHex, wornShirts } from './scoreboard';
 
 /** Radar presentation constants (UI, not gameplay; no TUNING-CR needed). */
 export const RADAR_TUNING = {
@@ -171,6 +171,7 @@ export function createRadar(): HudPart {
   let p1 = '#ff6b35';
   let p2 = '#3ed1f6';
   let clubsRef: readonly Club[] = [];
+  let wornCache: [number, number] | null = null;
   let lastState: ReadonlySimState | null = null;
 
   function syncHidden(): void {
@@ -241,15 +242,18 @@ export function createRadar(): HudPart {
     const s = ctxRef?.settings.get();
     const hc = !!s?.accessibility?.highContrastKits;
     squaresAway = !!s?.accessibility?.colourBlindMarkers;
+    // [QF-12] The shirts the players wear (clash check, fallback kits), not the requested kit slots. Resolved once per
+    // match (setMatch clears the cache): settings changes (volume sliders) re-colour without redoing the clash check.
+    if (!hc && !wornCache) wornCache = wornShirts(state, clubsRef);
+    const worn = hc ? null : wornCache;
     for (let t = 0; t < 2; t++) {
-      const team = state.teams[t]!;
-      const kit = teamKit(clubsRef[team.clubIdx], team.kit);
-      if (hc || !kit) {
+      if (hc || !worn) {
         fill[t] = t === 0 ? '#f7f0ee' : '#fbc547';
         stroke[t] = 'rgba(7,7,13,.9)';
       } else {
-        fill[t] = kitHex(kit.shirt);
-        stroke[t] = luminance(kit.shirt) < 0.09 ? 'rgba(247,240,238,.85)' : 'rgba(7,7,13,.9)';
+        const shirt = worn[t]!;
+        fill[t] = kitHex(shirt);
+        stroke[t] = luminance(shirt) < 0.09 ? 'rgba(247,240,238,.85)' : 'rgba(7,7,13,.9)';
       }
     }
     dirty = true;
@@ -344,6 +348,7 @@ export function createRadar(): HudPart {
     },
     setMatch(state: ReadonlySimState, clubs: readonly Club[]) {
       clubsRef = clubs;
+      wornCache = null;
       lastState = state;
       lastTick = -1;
       acc = RADAR_TUNING.redrawMs;

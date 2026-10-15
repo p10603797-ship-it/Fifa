@@ -18,7 +18,7 @@ import { deserializeState } from '../../src/sim/core/serialize';
 import { runTicks } from '../harness/scenario';
 
 describe('QF-2 CR (SIM-05): no body lock between a runner and an opponent running alongside', () => {
-  it.fails('glitch: Players run in place against each other — the runner gets free of the man alongside within 30 ticks, without velocity flips', () => {
+  it('glitch: Players run in place against each other — the runner gets free of the man alongside within 30 ticks, without velocity flips', () => {
     const s = deserializeState(readFileSync(new URL('./fixtures/qf-2-body-lock.state.json', import.meta.url), 'utf8'));
     const a = 10, b = 17;
     let reversals = 0, locked = 0, longest = 0;

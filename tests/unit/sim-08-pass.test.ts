@@ -340,7 +340,9 @@ describe('SIM-08 dinked pass', () => {
         place(s, OPP_A, 3.5, 0); // defender in the lane, 3 m from the ball
         const l = solve(s, KickKind.DINKED_PASS, { power, targetSlot: MATE_A })!;
         expect(l.vy).toBeGreaterThan(0);
-        expect(Math.atan2(l.vy, hspeed(l))).toBeCloseTo(T_PASS.dinkedAngle, 9);
+        // [QF-10] One of the dinked launch angles (T_PASS.dinkedAngle + LT.dinkAngleOffsets, chosen clear of a bounce).
+        const ang = Math.atan2(l.vy, hspeed(l));
+        expect(Math.min(...LT.dinkAngleOffsets.map((o) => Math.abs(ang - T_PASS.dinkedAngle - o)))).toBeLessThan(1e-9);
         let hAtDef = -1, closest = 1e9, vAt = -1;
         fly(launched(s, l), 400, (_i, b) => {
           if (hAtDef < 0 && b.x >= 3.5) hAtDef = b.y;

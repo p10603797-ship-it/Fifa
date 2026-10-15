@@ -143,7 +143,8 @@ function readyRestart(s: SimState, kind: RestartKind, team: number, x: number, z
   ev.begin(s.tick);
   awardRestart(s, kind, team, x, z, ev);
   expect(s.match.restart.kind).toBe(kind);
-  run(s, T_RULES.restartSetupTicks + 5, (st) => st.match.restart.ready === 1);
+  // [QF-10] Throw-ins and free kicks away from goal are walked set-ups (ready once everyone is in place, capped).
+  run(s, T_RULES.restartSetupTicks + RESTART_TUNING.setupExtendMaxTicks + 5, (st) => st.match.restart.ready === 1);
   const r = s.match.restart;
   expect(r.ready).toBe(1);
   expect(r.taken).toBe(0);

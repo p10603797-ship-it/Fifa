@@ -22,7 +22,7 @@ import { deserializeState } from '../../src/sim/core/serialize';
 import { runTicks } from '../harness/scenario';
 
 describe('QF-2 CR (SIM-15): the controlled receiver of a lofted pass meets it where it comes down', () => {
-  it.fails('the keeper\'s throw to the CPU-controlled defender reaches him (not out for a throw-in)', () => {
+  it('the keeper\'s throw to the CPU-controlled defender reaches him (not out for a throw-in)', () => {
     const s = deserializeState(readFileSync(new URL('./fixtures/qf-2-lofted-receiver.state.json', import.meta.url), 'utf8'));
     const keeper = s.ball.heldBy;
     expect(keeper).toBeGreaterThanOrEqual(0);

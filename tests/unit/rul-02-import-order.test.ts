@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { ActionKind, KickKind, MatchPhase, RestartKind, WatchdogReason } from '../../src/contracts/enums';
 import { EventType } from '../../src/contracts/events';
 import { ACTION_HANDLERS } from '../../src/sim/actions/registry';
-import { SETPIECE_INPUT, awardRestart } from '../../src/sim/rules/restart';
+import { LOCAL_TUNING as RESTART_LT, SETPIECE_INPUT, awardRestart } from '../../src/sim/rules/restart';
 import { throwInHandler as shell } from '../../src/sim/rules/throwinHooks';
 import { createEventBuffer } from '../../src/sim/core/events';
 import { makeScenario, runTicks } from '../harness/scenario';
@@ -28,7 +28,8 @@ describe('RUL-02 import order', () => {
     const ev = createEventBuffer();
     ev.begin(s.tick);
     awardRestart(s, RestartKind.THROW_IN, 0, 5, 34, ev);
-    const out = runTicks(s, 260);
+    // [QF-10] the throw-in set-up is walked (D-008) and may wait up to setupExtendMaxTicks past restartSetupTicks.
+    const out = runTicks(s, 260 + RESTART_LT.setupExtendMaxTicks);
     const kicks = out.filter((e) => e.type === EventType.KICK && e.b === KickKind.THROW_IN);
     expect(kicks).toHaveLength(1);
     expect(out.filter((e) => e.type === EventType.WATCHDOG && e.a === WatchdogReason.RESTART_BLOCKED)).toHaveLength(0);

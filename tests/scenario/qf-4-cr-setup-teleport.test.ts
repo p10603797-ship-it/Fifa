@@ -52,8 +52,11 @@ function throwInSetupJumps(seed: number, want: number): number[] {
 }
 
 describe('QF-4 CR (QF-1): restart set-ups shown on the main camera do not teleport players', () => {
-  it.fails('at a throw-in set-up no player moves more than 1 m in one tick (they walk to legal spots)', () => {
-    const jumps = throwInSetupJumps(1, 6);
+  it('at a throw-in set-up no player moves more than 1 m in one tick (they walk to legal spots)', () => {
+    // [QF-10] Seeds until 6 set-ups are seen: one 3-minute-half match may have only 2 throw-ins (sim changes move the
+    // count), which made the sample-size floor flaky.
+    const jumps: number[] = [];
+    for (let seed = 1; seed <= 4 && jumps.length < 6; seed++) jumps.push(...throwInSetupJumps(seed, 6 - jumps.length));
     expect(jumps.length).toBeGreaterThan(2);
     for (const j of jumps) expect(j).toBeLessThan(1);
   }, 120000);

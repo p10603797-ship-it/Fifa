@@ -84,8 +84,6 @@ export const LOCAL_TUNING = { // TUNING-CR (SIM-04): move into T_PLAYER
   staminaAttrScale: 0.4,
   /** Moving faster than this fraction of jog speed counts as jogging (staminaDrainJog). */
   jogDrainMinFrac: 0.75,
-  /** Stamina rates are per real second at this half length (T_PLAYER.staminaRefHalfMinutes, moved by QF-2), min. */
-  staminaRefHalfMinutes: T_PLAYER.staminaRefHalfMinutes,
   /** ticksToReach: distance at which a point counts as reached (= the ARRIVE stop distance), m. */
   reachRadius: T_PLAYER.arriveStop,
   /** ticksToReach: cos of the angle below which a moving player's turn is modelled. */
@@ -657,7 +655,7 @@ function movePlayer(s: SimState, slot: number): void {
   t = t < 0 ? 0 : t > 1 ? 1 : t;
   let st = st0;
   const hm = s.config.halfMinutes;
-  const rate = DT * LT.staminaRefHalfMinutes / (hm >= 2 && hm <= 10 ? hm : LT.staminaRefHalfMinutes);
+  const rate = DT * T_PLAYER.staminaRefHalfMinutes / (hm >= 2 && hm <= 10 ? hm : T_PLAYER.staminaRefHalfMinutes);
   // Sprint effort drains from the first step (the sprinting flag waits for 0.5 m/s), as does running above jog.
   if ((sprintEff === 1 && jockey === 0 && shield === 0 && spOut > 0) || spOut > jog * 1.02) {
     st -= T_PLAYER.staminaDrainSprint * (1 + LT.staminaAttrScale * (1 - 2 * t)) * rate;

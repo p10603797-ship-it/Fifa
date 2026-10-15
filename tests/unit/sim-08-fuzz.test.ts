@@ -74,7 +74,9 @@ describe('SIM-08 robustness sweep', () => {
       expect(sp).toBeLessThanOrEqual(T_BALL.maxSpeed + EPS);
       if (kind === KickKind.DINKED_PASS) {
         expect(l.vy).toBeGreaterThan(0);
-        expect(Math.abs(Math.atan2(l.vy, vh) - T_PASS.dinkedAngle)).toBeLessThan(1e-3);
+        // [QF-10] One of the dinked launch angles (T_PASS.dinkedAngle + LT.dinkAngleOffsets; Manual: the base one).
+        const ang = Math.atan2(l.vy, vh);
+        expect(Math.min(...LT.dinkAngleOffsets.map((o) => Math.abs(ang - T_PASS.dinkedAngle - o)))).toBeLessThan(1e-3);
         const lo = Math.min(LT.dinkSpeedMin, LT.dinkPowerSpeedMin);
         const hi = Math.max(LT.dinkSpeedMax, LT.dinkPowerSpeedMax);
         expect(sp).toBeGreaterThanOrEqual(lo - EPS);

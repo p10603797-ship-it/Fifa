@@ -23,8 +23,14 @@ function collectErrors(page: Page): string[] {
   return errors;
 }
 
-async function startMatch(page: Page): Promise<void> {
+/**
+ * [QF-12 refit] The match opens with the PRE_MATCH intro (touch cluster hidden) and a KICK_OFF; the checks below need
+ * open play. The kick-off is taken by the sim's own restart timeout; with `ownBall` the ball is then put at the
+ * controlled player's feet so the attack cluster (PASS / THROUGH / SHOOT) shows.
+ */
+async function startMatch(page: Page, ownBall = false): Promise<void> {
   await page.goto('/');
+  await page.evaluate(() => window.__dotkick!.ctx.settings.update((s) => { s.controls.autoSwitch = 0; }));
   await page.getByTestId('splash-start').click();
   await page.getByTestId('main-kickoff').click();
   await page.waitForFunction(() => {
@@ -32,9 +38,23 @@ async function startMatch(page: Page): Promise<void> {
     return !!d && d.ctx.router.current === 'match' && d.ctx.session.getState() !== null;
   }, null, { timeout: 30_000 });
   await page.waitForFunction(() => {
-    const s = window.__dotkick!.ctx.session.getState();
-    return !!s && s.tick > 10 && s.ctrl[0]!.slot >= 0;
-  }, null, { timeout: 15_000 });
+    const st = (window.__dotkick!.ctx.session as unknown as { runtime(): { curr: { match: { phase: number; restart: Record<string, number> } } } | null }).runtime()?.curr;
+    if (!st) return false;
+    const r = st.match.restart;
+    if (st.match.phase === 1 && r.ready === 1 && r.taken === 0) r.timeoutT = 1;
+    return st.match.phase === 2;
+  }, null, { timeout: 60_000 });
+  await waitTicks(page, 30);
+  if (!ownBall) return;
+  await page.evaluate(() => {
+    const st = (window.__dotkick!.ctx.session as unknown as { runtime(): { curr: Record<string, any> } }).runtime().curr; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const slot = st.ctrl[0].slot;
+    const p = st.players[slot];
+    const b = st.ball;
+    b.owner = slot; b.heldBy = -1; b.lastTouch = slot; b.lastTouchTeam = p.team; b.passTarget = -1;
+    b.x = p.x + 0.4; b.z = p.z; b.y = 0.11; b.vx = 0; b.vy = 0; b.vz = 0; b.px = b.x; b.pz = b.z; b.py = b.y;
+  });
+  await expect(page.locator('#touch .dk-tbtn[data-btn="0"]')).toHaveCount(1);
 }
 
 async function tick(page: Page): Promise<number> {
@@ -78,7 +98,7 @@ async function ptr(page: Page, type: string, id: number, x: number, y: number, e
 test.describe('TCH-01 pointer manager', () => {
   test('five simultaneous touches each drive their own control; a system cancel mid-hold leaves no stuck sprint or stick', async ({ page }) => {
     const errors = collectErrors(page);
-    await startMatch(page);
+    await startMatch(page, true);
     await expect(page.locator(LAYER)).toHaveCount(1);
     const cdp = await page.context().newCDPSession(page);
     const big = await centre(page, BIG);

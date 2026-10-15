@@ -83,7 +83,8 @@ describe('RUL-02 throw-ins in the complete pipeline', () => {
     it(`bot v bot, seed ${seed}: out at x=${x} on the ${side > 0 ? 'near' : 'far'} touchline off team ${lastTeam} -> team ${1 - lastTeam} throws, play resumes`, () => {
       const s = outOverTouchline(seed, x, side, lastTeam);
       const team = 1 - lastTeam;
-      const ev = run(s, 400, undefined, (st, e) => e.some((k) => k.type === EventType.KICK && k.b === KickKind.THROW_IN));
+      // [QF-10] a throw-in set-up is walked (D-008): it may wait up to setupExtendMaxTicks past restartSetupTicks.
+      const ev = run(s, 400 + RUL11_TUNING.setupExtendMaxTicks, undefined, (st, e) => e.some((k) => k.type === EventType.KICK && k.b === KickKind.THROW_IN));
       const awards = ofType(ev, EventType.RESTART_AWARDED);
       expect(awards).toHaveLength(1);
       expect([awards[0]!.a, awards[0]!.b]).toEqual([RestartKind.THROW_IN, team]);
@@ -93,8 +94,10 @@ describe('RUL-02 throw-ins in the complete pipeline', () => {
       expect(t).toBe(s.match.restart.taker);
       expect(s.players[t]!.team).toBe(team);
       expect(s.players[t]!.isKeeper).toBe(0);
-      // Taken by the CPU side (its brain's own input or RUL-02's CPU fallback) before RUL-11's CPU timeout.
-      expect(kicks[0]!.tick - awards[0]!.tick).toBeLessThan(T_RULES.restartSetupTicks + RUL11_TUNING.cpuTakeTimeoutTicks);
+      // Taken by the CPU side (its brain's own input or RUL-02's CPU fallback) before RUL-11's CPU timeout (counted from
+      // the ready tick, at most setupExtendMaxTicks after restartSetupTicks for a walked set-up).
+      expect(kicks[0]!.tick - awards[0]!.tick).toBeLessThan(
+        T_RULES.restartSetupTicks + RUL11_TUNING.setupExtendMaxTicks + RUL11_TUNING.cpuTakeTimeoutTicks);
       expect(s.match.phase).toBe(MatchPhase.IN_PLAY);
       expect(Math.abs(s.ball.z)).toBeLessThanOrEqual(BALL_OUT_Z);
       // Thrown to a teammate, or (a CPU long throw into space) to a point inside the pitch.

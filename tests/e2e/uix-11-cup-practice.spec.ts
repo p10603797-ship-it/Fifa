@@ -24,7 +24,8 @@ const GPU_ENVIRONMENT_NOISE = [/GL Driver Message/, /Automatic fallback to softw
 function collectConsole(page: Page): string[] {
   const out: string[] = [];
   page.on('console', (m) => {
-    if (m.type() !== 'error') return;
+    // [QF-12] BRIEF §14 item 7: zero console errors OR warnings on every menu path.
+    if (m.type() !== 'error' && m.type() !== 'warning') return;
     const text = m.text();
     if (GPU_ENVIRONMENT_NOISE.some((re) => re.test(text))) return;
     out.push(`${m.type()}: ${text}`);
@@ -154,6 +155,10 @@ test.describe('UIX-11 cup and practice', () => {
       return sideNow;
     });
     expect(side === 0 || side === 1).toBe(true);
+    // [QF-12] The final full-time screen (stats, player of the match) comes first; its Continue returns to the cup.
+    await expect.poll(() => route(page), { timeout: 30_000 }).toBe('full-time');
+    await expect(page.getByTestId('full-time-panel')).toBeVisible();
+    await page.getByTestId('ft-cup').tap();
     await expect.poll(() => route(page), { timeout: 30_000 }).toBe('cup');
     await expect(page.getByTestId('cup-result')).toContainText('Through');
     st = (await cupState(page))!;

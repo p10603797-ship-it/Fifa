@@ -454,13 +454,22 @@ describe('SIM-14 glitch list', () => {
 describe('SIM-14 in a bot match', () => {
   it('forced tackles of every kind near the ball keep every invariant and stay deterministic', () => {
     const KINDS = [ActionKind.STAND_TACKLE, ActionKind.HARD_TACKLE, ActionKind.SLIDE_TACKLE, ActionKind.SHOULDER, ActionKind.PUSH_PULL];
-    const run = (): { hash: number; started: number; tackles: number } => {
+    const run = (): { hash: number; started: number; tackles: number; whistled: number } => {
       const s = makeScenario({ seed: 2, config: { halfMinutes: 2 } });
       let started = 0;
+      let whistled = 0;
+      const pending = new Uint8Array(22);
       const t0 = s.tick;
       // [INT-A] 60 quiet ticks at the end: a tackle forced in the last few ticks used to be cut off by the end of the
       // run before its contact window closed (no TACKLE event yet), failing the count by chance.
+      // [QF-9] Likewise a tackle still unresolved when the whistle goes for something else (another challenge's foul, the
+      // ball out of play): the restart ends every action and that tackle never happens (no TACKLE event). Counted here
+      // (whistled): in a tackle action, unresolved before the tick, gone without a TACKLE event as play stops.
       const ev = runTicks(s, 3060, (t, st) => {
+        for (let i = 0; i < 22; i++) {
+          const p = st.players[i]!;
+          pending[i] = p.act >= ActionKind.STAND_TACKLE && p.act <= ActionKind.PUSH_PULL && (p.actA & 1) === 0 ? 1 : 0;
+        }
         if (t % 7 !== 0 || t - t0 >= 3000) return;
         const b = st.ball;
         for (let i = 0; i < 22; i++) {
@@ -469,12 +478,24 @@ describe('SIM-14 in a bot match', () => {
           if (b.owner >= 0 && st.players[b.owner]!.team === p.team) continue;
           started += startTackle(st, i, KINDS[(t + i) % KINDS.length]!, -1, EV);
         }
-      }, { check: 'all' });
-      return { hash: hashState(s), started, tackles: tackles(ev).length };
+      }, {
+        check: 'all',
+        until: (st, evs) => {
+          if (st.match.phase === MatchPhase.IN_PLAY) return false;
+          for (let i = 0; i < 22; i++) {
+            const p = st.players[i]!;
+            if (pending[i] === 0 || (p.act >= ActionKind.STAND_TACKLE && p.act <= ActionKind.PUSH_PULL)) continue;
+            if (!evs.some((e) => e.type === EventType.TACKLE && e.a === i)) whistled++;
+          }
+          return false;
+        },
+      });
+      return { hash: hashState(s), started, tackles: tackles(ev).length, whistled };
     };
     const a = run();
     expect(a.started).toBeGreaterThan(40);
-    expect(a.tackles).toBeGreaterThanOrEqual(a.started);
+    expect(a.whistled).toBeLessThanOrEqual(2);
+    expect(a.tackles + a.whistled).toBeGreaterThanOrEqual(a.started);
     expect(run()).toEqual(a);
   }, 60_000);
 });

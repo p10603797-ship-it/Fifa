@@ -2,8 +2,8 @@
  * INT-B app shell wiring:
  *  - loop: the tick's events reach the rumble consumer after audio (PAD-07), a throwing rumble is reported and never
  *    hides events from the others or stops the loop;
- *  - stepWithModes: set-piece practice re-awards its restart inside the app tick (MOD-04 practiceRulesTick), every
- *    other mode is the plain sim step (bit-identical hashes);
+ *  - stepWithModes: [QF-12] the plain sim step (the practice rules run inside the sim since QF-1): set-piece practice
+ *    re-awards its restart through `step` alone, every mode is bit-identical to `step`;
  *  - router: an input Back that pops a screen plays the Back sound (AUD-05 CR 2) exactly once; screen-handled Back,
  *    the root and programmatic back() stay silent;
  *  - recovery attach: false never wraps the session's afterTick and still reports the app recorder (PLT-05).
@@ -98,7 +98,7 @@ describe('INT-B loop rumble consumer (PAD-07)', () => {
   });
 });
 
-describe('INT-B stepWithModes (practice rules inside the app tick)', () => {
+describe('INT-B stepWithModes (QF-12: the plain sim step, practice rules inside the sim)', () => {
   function run(mode: ModeId, practice: PracticeKind, ticks: number, stepFn: typeof step) {
     const c = createMatchConfig();
     c.seed = 31;
@@ -130,11 +130,13 @@ describe('INT-B stepWithModes (practice rules inside the app tick)', () => {
     expect(entries).toBeGreaterThanOrEqual(1);
   });
 
-  it('corner practice through the plain sim step never sees a corner (the hook is what awards it)', () => {
+  it('corner practice through the plain sim step awards the corner (the practice rules live in the sim; QF-12 refit)', () => {
+    expect(stepWithModes).toBe(step);
     const plain = run(ModeId.PRACTICE, PracticeKind.CORNERS, 120, step);
-    expect(plain.phases.includes(MatchPhase.CORNER)).toBe(false);
+    expect(plain.phases.includes(MatchPhase.CORNER)).toBe(true);
     const hooked = run(ModeId.PRACTICE, PracticeKind.CORNERS, 120, stepWithModes);
-    expect(hooked.phases.includes(MatchPhase.CORNER)).toBe(true);
+    expect(hooked.phases).toEqual(plain.phases);
+    expect(hashState(hooked.s)).toBe(hashState(plain.s));
   });
 
   it('every other mode is the plain sim step, bit for bit', () => {

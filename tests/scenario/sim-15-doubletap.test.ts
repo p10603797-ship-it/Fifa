@@ -83,7 +83,8 @@ describe('SIM-15 double-tap window edge with real kick contact timing', () => {
     const t = trace(s, 120, taps(Btn.PASS, T_INPUT.doubleTapTicks + 1));
     expect(t.kicks.map((k) => k.kind)).not.toContain(KickKind.DINKED_PASS);
     expect(t.kicks[0]!.kind).toBe(KickKind.GROUND_PASS);
-    expect(t.leftFeet).toBe(1 + LOCAL_TUNING.tapGraceTicks); // tapped ground pass struck when the grace ended
+    // Tapped ground pass: the charge released when the grace ended, struck T_PASS.releaseStrikeTicks later (QF-10).
+    expect(t.leftFeet).toBe(1 + LOCAL_TUNING.tapGraceTicks + T_PASS.releaseStrikeTicks);
   });
 
   it('glitch "receiver plays a dinked pass nobody asked for": a late second tap after the auto-switch is a plain first-time pass', () => {
@@ -163,10 +164,10 @@ describe('SIM-15 tap grace only where a second press can convert', () => {
     expect(t.kicks.map((k) => k.kind)).toEqual([KickKind.DRIVEN_PASS]);
     expect(t.leftFeet).toBe(T_PASS.windup); // started on tick 1 (actT 1), contact at actT = windup
   });
-  it('a tapped Cross (ground pass) keeps the grace and strikes at press + doubleTapTicks', () => {
+  it('a tapped Cross (ground pass) keeps the grace and strikes at press + doubleTapTicks (+ the release strike delay)', () => {
     const s = passScene(AutoSwitch.OFF);
     const t = trace(s, 30, (i) => (i === 1 ? Btn.PASS : 0));
-    expect(t.leftFeet).toBe(1 + T_INPUT.doubleTapTicks);
+    expect(t.leftFeet).toBe(1 + T_INPUT.doubleTapTicks + T_PASS.releaseStrikeTicks); // [QF-9] QF-10's strike delay
     expect(s.players[P]!.actCharging).toBe(0);
   });
 });
@@ -196,7 +197,11 @@ describe('SIM-15 first-time kicks: the charge ends when the ball arrives', () =>
 
   it('a tapped first-time pass gets no tap grace: it strikes as the ball arrives, same tick as an untimed press', () => {
     const early = firstTime(30, 2); // released long before the launch: no charge at all
-    const late = firstTime(42, 2); // launched while held (charging), then released
+    // [QF-9 skeptic] Pressed on the very tick the untimed press launches (ballEta now counts to the ball entering his
+    // reach, with his own run onto it: that launch is earlier than the old fixed press at 42), so it is launched while
+    // held (charging), then released.
+    const at = early.t.kicks[0]!.tick;
+    const late = firstTime(at, 2);
     expect(late.t.kicks[0]!.tick).toBe(early.t.kicks[0]!.tick);
     expect(late.t.lastTouch).toBe(P);
     expect(late.s.ball.vx).toBeCloseTo(early.s.ball.vx, 6);

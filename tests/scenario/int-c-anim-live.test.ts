@@ -37,8 +37,8 @@ interface Measure {
   outOfReach: number;
   /**
    * [QF-4] Charged kicks struck on the very tick the power bar was released (sim side: the contact cannot be shown on
-   * that frame without a 0.8 m limb pop; the render shows the strike over two frames). Counted, not measured, until
-   * QF-2 lands tests/scenario/qf-4-cr-charged-strike.test.ts (contact >= 2 ticks after the release).
+   * that frame without a 0.8 m limb pop). [QF-10] The sim now strikes T_PASS.releaseStrikeTicks after the release
+   * (tests/scenario/qf-4-cr-charged-strike.test.ts): these kicks are measured like the others and this count stays 0.
    */
   instantRelease: number;
 }
@@ -81,7 +81,7 @@ function measure(seed: number, from: number, ticks: number, framesPerTick: numbe
       if (p.act !== ActionKind.KICK && p.act !== ActionKind.SHOT) continue;
       // A ball the sim kicks from beyond a boot's reach cannot be met by any pose (reported, not a render fault).
       if (Math.hypot(e.x - p.x, e.z - p.z) > 1 || e.y > 0.5) { outOfReach++; continue; }
-      if (charging[e.a] === 1) { instantRelease++; continue; }
+      if (charging[e.a] === 1) instantRelease++;
       pendingKicks.push({ slot: e.a, x: e.x, y: e.y, z: e.z });
     }
     if (t < from - 30) continue; // let the driver settle before measuring
@@ -147,8 +147,8 @@ describe('INT-C animation in live play (sim + GFX-07 model + GFX-12 driver, no W
     expect(m.grounded).toBeGreaterThan(2000);
     expect(m.slipP50).toBeLessThan(0.08);
     expect(m.stationary).toBeGreaterThan(0.6);
-    expect(m.kicks + m.instantRelease).toBeGreaterThan(3);
-    expect(m.kicks).toBeGreaterThan(1);
+    expect(m.instantRelease).toBe(0);
+    expect(m.kicks).toBeGreaterThan(3);
     expect(m.contactMedian).toBeLessThan(0.25);
     expect(m.contactMax).toBeLessThan(0.5);
   });
@@ -159,8 +159,8 @@ describe('INT-C animation in live play (sim + GFX-07 model + GFX-12 driver, no W
     expect(m.grounded).toBeGreaterThan(2000);
     expect(m.slipP50).toBeLessThan(0.08);
     expect(m.stationary).toBeGreaterThan(0.6);
-    expect(m.kicks + m.instantRelease).toBeGreaterThan(3);
-    expect(m.kicks).toBeGreaterThan(1);
+    expect(m.instantRelease).toBe(0);
+    expect(m.kicks).toBeGreaterThan(3);
     expect(m.contactMedian).toBeLessThan(0.25);
     expect(m.contactMax).toBeLessThan(0.5);
   });

@@ -40,7 +40,8 @@
  *    left on anyone else end (inactive players) or turn into RECOVER.
  *
  * THROW_IN action fields: p.actA = ThrowState sub-state (each sub-state starts with beginAction, so p.actT counts
- * ticks in it); p.actKick = THROW_IN; p.actB = ThrowFlag bits; p.actPower = long-throw power 0..1; p.actSlot = target
+ * ticks in it); p.actKick = THROW_IN; [QF-10] p.actCurve = the APPROACH run speed so far (m/s, ramping up at
+ * approachAccel from his speed when it started); p.actB = ThrowFlag bits; p.actPower = long-throw power 0..1; p.actSlot = target
  * receiver (-1 = a point); p.actX/actZ = target point; p.actDirX/actDirZ = throw direction once committed;
  * p.actContact = release tick of the WINDUP; p.actDone = 1 once released. p.ix carries the stick along the line from
  * throwInInput to the handler for one tick (consumed). Movement is LOCKED (the handler sets vx/vz and facing).
@@ -121,8 +122,12 @@ export const LOCAL_TUNING = { // TUNING-CR
   shuffleSpeed: 2.2,
   stickDead: 0.25,
   /** Before the ball is in his hands the taker walks to his spot: speed m/s, arrival gain 1/s; he takes the ball
-   *  within pickupRadius m of the spot (at ready he is put there). */
-  approachSpeed: 5,
+   *  within pickupRadius m of the spot (at ready he is put there). [QF-10] 5 -> 6.5 m/s (a run, at most
+   *  approachTopFrac of his top speed, reached at approachAccel m/s^2): the set-up waits for him instead of
+   *  teleporting him at the set-up tick (RUL-11 walked set-ups). */
+  approachSpeed: 6.5,
+  approachTopFrac: 0.85,
+  approachAccel: 7,
   approachGain: 4,
   pickupRadius: 0.35,
   /** Thrower facing turn rate, rad/s; min component of his facing into the pitch (unit vector). */
@@ -905,18 +910,24 @@ function approachStep(s: SimState, p: PlayerState): void {
   p.wantSprint = 0;
   if (d > 1e-3) {
     let sp: number = T.approachSpeed;
+    const top = s.attrs[p.slot]!.topSpeed * T.approachTopFrac;
+    if (top > 0 && top < sp) sp = top;
+    const cur = (p.actCurve > 0 ? p.actCurve : 0) + T.approachAccel * DT; // [QF-10] no instant run
+    if (cur < sp) sp = cur;
     const g = T.approachGain * d;
     if (g < sp) sp = g;
     const lim = d / DT;
     if (lim < sp) sp = lim;
     p.vx = (dx / d) * sp;
     p.vz = (dz / d) * sp;
+    p.actCurve = sp;
     TURN.x = dx;
     TURN.z = dz;
     turnToward(p);
   } else {
     p.vx = 0;
     p.vz = 0;
+    p.actCurve = 0;
   }
   extendWait(p);
 }
@@ -1009,6 +1020,7 @@ function beginApproach(s: SimState, slot: number): void {
   p.actSlot = -1;
   p.actX = p.x;
   p.actZ = p.z;
+  p.actCurve = Math.sqrt(p.vx * p.vx + p.vz * p.vz); // [QF-10] approach speed so far (ramps up from his speed)
   p.moveMode = MoveMode.LOCKED;
   p.ix = 0;
   p.iz = 0;

@@ -85,8 +85,17 @@ export interface CommandQueue {
   size(human: number): number;
 }
 
+/**
+ * Default capacity of a command queue, per human. [QF-12] Room for a whole pause-menu outbox handed over at once
+ * (ui/screens/pause.ts: leaving the match screen while play runs flushes every order, e.g. Resume from the half-time
+ * team shortcut): MAX_SUBS substitutions + formation + focus + 4 quick tactics = 11, plus a SKIP / QUICK_SUB. It was 8,
+ * and the overflow dropped the OLDEST commands, which are the substitutions (sent first): 5 subs + 6 other orders made
+ * at half-time applied only 2 of the 5 subs.
+ */
+export const COMMAND_QUEUE_CAPACITY = 16;
+
 /** Fixed-capacity FIFO of commands per human (oldest dropped on overflow). Allocation-free after creation. */
-export function createCommandQueue(capacity = 8): CommandQueue {
+export function createCommandQueue(capacity = COMMAND_QUEUE_CAPACITY): CommandQueue {
   const cmds: number[][] = [];
   const args: number[][] = [];
   const head: number[] = [];

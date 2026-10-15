@@ -87,9 +87,9 @@
  */
 // Re-export the handler shell FIRST (import-cycle safety with actions/registry; see firstTouchHooks.ts).
 export { firstTouchHandler } from './firstTouchHooks';
-import { bindFirstTouchImpl } from './firstTouchHooks';
+import { bindFirstTouchImpl, CHEST_REACH_MUL } from './firstTouchHooks';
 import { BALL_RADIUS, DT, NUM_SLOTS, PLAYERS_PER_TEAM, teamFirstSlot } from '../../contracts/constants';
-import { ActionKind, CrossKind, KickKind, MatchPhase, isFootPassKind } from '../../contracts/enums';
+import { ActionKind, CrossKind, KickKind, MatchPhase, isFootPassKind, isShotKind } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
 import { MoveMode, type BallState, type SimState } from '../../contracts/state';
 import { createKickLaunch } from '../../contracts/systems';
@@ -109,7 +109,7 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** Airborne (a first touch at any speed): not grounded and the ball centre this far above its resting height, m. */
   airborneLift: 0.04,
   /** Thigh / chest reach radius as a fraction of T_TOUCH.receiveRadius (the body has to get under the ball). */
-  chestReachMul: 0.65,
+  chestReachMul: CHEST_REACH_MUL,
   /** The last kicker cannot receive his own kick for this many ticks (mirrors SIM-06 selfKickTicks). */
   selfKickTicks: 12,
   /** Outfield opponents leave an untouched pass at or below this ball height to SIM-14 interceptions, m. */
@@ -145,7 +145,7 @@ export const LOCAL_TUNING = { // TUNING-CR
   skillMulBest: 0.34,
   // ---------------------------------------------------------------- outcome
   /** Quality at or below which a touch is never clean, and at or above which it always is (0..1). */
-  qHeavyLo: 0.25,
+  qHeavyLo: 0.1,
   qCleanHi: 0.7,
   /** A touch that is not clean misses with probability 1 at q = 0 falling to 0 at qMissHi (0..1), scaled by how far
    *  from his body (T_PLAYER.bodyRadius .. his reach) the ball's path passes. */
@@ -169,6 +169,15 @@ export const LOCAL_TUNING = { // TUNING-CR
   stickDead: 0.05,
   /** Max ball speed of a settling touch, m/s. */
   settleMaxSpeed: 14,
+  /** [QF-9] Clean settle: max sideways ball speed (relative to him) that brings the ball onto his line, m/s; and the
+   *  shortest time it is given to get there, s. */
+  settleLatMax: 3,
+  settleLatMinTime: 0.2,
+  /** [QF-9] Clean settle speed solver: horizon s, step s, bisection iterations, upper bound above his speed m/s. */
+  settleSolveHorizon: 2.5,
+  settleSolveStep: 1 / 30,
+  settleSolveIters: 14,
+  settleSolveHiExtra: 8,
   /** Vertical speed of a ball cushioned down from the air, m/s. */
   cushionVy: -0.5,
   /** Extra FIRST_TOUCH ticks for a thigh / chest trap (the ball has to come down). */
@@ -198,7 +207,7 @@ for (const ph of RESTART_PHASES) RESTART_PHASE[ph] = 1;
  * Numbers passed between helpers. V8 boxes a double passed to (or returned from) a call it does not inline, so the
  * contact-path helpers take and return their numbers through this typed array instead (no allocation).
  */
-const F = new Float64Array(16);
+const F = new Float64Array(24);
 /** Contact height, reach radius, entry parameter (reachParam / pickReceiver). */
 const F_Y = 0, F_R = 1, F_T = 2;
 /** Intended direction and clean lead (intendedDir). */
@@ -207,6 +216,13 @@ const F_UX = 3, F_UZ = 4, F_LEAD = 5;
 const F_QW = 6, F_QH = 7, F_Q = 8;
 /** missRoom result; the heavy-touch draws (distance, angle). */
 const F_ROOM = 9, F_R2 = 10, F_R3 = 11;
+/** Speed input of leadAtF, m/s. */
+const F_SP = 12;
+/** [QF-9] Clean-settle solver (settlePeak): lead along u now, his speed along u now, the window's speed cap, the window
+ *  length (s), his acceleration, the wanted peak lead, the trial ball speed. */
+const F_D0 = 13, F_V0 = 14, F_CAP = 15, F_TW = 16, F_ACC = 17, F_TGT = 18, F_UBT = 19;
+/** [QF-9] Time until a cushioned ball lands (0 on the ground): it carries on at its speed until then, s. */
+const F_TL = 20;
 const LAUNCH = createKickLaunch();
 
 function validSlot(slot: number): boolean {
@@ -324,6 +340,13 @@ function pickReceiver(s: SimState, pass: number): number {
   const b = s.ball;
   const selfKick = s.tick - b.lastKickTick < L.selfKickTicks ? b.lastKickBy : -1;
   const passTeam = pass === 1 ? b.lastKickTeam : -1;
+  // [QF-9] A fresh shot's outfield opponents block it in SIM-14 interceptContacts (body in its path, or a stretched
+  // leg's roll), which ran just before: they never "receive" it here (the controlled presser / chaser used to take every
+  // shot passing within receiveRadius at any speed, while any other defender in its path was a ghost).
+  // (Fresh shot as SIM-14 isFreshShot, inline: this module must not import defend/tackle.)
+  const fresh = validSlot(b.shotBy) && b.shotBy === b.lastKickBy && isShotKind(b.lastKickKind) &&
+    b.lastTouch === b.lastKickBy && b.lastTouchTick === b.lastKickTick;
+  const shotTeam = pass === 0 && fresh ? b.lastKickTeam : -1;
   const target = validSlot(b.passTarget) ? b.passTarget : -1;
   let best = -1;
   let bestT = 2;
@@ -338,8 +361,9 @@ function pickReceiver(s: SimState, pass: number): number {
     if (!(i === target || ctrl || keeper || chaser)) continue;
     if (pass === 1 && p.team === passTeam && target >= 0 && i !== target && !ctrl) continue;
     if (reachParam(s, i) === 0 || !(F[F_T]! < bestT)) continue;
-    // Outfield opponents of an untouched low pass: SIM-14 interceptions.
+    // Outfield opponents of an untouched low pass: SIM-14 interceptions. Of a fresh shot: SIM-14 blocks.
     if (pass === 1 && p.team !== passTeam && !keeper && F[F_Y]! <= L.interceptHeight) continue;
+    if (shotTeam >= 0 && p.team !== shotTeam && !keeper) continue;
     best = i;
     bestT = F[F_T]!;
     bestY = F[F_Y]!;
@@ -388,7 +412,13 @@ export function trapLead(s: SimState, slot: number): number {
 /** trapLead into F[F_LEAD]. */
 function leadF(s: SimState, slot: number): void {
   const p = s.players[slot]!;
-  const sp = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
+  F[F_SP] = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
+  leadAtF(s, slot);
+}
+
+/** The trap lead for speed F[F_SP] (m/s) into F[F_LEAD]. */
+function leadAtF(s: SimState, slot: number): void {
+  const sp = F[F_SP]!;
   const close = T_DRIBBLE.touchAheadClose, jogLead = T_DRIBBLE.touchAheadJog;
   const top = maxSpeed(s, slot, true);
   const jog = top * T_PLAYER.jogFraction;
@@ -400,40 +430,152 @@ function leadF(s: SimState, slot: number): void {
 }
 
 /**
- * Clean control: roll the ball to the lead spot (F[F_LEAD] along F[F_UX], F[F_UZ]) ahead of where slot will be when
- * the window of dur ticks ends.
+ * [QF-9] Does the clean-settle ball's lead over the receiver along u peak at F[F_TGT] or more, for the trial ball
+ * speed F[F_UBT]? 1-D model along u: the ball rolls (SIM-02: rollDecel + rollDamping * v; a cushioned ball first carries
+ * on in the air for F[F_TL] s); he runs from F[F_V0] toward
+ * the FIRST_TOUCH speed cap F[F_CAP] (braking at T_PLAYER.decel, accelerating at F[F_ACC]) for the window F[F_TW] s,
+ * then holds the speed he has (never backward). The lead counts only once the ball is at least as fast as he is (a
+ * soft touch that first drops back counts where it comes to rest ahead of him), as in SIM-06's push solver. Increasing
+ * in the ball speed (bisection). Inputs through F (V8 would box double arguments).
+ */
+function settlePeak(): number {
+  const h = L.settleSolveStep;
+  const n = Math.ceil(L.settleSolveHorizon / h);
+  const ra = T_BALL.rollDecel, rc = T_BALL.rollDamping, rest = T_BALL.restSpeed, dec = T_PLAYER.decel;
+  const d0 = F[F_D0]!, cap = F[F_CAP]!, tw = F[F_TW]!, acc = F[F_ACC]!, tgt = F[F_TGT]!, tl = F[F_TL]!;
+  let vb = F[F_UBT]!, vp = F[F_V0]!, lead = d0;
+  let rising = vb >= vp ? 1 : 0;
+  let best = rising === 1 ? d0 : -1e9;
+  if (best >= tgt) return 1;
+  let hold = -1;
+  for (let k = 1; k <= n; k++) {
+    let nvb = vb;
+    if (k * h > tl) {
+      nvb = vb - (ra + rc * vb) * h;
+      if (nvb < rest) nvb = 0;
+    }
+    let nvp = vp;
+    if (k * h <= tw) {
+      if (vp > cap) { nvp = vp - dec * h; if (nvp < cap) nvp = cap; } else if (vp < cap) {
+        nvp = vp + (vp < 0 ? dec : acc) * h;
+        if (nvp > cap) nvp = cap;
+      }
+    } else {
+      if (hold < 0) hold = vp > 0 ? vp : 0;
+      if (vp < hold) { nvp = vp + dec * h; if (nvp > hold) nvp = hold; }
+    }
+    lead += 0.5 * (vb + nvb) * h - 0.5 * (vp + nvp) * h;
+    vb = nvb;
+    vp = nvp;
+    if (rising === 0 && vb >= vp) rising = 1;
+    if (rising === 1 && lead > best) best = lead;
+    if (best >= tgt) return 1;
+    // Past the window, the ball no faster than he runs and he no longer speeding up: the lead only falls from here.
+    if (hold >= 0 && vb <= vp && vp >= hold) break;
+  }
+  return 0;
+}
+
+/**
+ * Clean control (QF-9 rewrite of the settle): the ball is settled in his intended direction u so that it stays in his
+ * reach. Along u its speed is solved (settlePeak) so that its lead over him peaks at the trap lead for the speed he
+ * will have when the FIRST_TOUCH window of dur ticks ends (the window caps his run at slowFraction of jog: a sprinting
+ * receiver brakes, so "plan with the capped speed"); sideways it moves with him and closes its offset from his line
+ * (at most settleLatMax, and slowly enough to roll to rest on the line rather than across it). Was: the ball was given
+ * whatever speed reached the lead spot ahead of his capped position exactly at the window's end; for a sprinting
+ * receiver that fired it at 14 m/s while he braked to 7 m/s, so the "controlled" ball ran 2.6 m clear within 15 ticks
+ * and he lost it (QF-2 CR: qf-2-cr-first-touch-sprint). F[F_UX], F[F_UZ] = u (intendedDir). p.actX / actZ = the lead
+ * spot ahead of where he will be when the window ends (animation).
  */
 function settleBall(s: SimState, slot: number, dur: number): void {
   const p = s.players[slot]!;
   const b = s.ball;
-  const ux = F[F_UX]!, uz = F[F_UZ]!, lead = F[F_LEAD]!;
+  const ux = F[F_UX]!, uz = F[F_UZ]!;
   const T = dur * DT;
   // His run over the window, slowed to the FIRST_TOUCH cap (braking at T_PLAYER.decel).
   const sp = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
   const cap = maxSpeed(s, slot, true) * T_PLAYER.jogFraction * L.slowFraction;
-  let avg = sp;
+  let avg = sp, vEnd = sp;
   if (sp > cap) {
     const tc = (sp - cap) / T_PLAYER.decel;
     avg = tc >= T ? sp - 0.5 * T_PLAYER.decel * T : ((sp + cap) * 0.5 * tc + cap * (T - tc)) / T;
+    vEnd = tc >= T ? sp - T_PLAYER.decel * T : cap;
   }
+  F[F_SP] = vEnd;
+  leadAtF(s, slot);
+  const lead = F[F_LEAD]!;
   const k = sp > 1e-6 ? (avg / sp) * T : 0;
-  const gx = p.x + p.vx * k + ux * lead;
-  const gz = p.z + p.vz * k + uz * lead;
-  p.actX = gx;
-  p.actZ = gz;
-  let dx = gx - b.x, dz = gz - b.z;
-  const d = Math.sqrt(dx * dx + dz * dz);
-  let v = 0;
-  if (d > 1e-6) {
-    const a = T_BALL.rollDecel, c = T_BALL.rollDamping;
-    // Rolls d in T without stopping (decel a + c v, first order) ... unless it would stop first: then stop at d.
-    v = (d + 0.5 * a * T * T) / (T * (1 - 0.5 * c * T));
-    if (v * (1 - c * T) < a * T) v = Math.sqrt(2 * a * d);
-    if (v > L.settleMaxSpeed) v = L.settleMaxSpeed;
-    dx /= d; dz /= d;
+  p.actX = p.x + p.vx * k + ux * lead;
+  p.actZ = p.z + p.vz * k + uz * lead;
+  // Along u: solve the ball speed whose lead peaks at `lead`.
+  const rx = b.x - p.x, rz = b.z - p.z;
+  const v0 = p.vx * ux + p.vz * uz;
+  F[F_D0] = rx * ux + rz * uz;
+  F[F_V0] = v0;
+  F[F_CAP] = cap;
+  F[F_TW] = T;
+  const at = s.attrs[slot]!;
+  F[F_ACC] = (at.accel > 0 ? at.accel : T_PLAYER.accelMin);
+  F[F_TGT] = lead;
+  // A ball cushioned from the air (cushionVy) carries on until it lands.
+  let tLand = 0;
+  if (b.y > REST_Y) {
+    const vy = L.cushionVy, g = T_BALL.gravity, hgt = b.y - BALL_RADIUS;
+    tLand = (vy + Math.sqrt(vy * vy + 2 * g * hgt)) / g;
   }
-  b.vx = dx * v;
-  b.vz = dz * v;
+  F[F_TL] = tLand;
+  let lo = 0;
+  let hi = (v0 > cap ? v0 : cap) + L.settleSolveHiExtra;
+  if (hi > L.settleMaxSpeed) hi = L.settleMaxSpeed;
+  F[F_UBT] = lo;
+  if (settlePeak() === 1) hi = lo;
+  else {
+    F[F_UBT] = hi;
+    if (settlePeak() === 1) {
+      for (let i = 0; i < L.settleSolveIters; i++) {
+        const mid = 0.5 * (lo + hi);
+        F[F_UBT] = mid;
+        if (settlePeak() === 1) hi = mid; else lo = mid;
+      }
+    }
+  }
+  // The speed that brings the ball to the lead spot ahead of his capped run exactly when the window ends (rolling, or
+  // carried in the air until it lands; a ball beyond the spot is drawn back to it), capped by the solved speed so its
+  // lead never runs on past the trap lead.
+  const du = (p.vx * k) * ux + (p.vz * k) * uz + lead - F[F_D0]!;
+  const adu = du < 0 ? -du : du;
+  let vt = 0;
+  if (adu > 1e-6) {
+    if (tLand >= T) vt = adu / T;
+    else {
+      const a = T_BALL.rollDecel, c = T_BALL.rollDamping;
+      vt = (adu + 0.5 * a * T * T) / (T * (1 - 0.5 * c * T));
+      if (vt * (1 - c * T) < a * T) vt = Math.sqrt(2 * a * adu);
+    }
+    if (du < 0) vt = -vt;
+  }
+  const vu = vt < hi ? vt : hi;
+  // Sideways (n = (-uz, ux)): his own sideways speed at the window's end plus a correction that brings the ball onto
+  // his line by the window's end (at least settleLatMinTime, at most settleLatMax); a ball that will move mostly
+  // sideways is instead given the speed that rolls it to rest on his line (it would otherwise roll on across it).
+  const e0 = rz * ux - rx * uz;
+  const pn = sp > 1e-6 ? (-p.vx * uz + p.vz * ux) * (vEnd / sp) : 0;
+  const ae = e0 < 0 ? -e0 : e0;
+  const tl = T > L.settleLatMinTime ? T : L.settleLatMinTime;
+  let corr = ae / tl;
+  if (corr > L.settleLatMax) corr = L.settleLatMax;
+  const avu = vu < 0 ? -vu : vu;
+  if (avu < corr) {
+    const stop = Math.sqrt(2 * T_BALL.rollDecel * ae);
+    if (corr > stop) corr = stop;
+  }
+  const vn = pn + (e0 > 0 ? -corr : corr);
+  let vx = ux * vu - uz * vn;
+  let vz = uz * vu + ux * vn;
+  const v = Math.sqrt(vx * vx + vz * vz);
+  if (v > L.settleMaxSpeed) { vx *= L.settleMaxSpeed / v; vz *= L.settleMaxSpeed / v; }
+  b.vx = vx;
+  b.vz = vz;
   b.sx = 0; b.sy = 0; b.sz = 0;
   if (b.y > REST_Y) { b.vy = L.cushionVy; b.grounded = 0; } else if (b.vy > 0) b.vy = 0;
 }

@@ -148,6 +148,14 @@ function run(s: SimState, n: number, opts: RunOpts = {}): SimEvent[] {
   return all;
 }
 
+/** [QF-10] Run to ready: at restartSetupTicks, or for a walked set-up (throw-ins, free kicks away from goal) once
+ *  everybody is in place, at most setupExtendMaxTicks later. Returns the events. */
+function toReady(s: SimState): SimEvent[] {
+  const evs = run(s, SETUP + LOCAL_TUNING.setupExtendMaxTicks, { until: (st) => st.match.restart.ready === 1 });
+  expect(s.match.restart.ready).toBe(1);
+  return evs;
+}
+
 function ofType(ev: readonly SimEvent[], type: EventType): SimEvent[] {
   return ev.filter((e) => e.type === type);
 }
@@ -401,8 +409,7 @@ describe('RUL-11 legal positions', () => {
       p.x = Math.max(-HALF_LENGTH - 2, Math.min(HALF_LENGTH + 2, r.x + Math.cos(a) * rad));
       p.z = Math.max(-HALF_WIDTH - 2, Math.min(HALF_WIDTH + 2, r.z + Math.sin(a) * rad));
     }
-    run(s, SETUP);
-    expect(s.match.restart.ready).toBe(1);
+    toReady(s);
     return s;
   }
 
@@ -498,7 +505,8 @@ describe('RUL-11 legal positions', () => {
   it('glitch "opponents inside the required distance blocking forever": pushed out within 1 s, no teleport, even when walking in', () => {
     const s = base();
     award(s, RestartKind.FREE_KICK, 0, 10, 0);
-    run(s, SETUP + 1);
+    toReady(s); // [QF-10] (a walked set-up: ready once everyone is in place)
+    run(s, 1);
     const r = s.match.restart;
     const o = 15;
     const p = s.players[o]!;
@@ -532,7 +540,8 @@ describe('RUL-11 legal positions', () => {
       const x = kind === RestartKind.CORNER ? HALF_LENGTH - 0.5 : 0;
       const z = kind === RestartKind.CORNER ? HALF_WIDTH - 0.5 : kind === RestartKind.THROW_IN ? -HALF_WIDTH : 0;
       award(s, kind, 0, x, z);
-      run(s, SETUP + 1);
+      toReady(s); // [QF-10] (throw-ins and free kicks away from goal are walked set-ups)
+      run(s, 1);
       const r = s.match.restart;
       const p = s.players[14]!;
       p.x = r.x + 0.05; p.z = r.z + (kind === RestartKind.THROW_IN ? 0.5 : -0.05);
@@ -571,7 +580,7 @@ describe('RUL-11 taker', () => {
     expect(second).not.toBe(first);
     expect(s.players[second]!.team).toBe(1);
     expect(s.players[second]!.active).toBe(1);
-    run(s, SETUP);
+    toReady(s); // [QF-10] (a walked set-up: the taker runs to the ball in SET_PIECE before it is ready)
     expect(s.players[second]!.act).toBe(ActionKind.SET_PIECE);
     // sent off after ready: the next taker is put on the ball and waits
     sendOff(s, second);
@@ -704,7 +713,8 @@ describe('RUL-11 timeouts', () => {
   it('a CPU taker that has not acted after 4 s gets the Default (logged); a Default that does nothing is followed by a forced kick', () => {
     const s = base();
     award(s, RestartKind.THROW_IN, 1, -30, -HALF_WIDTH);
-    const evs = run(s, SETUP + LOCAL_TUNING.cpuTakeTimeoutTicks);
+    const evs = toReady(s); // [QF-10] (walked set-up; with RUL-02's Setup mocked nobody walks in: placed at the cap)
+    evs.push(...run(s, LOCAL_TUNING.cpuTakeTimeoutTicks));
     expect(H.log).toContain('default:2');
     const w = ofType(evs, EventType.WATCHDOG);
     expect(w.map((e) => [e.a, e.b])).toEqual([[WatchdogReason.RESTART_BLOCKED, RestartKind.THROW_IN]]);
@@ -727,11 +737,12 @@ describe('RUL-11 timeouts', () => {
     for (const [kind, x, z] of kinds) {
       const s = base({ humans: 1 });
       award(s, kind, 0, x, z);
-      const evs = run(s, SETUP + 40, {
+      const evs = run(s, SETUP + LOCAL_TUNING.setupExtendMaxTicks + 40, { // [QF-10] walked set-ups may be ready later
         inputs: (st) => {
           const r = st.match.restart;
           if (st.match.phase !== MatchPhase.IN_PLAY && r.ready === 1 && r.taken === 0 && r.t >= SETUP + 30) takeRestart(st, NULL_EV);
         },
+        until: (st) => st.match.phase === MatchPhase.IN_PLAY,
       });
       expect(ofType(evs, EventType.PHASE_CHANGE).map((e) => e.b), RestartKind[kind]).toEqual([MatchPhase.IN_PLAY]);
       expect(s.match.phase, RestartKind[kind]).toBe(MatchPhase.IN_PLAY);

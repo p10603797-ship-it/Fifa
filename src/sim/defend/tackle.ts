@@ -104,7 +104,7 @@ export {
 } from './tackleHooks';
 import { bindTackleImpl } from './tackleHooks';
 import { HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PLAYERS_PER_TEAM, TICK_HZ } from '../../contracts/constants';
-import { ActionKind, ChallengeKind, CrossKind, KickKind, MatchPhase, isFootPassKind } from '../../contracts/enums';
+import { ActionKind, ChallengeKind, CrossKind, KickKind, MatchPhase, isFootPassKind, isShotKind } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
 import {
   MAX_CHALLENGES, MoveMode, createChallengeRecord, type ChallengeRecord, type PlayerState, type SimState,
@@ -331,6 +331,9 @@ export const LOCAL_TUNING = { // TUNING-CR
   interceptBodyBlock: 0.8,
   /** ... and he traps it (instead of a block) below this share of his controlled-interception speed. */
   bodyControlFrac: 0.6,
+  /** [QF-9] A fresh shot is blocked by an outfield opponent's body up to this ball height (torso), m; his reach-entry
+   *  roll (a stretched leg) only up to interceptMaxHeight. */
+  shotBlockHeight: 1.8,
 } as const;
 
 const L = LOCAL_TUNING;
@@ -1168,10 +1171,40 @@ function blockBall(s: SimState, j: number, ev: EventSink): void {
   contactKick(s, j, q.vx + ox, b.vy > 0 ? 0 : b.vy, q.vz + oz, KickKind.DEFLECTION, ev);
 }
 
-/** Contact phase: defenders intercepting passes that cross their reach. */
+/**
+ * [QF-9] A shot nobody has touched since it was struck (shotBy is cleared by any other touch). Its outfield opponents
+ * block it here (body in the path on any tick; a reach entry rolls interceptChance), never by a SIM-07 first touch.
+ */
+export function isFreshShot(s: SimState): boolean {
+  const b = s.ball;
+  return validSlot(b.shotBy) && b.shotBy === b.lastKickBy && isShotKind(b.lastKickKind) && b.lastTouch === b.lastKickBy &&
+    b.lastTouchTick === b.lastKickTick;
+}
+
+/**
+ * [QF-9 skeptic] A busy outfield opponent whose body still stops a fresh shot: anyone upright in an action (a tackle in
+ * its wind-up, glide or recovery, a stumble, getting up, a header / kick / volley wind-up, a first touch, a shield) or
+ * stunned. Not a man lying FALLEN (his body is no upright circle), a wall member (RUL-05 WALL_JUMP blocks free kicks
+ * itself), nor set-piece / celebration states. A shot struck while a tackle came in passed straight through the
+ * tackler's body (isFree only).
+ */
+function shotBodyBlocks(q: PlayerState): boolean {
+  const a = q.act;
+  return a === ActionKind.NONE || (a >= ActionKind.KICK && a <= ActionKind.STUMBLE) || a === ActionKind.GET_UP ||
+    a === ActionKind.SHIELD;
+}
+
+/**
+ * Contact phase: defenders intercepting passes that cross their reach, and [QF-9] blocking fresh shots: a shot used to
+ * pass straight through every outfield defender who was not the controlled player, the chaser or the pass target (only
+ * passes were intercepted here, and SIM-07 let only those three "receive" a shot, at any speed).
+ */
 export function interceptContacts(s: SimState, ev: EventSink): void {
   const b = s.ball;
-  if (b.owner >= 0 || !ballPlayable(s) || ballTouchedThisTick(s) || !liveBall(s) || !untouchedPass(s)) return;
+  if (b.owner >= 0 || !ballPlayable(s) || ballTouchedThisTick(s) || !liveBall(s)) return;
+  const shot = untouchedPass(s) ? 0 : isFreshShot(s) ? 1 : 0;
+  if (shot === 0 && !untouchedPass(s)) return;
+  const maxH = shot === 1 ? L.shotBlockHeight : L.interceptMaxHeight;
   const sp = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
   if (!(sp >= L.interceptMinSpeed)) return;
   const passTeam = b.lastKickTeam;
@@ -1181,7 +1214,11 @@ export function interceptContacts(s: SimState, ev: EventSink): void {
   let n = 0;
   for (let j = first; j < first + PLAYERS_PER_TEAM; j++) {
     const q = s.players[j]!;
-    if (q.active !== 1 || q.isKeeper === 1 || q.team === passTeam || !isFree(q) || q.noTouchT > 0) continue;
+    if (q.active !== 1 || q.isKeeper === 1 || q.team === passTeam) continue;
+    // [QF-9 skeptic] Free (and allowed to touch): intercepts / blocks. Busy (a tackle, its recovery, a stumble, a
+    // header or kick wind-up, stunned): his body still stops a fresh shot (shotBodyBlocks), nothing else.
+    const free = isFree(q) && q.noTouchT <= 0 ? 1 : 0;
+    if (free === 0 && (shot === 0 || !shotBodyBlocks(q))) continue;
     S[0] = b.px; S[1] = b.pz; S[2] = b.x; S[3] = b.z; S[4] = q.x; S[5] = q.z;
     segDist();
     const d = G[0]!, t = G[1]!;
@@ -1192,9 +1229,13 @@ export function interceptContacts(s: SimState, ev: EventSink): void {
     const ex = b.px - qx0, ez = b.pz - qz0;
     const entry = ex * ex + ez * ez > reach * reach ? 1 : 0;
     const body = d <= bodyRadiusOf(s, j) * L.interceptBodyBlock ? 1 : 0;
-    if (entry === 0 && body === 0) continue;
+    if ((entry === 0 || free === 0) && body === 0) continue;
     const yAt = b.py + (b.y - b.py) * t;
-    if (!(yAt <= L.interceptMaxHeight)) continue;
+    if (!(yAt <= maxH)) continue;
+    // Above interceptMaxHeight (a shot at his chest): only his body stops it, no stretched-leg roll; nor for a busy
+    // man.
+    const roll = free === 1 && entry === 1 && yAt <= L.interceptMaxHeight ? 1 : 0;
+    if (roll === 0 && body === 0) continue;
     if (keeperClaims(s, j)) continue;
     // insertion by path order (ties: lower slot first, already in slot order)
     let k = n;
@@ -1204,7 +1245,7 @@ export function interceptContacts(s: SimState, ev: EventSink): void {
     }
     // The chance reads how far from him the pass runs (its line), not where it first touches his reach.
     const miss = ((q.x - b.x) * b.vz - (q.z - b.z) * b.vx) / sp;
-    CAND_T[k] = t; CAND_D[k] = miss < 0 ? -miss : miss; CAND_SLOT[k] = j; CAND_F[k] = entry + 2 * body;
+    CAND_T[k] = t; CAND_D[k] = miss < 0 ? -miss : miss; CAND_SLOT[k] = j; CAND_F[k] = roll + 2 * body;
     n++;
   }
   const passer = b.lastKickBy;
@@ -1222,7 +1263,8 @@ export function interceptContacts(s: SimState, ev: EventSink): void {
     const rvx = b.vx - q.vx, rvz = b.vz - q.vz;
     let ctrl = lerp(L.interceptControlSpeedLo, L.interceptControlSpeedHi, attr01(s.attrs[j]!.ballControl));
     if (!won) ctrl *= L.bodyControlFrac; // straight at him: he traps it only when it is gentle
-    if (rvx * rvx + rvz * rvz <= ctrl * ctrl) {
+    // A busy man (tackle, stumble, ...) never traps it: it comes off his body.
+    if (isFree(q) && q.noTouchT <= 0 && rvx * rvx + rvz * rvz <= ctrl * ctrl) {
       takePossession(s, j, ev);
       let fx = b.x - q.x, fz = b.z - q.z;
       const fl = Math.sqrt(fx * fx + fz * fz);

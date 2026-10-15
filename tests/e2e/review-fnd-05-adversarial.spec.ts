@@ -32,11 +32,30 @@ async function waitMatch(page: Page): Promise<void> {
   }, null, { timeout: 15_000 });
 }
 
-async function startMatch(page: Page): Promise<void> {
+async function startMatch(page: Page, live = false): Promise<void> {
   await page.goto('/');
+  // [QF-12 refit] `live`: auto-switch off (the checks follow one player) and open play (below).
+  if (live) await page.evaluate(() => window.__dotkick!.ctx.settings.update((s) => { s.controls.autoSwitch = 0; }));
   await page.getByTestId('splash-start').click();
   await page.getByTestId('main-kickoff').click();
   await waitMatch(page);
+  if (live) await toOpenPlay(page);
+}
+
+/**
+ * [QF-12 refit] The match opens with the PRE_MATCH intro (touch cluster hidden, nobody moves) and a KICK_OFF whose taker
+ * stands at the ball: input checks need open play. The kick-off is taken by the sim's own restart timeout.
+ */
+async function toOpenPlay(page: Page): Promise<void> {
+  await page.waitForFunction(() => {
+    const st = (window.__dotkick!.ctx.session as unknown as { runtime(): { curr: { match: { phase: number; restart: Record<string, number> } } } | null }).runtime()?.curr;
+    if (!st) return false;
+    const r = st.match.restart;
+    if (st.match.phase === 1 && r.ready === 1 && r.taken === 0) r.timeoutT = 1;
+    return st.match.phase === 2;
+  }, null, { timeout: 60_000 });
+  const t = await page.evaluate(() => window.__dotkick!.ctx.session.getState()!.tick);
+  await page.waitForFunction((t0) => window.__dotkick!.ctx.session.getState()!.tick >= t0 + 30, t, { timeout: 30_000 });
 }
 
 async function controlled(page: Page): Promise<Controlled> {
@@ -131,11 +150,14 @@ test.describe('REVIEW FND-05 adversarial', () => {
     });
     const errors = collectErrors(page);
     const listeners = (): Promise<Record<string, number>> => page.evaluate(() => (window as unknown as { __listeners: () => Record<string, number> }).__listeners());
+    await page.goto('/');
+    await page.evaluate(() => window.__dotkick!.ctx.settings.update((s) => { s.controls.autoSwitch = 0; }));
     await startMatch(page);
     const inMatch1 = await listeners();
     const quit = async (): Promise<void> => {
       await page.evaluate(() => window.__dotkick!.ctx.session.pause(0));
       await page.getByTestId('pause-quit').click();
+      await page.getByTestId('pause-quit-confirm').click(); // UIX-08 quit confirmation [QF-12 refit]
       await page.waitForFunction(() => window.__dotkick!.ctx.router.current === 'main');
     };
     await quit();
@@ -161,7 +183,8 @@ test.describe('REVIEW FND-05 adversarial', () => {
       await expect(page.locator('#touch .dk-touch')).toHaveCount(1);
       expect(await listeners()).toEqual(inMatch1);
     }
-    // Input still drives the player after all that.
+    // Input still drives the player after all that (in open play: the kick-off taken first).
+    await toOpenPlay(page);
     const before = await controlled(page);
     await page.keyboard.down('KeyD');
     await page.waitForTimeout(600);
@@ -218,7 +241,7 @@ test.describe('REVIEW FND-05 adversarial', () => {
 
   test('resize mid-match (4:3 and 21:9): cluster relayouts inside the viewport and still responds; camera follows', async ({ page }) => {
     const errors = collectErrors(page);
-    await startMatch(page);
+    await startMatch(page, true);
     const cdp = await page.context().newCDPSession(page);
     for (const [w, h] of [[1024, 768], [1600, 686]] as const) {
       await page.setViewportSize({ width: w, height: h });
@@ -275,7 +298,7 @@ test.describe('REVIEW FND-05 adversarial', () => {
     });
     type W = { __pads: ({ axes: number[]; connected: boolean; buttons: { pressed: boolean; value: number }[] } | null)[]; __mkPad: (i: number) => unknown };
     const errors = collectErrors(page);
-    await startMatch(page);
+    await startMatch(page, true);
     await page.evaluate(() => {
       const p = (window as unknown as W).__pads[0]!;
       p.buttons[2]!.pressed = true; p.buttons[2]!.value = 1;
@@ -295,18 +318,31 @@ test.describe('REVIEW FND-05 adversarial', () => {
       w.__pads[0]!.connected = false;
       w.__pads[0] = null;
     });
-    await waitTicks(page, b.tick, 90);
+    // PAD-03: losing the bound pad mid-match pauses with the reconnect card [QF-12 refit: the spec predates it], so the
+    // player stops at once and nothing runs on the dead stick.
+    await page.waitForFunction(() => window.__dotkick!.ctx.session.paused, null, { timeout: 15_000 });
     const c = await controlled(page);
-    await waitTicks(page, c.tick, 30);
+    await waitFrames(page, 20);
     const d = await controlled(page);
-    expect(Math.abs(d.x - c.x)).toBeLessThan(0.15); // stopped, not running on a dead stick
+    expect(d.tick).toBe(c.tick);
+    expect(Math.abs(d.x - c.x)).toBeLessThan(0.15);
     const listed = await page.evaluate(() => window.__dotkick!.ctx.devices.list().filter((x) => x.kind === 'pad').map((x) => ({ id: x.id, c: x.connected })));
     expect(listed).toEqual([{ id: 'pad:1', c: false }]);
     await page.evaluate(() => {
       const w = window as unknown as W;
       const p = w.__mkPad(2) as W['__pads'][number];
-      p!.axes[0] = 1;
       w.__pads[2] = p;
+    });
+    // Back at a new index: any button on it resumes (the card), then the stick drives the same player again.
+    await page.evaluate(() => {
+      const p = (window as unknown as W).__pads[2]!;
+      p.buttons[0]!.pressed = true; p.buttons[0]!.value = 1;
+    });
+    await page.waitForFunction(() => !window.__dotkick!.ctx.session.paused, null, { timeout: 15_000 });
+    await page.evaluate(() => {
+      const p = (window as unknown as W).__pads[2]!;
+      p.buttons[0]!.pressed = false; p.buttons[0]!.value = 0;
+      p.axes[0] = 1;
     });
     const e = await controlled(page);
     await waitTicks(page, e.tick, 60);
@@ -324,7 +360,7 @@ test.describe('REVIEW FND-05 adversarial', () => {
       Object.defineProperty(navigator, 'serviceWorker', { configurable: true, get() { return undefined; } });
     });
     const errors = collectErrors(page);
-    await startMatch(page);
+    await startMatch(page, true);
     const cdp = await page.context().newCDPSession(page);
     const before = await controlled(page);
     await touches(cdp, 'touchStart', [{ x: 300, y: 520, id: 1 }]);

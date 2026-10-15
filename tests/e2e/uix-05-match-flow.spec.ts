@@ -29,6 +29,32 @@ const stateConfig = (page: Page): Promise<Cfg | null> =>
     return s ? (JSON.parse(JSON.stringify(s.config)) as Cfg) : null;
   });
 
+/**
+ * [QF-12] Record every loading-tip-kind label the loading screen shows, from now on. The session replaces 'loading'
+ * with 'match' as soon as the match is ready, which can be within a frame or two of the route check: reading the
+ * label after `route === 'loading'` raced that replace and failed with "loading-tip-kind not found" under load.
+ * A MutationObserver sees the label when the screen mounts, however briefly it stays.
+ */
+async function recordTipKinds(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __tipKinds: string[] };
+    w.__tipKinds = [];
+    const seen = new WeakSet<Element>(); // one entry per label element (a moved node is reported again)
+    const scan = (n: Node): void => {
+      if (!(n instanceof HTMLElement)) return;
+      const els = n.matches('[data-testid="loading-tip-kind"]') ? [n] : Array.from(n.querySelectorAll<HTMLElement>('[data-testid="loading-tip-kind"]'));
+      for (const el of els) {
+        if (seen.has(el)) continue;
+        seen.add(el);
+        w.__tipKinds.push(el.textContent ?? '');
+      }
+    };
+    new MutationObserver((recs) => { for (const r of recs) r.addedNodes.forEach(scan); }).observe(document.body, { childList: true, subtree: true });
+  });
+}
+
+const tipKinds = (page: Page): Promise<string[]> => page.evaluate(() => (window as unknown as { __tipKinds?: string[] }).__tipKinds ?? []);
+
 async function waitForMatch(page: Page): Promise<void> {
   await expect.poll(() => route(page), { timeout: 90_000 }).toBe('match');
   await expect.poll(async () => (await stateConfig(page)) !== null).toBe(true);
@@ -71,10 +97,12 @@ test.describe('UIX-05 mode setup, match settings and loading', () => {
     await expect(page.getByTestId('mset-offside')).toHaveAttribute('aria-checked', 'false');
     await shot(page, 'uix-05-match-settings-1180x820');
 
+    await recordTipKinds(page);
     await page.getByTestId('settings-start').tap();
     await expect.poll(() => route(page)).not.toBe('match-settings');
     if ((await route(page)) === 'loading') await shot(page, 'uix-05-loading-touch');
     await waitForMatch(page);
+    expect(await tipKinds(page)).toEqual(['Touch tips']);
     const c = (await stateConfig(page))!;
     expect(c.homeClub).toBe(3);
     expect(c.awayClub).toBe(9);
@@ -149,13 +177,13 @@ test.describe('UIX-05 mode setup, match settings and loading', () => {
     await expect(page.getByTestId('mset-offside')).toHaveAttribute('aria-checked', 'false');
     await shot(page, 'uix-05-match-settings-pad');
     await walkTo(page, 'settings-start', () => padTap(page, PAD.UP));
+    await recordTipKinds(page);
     await padTap(page, PAD.A);
     await expect.poll(() => route(page)).not.toBe('match-settings');
-    if ((await route(page)) === 'loading') {
-      await expect(page.getByTestId('loading-tip-kind')).toHaveText('Controller tips');
-      await shot(page, 'uix-05-loading-pad');
-    }
+    if ((await route(page)) === 'loading') await shot(page, 'uix-05-loading-pad');
     await waitForMatch(page);
+    // The loading screen showed controller tips (recorded on mount; it may be replaced by 'match' within a frame).
+    expect(await tipKinds(page)).toEqual(['Controller tips']);
     const c = (await stateConfig(page))!;
     expect(c.homeClub).toBe(1);
     expect(c.awayClub).toBe(6);
