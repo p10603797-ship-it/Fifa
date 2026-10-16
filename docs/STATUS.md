@@ -215,7 +215,9 @@ Total assignments: 201.
 | QF-11 | done (19 defects; ladder 5/5 at 100/pair, top pairs borderline; balance ~77% over 800 vs 80%; 500-match Professional soak PASS: goals 3.27, shots 17.3, passes 78.3%, fouls 12.7, blow-outs 3.4%) | difficulty ladder and club balance (D-022) |
 | QF-12 | done (12 defects: records counting, cup final screen + Back, HUD kit chips match worn kits, Continue press kept, refuse benchmark/replay/tutorial mid-match, command queue overflow; full e2e 194 tests: 191 pass first run, the rest pass on rerun or are flaky test steps; monkey 15 seeds clean) | app/modes follow-up, full e2e suite run |
 | QF-13 | done (19 defects: 11 + 8; 500-match soak PASS goals 3.55 shots 19.0 passes 78.5% fouls 12.4 blow-outs 2.6%; fuzz 60 PASS) | header flick-ons, reaction chains, off-pitch receivers, balance, shot bodies, FK slide |
-| TUN-1 | queued (after QF-13) | gameplay constants into tuning.ts, hash-identical (BRIEF §4 rule 6) |
+| QF-14 | running | goal-band margin (3.55 -> 2.6-3.2) and shot quality, ladder/balance kept |
+| QF-15 | running | online final-whistle desync detection |
+| TUN-1 | queued (after QF-14) | gameplay constants into tuning.ts, hash-identical (BRIEF §4 rule 6) |
 | QF-7 | queued (after TUN-1) | performance |
 | SGN-05 | done | originality and licence audit: names screened against ~1,700 famous names + Wikidata (98k footballers, 37k clubs); 6 player names renamed (names only, attributes identical); visuals, audio, dependencies, licence notices in dist, runtime network (proxy + NetLog logs: no request outside online 1v1) all PASS |
 | QF-8 | queued (last) | determinism, soak 2000, fuzz 500 |
