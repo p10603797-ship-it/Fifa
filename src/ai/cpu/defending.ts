@@ -163,6 +163,11 @@ export const LOCAL_TUNING = {
   turnCos: 0.6,
   /** Standing tackle: ball within standReach + this of the defender now, m. */
   tackleApproach: 0.4,
+  /** [QF-14] Patience: a carrier within this distance of our goal line who has had the ball T_LEVEL.shoulderAfterTicks
+   *  gets a shoulder challenge from a controlled defender running alongside him (no exposed ball needed), m. */
+  shoulderZone: T_CPU.defendShoulderZone,
+  /** [QF-14] Patience, goal-side: 1 = no step back toward our goal (hold the ground), 0 = keep standoff in front. */
+  holdGround: T_CPU.defendHoldGround,
   /** Rash lunge at a carrier with the ball at his feet: chance per rashBucketTicks = decisionNoise x this. */
   rashLungeChance: T_CPU.defendRashLungeChance,
   rashBucketTicks: 30,
@@ -670,7 +675,7 @@ function defendCarrier(
   // [QF-14] Patience, goal-side: he holds his ground. The point patienceStandoff in front of the carrier moves back with
   // him, so a carrier jogging at 4 m/s with the ball tight still pushed the defender 30 m into the six-yard box (14 s,
   // soak seed 1 #14): no step toward our goal, only across; the carrier runs into him, turns (an exposure) or passes.
-  if (patient && w <= 0) {
+  if (patient && w <= 0 && L.holdGround > 0) {
     const back = (tgX - p.x) * gx + (tgZ - p.z) * gz;
     if (back > 0) { tgX -= back * gx; tgZ -= back * gz; }
   }
@@ -725,10 +730,11 @@ function defendCarrier(
       const bucket = Math.floor(s.tick / L.rashBucketTicks);
       if (noise01(seed, who, bucket * 4 + 2) < noisy * L.rashLungeChance) { pressTackle(brain, lv); return; }
     }
-    // [QF-14] Patience over and running alongside him: the shoulder challenge (SIM-14: a strength duel, never a foul)
-    // needs no exposed ball. A controlled defender pinned beside a close-control dribbler ran with him for 14 s into
-    // the box without a challenge (soak seed 1 #14).
-    if (patient && kind === ActionKind.SHOULDER && expOn !== 1) { pressTackle(brain, lv); return; }
+    // [QF-14] Running alongside a carrier near our goal (shoulderZone) who has had the ball T_LEVEL.shoulderAfterTicks:
+    // the shoulder challenge (SIM-14: a strength duel, never a foul) needs no exposed ball. A controlled defender pinned
+    // beside a close-control dribbler ran with him for 14 s into the box without a challenge (soak seed 1 #14).
+    if (patient && kind === ActionKind.SHOULDER && expOn !== 1 && goalLineDist <= L.shoulderZone &&
+      s.ball.ownerT >= levelValue(s, team, T_LEVEL.shoulderAfterTicks)) { pressTackle(brain, lv); return; }
   }
 
   // Slide: goal-side, the ball loose-ish (between touches), beyond standing reach, in our half and urgent (a quick

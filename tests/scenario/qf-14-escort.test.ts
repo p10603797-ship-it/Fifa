@@ -14,6 +14,9 @@ import { ActionKind, Difficulty, MatchPhase } from '../../src/contracts/enums';
 import { EventType, type SimEvent } from '../../src/contracts/events';
 import { MoveMode, type SimState } from '../../src/contracts/state';
 import { T_LEVEL } from '../../src/contracts/tuning';
+import { HALF_LENGTH } from '../../src/contracts/constants';
+import { runMatch } from '../../tools/headless';
+import { soakConfig } from '../../tools/lib/configs';
 import { makeScenario, runTicks } from '../harness/scenario';
 
 const C = 9; // human carrier, team 0 (attacks +x)
@@ -76,4 +79,41 @@ describe('QF-14 TAI-11: patience with a close-control dribbler', () => {
     expect(won).toBeGreaterThanOrEqual(2);
     expect(fouls).toBeLessThanOrEqual(1);
   });
+
+  it('glitch: defender jockeys a dribbler for ever — no escort of 8 s or more in 16 Professional soak matches', () => {
+    // An escort: one carrier keeps the ball 8 s+ with an opponent within 2.5 m for 80% of it and no tackle on him.
+    // Before: two of these 16 matches had one of 10-14 s ending in the box (#4, #14: a controlled defender pinned
+    // beside the dribbler ran with him from 19 m out on the wing into the box), even with the hold-ground patience.
+    const long: string[] = [];
+    for (let m = 0; m < 16; m++) {
+      const config = soakConfig(m, 1, { halfMinutes: 4, difficulty: Difficulty.PROFESSIONAL });
+      let own = -1, start = 0, close = 0, tackled = 0, minGoal = 1e9;
+      runMatch({
+        config, checker: 'none', fastCutscenes: true,
+        onTick: (st, ev) => {
+          for (let i = 0; i < ev.count; i++) { const e = ev.get(i); if (e.type === EventType.TACKLE && e.b === own) tackled++; }
+          const b = st.ball;
+          const o = b.owner >= 0 && b.heldBy < 0 ? b.owner : -1;
+          if (o !== own) {
+            const dur = st.tick - start;
+            if (own >= 0 && dur >= 480 && close >= 0.8 * dur && tackled === 0) long.push(`#${m} t${start} ${(dur / 60).toFixed(1)} s, ${minGoal.toFixed(1)} m from goal`);
+            own = o; start = st.tick; close = 0; tackled = 0; minGoal = 1e9;
+          }
+          if (own < 0) return;
+          const p = st.players[own]!;
+          let nd = 1e9;
+          for (let j = 0; j < 22; j++) {
+            const q = st.players[j]!;
+            if (q.team === p.team || q.active !== 1 || q.isKeeper === 1) continue;
+            const d = Math.hypot(q.x - p.x, q.z - p.z);
+            if (d < nd) nd = d;
+          }
+          if (nd < 2.5) close++;
+          const g = Math.hypot(st.teams[p.team]!.dir * HALF_LENGTH - p.x, p.z);
+          if (g < minGoal) minGoal = g;
+        },
+      });
+    }
+    expect(long).toEqual([]);
+  }, 300000);
 });
