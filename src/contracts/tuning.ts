@@ -128,6 +128,10 @@ export const T_TOUCH = {
   meetOvershootMin: 3.5,
   meetOvershootMax: 5,
   meetCatchDist: 1.2,
+  /** [QF-13] SIM-15 receiver's meeting point (and the overshoot target above) at most this far outside the touchlines
+   *  and goal lines: an overhit lofted pass's receiver ran to its landing point 4.75 m beyond the touchline and stood
+   *  there; he now goes to where its track leaves the pitch. m. */
+  meetPitchMargin: 0.5,
 } as const;
 
 export const T_PASS = {
@@ -178,6 +182,10 @@ export const T_SHOT = {
   speedMax: 32,
   /** Power shot max, m/s. */
   powerShotMax: 36,
+  /** [QF-13] Highest elevation of an aimed shot's launch (every kind but the chip), rad (35 degrees). A soft long shot
+   *  that cannot carry to its aim point lower lands short and bounces on; the solver used to climb to 1.3 rad (74
+   *  degrees) for it, a balloon straight up (CPU long shots cut to a tap: 25 of 363 shots above 45 degrees). */
+  maxAimedElevation: 0.61,
   finesseSpeedMul: 0.78,
   chipSpeedMul: 0.55,
   windup: 10,
@@ -252,6 +260,17 @@ export const T_GK = {
   /** [QF-11 skeptic] GKP-02: a set catch (GK_CATCH) is kept up to this many ticks after the shot stops looking like a
    *  threat while the ball still comes at him (no GKP-02 / GKP-03 start / abort flip-flop), ticks. */
   catchKeepTicks: 12,
+  /** [QF-13] GKP-02 parry round the post: a parried ball met more than parryPostBand m off the goal centre (toward a
+   *  post) is pushed round that post and behind for a corner, with chance parryPostChance x (how near the post, 0 at the
+   *  band, 1 at the post) x (0.5 + half the parry quality), instead of back into play (every parry went back into play:
+   *  rebounds or nothing, 0 corners from 0.4 parries a match). Turned back toward the goal line by up to parryPostBackMax
+   *  rad past square, and only so far that it crosses the line parryPostClear m outside the post's inside edge; no push
+   *  when that leaves less than parryPostBackMin rad (met on the line). m, 0..1, m, rad, rad. */
+  parryPostBand: 2.0,
+  parryPostChance: 0.7,
+  parryPostClear: 0.45,
+  parryPostBackMax: 0.7,
+  parryPostBackMin: 0.1,
   /** Max ticks a keeper may hold the ball (6 s). */
   maxHoldTicks: 360,
   /** Auto release for humans after this many ticks. */
@@ -371,6 +390,15 @@ export const T_AI = {
    *  run, TAI-11 branch 2) gets there that many ticks later unless his run already takes him to the interception point
    *  (approaching it at controlledApproachSpeed, or within this distance of it and not running away), m. */
   chaserReactNearDist: 1.2,
+  /** [QF-13] TAI-11 reaction delay in an opponent's passing chain: after a delay runs out, a further change of ball
+   *  owner re-arms it only once the CPU defender has been awake for this share of the level's reactionTicks (a turnover
+   *  always re-arms). Every owner change re-armed Beginner's 80 ticks before: frozen up to 29 s with 0.25 s gaps.
+   *  Unitless. */
+  reactRearmGapFrac: 0.25,
+  /** [QF-13] Game management (ai/cpu/levels effectiveFocus): a CPU side leading by this many goals or more plays its
+   *  default tactical focus as DEFENDING (a deeper block, fewer runners: data/tactics FOCUS_MODIFIERS). Without it 5.0%
+   *  of 500 Professional soak matches ended in a blow-out (5+ goal margin, band < 5%); with it 3.2%. Goals. */
+  gameManageLead: 3,
 } as const;
 
 /**
@@ -389,6 +417,28 @@ export const T_AERIAL = {
   headerShotCap: 19.8,
   opennessW: 0.8,
   aiClearAlwaysDepth: 22,
+  /** [QF-13] An AI-driven contested header pass (not a clearance) in the attacking half with no teammate in the forward
+   *  cone goes back across the box: toward the point aiFlickSpotDepth m out from the attacked goal line on the centre
+   *  line (a receiver in that direction first), never straight up the pitch (2.0 goal kicks a match came from flicks
+   *  over the goal line). Every AI header pass lands at least aiFlickLineMargin m inside the attacked goal line and
+   *  aiFlickTouchMargin m inside the touchlines, and an AI flick to no one is shortened (up to aiFlickTries launches,
+   *  predicted with the ball physics) until it would slow below aiFlickSlowSpeed m/s before crossing those margins
+   *  (a header pass rolls on about 1.5 times as far as it flies). m, m, m, m/s, launches. */
+  aiFlickSpotDepth: 11,
+  aiFlickLineMargin: 5,
+  aiFlickTouchMargin: 2,
+  aiFlickSlowSpeed: 3,
+  aiFlickTries: 3,
+  /** [QF-13] A flick shortened for its predicted roll is aimed this share of the inside travel (a margin for the
+   *  prediction's linear scaling). Unitless. */
+  aiFlickShrink: 0.92,
+  /** [QF-13] Prediction horizon of that roll check, ticks (4 s: a 16 m/s header pass is below 3 m/s by then). */
+  aiFlickPredictTicks: 240,
+  /** [QF-13] No AI-driven player starts a header / volley on a shot (struck, untouched since) sooner than this after the
+   *  strike: a defender 0.4 m from the shooter volleyed 17-27 m/s shots away as aimed 24 m/s clearances 2 ticks after
+   *  they were struck (about 1 a match). Inside this time only a body in the shot's path (TAC-02 block) stops it.
+   *  Ticks (1/6 s, a quick human reaction to a ball). */
+  aiShotReactTicks: 10,
 } as const;
 
 /**
@@ -435,6 +485,10 @@ export const T_CPU = {
   carrierClearBoxBonus: 0.006,
   carrierClearPower: 0.5,
   carrierSwitchMargin: 0.003,
+  /** [QF-13] TAI-08 dribble turn: the carrier runs to his ball until it comes into reach judged this many ticks ahead,
+   *  aimed at where it will be (lead at least at this speed), not letting go once set off. Ticks, m/s. */
+  carrierLeashLeadTicks: 2,
+  carrierLeashLeadMinSpeed: 4,
   // ---- passing.ts
   passGroundArriveMin: 7,
   passGroundArriveMax: 12,
@@ -460,13 +514,36 @@ export const T_CPU = {
    *  [QF-11 skeptic] Or within his braking distance toward the line (v^2 / (2 x T_PLAYER.decel)) + brake slack, m. */
   defendMomentumEdgeMargin: 2,
   defendMomentumBrakeSlack: 0.5,
+  /** [QF-13 skeptic] TAI-11 reception near a line: when SIM-07 takes the ball this tick (a moving ball at the feet of the
+   *  CPU's controlled player comes within T_TOUCH.receiveRadius of him, also with the turn's braking; a turn that is
+   *  not followed by the touch slowed his chase, he missed the ball and turned back after it, a stick flip-flop every
+   *  tick) within defendReceiveEdge of a touchline / goal line (or his braking distance toward it + defendMomentumBrakeSlack +
+   *  defendReceiveLead, the room the settled ball runs ahead of him, whichever is more) while he runs or steers at it
+   *  (faster than defendReceiveOutSpeed, or a stick component over defendReceiveOutStick; with the stick released, also
+   *  the ball going at it), the stick's component toward the line becomes defendReceiveInward into the pitch (SPRINT let
+   *  go), so SIM-07's clean settle (stick direction) keeps the ball in play: the receiver of an overhit pass sprinted
+   *  onto it at the line and trapped it over (1.4 throw-ins a match, 18% of all). m, m, m/s, 0..1, 0..1. */
+  defendReceiveEdge: 3,
+  defendReceiveLead: 1.5,
+  defendReceiveOutSpeed: 0.5,
+  defendReceiveOutStick: 0.1,
+  defendReceiveInward: 0.8,
+  /** [QF-13 skeptic] TAI-11 box care: in the own penalty area a careful (well-timed) tackle also needs, at contact, the
+   *  carrier at least 2 x T_PLAYER.bodyRadius + defendBoxBodyGap from the tackler and his body (bodyRadius +
+   *  defendBoxClearMargin) off the line from the tackler to the ball: SIM-14 makes a missed tackle with the body in reach a
+   *  foul, and the top levels' careful tackles conceded 1.6-2.0 penalties a match at Legend (0.75 World Class, 0.38
+   *  Professional); now about 0.4 at Legend. m, m. */
+  defendBoxClearMargin: 0.3,
+  defendBoxBodyGap: 0.6,
 } as const;
 
 /** Per-difficulty AI parameters, indexed by Difficulty (0 Beginner .. 5 Legend). Never physics. */
 export const T_LEVEL = {
   /** [QF-11] Ticks a CPU carrier keeps running the way he is going after he gets the ball, and a CPU defender after a
-   *  change of ball owner, before deciding (head down): measured the strongest lever below Professional. */
-  reactionTicks: [80, 42, 24, 11, 6, 1] as readonly number[],
+   *  change of ball owner, before deciding (head down): measured the strongest lever below Professional. [QF-13]
+   *  Semi-Pro 24 -> 18: with the reaction-delay chain fixed, Semi-Pro v Amateur fell to 64% (400); 18 gives 76.5% (400)
+   *  and Professional v Semi-Pro 72% (200). */
+  reactionTicks: [80, 42, 18, 11, 6, 1] as readonly number[],
   /** [QF-11] Option noise (TAI-08 carrier utilities, TAI-11 rash / noisy tackles, TAI-13 set-piece targets, GKP-04
    *  distribution): a noisy carrier picks the safe square pass among many near-equal ones and never makes the chance;
    *  the strongest lever above Professional (Legend decides without noise). */
@@ -480,13 +557,16 @@ export const T_LEVEL = {
   /** [QF-2] Extra save-reaction ticks of a CPU team's keeper by level (GKP-02; 0 at Professional and for a human
    *  side): reaction time is one of the level differences (BRIEF §7), the keeper's included. Not in LevelParams
    *  (contracts/systems.ts): GKP-02 reads it here. [QF-11] was 10 / 6 / 3 / 0 / -2 / -3: a low level's keeper is
-   *  visibly slow to react (Beginner +30 ticks on top of his reflexes), a top level's sharper. */
-  keeperReactTicks: [30, 21, 10, 0, -3, -8] as readonly number[],
+   *  visibly slow to react (Beginner +30 ticks on top of his reflexes), a top level's sharper. [QF-13] Beginner /
+   *  Amateur 30 / 21 -> 45 / 30: the reaction-delay chain fix (T_AI.reactRearmGapFrac) gave the low levels' defenders
+   *  back most of their reactions (Amateur v Beginner 71 -> ~61%, Semi-Pro v Amateur 76 -> ~59%). */
+  keeperReactTicks: [45, 30, 10, 0, -3, -8] as readonly number[],
   /** [QF-11] Extra AI tables (read through ai/cpu/levels levelValue: a human side's AI always uses the Professional
    *  entry, which is the pre-QF-11 behaviour). CPU carrier re-decision period, ticks (TAI-08; T_AI.carrierEvalInterval
    *  for every level before): a top level is patient and carries the ball to the better option (re-deciding every few
-   *  ticks takes the first pass that edges ahead). */
-  carrierEvalTicks: [5, 5, 5, 5, 6, 12] as readonly number[],
+   *  ticks takes the first pass that edges ahead). [QF-13] Beginner / Amateur 5 -> 3 / 4 (with keeperReactTicks, after
+   *  the reaction-delay chain fix; see docs/TUNING.md QF-13). */
+  carrierEvalTicks: [3, 4, 5, 5, 6, 12] as readonly number[],
   /** [QF-11] TAI-04 marking distance multiplier of a CPU side (markGap / markGapMid x this): a low level marks loose. */
   markGapMul: [2.0, 1.6, 1.26, 1, 1, 1] as readonly number[],
   /** [QF-11] TAI-04 back-line speed multiplier of a CPU side (lineUpRate / lineDownRate x this): a low level's line
@@ -497,6 +577,13 @@ export const T_LEVEL = {
    *  0 elsewhere: a spread of noise round the level's noise narrows the gap to the neighbouring level (the cost of
    *  noise is concave), measured 10-15 points of ladder win share at full weight everywhere. */
   composureNoiseWeight: [0, 0, 0.5, 1, 0, 0] as readonly number[],
+  /** [QF-13] TAI-11 in its own penalty area (the carrier inside it, where a foul is a penalty): the rash / noisy lunges
+   *  (exposure and at-feet) are multiplied by boxRashMul and the slide chance by boxSlideMul; the careful, well-timed
+   *  standing tackle stays. Every CPU tackle there was as free as in midfield: 0.92 penalties a match at Professional
+   *  (real football about 0.3), 1.2 in the 88 v 62 balance pair, half the weaker club's goals. A low level keeps its
+   *  rash lunges in the box (a beginner's mistake, which the ladder needs); Professional and up are careful. */
+  boxRashMul: [1, 1, 0.5, 0, 0, 0] as readonly number[],
+  boxSlideMul: [1, 1, 0.5, 0, 0, 0] as readonly number[],
 } as const;
 
 export const T_INPUT = {

@@ -6,6 +6,9 @@
  * of goal kicks (5.25 per match) and more than all corners (0.75 per match) together. Fix suggestion: head a contested
  * ball toward the best-placed teammate ahead (as TAI-09's pass target) or, with none, at a point short of the goal
  * line / back across the box; keep the defensive clearance as it is. Flip to it() when fixed.
+ * [QF-13] Landed (aerial.ts solveAerial: back across the box, landing and roll kept inside the lines; regression tests
+ * in tests/scenario/qf-13-header-flick.test.ts): flipped to it(). Seed 287, 8 Professional matches: 14 of 33 goal
+ * kicks came off such a flick before, 0 of 22 after.
  */
 import { describe, expect, it } from 'vitest';
 import { Difficulty, KickKind, RestartKind } from '../../src/contracts/enums';
@@ -46,7 +49,7 @@ describe('QF-11 CR: contested headers are not flicked on over the goal line', ()
     expect(t.goalKicks).toBeGreaterThan(0);
   });
 
-  it.fails('an attacker\'s headed flick-on (HEADER_PASS, untouched after) causes at most 1 goal kick in 6 short matches', () => {
+  it('an attacker\'s headed flick-on (HEADER_PASS, untouched after) causes at most 1 goal kick in 6 short matches', () => {
     expect(t.headerOut).toBeLessThanOrEqual(1);
   });
 });

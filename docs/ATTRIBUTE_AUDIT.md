@@ -38,7 +38,11 @@ Two halves, both re-runnable by QA:
     good carriers, `visionNoiseBonusSlope` 0.45, gives 81.5% but costs World Class v Professional 6.5 points of the
     ladder; see docs/TUNING.md, QF-11 skeptic) (`tools/balance.ts`;
     `tests/scenario/qf-11-defects.test.ts` pins that a calm carrier makes the clean choice more often than a nervous
-    one).
+    one). [QF-13] With the same weights the 88 v 62 pair now wins 84.0% of 800 (4 seeds) and the closest pair splits
+    56.1% of points: AI defenders no longer clear shots faster than they could react, so the side creating three times
+    the shots scores more of them (docs/TUNING.md, QF-13). Composure (box care by composure), stamina (stronger fatigue,
+    a pivot on the stamina attribute) and passing / shooting error spreads were measured as balance levers and not
+    kept (same table).
   - **finishing at close range**: with the Assisted aim a 40-finishing striker still puts 99% of 14 m shots on target;
     finishing moves placement (0.65 to 0.18 m from the aim point), so it shows as corners hit versus shots near the
     keeper rather than misses. Tuning is for SIM-11 / Wave 4.
@@ -79,8 +83,8 @@ dynamic micro-test (table further down has the exact numbers and levels).
 | stamina | drain and recovery rate of the condition (which scales speed, acceleration and kick accuracy when low) | - | condition drained per minute of sprinting 0.51 -> 0.32 | keep |
 | composure | shot pressure relief; 40% of penalty accuracy; penalty-taker choice; penalty keeper's read | CPU shot decision; [QF-11] CPU decision noise (carrier options, rash / noisy tackles) | 14 m shot under a 1 m press: placement error 0.59 -> 0.45 m; CPU option noise x1.23 -> x0.78 (57 -> 87) | keep |
 | gkDiving | dive speed, max reach, get-up time; claim jump height; best keeper for a sub | CPU shot placement against the keeper | save rate, hard corner shots 16-22 m: 36% -> 78% | keep |
-| gkHandling | catch-speed limit (catch vs parry), parry quality; throw accuracy; claim catch limit; punch speed | - | share of saves held 58% -> 92% | keep |
-| gkReflexes | reaction delay (`keeperReactTicks`); parry quality | CPU shot placement against the keeper | save rate, close-range shots 8-11 m: 67% -> 89% | keep |
+| gkHandling | catch-speed limit (catch vs parry), parry quality (angle, rest speed and, [QF-13], the chance a parry by the post goes round it for a corner); throw accuracy; claim catch limit; punch speed | - | share of saves held 58% -> 92% | keep |
+| gkReflexes | reaction delay (`keeperReactTicks`); parry quality (as gkHandling, round-the-post chance included) | CPU shot placement against the keeper | save rate, close-range shots 8-11 m: 67% -> 89% | keep |
 | gkPositioning | positioning accuracy (`idealKeeperSpot` error); free-kick spot | - | distance from the ideal spot 0.23 -> 0.03 m | keep (moderate) |
 | gkKicking | drop-kick / kick accuracy and distance error; sweeper clearance speed | - | drop-kick direction spread 1.95 -> 0.83 deg | keep |
 | height | body radius; standing head height in aerials; keeper reach heights; throw-in release height; wall blocking height; aerial target choice | set-piece aerial / marker roles | aerial duel win rate 23% (170 cm) -> 93% (195 cm) | keep |
@@ -177,17 +181,20 @@ matchup, preferred formations, offside and fouls on; top-bottom and equal play e
 swapped). Exit code 0 = every target met. Useful flags: `--matches N`, `--suite top-bottom,equal,mirror`,
 `--workers W`, `--seed S`, `--halfMinutes M`, `--difficulty D`, `--cup`, `--json out.json`, `--max-ticks T` (smoke).
 
-Current numbers (2026-10-14, `npx tsx tools/balance.ts --workers 2`, seed 1, 4-minute halves, 600 matches, 873 s,
-no failed match). **RESULT: FAIL (2/3 matchups meet the target).**
+Current numbers (QF-13, `npx tsx tools/balance.ts --matches 200 --workers 3`, seeds 1-4, 4-minute halves; seed 1 all
+three suites, seeds 2-4 top-bottom and equal; no failed match). **RESULT: PASS on every seed.**
 
-| Matchup | n | A W / D / L | Judged value (95% CI) | Target | Verdict | Goals A-B | Shots A-B | On target A-B |
+| Matchup | n | A W / D / L | Judged value | Target | Verdict | Goals A-B | Shots A-B | On target A-B |
 |---|---|---|---|---|---|---|---|---|
-| top-bottom: MOS (88) v ROO (62) | 200 | 40 / 159 / 1 | wins 20.0% (15.0-26.1) | wins >= 80% | FAIL | 0.23-0.01 | 0.9-0.1 | 0.5-0.1 |
-| equal: SND (76) v GLA (75) | 200 | 15 / 172 / 13 | points 50.5% (43.6-57.4) | points 40-60% | PASS | 0.09-0.09 | 0.6-0.4 | 0.4-0.2 |
-| mirror: GLA (75) v GLA (75) | 200 | 9 / 175 / 16 | home points 48.3% (41.4-55.1) | points 40-60% | PASS | 0.06-0.09 | 0.5-0.5 | 0.3-0.3 |
+| top-bottom: MOS (88) v ROO (62), seed 1 | 200 | 166 / 20 / 14 | wins 83.0% (77.2-87.6) | wins >= 80% | PASS | 2.63-0.58 | 12.6-3.5 | 9.2-2.1 |
+| top-bottom, seeds 1-4 | 800 | 671 / 76 / 53 | wins 83.9% (83.0 / 86.5 / 84.5 / 81.5) | wins >= 80% | PASS | 2.65-0.55 | 13.1-3.6 | 9.6-2.1 |
+| equal: SND (76) v GLA (75), seed 1 | 200 | 90 / 34 / 76 | points 53.5% (46.6-60.3) | points 40-60% | PASS | 1.59-1.39 | 9.0-7.9 | 6.3-5.1 |
+| equal, seeds 1-4 | 800 | 370 / 160 / 270 | points 56.3% (53.5 / 57.3 / 60.0 / 54.3) | points 40-60% | PASS | 1.66-1.39 | 9.0-7.7 | 6.3-5.1 |
+| mirror: GLA (75) v GLA (75), seed 1 | 200 | 83 / 51 / 66 | home points 54.3% (47.3-61.0) | points 40-60% | PASS | - | - | - |
 
-Reading: the stronger club is clearly stronger (40 wins to 1 loss, 52.5% possession, 9x the shots), but 80-88% of
-CPU-v-CPU matches end 0-0, with under one shot per side per match. The equal and mirror passes say little for the same
-reason (the tool now prints a WARN line for matchups with more than 50% draws or under one goal per match). The
-balance target cannot be judged until CPU attacks create and finish chances; that is Wave 4 tuning (AI attacking
-play, shot decision thresholds, keeper save rates), after which QA re-runs the tool unchanged.
+Reading: the 88-rated club wins in more than four of five matches on every seed (draws 7.5-11%, losses 6-7.5%), with
+60% of the ball and 3.6 times the shots; the closest-rated pair splits points near evenly (SND's 84-rated striker
+against GLA's 70 keeps it above half). History: 20% at Wave 2 (0-0 matches), 76.9% over 800 after QF-11 (55.3%
+equal), 83.9% now: the rating gap shows through attributes (finishing, shot power, keeper ratings) and the
+composure / vision decision noise (QF-11), and since QF-13 AI defenders no longer clear shots faster than a human
+could react, which had hidden much of the stronger side's chance creation (docs/TUNING.md, QF-13).

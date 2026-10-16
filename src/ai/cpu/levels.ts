@@ -30,7 +30,7 @@
  *   allocation. Bad input never leaks into the frame: a non-finite or negative scale adds no noise, a non-finite
  *   value returns 0. An invalid team index or brain level uses Professional.
  */
-import { Difficulty, TeamStyle } from '../../contracts/enums';
+import { Difficulty, TacticalFocus, TeamStyle } from '../../contracts/enums';
 import type { SimState } from '../../contracts/state';
 import type { LevelParams, StyleWeights } from '../../contracts/systems';
 import { T_AI, T_LEVEL } from '../../contracts/tuning';
@@ -179,4 +179,18 @@ export function applyExecutionError(s: SimState, team: number, value: number, sc
   const lv = t ? levelParams(t.cpu.level) : PROFESSIONAL;
   const v = value + g * scale * lv.executionError;
   return Number.isFinite(v) ? v : value;
+}
+
+/**
+ * [QF-13] Tactical focus team `team` plays with (every TAI-14 focus reader: TAI-01 shape, TAI-03 runs, TAI-04 line,
+ * TAI-05 press, TAI-06 transition): its set focus, except that a CPU side (active CPU brain) on the default focus that
+ * leads by T_AI.gameManageLead goals or more manages the game with DEFENDING (deeper block, fewer runners). A human
+ * side's focus is always its own. Pure.
+ */
+export function effectiveFocus(s: SimState, team: number): number {
+  const t = s.teams[team]!;
+  const f = t.focus;
+  if (f !== TacticalFocus.DEFAULT || t.cpu.active !== 1) return f;
+  const o = s.teams[team === 0 ? 1 : 0]!;
+  return t.goals - o.goals >= T_AI.gameManageLead ? TacticalFocus.DEFENDING : f;
 }

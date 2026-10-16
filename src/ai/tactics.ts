@@ -77,13 +77,13 @@
  * receiver exists (rare: auto-switch hands the receiver to the controller).
  */
 import {
-  BALL_RADIUS, BOARD_X, BOARD_Z, HALF_LENGTH, HALF_WIDTH, NUM_CONTROLLERS, PLAYERS_PER_TEAM, TICK_HZ, teamFirstSlot,
+  BALL_RADIUS, HALF_LENGTH, HALF_WIDTH, NUM_CONTROLLERS, PLAYERS_PER_TEAM, TICK_HZ, teamFirstSlot,
 } from '../contracts/constants';
 import { ActionKind, AiJob, Command, ControllerKind, KickKind, MatchPhase, Role, TacticalFocus } from '../contracts/enums';
 import { EventType, type EventSink } from '../contracts/events';
 import { MoveMode, type SimState, type TeamState } from '../contracts/state';
 import { createBallPrediction, MAX_PREDICT_TICKS } from '../contracts/systems';
-import { T_PLAYER } from '../contracts/tuning';
+import { T_PLAYER, T_TOUCH } from '../contracts/tuning';
 import { FORMATIONS, getFormation, remapFormation } from '../data/formations';
 import { focusForCommand, TacticFlag, tacticFlagForCommand } from '../data/tactics';
 import { predictBall } from '../sim/ball/flight';
@@ -115,9 +115,10 @@ const N_FORMATIONS = FORMATIONS.length;
 /** The ball is out of play once its centre is a radius beyond a line (whole ball over the line). */
 const OUT_X = HALF_LENGTH + BALL_RADIUS;
 const OUT_Z = HALF_WIDTH + BALL_RADIUS;
-/** Movement targets stay a body radius inside the boards (steer clamps the same way). */
-const TGT_MAX_X = BOARD_X - T_PLAYER.bodyRadius;
-const TGT_MAX_Z = BOARD_Z - T_PLAYER.bodyRadius;
+/** [QF-13] The receiver's reception point (in play) within the pitch + T_TOUCH.meetPitchMargin, as SIM-15 meetPoint
+ *  (was a body radius inside the boards: a receiver ran up to 6 m beyond the touchline for an overhit ball). */
+const RECV_MAX_X = HALF_LENGTH + T_TOUCH.meetPitchMargin;
+const RECV_MAX_Z = HALF_WIDTH + T_TOUCH.meetPitchMargin;
 
 // ---------------------------------------------------------------- module scratch (rewritten on every call)
 
@@ -530,8 +531,8 @@ export function receiverAssist(s: SimState, team: number, ev: EventSink): void {
     const b = s.ball;
     const x = RES[0]!;
     const z = RES[1]!;
-    const tx = clampTo(Number.isFinite(x) ? x : b.x, TGT_MAX_X);
-    const tz = clampTo(Number.isFinite(z) ? z : b.z, TGT_MAX_Z);
+    const tx = clampTo(Number.isFinite(x) ? x : b.x, RECV_MAX_X);
+    const tz = clampTo(Number.isFinite(z) ? z : b.z, RECV_MAX_Z);
     const top = s.attrs[r]!.topSpeed;
     if (!assignJob(s, r, AiJob.RECEIVE, tx, tz, top > 0 ? top : T_PLAYER.topSpeedMin, -1)) r = -1;
   }

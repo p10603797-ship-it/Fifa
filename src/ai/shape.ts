@@ -56,6 +56,7 @@ import {
   BOX_SPOTS, createTacticParams, EXTRA_STRIKER_SHAPES, resolveTactics, slotLineFor, TacticFlag, tacticFlags,
 } from '../data/tactics';
 import { otherTeam, possessingTeam, teamEnd, teamStart } from '../sim/core/query';
+import { effectiveFocus } from './cpu/levels';
 
 // Per-phase tables are indexed by TeamPhase: BUILD_UP, ATTACK, DEFEND, TRANSITION_ATTACK, TRANSITION_DEFEND,
 // SET_PIECE. SET_PIECE is resolved to BUILD_UP/ATTACK (restart team) or DEFEND (other team) before lookup, so its
@@ -596,7 +597,8 @@ function computeShape(s: SimState, team: number): void {
   // 2. Phase, focus and the extra striker.
   const ph = phaseIndex(s, team, bu < -HALF_LENGTH / 3 ? 1 : 0);
   const defending = ph === TeamPhase.DEFEND || ph === TeamPhase.TRANSITION_DEFEND;
-  const fo = t.focus >= 0 && t.focus <= 2 && (t.focus | 0) === t.focus ? t.focus : 0;
+  const ef = effectiveFocus(s, team); // [QF-13] game management (a CPU side 3+ goals up)
+  const fo = ef >= 0 && ef <= 2 && (ef | 0) === ef ? ef : 0;
   const extra = t.extraStriker === 1 ? applyExtraStriker(fi, defending, full) : -1;
   // Focus + quick tactics as every module reads them (data/tactics): block push (team press only out of
   // possession) and width multiplier.

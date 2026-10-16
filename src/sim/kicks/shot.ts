@@ -70,7 +70,9 @@
  *  - Trajectory: the launch (elevation + azimuth at the fixed speed; a chip: azimuth + speed at the elevation
  *    lerp(LT.chipAngleMin, chipAngleMax, power), Semi / Manual blend toward the power-only chip speed) is solved by
  *    iterating SIM-01 ballAirStep flights (secant on the height, rotation on the lateral miss) so the ball passes the
- *    aim point after error with its spin. A low driven shot's rise is capped (peak LT.lowDrivenMaxPeak). An Assisted /
+ *    aim point after error with its spin; [QF-13] its elevation is at most T_SHOT.maxAimedElevation (a soft shot that
+ *    cannot carry that far lower lands short and bounces on). A low driven shot's rise is capped (peak
+ *    LT.lowDrivenMaxPeak). An Assisted /
  *    Semi free kick that would hit the wall (height at the wall below LT.fkWallClearY within the wall's width) gets more
  *    topspin (LT.fkWallDipStep, up to LT.fkWallDipSteps times) to dip over it.
  *  - launch.onTarget = 1 when the solved flight crosses the goal line inside the mouth (centre within the posts and
@@ -263,7 +265,7 @@ export const LOCAL_TUNING = { // TUNING-CR
   maxFlightTicks: 300,
   /** Elevation bounds of the solved launch, rad. */
   minElevation: -0.35,
-  maxElevation: 1.3,
+  maxElevation: T_SHOT.maxAimedElevation, // [QF-13] was 1.3
 } as const;
 
 const LT = LOCAL_TUNING;

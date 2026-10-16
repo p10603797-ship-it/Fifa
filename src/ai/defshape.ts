@@ -64,7 +64,7 @@
 import {
   DT, GOAL_AREA_DEPTH, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PENALTY_AREA_DEPTH, PENALTY_AREA_HALF_WIDTH, PLAYERS_PER_TEAM,
 } from '../contracts/constants';
-import { AiJob, MatchPhase, TeamPhase } from '../contracts/enums';
+import { AiJob, KickKind, MatchPhase, TeamPhase } from '../contracts/enums';
 import type { EventSink } from '../contracts/events';
 import type { SimState } from '../contracts/state';
 import { T_AI, T_LEVEL, T_PLAYER } from '../contracts/tuning';
@@ -74,7 +74,7 @@ import {
 } from '../data/tactics';
 import { otherTeam, teamEnd, teamStart } from '../sim/core/query';
 import { assignJob, isJobDriven } from './jobs';
-import { teamLevel } from './cpu/levels';
+import { effectiveFocus, teamLevel } from './cpu/levels';
 
 export const LOCAL_TUNING = {
   // ---- line height (team frame u, m from the centre spot toward the opposition goal)
@@ -412,10 +412,17 @@ function secondLastU(s: SimState, team: number, dir: number): void {
   OUT[OUT_SL] = second >= BIG ? first : second;
 }
 
+/** [QF-13] A deliberate kick (TAI-06 CONTROL_KICK): anything but a deflection, poke, parry, punch or tip. */
+function controlKick(k: number): boolean {
+  return k > KickKind.NONE && k !== KickKind.DEFLECTION && k !== KickKind.TACKLE_POKE && k !== KickKind.GK_PARRY &&
+    k !== KickKind.GK_PUNCH && k !== KickKind.GK_TIP;
+}
+
 /**
  * True when `team` is out of possession for shape purposes: the opponent owns the ball, an opponent pass is in
- * flight (last touch theirs, intended receiver theirs), or the ball is loose and the nearest opponent is closer to
- * it than our nearest player. Pure.
+ * flight (last touch theirs, intended receiver theirs), [QF-13] the last touch was a deliberate kick of theirs still
+ * travelling untouched (ours: not defending), or the ball is loose and the nearest opponent is closer to it than our
+ * nearest player. Pure.
  */
 export function isDefending(s: SimState, team: number): boolean {
   const b = s.ball;
@@ -423,6 +430,13 @@ export function isDefending(s: SimState, team: number): boolean {
   const o = b.owner >= 0 && b.owner < NUM_SLOTS ? b.owner : b.heldBy >= 0 && b.heldBy < NUM_SLOTS ? b.heldBy : -1;
   if (o >= 0) return s.players[o]!.team === opp;
   if (b.lastTouchTeam === opp && b.passTarget >= 0 && b.passTarget < NUM_SLOTS && s.players[b.passTarget]!.team === opp) return true;
+  // [QF-13] A deliberate kick still travelling untouched (a clearance, a long ball, a header on, a pass) belongs to the
+  // kicking team, as TAI-06's possession has it: with the nearest-player rule alone a long ball flipped the shape
+  // between defending and not as it flew over players (back-line targets jumping 3 m to and fro every 0.5 s).
+  const lt = b.lastTouch;
+  if (lt >= 0 && lt < NUM_SLOTS && b.lastKickBy === lt && b.lastKickTick === b.lastTouchTick && controlKick(b.lastKickKind)) {
+    return s.players[lt]!.team === opp;
+  }
   let dOwn = BIG, dOpp = BIG;
   for (let i = 0; i < NUM_SLOTS; i++) {
     const p = s.players[i]!;
@@ -656,7 +670,7 @@ export function assignDefensiveShape(s: SimState, team: number, ev: EventSink): 
   LVL[LVL_UP] = LT.lineUpRate * DT * rateMul;
   LVL[LVL_UP_TRAP] = LT.trapUpRate * DT * rateMul;
   LVL[LVL_DOWN] = LT.lineDownRate * DT * rateMul;
-  resolveTactics(t.focus, flags, TP);
+  resolveTactics(effectiveFocus(s, team), flags, TP);
   collectMembers(s, team, dir, flags);
   if (!isDefending(s, team)) {
     // Track the back line so the value is continuous when the ball is lost.
@@ -893,7 +907,7 @@ export function defensiveLineTarget(s: SimState, team: number): number {
   const t = s.teams[team]!;
   const dir = t.dir < 0 ? -1 : 1;
   const flags = teamFlags(s, team);
-  resolveTactics(t.focus, flags, TP);
+  resolveTactics(effectiveFocus(s, team), flags, TP);
   collectMembers(s, team, dir, flags);
   evaluateLine(s, team, dir, (flags & TacticFlag.OFFSIDE_TRAP) !== 0);
   return dir * EVAL.target + 0;

@@ -15,7 +15,8 @@ import { createEventBuffer } from '../../src/sim/core/events';
 import { hashState } from '../../src/sim/core/hash';
 import { createInvariantChecker } from '../../src/sim/debug/invariants';
 import { awardRestart } from '../../src/sim/rules/restart';
-import { WallMode } from '../../src/sim/rules/freekick';
+import { LOCAL_TUNING as FK_TUNING, WallMode } from '../../src/sim/rules/freekick';
+import { LOCAL_TUNING as RESTART_TUNING } from '../../src/sim/rules/restart';
 import { step } from '../../src/sim/step';
 import { makeScenario, type ScenarioHuman, type ScenarioInputs } from '../harness/scenario';
 
@@ -78,8 +79,12 @@ describe('RUL-05 free kicks in the full pipeline', () => {
         const tag = `team ${team} at (${sx}, ${z})`;
         expect(t.readyTick, tag).toBeGreaterThan(0);
         expect(t.kickTick, tag).toBeGreaterThan(0);
-        // TAI-13 or the RUL-05 CPU fallback: well before RUL-11's 4 s CPU watchdog.
-        expect(t.kickTick - t.readyTick, tag).toBeLessThan(T_RULES.cpuRestartDelay + 120);
+        // TAI-13 or the RUL-05 CPU fallback (due cpuRestartDelay + cpuGraceTicks after ready, then the kick's wind-up):
+        // before RUL-11's 4 s CPU timeout. [QF-13] The bound was cpuRestartDelay + 120 = 180, stale since QF-10 moved
+        // the fallback to 140 ticks of grace (TAI-13 waits for its box runners): the 18 m central kick (seed 3) is struck
+        // at 219 ticks, on the tree before QF-13 as well.
+        expect(T_RULES.cpuRestartDelay + FK_TUNING.cpuGraceTicks, tag).toBeLessThan(RESTART_TUNING.cpuTakeTimeoutTicks);
+        expect(t.kickTick - t.readyTick, tag).toBeLessThan(RESTART_TUNING.cpuTakeTimeoutTicks);
         const kick = t.events.find((e) => e.type === EventType.KICK && e.tick === t.kickTick)!;
         expect(kick, tag).toBeDefined();
         expect(s.players[kick.a]!.team, tag).toBe(team);

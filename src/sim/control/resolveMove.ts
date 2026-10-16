@@ -22,7 +22,7 @@ import { Btn } from '../../contracts/input';
 import { MoveMode, type ControllerState, type PlayerState, type SimState } from '../../contracts/state';
 import { T_PLAYER, T_TOUCH } from '../../contracts/tuning';
 import { canManualSwitch } from './switching';
-import { Ctx, LT, MEET, SeqFlag, ballEta, meetPoint, oppCarrier, validSlot } from './resolveShared';
+import { Ctx, LT, MEET, SeqFlag, ballEta, clampMeetTarget, meetPoint, oppCarrier, validSlot } from './resolveShared';
 
 const TGT_MAX_X = BOARD_X - 1;
 const TGT_MAX_Z = BOARD_Z - 1;
@@ -125,6 +125,10 @@ export function moveTick(s: SimState, c: number, ctl: ControllerState, p: Player
         tx += (b.vx / bv) * o;
         tz += (b.vz / bv) * o;
         if (ahead / bv > T_TOUCH.meetCatchDist) { tsp = top; want = 1; }
+        // [QF-13] ... but not over the line after a ball rolling out.
+        MEET.x = tx; MEET.z = tz;
+        clampMeetTarget();
+        tx = MEET.x; tz = MEET.z;
       }
       ctl.receiver = slot;
     }

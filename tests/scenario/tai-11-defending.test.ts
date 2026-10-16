@@ -359,7 +359,8 @@ describe('TAI-11 tackle timing', () => {
 describe('TAI-11 slides', () => {
   /** Carrier through on goal at speed with the ball pushed ahead; the defender `rel` relative to the carrier. */
   function slideScene(lv: Difficulty, seed: number, k: number, behind: boolean): SimState {
-    const cx = 32 + (k % 7), cz = ((k * 7) % 9) - 4;
+    // [QF-13] Outside the penalty area (x < 36): inside it the CPU makes no slides (T_CPU.defendBoxSlideMul).
+    const cx = 28 + (k % 7), cz = ((k * 7) % 9) - 4;
     // Ball 1 m ahead of the carrier; the defender 2.0 .. 2.8 m from it (beyond standing reach, inside slide reach).
     const d = behind ? { x: cx - 1.0 - (k % 5) * 0.2, z: cz + ((k % 3) - 1) * 0.3 } : { x: cx + 3.2 + (k % 4) * 0.15, z: cz + ((k % 3) - 1) * 0.4 };
     const s = scene({ level: lv, seed, c: { x: cx, z: cz, vx: 7, fx: 1 }, d, ball: { dx: 1.0, dz: 0, vx: 8 } });

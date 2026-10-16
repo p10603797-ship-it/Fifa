@@ -61,13 +61,13 @@
  * either a pure cache (the prediction) or rebuilt every call (per-slot interception results).
  */
 import {
-  BOARD_X, BOARD_Z, CPU_CONTROLLER_BASE, NUM_SLOTS, PLAYERS_PER_TEAM, TICK_HZ, teamFirstSlot,
+  BOARD_X, BOARD_Z, CPU_CONTROLLER_BASE, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PLAYERS_PER_TEAM, TICK_HZ, teamFirstSlot,
 } from '../contracts/constants';
 import { ActionKind, AiJob, MatchPhase } from '../contracts/enums';
 import type { EventSink } from '../contracts/events';
 import { createBallState, MoveMode, type BallState, type PlayerState, type SimState } from '../contracts/state';
 import { createBallPrediction, MAX_PREDICT_TICKS } from '../contracts/systems';
-import { T_AI, T_PLAYER } from '../contracts/tuning';
+import { T_AI, T_PLAYER, T_TOUCH } from '../contracts/tuning';
 import { predictBall } from '../sim/ball/flight';
 import { ticksToReach } from '../sim/players/locomotion';
 import { assignJob, finalizeJobT, isJobDriven } from './jobs';
@@ -132,6 +132,9 @@ const LT = LOCAL_TUNING;
 /** Board limits for movement targets (player centres keep a body radius off the boards; SIM-04 confines too). */
 const TGT_MAX_X = BOARD_X - T_PLAYER.bodyRadius;
 const TGT_MAX_Z = BOARD_Z - T_PLAYER.bodyRadius;
+/** [QF-13] Ball-job targets (CHASE_LOOSE and its overshoot, IN_PLAY only): the pitch + T_TOUCH.meetPitchMargin. */
+const PITCH_MAX_X = HALF_LENGTH + T_TOUCH.meetPitchMargin;
+const PITCH_MAX_Z = HALF_WIDTH + T_TOUCH.meetPitchMargin;
 const BIG = 1e9;
 
 // ---------------------------------------------------------------- action / job tables (built once at load)
@@ -549,8 +552,10 @@ export function assignChaser(s: SimState, team: number, ev: EventSink): void {
   if (pick >= 0 && isJobDriven(s, pick)) {
     if (OK[pick] !== 1) evalIntercept(s, pick);
     const top = s.attrs[pick]!.topSpeed;
-    assignJob(s, pick, AiJob.CHASE_LOOSE, clampTo(finiteOr(IX[pick]!, b.x), TGT_MAX_X),
-      clampTo(finiteOr(IZ[pick]!, b.z), TGT_MAX_Z), top > 0 ? top : T_PLAYER.topSpeedMin, -1);
+    // [QF-13] Within the pitch + T_TOUCH.meetPitchMargin (was the boards, 6 m out): the interception point of a ball
+    // rolling out took chasers 2.4 m off the pitch (seed 33 #3).
+    assignJob(s, pick, AiJob.CHASE_LOOSE, clampTo(finiteOr(IX[pick]!, b.x), PITCH_MAX_X),
+      clampTo(finiteOr(IZ[pick]!, b.z), PITCH_MAX_Z), top > 0 ? top : T_PLAYER.topSpeedMin, -1);
   }
 }
 
@@ -585,8 +590,9 @@ function steerJob(s: SimState, slot: number): void {
       let o = bv * LT.overshootSec;
       if (o < LT.overshootMin) o = LT.overshootMin;
       if (o > LT.overshootMax) o = LT.overshootMax;
-      tx = clampTo(tx + (b.vx / bv) * o, TGT_MAX_X);
-      tz = clampTo(tz + (b.vz / bv) * o, TGT_MAX_Z);
+      // [QF-13] ... but not beyond the pitch + T_TOUCH.meetPitchMargin (a ball that far out is out of play).
+      tx = clampTo(tx + (b.vx / bv) * o, PITCH_MAX_X);
+      tz = clampTo(tz + (b.vz / bv) * o, PITCH_MAX_Z);
     }
   }
   let req = p.tgtSpeed;

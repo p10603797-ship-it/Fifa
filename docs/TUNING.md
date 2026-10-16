@@ -565,3 +565,154 @@ with `T_AI.visionNoiseBonusSlope` (0.45 meets top-bottom and costs World Class v
 - `tools/soak.ts --matches 500 --difficulty 3 --enforce all`: PASS; goals 3.27, shots 17.30, dominant possession
   56.98%, home possession 50.94%, pass completion 78.31%, fouls 12.71, offsides 0.13, blow-outs 3.4%; 0 exceptions,
   invariant failures or watchdogs; determinism PASS.
+
+## QF-13 (Wave 4 round 3: balance robustness and the last gameplay CRs)
+
+Measured with `tools/ladder.ts` / `tools/balance.ts` / `tools/soak.ts` (4-minute halves, mirror legs, Professional
+unless stated) and, for experiments, a scratch runner that overrides `T_*` entries per run on the same seeded configs
+(it reproduces the tools' numbers match for match). Every change below changes sim behaviour (state hashes).
+
+### Defects fixed (each with a regression test `tests/scenario/qf-13-*.test.ts`)
+
+| Defect | Measured before | Fix | After |
+|---|---|---|---|
+| Header flicked over the goal line (QF-11 CR) | an AI attacker's contested header 10-35 m out was aimed straight up the pitch with no target: 2.0 goal kicks a match, the largest single cause | SIM-12 `aiChoose` / `solveAerial`: with nobody in the forward cone the header goes back across the box (a teammate that way, else toward the spot `T_AERIAL.aiFlickSpotDepth` 11 m out); every AI header pass lands `aiFlickLineMargin` 5 m inside the goal line and `aiFlickTouchMargin` 2 m inside the touchlines; a flick to no one is shortened (up to `aiFlickTries` 3 launches, `aiFlickShrink` 0.92) until its predicted roll (`aiFlickPredictTicks` 240) slows below `aiFlickSlowSpeed` 3 m/s inside them. The clearance branch (F_CLEAR) is unchanged | goal kicks off an AI header pass 1.67 -> 0 a match, all goal kicks 4.10 -> 2.60 (the same 30 matches, seed 7); `qf-13-header-flick`, `qf-11-cr-header-flick-out` now `it()` |
+| Reaction delay chained through passes | every change of ball owner re-armed TAI-11's delay: a Beginner defender kept his old run (often standing) for up to 29 s with gaps under 0.25 s (6 short Beginner matches: 129 near-continuous freezes over 2.5 s, merged up to 1746 ticks) | `defending.ts tickBrain`: no re-arm while a delay runs; after it, a change re-arms only once he has been awake `T_AI.reactRearmGapFrac` 0.25 x the delay; a turnover (our ball before) always re-arms | longest merged freeze at most one delay (81 ticks, 2 Beginner matches); `qf-13-react-chain` |
+| Lofted pass receiver off the pitch | the receiver of an overhit lofted pass ran to its landing point and stood 3.9-4.75 m beyond the touchline for 85 ticks (Beginner, soak seed 21 #0) | SIM-15 `meetPoint` and the overshoot target: within the pitch + `T_TOUCH.meetPitchMargin` 0.5 m (where the ball's track leaves it) | `qf-13-meet-on-pitch` |
+| Penalties | every CPU tackle in its own box was as free as in midfield: 0.92 penalties a match at Professional (12 matches, soak seed 5; real football ~0.3), 1.2 in MOS v ROO | TAI-11: the rash / noisy lunges x `T_LEVEL.boxRashMul`, slides x `boxSlideMul` (1 / 1 / 0.5 / 0 / 0 / 0) when the carrier is in our area; the careful, well-timed tackle stays | 0.38 a match (24 matches, seed 5; 1.43 -> 0.43 on the 30 seed-7 matches); `qf-13-box-care` (`tai-11-defending`'s slide scene moved outside the box) |
+| Carrier orbiting his ball at the corner flag | the CPU carrier turned away 0.2 m short of a ball rolling into the corner and back after it: 5 s without a touch, the ball on the goal line, the carrier 1.3 m beyond it (seed 33 #17) | TAI-08 dribble turn: he runs to the ball until it is in reach judged `T_CPU.carrierLeashLeadTicks` 2 ahead (lead speed at least `carrierLeashLeadMinSpeed` 4 m/s), latched until the touch | `qf-13-off-pitch` |
+| Chasers over the touchline | TAI-11's loose-ball chase at full stick ran 2.34 m over the touchline for 36 ticks; TAI-07 ball jobs aimed up to 6 m beyond the line | TAI-11: within his braking distance of a line the stick's component toward it is let go; TAI-07 chase / overshoot targets and TAI-14 `receiverAssist`'s reception point within the pitch + `meetPitchMargin` | 0 episodes over 0.6 m off in 30 matches (seed 55, every level); `qf-13-off-pitch` |
+| Defending shape flipping under a long ball | TAI-04 `isDefending` for a loose ball read only the nearest player: under an opponent's clearance the back line's targets jumped 3 m every 0.5 s (14 jumps over 1.5 m in 2.5 s, World Class, seed 61 #16) | an untouched deliberate kick belongs to the kicking team (TAI-06's model) | `qf-13-shape-flip` |
+| Superhuman shot clearances | AI defenders 0.4-1.4 m from the shooter started a volley / header on the next scan tick and cleared 17-27 m/s shots as aimed 24 m/s passes 2-6 ticks after the strike (about 1 a match) | SIM-12 `aiStarts`: no AI header / volley on a fresh shot before `T_AERIAL.aiShotReactTicks` 10 (1/6 s); inside that only a body in the path (TAC-02 block) stops it | `qf-13-shot-react` (54 early starts in its grid before, 0 after) |
+| Balloon shots | SIM-11's solver climbed to 1.3 rad for a soft long shot that could not carry to its aim point lower: 25 of 363 Professional shots launched above 45 degrees (max 74), 72 above 30 (20 matches) | `T_SHOT.maxAimedElevation` 0.61 rad for every aimed kind (not the chip): such a shot lands short and bounces on | 0 above 35 degrees; `qf-13-shot-elevation` |
+| Parries never went round the post | GKP-02's parry angle is capped at 1.35 rad off the outward axis: every parry went back into play (0 corners from 0.4 parries a match) | a parry met more than `T_GK.parryPostBand` 2 m off the goal centre is pushed round the post with chance `parryPostChance` 0.7 x nearness to the post x (0.5 + half the parry quality), turned back at most `parryPostBackMax` 0.7 rad past square and only so far that it crosses the line `parryPostClear` 0.45 m outside the post (none when that leaves under `parryPostBackMin` 0.1 rad) | corners 0.65 -> 0.72 a match with it (60 soak-config matches, everything else equal); 4 of 22 corners off parries (30 matches, seed 7); `qf-13-parry-post` |
+
+### Ladder (QA-19; item 2 keeps Beginner the weakest)
+
+The reaction-delay fix gave the low levels' defenders most of their reactions back: in an opponent's passing chain
+every level below Legend had been frozen most of the time (Amateur's 42 and Semi-Pro's 24 ticks re-armed on every
+change of owner just as Beginner's 80). On the tree with the fix (and box care at every level, 200 a seed, mirror legs):
+Amateur v Beginner 60.0% (400), Semi-Pro v Amateur 59.3% (400), World Class v Professional 68.0% (400), Legend v World
+Class 62.8% (400); QF-11 had measured 71.0 / 76.5 / 64.5 / 66.0% (200, seed 1).
+
+| Bottom-pair lever (seed 1, 200 a pair; base about 63% / 62%) | Amateur v Beginner | Semi-Pro v Amateur | Kept |
+|---|---|---|---|
+| `T_AI.reactRearmGapFrac` 0.12 (a shorter awake gap) | 62.0% | 67.0% | - (the gap is what stops the chain; 15 ticks awake is the least that reads as a reaction) |
+| `T_LEVEL.carrierEvalTicks` Beginner / Amateur 5 -> 3 / 4 | 68.0% | 72.0% | yes |
+| `T_LEVEL.keeperReactTicks` Beginner / Amateur 30 / 21 -> 45 / 30 | 67.0% | 72.5% | yes |
+| `markGapMul` 2.6 / 2.0, `lineRateMul` 0.35 / 0.5 | 59.0% | 78.0% | - (costs Amateur v Beginner) |
+| `reactionTicks` 100 / 55 | 57.5% | 65.0% | - |
+| `pressIntensity` 0.95 / 0.9 | 58.0% | 63.0% | - |
+| Earlier, 400 each: Beginner `reactionTicks` 100 / `decisionNoise` 0.6 / keeper +40 | 61.8 / 60.5 / 63.3% | - | - |
+
+Re-deciding often is worse (QF-11's finding), and a slow keeper costs goals: both separate the bottom levels without
+touching physics or Professional. On the final tree (with the shot-reaction, balloon and parry fixes) Semi-Pro v
+Amateur still came out at 66.5 / 61.5% (seeds 1 / 2, 64.0% over 400), so the middle step got one more lever:
+
+| Semi-Pro v Amateur lever (seeds 1-2, 400; Professional v Semi-Pro seed 1, 200) | Semi-Pro v Amateur | Pro v Semi-Pro | Kept |
+|---|---|---|---|
+| none | 64.0% | 75.5% | - |
+| `reactionTicks` Semi-Pro 24 -> 18 | 76.5% | 72.0% | yes |
+| `decisionNoise` Semi-Pro 0.275 -> 0.24 | 71.0% | 71.0% | - |
+
+### Club balance (QA-20, item 4; 88-rated MOS v 62-rated ROO, 76 SND v 75 GLA; Professional, mirror legs)
+
+Every setting measured (top-bottom wins, equal SND points share; "old" = the tree before the shot-reaction, balloon and
+parry fixes above, with the reaction-delay fix and box care):
+
+| Setting | Top-bottom wins | Equal points | Notes |
+|---|---|---|---|
+| old: base | 75.6% (800) | 60.4% (400) | the charter's ~77% / 55.3% start |
+| old: `T_SHOT` shot power spread (`shotPowerMulMin` 0.6) | 77.0% (400) | 54.8% (200) | |
+| old: shot error base share 0.9 (finishing / long shots weigh more) | 74.5% (400) | 53.3% (200) | |
+| old: pass `errorMax` 0.26 (passing weighs more) | 78.8% (400) | 67.5% (200) | breaks the equal pair |
+| old: wider keeper ranges | 76.5% (400) | 59.8% (200) | |
+| old: box care by composure (rash in the box below composure 80, weighted 0 / 0 / 0.5 / 1 / 1 / 1) | 79.0% (400) | 55.5% (200) | 0.75 penalties a match |
+| old: no box care (pre-QF-13 penalties) | 78.5% (400) | 57.5% (200) | 0.92 penalties a match |
+| old: fatigue `staminaDrainSprint` 0.008, `staminaFloorMul` 0.75 | 82.5% (400) | 54.5% (200) | |
+| old: fatigue 0.0065 / 0.78 | 80.0% (400) | 60.5% (200) | |
+| old: stamina attribute pivot 70 (rates x 0.8 / x 1.2 of the attribute scale) | 79.5 / 79.0% (400) | 59.8 / 57.3% (200) | |
+| **new tree (kept, no balance lever)** | **84.0% (800)** | **56.1% (800)** | seeds 1-4: 83.5 / 86.5 / 84.5 / 81.5%; 53.5 / 56.5 / 60.0 / 54.3% (before game management; final tree below: 83.9% / 56.3%) |
+| new tree + fatigue 0.008 / 0.75 | 88.0% (800) | 56.9% (800) | blow-outs 5.3% (150-match soak), end-of-match stamina 0.22 (0.61 now), 32% of outfield ticks below the low-stamina threshold: not kept |
+| new tree + fatigue + a leading CPU side managing the game (3 goals up: loss cost x1.6, shot threshold x4) | - | - | blow-outs 6.0% (150): no effect, removed |
+
+What moved the balance: AI defenders no longer clear shots before they could have reacted (`aiShotReactTicks`), so the
+side that shoots three times as often scores more of them (top-bottom goals 2.14-0.53 -> 2.75-0.53 a match). On the
+final tree (100 a seed, seeds 1-4, the same configs) top-bottom is 81.5% with it and 76.0% with `aiShotReactTicks` 0.
+No attribute or level table was changed for the balance.
+
+### Blow-outs and game management (section 7 band, 500-match Professional soak, seed 1)
+
+Before QF-13 3.4% (QF-11 skeptic). With the fixes above 5.0% (25 of 500: FAIL, the band is under 5%), goals 3.44: the
+shots no longer cleared at once count in mismatched pairs too. A carrier-level ease-off (3 goals up: loss cost x1.6,
+shot threshold x4) changed nothing measurable (150 matches with stronger fatigue: 6.0% v 5.3%). Kept: TAI-14 game
+management, a CPU side on its default focus that leads by `T_AI.gameManageLead` 3 goals plays it as DEFENDING (deeper
+block, at most 2 runners, `data/tactics` FOCUS_MODIFIERS; `ai/cpu/levels effectiveFocus`, read by every focus reader;
+a human side's focus and an explicitly set focus are untouched): 3.2% (16 of 500), goals 3.36, every other band
+unchanged; `qf-13-game-manage`.
+
+### Corners (item 5)
+
+Professional, 30 matches (seed 7, 4-minute halves), the tree before QF-13 -> after: corners 0.47 -> 0.73 a match, goal
+kicks 4.10 -> 2.60 (1.67 -> 0 off AI header passes; missed shots 2.2 a match both), penalties 1.43 -> 0.43, goals 3.53
+-> 3.70. Where corners come from and why there are few:
+
+- Keeper tips over the bar: 7 of 15 corners. Every tip goes behind (by design).
+- Keeper parries: 0 before (always back into play; 0.4 parries a match, the CPU's shots are mostly soft enough to be
+  caught: 3.6 held a match), 4 of 22 after the round-the-post push (`T_GK.parryPost*`, defect table above).
+- Shots blocked by defenders: about 6.9 a match (2.8 headed, 2.5 off the body, 1.4 volleyed away), 2 corners in 30
+  matches. A body block (TAC-02 `blockBall`) sends the ball straight back (normal restitution 0.3) or on along its line
+  (half the tangential speed), so it rarely goes behind; headed / volleyed blocks are aimed clearances (upfield, toward
+  the near touchline). A gaussian scatter of the block direction (0.35 rad) was tried: +0.1 corners a match, no corner
+  from a blocked cross in 20 matches; not kept (it changes every block for little).
+- Blocked crosses: 15 of 68 crosses were blocked within 4 m of the crosser (20 matches), none went behind (they come
+  back off the blocker toward the crosser or stay with a nearby player).
+- Defenders never clear behind under pressure (TAI clearances always go upfield).
+
+So corners stay well below real football's ratio to shots (about 10 to 25; here 0.7 to 18): the missing source is a
+defender conceding a corner (clearing or deflecting behind under pressure), which needs new defending behaviour, not a
+constant. The section 7 bands stay inside with the parry change (60-match soak: goals 3.28, blow-outs 1.7%).
+
+### Observation for the lead: long shots
+
+CPU ground shots by distance (Professional, 20 matches): 3.1 a match from inside 12 m (32 of the 36 goals), 1.2 from
+12-16.5 m, 1.3 from 16.5-22, 2.0 from 22-28, 2.2 from 28-34 and 4.2 from 34-40 m (QF-2 widened `carrierShotMaxDist` to
+40 m to reach the shots band): about half the CPU's shots come from 28 m or more and score 2 of 134. TAI-08's quick-shot
+cut (strike before an opponent steps onto the line) takes their power to a tap (about 20 m/s), which the solver used to
+loft at up to 74 degrees (balloon, fixed above). Giving such long shots a power floor (0.7 x the distance factor) made
+them real shots and broke the bands (goals 4.12, blow-outs 15%, 60 matches): not kept. Fewer, better long shots need a
+chance-creation pass that keeps the shots band (14-26) without them.
+
+### Tables changed (`T_LEVEL`; Professional untouched)
+
+| Table | Was (QF-11) | Now |
+|---|---|---|
+| reactionTicks | 80 / 42 / 24 / 11 / 6 / 1 | 80 / 42 / 18 / 11 / 6 / 1 |
+| keeperReactTicks | 30 / 21 / 10 / 0 / -3 / -8 | 45 / 30 / 10 / 0 / -3 / -8 |
+| carrierEvalTicks | 5 / 5 / 5 / 5 / 6 / 12 | 3 / 4 / 5 / 5 / 6 / 12 |
+| boxRashMul / boxSlideMul (new) | - | 1 / 1 / 0.5 / 0 / 0 / 0 |
+
+### Final measurement (this tree)
+
+`tools/ladder.ts --matches 200`, seeds 1 and 2 (400 a pair, mirror legs, same club both sides):
+
+| Pair | Seed 1 | Seed 2 | Over 400 | Target 65% |
+|---|---|---|---|---|
+| Amateur v Beginner | 141 / 31 / 28 = 70.5% | 138 / 23 / 39 = 69.0% | 69.8% | meets |
+| Semi-Pro v Amateur | 154 / 27 / 19 = 77.0% | 155 / 21 / 24 = 77.5% | 77.3% | meets |
+| Professional v Semi-Pro | 144 / 33 / 23 = 72.0% | 139 / 35 / 26 = 69.5% | 70.8% | meets |
+| World Class v Professional | 128 / 29 / 43 = 64.0% | 139 / 33 / 28 = 69.5% | 66.8% | meets (over 400) |
+| Legend v World Class | 131 / 45 / 24 = 65.5% | 138 / 37 / 25 = 69.0% | 67.3% | meets |
+
+`tools/balance.ts --matches 200`, seeds 1-4 (seed 1 all suites, seeds 2-4 `--suite top-bottom,equal`):
+
+| Matchup | Seed 1 | Seed 2 | Seed 3 | Seed 4 | Over 800 | Target |
+|---|---|---|---|---|---|---|
+| top-bottom MOS (88) v ROO (62), wins | 166 / 20 / 14 = 83.0% | 173 / 15 / 12 = 86.5% | 169 / 19 / 12 = 84.5% | 163 / 22 / 15 = 81.5% | 83.9% (goals 2.65-0.55) | >= 80%: meets |
+| equal SND (76) v GLA (75), points | 53.5% | 57.3% | 60.0% | 54.3% | 56.3% | 40-60%: meets |
+| mirror GLA v GLA, home points | 54.3% | - | - | - | - | 40-60%: meets |
+
+`tools/soak.ts --matches 500 --difficulty 3 --enforce all`: PASS; 500 finished, 0 exceptions / invariant failures /
+watchdogs, determinism PASS; goals 3.36, shots 18.66, dominant possession 56.3%, home possession 50.5%, pass completion
+78.4%, fouls 12.19, offsides 0.18, blow-outs 3.6% (18). `tools/fuzz.ts --matches 60 --enforce all`: PASS (0 exceptions,
+invariant failures or watchdogs; determinism PASS).

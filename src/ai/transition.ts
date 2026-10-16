@@ -59,6 +59,7 @@ import { RESTART_PHASES } from '../contracts/transitions';
 import { T_AI } from '../contracts/tuning';
 import { focusModifier, phaseOffset, rolePreset, slotRole, tacticFlags } from '../data/tactics';
 import { otherTeam, secondLastDefenderX, teamEnd, teamStart } from '../sim/core/query';
+import { effectiveFocus } from './cpu/levels';
 import { assignJob, isJobDriven } from './jobs';
 
 /** TUNING-CR: move into contracts/tuning.ts as T_TRANSITION. Per-style arrays are indexed by TeamStyle
@@ -349,7 +350,7 @@ function breakForward(s: SimState, team: number): void {
   const carrier = b.owner;
   const receiver = carrier === -1 && b.lastKickTeam === team ? b.passTarget : -1;
   const flags = tacticFlags(t);
-  const runScale = phaseOffset(TeamPhase.TRANSITION_ATTACK).runScale * focusModifier(t.focus).runScale;
+  const runScale = phaseOffset(TeamPhase.TRANSITION_ATTACK).runScale * focusModifier(effectiveFocus(s, team)).runScale;
   const nIn = LT.inBehindRunners[st]!;
   let want = nIn + LT.supportRunners[st]!;
   if (want > MAX_RUNNERS) want = MAX_RUNNERS;
@@ -440,7 +441,7 @@ function recoveryRuns(s: SimState, team: number): void {
   const dir = dirOf(t);
   const ub = dir * fin(b.x), vb = dir * fin(b.z);
   const flags = tacticFlags(t);
-  const dutyScale = phaseOffset(TeamPhase.TRANSITION_DEFEND).dutyScale * focusModifier(t.focus).dutyScale *
+  const dutyScale = phaseOffset(TeamPhase.TRANSITION_DEFEND).dutyScale * focusModifier(effectiveFocus(s, team)).dutyScale *
     LT.recoverStyleScale[styleIdx(t)]!;
   const goalSide = ub - LT.recoverDepth;
   const caughtU = ub - LT.goalSideMargin;

@@ -78,7 +78,7 @@ import { ShapeLine } from '../data/formations';
 import { createTacticParams, phaseOffset, resolveTactics, rolePreset, slotLineFor, slotRole, tacticFlags } from '../data/tactics';
 import { otherTeam, teamEnd, teamStart } from '../sim/core/query';
 import { ticksToReach } from '../sim/players/locomotion';
-import { levelParams, styleWeights } from './cpu/levels';
+import { effectiveFocus, levelParams, styleWeights } from './cpu/levels';
 import { assignJob, isJobDriven } from './jobs';
 
 export const LOCAL_TUNING = {
@@ -237,7 +237,7 @@ function clearSlots(t: TeamState): void {
  */
 export function teamPressIntensity(s: SimState, team: number): number {
   const t = s.teams[team]!;
-  resolveTactics(t.focus, tacticFlags(t), TP);
+  resolveTactics(effectiveFocus(s, team), tacticFlags(t), TP);
   return intensityFromTP(t);
 }
 
@@ -385,7 +385,7 @@ export function assignPressing(s: SimState, team: number, ev: EventSink): void {
 
   const dir = t.dir < 0 ? -1 : 1;
   const flags = tacticFlags(t);
-  resolveTactics(t.focus, flags, TP);
+  resolveTactics(effectiveFocus(s, team), flags, TP);
   const I = intensityFromTP(t);
   const dutyK = phaseOffset(t.phase).dutyScale * TP.dutyScale;
   let lineU = dir * t.lineX;

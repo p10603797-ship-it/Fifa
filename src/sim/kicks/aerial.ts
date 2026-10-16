@@ -46,12 +46,16 @@
  *  shoot inside the shooting zone (crosses aimed at them), defenders head / volley clear near their goal, high balls
  *  (above the chest-trap height, or contested) are headed on to a teammate; everything else is left to SIM-07 first
  *  touch. The pass target of a teammate's pass has priority; other teammates leave it alone. AI jump timing gets a
- *  small s.rng error that shrinks with heading.
+ *  small s.rng error that shrinks with heading. [QF-13] Nobody starts on a fresh shot (TAC-02 isFreshShot) sooner
+ *  than T_AERIAL.aiShotReactTicks after the strike: inside that only a body in its path stops it.
  *  Solvers (solveHeader / solveVolley): header shots 10-20 m/s and volley shots 20-30 m/s at the goal mouth (assisted
  *  aim like SIM-11: stick ray onto the goal line clamped inside the posts, or away from the keeper; Manual is
  *  unclamped), with an elevation solved through the real drag model so the ball crosses the line at the aimed height;
  *  passes land on the chosen receiver (SIM-01 solveLaunchSpin from the contact height); clearances go high and long
- *  away from goal. Error (s.rng) grows with weak heading / finishing / passing, pressure, balance (redirect angle),
+ *  away from goal. [QF-13] An AI header pass in the attacking half with nobody in the forward cone goes back across
+ *  the box (a teammate that way, else toward the spot T_AERIAL.aiFlickSpotDepth out); every AI header pass lands
+ *  aiFlickLineMargin inside the attacked goal line (aiFlickTouchMargin inside the touchlines) and a flick to no one is
+ *  shortened until its predicted roll slows down short of the lines. Error (s.rng) grows with weak heading / finishing / passing, pressure, balance (redirect angle),
  *  awkward height, fast incoming balls, power above the knee, low stamina and (volleys) the weaker foot.
  *
  * Determinism: dmath trig only, s.rng only, slot-order loops, module scratch (no per-tick allocation).
@@ -71,11 +75,11 @@ import { createKickLaunch, type ActionRequest, type KickLaunch } from '../../con
 import { T_AERIAL, T_BALL, T_PASS, T_PLAYER, T_SHOT, T_TACKLE } from '../../contracts/tuning';
 import { ballStepTick } from '../ball/contact';
 import { ballAirStep, copyBallState, createLaunchSolution, solveLaunchSpin } from '../ball/flight';
-import { clamp01, datan2, dcos, dsin, lerp, PI } from '../core/dmath';
+import { clamp01, datan2, dcos, dlog, dsin, lerp, PI } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
 import { pressureOn } from '../core/query';
 import { rngChance, rngGauss, rngRange } from '../core/rng';
-import { knockDown } from '../defend/tackle';
+import { isFreshShot, knockDown } from '../defend/tackle';
 import { staminaFactor } from '../players/locomotion';
 
 // Hot-path copies of imported constants: module-level locals, so loops never go through import bindings (which
@@ -250,6 +254,16 @@ export const LOCAL_TUNING = {
   /** Receiver cone half-angle by assist (Assisted uses T_PASS.coneHalfAngle), rad; AI cone. */
   semiCone: 0.45,
   aiCone: 1.1,
+  /** [QF-13] AI flick-on with no receiver ahead: back across the box, landing inside the lines (contracts/tuning.ts
+   *  T_AERIAL; see there). m, m, m, m/s, launches. */
+  aiFlickSpotDepth: T_AERIAL.aiFlickSpotDepth,
+  aiFlickLineMargin: T_AERIAL.aiFlickLineMargin,
+  aiFlickTouchMargin: T_AERIAL.aiFlickTouchMargin,
+  aiFlickSlowSpeed: T_AERIAL.aiFlickSlowSpeed,
+  aiFlickTries: T_AERIAL.aiFlickTries,
+  aiFlickShrink: T_AERIAL.aiFlickShrink,
+  aiFlickPredictTicks: T_AERIAL.aiFlickPredictTicks,
+  aiShotReactTicks: T_AERIAL.aiShotReactTicks,
   /** Receiver choice: weight of openness (nearest opponent, capped at opennessCap m) and distance mismatch. */
   opennessCap: 6,
   opennessW: T_AERIAL.opennessW,
@@ -394,7 +408,7 @@ const CAND_Q = new Float64Array(NS);
  * Scratch results of the geometry helpers, hit tests and the elevation solver (a typed array: storing doubles here
  * never boxes them, unlike returning them from calls or writing module-level lets in V8).
  */
-const R = new Float64Array(8);
+const R = new Float64Array(11);
 /** Standing head-centre height, max jump height, planned jump height, current jump height, head-centre height (m). */
 const R_STAND = 0;
 const R_MAXJ = 1;
@@ -406,6 +420,10 @@ const R_HIT_T = 5;
 const R_HIT_D = 6;
 /** Speed actually used by the last elevation solve, m/s. */
 const R_AIMV = 7;
+/** [QF-13] flickDir: unit direction back across the box and the distance to its spot (m). */
+const R_FLX = 8;
+const R_FLZ = 9;
+const R_FLD = 10;
 
 // ---------------------------------------------------------------- small helpers
 
@@ -1355,6 +1373,8 @@ function keepersBall(s: SimState, slot: number, x: number, z: number): boolean {
 function aiStarts(s: SimState, ev: EventSink): void {
   const b = s.ball;
   if (b.grounded === 1 || b.inNet !== 0 || b.owner >= 0 || b.heldBy >= 0) return;
+  // [QF-13] Nobody reacts to a shot sooner than aiShotReactTicks after the strike (only a body in its path stops it).
+  if (s.tick - b.lastKickTick < LT.aiShotReactTicks && isFreshShot(s)) return;
   const hs = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
   const range = hs * (LT.aiLeadTicks + 1) * TDT + LT.aiScanRadius;
   const r2 = range * range;
@@ -1759,6 +1779,14 @@ function solveAerial(s: SimState, slot: number, out: KickLaunch, header: boolean
     } else if (ai || assist !== AssistLevel.MANUAL) {
       const cone = ai ? LT.aiCone : assist === AssistLevel.SEMI ? LT.semiCone : T_PASS.coneHalfAngle;
       recv = pickReceiver(s, slot, b.x, b.z, dirX, dirZ, power, cone, minD, maxD);
+      if (recv < 0 && ai && tdir * b.x >= 0) {
+        // [QF-13] Nobody ahead in the attacking half: back across the box (a teammate that way first), never straight
+        // up the pitch over the goal line.
+        flickDir(b.x, b.z, tdir);
+        dirX = R[R_FLX]!;
+        dirZ = R[R_FLZ]!;
+        recv = pickReceiver(s, slot, b.x, b.z, dirX, dirZ, power, LT.aiCone, minD, maxD);
+      }
     }
     // No one to find in the own half: put it away.
     if (recv < 0 && tdir * b.x < 0) clear = true;
@@ -1790,6 +1818,9 @@ function solveAerial(s: SimState, slot: number, out: KickLaunch, header: boolean
   }
   let tx: number;
   let tz: number;
+  // [QF-13] An AI pass to no one (attacking half: back across the box, see above) is a flick: landing and roll kept
+  // inside the lines below.
+  let flick = ai && recv < 0;
   if (recv >= 0) {
     const q = s.players[recv]!;
     const dx = q.x - b.x;
@@ -1800,7 +1831,12 @@ function solveAerial(s: SimState, slot: number, out: KickLaunch, header: boolean
     tz = q.z + q.vz * lead;
     out.target = recv;
   } else {
-    const dist = lerp(minD, maxD, power);
+    let dist = lerp(minD, maxD, power);
+    if (flick) {
+      // No further than the spot back across the box.
+      const sd = R[R_FLD]!;
+      if (sd < dist) dist = sd > minD ? sd : minD;
+    }
     tx = b.x + dirX * dist;
     tz = b.z + dirZ * dist;
   }
@@ -1808,26 +1844,183 @@ function solveAerial(s: SimState, slot: number, out: KickLaunch, header: boolean
   else if (tx < -HL) tx = -HL;
   if (tz > HW) tz = HW;
   else if (tz < -HW) tz = -HW;
-  const dx = tx - b.x;
-  const dz = tz - b.z;
-  const d = Math.sqrt(dx * dx + dz * dz);
-  const ang = header ? lerp(LT.headerPassAngleNear, LT.headerPassAngleFar, clamp01((d - 5) / 20)) : LT.volleyPassAngle;
+  let dx = tx - b.x;
+  let dz = tz - b.z;
+  let d = Math.sqrt(dx * dx + dz * dz);
   let lx = tx, lz = tz;
+  let short = 0;
   if (header && recv >= 0 && d > 1e-6) {
-    let short = d * LT.headerShortFrac;
+    short = d * LT.headerShortFrac;
     if (short > LT.headerShortMax) short = LT.headerShortMax;
     lx = tx - (dx / d) * short;
     lz = tz - (dz / d) * short;
   }
-  launchToPoint(s, lx, lz, ang, header ? LT.headerPassMaxSpeed : LT.volleyPassMaxSpeed, out);
+  if (ai) {
+    // [QF-13] An AI header pass lands aiFlickLineMargin inside the attacked goal line and aiFlickTouchMargin inside
+    // the touchlines (shortened along its line); when that leaves less than a minimum pass (a receiver on the line,
+    // the ball already outside the margin), it goes back across the box instead.
+    let f = landScale(b.x, b.z, lx, lz, tdir);
+    const lxd = lx - b.x;
+    const lzd = lz - b.z;
+    const ld = Math.sqrt(lxd * lxd + lzd * lzd);
+    if (f < 1 && f * ld < minD) {
+      recv = -1;
+      out.target = -1;
+      flick = true;
+      short = 0;
+      flickDir(b.x, b.z, tdir);
+      let dist = lerp(minD, maxD, power);
+      const sd = R[R_FLD]!;
+      if (sd < dist) dist = sd > minD ? sd : minD;
+      tx = b.x + R[R_FLX]! * dist;
+      tz = b.z + R[R_FLZ]! * dist;
+      lx = tx;
+      lz = tz;
+      f = landScale(b.x, b.z, lx, lz, tdir);
+    }
+    if (f < 1) {
+      lx = b.x + (lx - b.x) * f;
+      lz = b.z + (lz - b.z) * f;
+      if (recv < 0) { tx = lx; tz = lz; }
+    }
+    dx = tx - b.x;
+    dz = tz - b.z;
+    d = Math.sqrt(dx * dx + dz * dz);
+  }
+  const ldx = lx - b.x;
+  const ldz = lz - b.z;
+  const landD = Math.sqrt(ldx * ldx + ldz * ldz) + short;
+  const ang = header ? lerp(LT.headerPassAngleNear, LT.headerPassAngleFar, clamp01((landD - 5) / 20)) : LT.volleyPassAngle;
+  const vcap = header ? LT.headerPassMaxSpeed : LT.volleyPassMaxSpeed;
+  launchToPoint(s, lx, lz, ang, vcap, out);
   let ux = dirX;
   let uz = dirZ;
   if (d > 1e-6) { ux = dx / d; uz = dz / d; }
   const err = aerialError(s, slot, pbase, power, ux, uz, header, false);
-  yawOut(out, err * rngGauss(s.rng));
+  // [QF-13 skeptic] The aim error is drawn before the flick check below so that the check sees the ball as it will
+  // fly: a weak header's yaw turned a flick shortened for its aimed line toward the goal line and over it (team 1's
+  // 30 m flicks back across the box, 0.1-1.1 m over). Same single s.rng draw as before.
+  const yaw = err * rngGauss(s.rng);
+  yawOut(out, yaw);
+  if (flick) {
+    // [QF-13] ... and rolls out of play no more: shortened until the predicted ball slows below aiFlickSlowSpeed
+    // before it gets within aiFlickTouchMargin of the attacked goal line or a touchline.
+    for (let k = 1; k < LT.aiFlickTries; k++) {
+      const g = flickRollScale(s, out, tdir);
+      if (!(g < 1)) break;
+      const cd = Math.sqrt((lx - b.x) * (lx - b.x) + (lz - b.z) * (lz - b.z));
+      let gg = g * LT.aiFlickShrink;
+      if (cd * gg < minD) gg = cd > 1e-6 ? minD / cd : 1;
+      if (!(gg < 1)) break;
+      lx = b.x + (lx - b.x) * gg;
+      lz = b.z + (lz - b.z) * gg;
+      tx = lx;
+      tz = lz;
+      const nd = Math.sqrt((lx - b.x) * (lx - b.x) + (lz - b.z) * (lz - b.z));
+      const na = header ? lerp(LT.headerPassAngleNear, LT.headerPassAngleFar, clamp01((nd - 5) / 20)) : LT.volleyPassAngle;
+      launchToPoint(s, lx, lz, na, vcap, out);
+      yawOut(out, yaw);
+    }
+  }
   out.tx = tx;
   out.tz = tz;
   return 1;
+}
+
+/**
+ * [QF-13] Unit direction from (bx, bz) back across the box: toward the point LT.aiFlickSpotDepth out from the goal
+ * attacked by a team playing toward tdir, on the centre line -> R[R_FLX], R[R_FLZ]; distance to it -> R[R_FLD].
+ */
+function flickDir(bx: number, bz: number, tdir: number): void {
+  const sx = tdir * (HL - LT.aiFlickSpotDepth);
+  const fx = sx - bx;
+  const fz = -bz;
+  const fl = Math.sqrt(fx * fx + fz * fz);
+  if (fl > 1e-6) {
+    R[R_FLX] = fx / fl;
+    R[R_FLZ] = fz / fl;
+  } else {
+    R[R_FLX] = -tdir;
+    R[R_FLZ] = 0;
+  }
+  R[R_FLD] = fl;
+}
+
+/**
+ * [QF-13] Largest f in [0, 1] such that the landing (bx, bz) + f x ((lx, lz) - (bx, bz)) is at least
+ * LT.aiFlickLineMargin inside the goal line attacked toward tdir and LT.aiFlickTouchMargin inside both touchlines
+ * (0 when the ball is already outside such a margin and the landing is further out).
+ */
+function landScale(bx: number, bz: number, lx: number, lz: number, tdir: number): number {
+  let f = 1;
+  const lim = HL - LT.aiFlickLineMargin;
+  const ub = tdir * bx;
+  const ul = tdir * lx;
+  if (ul > lim) {
+    const g = ub >= lim ? 0 : (lim - ub) / (ul - ub);
+    if (g < f) f = g;
+  }
+  const zl = HW - LT.aiFlickTouchMargin;
+  const ab = absf(bz);
+  if (absf(lz) > zl && (lz > 0) === (lz - bz > 0)) {
+    const g = ab >= zl ? 0 : (zl - ab) / (absf(lz) - ab);
+    if (g < f) f = g;
+  }
+  return f < 0 ? 0 : f;
+}
+
+/**
+ * [QF-13] Predicts the launched ball (from the current ball position, without spin; at most LT.aiFlickPredictTicks
+ * ticks, the ball physics) until its horizontal speed drops below LT.aiFlickSlowSpeed on the ground: 1 when it is then
+ * more than LT.aiFlickTouchMargin inside the attacked goal line and both touchlines, else the share of that travel
+ * which stays inside them (< 1; a header pass's travel scales about with its length).
+ */
+function flickRollScale(s: SimState, out: KickLaunch, tdir: number): number {
+  const b = s.ball;
+  copyBallState(SIMB, b);
+  SIMB.vx = out.vx; SIMB.vy = out.vy; SIMB.vz = out.vz;
+  SIMB.sx = 0; SIMB.sy = 0; SIMB.sz = 0;
+  SIMB.owner = -1; SIMB.heldBy = -1; SIMB.inNet = 0; SIMB.bounces = 0;
+  SIMB.grounded = 0;
+  const slow = LT.aiFlickSlowSpeed;
+  const x0 = SIMB.x;
+  const z0 = SIMB.z;
+  let ex = 0;
+  let ez = 0;
+  for (let k = 0; k < LT.aiFlickPredictTicks; k++) {
+    ballStepTick(SIMB, null);
+    const vh2 = SIMB.vx * SIMB.vx + SIMB.vz * SIMB.vz;
+    if (vh2 < slow * slow && SIMB.y < BR + 0.05) break;
+    if (SIMB.inNet !== 0 || tdir * SIMB.x >= HL || absf(SIMB.z) >= HW) {
+      // Over a line (a goal net or the boards would stop it): the rest of its way as a ground roll down to the slow
+      // speed (SIM-02 roll model), along its velocity.
+      const vh = Math.sqrt(vh2);
+      if (vh > slow) {
+        const a = T_BALL.rollDecel;
+        const c = T_BALL.rollDamping;
+        const rest = c > 0 ? (vh - slow) / c - (a / (c * c)) * dlog((a + c * vh) / (a + c * slow)) : (vh2 - slow * slow) / (2 * a);
+        ex = SIMB.vx / vh * rest;
+        ez = SIMB.vz / vh * rest;
+      }
+      break;
+    }
+  }
+  const lim = HL - LT.aiFlickTouchMargin;
+  const zl = HW - LT.aiFlickTouchMargin;
+  const fx = tdir * (SIMB.x + ex - x0);
+  const u0 = tdir * x0;
+  let g = 1;
+  if (u0 + fx > lim && fx > 1e-6) {
+    const h = (lim - u0) / fx;
+    if (h < g) g = h;
+  }
+  const az0 = absf(z0);
+  const az1 = absf(SIMB.z + ez);
+  if (az1 > zl && az1 - az0 > 1e-6) {
+    const h = (zl - az0) / (az1 - az0);
+    if (h < g) g = h;
+  }
+  return g < 0 ? 0 : g;
 }
 
 function solveHeaderImpl(s: SimState, slot: number, out: KickLaunch): number { return solveAerial(s, slot, out, true); }

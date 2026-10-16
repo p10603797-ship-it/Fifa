@@ -58,6 +58,7 @@ import type { SimState, TeamState } from '../contracts/state';
 import { T_RULES } from '../contracts/tuning';
 import { BOX_SPOTS, createTacticParams, phaseOffset, resolveTactics, rolePreset, tacticFlags } from '../data/tactics';
 import { otherTeam, secondLastDefenderX, teamEnd, teamStart } from '../sim/core/query';
+import { effectiveFocus } from './cpu/levels';
 import { assignJob, isJobDriven } from './jobs';
 
 /** TUNING-CR: move into contracts/tuning.ts as T_RUNS. */
@@ -775,7 +776,7 @@ function plan(s: SimState, team: number, t: TeamState, mode: number): void {
   computeOnside(s.config.offside);
   buildLanes();
   takenVN = 0;
-  resolveTactics(t.focus, tacticFlags(t), TP);
+  resolveTactics(effectiveFocus(s, team), tacticFlags(t), TP);
   let phaseScale = phaseOffset(t.phase).runScale;
   if (!(phaseScale > 0)) phaseScale = phaseOffset(TeamPhase.BUILD_UP).runScale; // phase lagging possession
   G[G_RUN_SCALE] = phaseScale * TP.runScale;

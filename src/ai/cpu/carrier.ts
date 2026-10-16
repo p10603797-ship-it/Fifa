@@ -214,6 +214,10 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   leashCos: 0.94,
   reachLookahead: 0.08,
   leashMargin: 0.2,
+  /** [QF-13] ... the ball judged this many ticks ahead (relative motion), and aimed at where it will be when he gets
+   *  there (lead = distance / max(his speed, leashLeadMinSpeed m/s)). Ticks, m/s. */
+  leashLeadTicks: T_CPU.carrierLeashLeadTicks,
+  leashLeadMinSpeed: T_CPU.carrierLeashLeadMinSpeed,
   // ---- skill moves
   /** Success estimate: base + per star + x dribbling / 99, capped. */
   skillBase: 0.3,
@@ -1085,8 +1089,28 @@ function runDribble(s: SimState, team: number, brain: CpuBrainState, p: Readonly
   const bd = Math.sqrt(bx * bx + bz * bz);
   if (bd > 1e-6 && (bx * dx + bz * dz) / bd < LT.leashCos) {
     turning = true;
+    // [QF-13] Run to the ball until it is about to come into his reach: judged LT.leashLeadTicks ahead (SIM-06 touches
+    // after this tick's movement, along the stick), and once he has set off (brain.p3 = 1) not let go before then.
+    // With a fixed margin he turned away 0.2 m short of a ball rolling away from him, then back after it: a carrier
+    // hovered by his ball rolling into the corner for 5 s without a touch and walked off the pitch (seed 33 #17).
     const v = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
-    if (bd > T_DRIBBLE.controlRadius + v * LT.reachLookahead + LT.leashMargin) { dx = bx / bd; dz = bz / bd; }
+    const reach = T_DRIBBLE.controlRadius + v * LT.reachLookahead;
+    const lt = LT.leashLeadTicks / TICK_HZ;
+    const nx = bx + (b.vx - p.vx) * lt, nz = bz + (b.vz - p.vz) * lt;
+    const nd = Math.sqrt(nx * nx + nz * nz);
+    const dd = nd < bd ? nd : bd;
+    if (dd > reach + (brain.p3 === 1 ? 0 : LT.leashMargin)) {
+      brain.p3 = 1;
+      // Toward where the ball will be when he gets there (it rolls on meanwhile).
+      const lead = bd / (v > LT.leashLeadMinSpeed ? v : LT.leashLeadMinSpeed);
+      const px = bx + b.vx * lead, pz = bz + b.vz * lead;
+      const pd = Math.sqrt(px * px + pz * pz);
+      if (pd > 1e-6) { dx = px / pd; dz = pz / pd; } else { dx = bx / bd; dz = bz / bd; }
+    } else {
+      brain.p3 = 0;
+    }
+  } else {
+    brain.p3 = 0;
   }
   nearestOpponent(s, p);
   SV[0] = dx; SV[1] = dz;
@@ -1118,6 +1142,7 @@ function runSkill(s: SimState, team: number, brain: CpuBrainState, p: Readonly<P
   if (startedOf(brain) === 1) {
     // Move done: run on along the exit, decide again shortly.
     brain.plan = CpuPlan.DRIBBLE;
+    brain.p3 = 0; // [QF-13] held the SkillMove; for DRIBBLE it is the leash latch
     setP1(brain, STEP_RUN, MODE_NONE, 0, failMaskOf(brain), failEvalsOf(brain));
     brain.planT = 0;
     brain.evalT = LT.postSkillEval;

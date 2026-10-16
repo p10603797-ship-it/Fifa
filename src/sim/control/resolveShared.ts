@@ -14,7 +14,7 @@
  *  - seqB: tick until which a timed second-defender call / gesture press stays active.
  *  - secondDef: called second defender (TAI-05 reads it); receiver: controlled receiver auto-collecting (-1 none).
  */
-import { HALF_LENGTH, NUM_CONTROLLERS, NUM_SLOTS, TICK_HZ } from '../../contracts/constants';
+import { HALF_LENGTH, HALF_WIDTH, NUM_CONTROLLERS, NUM_SLOTS, TICK_HZ } from '../../contracts/constants';
 import { ControllerKind, KickKind } from '../../contracts/enums';
 import { Btn } from '../../contracts/input';
 import type { ControllerState, PlayerState, SimState } from '../../contracts/state';
@@ -492,7 +492,8 @@ function meetEval(): number {
  * Earliest point on the loose ball's ground track that `slot` can reach in time (at top speed when sprint = 1, else
  * jog speed or his current speed when faster; samples every LT.meetStepSec up to LT.receiveLookAheadSec, grounded balls
  * decelerating) into MEET; the last sample if none. [QF-9] A lofted ball's track is skipped where it is above
- * LT.meetMaxHeight (see below). Takes no double arguments (V8 boxes doubles across calls).
+ * LT.meetMaxHeight (see below). [QF-13] Never beyond the pitch + T_TOUCH.meetPitchMargin (meetOnPitch). Takes no double
+ * arguments (V8 boxes doubles across calls).
  */
 export function meetPoint(s: SimState, slot: number, sprint: number): void {
   const b = s.ball;
@@ -543,7 +544,7 @@ export function meetPoint(s: SimState, slot: number, sprint: number): void {
       if (e < 2 && !(t > prev && t <= tk)) continue;
       if (e === 2 && tk > tUp && tk < tDown) continue;
       MT[0] = t;
-      if (meetEval() === 1) return;
+      if (meetEval() === 1) { meetOnPitch(); return; }
     }
     prev = tk;
   }
@@ -551,6 +552,44 @@ export function meetPoint(s: SimState, slot: number, sprint: number): void {
   const tLast = n * step - phase;
   MT[0] = tDown > tLast ? tDown : tLast;
   meetEval();
+  meetOnPitch();
+}
+
+/**
+ * [QF-13] A meeting point beyond a touchline or goal line (the ball will be out there: an overhit lob's landing point)
+ * moves back along the ball's track to where it leaves the pitch + T_TOUCH.meetPitchMargin; then it is clamped to that
+ * box (a ball already outside it).
+ */
+function meetOnPitch(): void {
+  const m = T_TOUCH.meetPitchMargin;
+  const xl = HALF_LENGTH + m;
+  const zl = HALF_WIDTH + m;
+  if (MEET.x <= xl && MEET.x >= -xl && MEET.z <= zl && MEET.z >= -zl) return;
+  const bx = MT[1]!, bz = MT[2]!, ux = MT[3]!, uz = MT[4]!;
+  if (bx <= xl && bx >= -xl && bz <= zl && bz >= -zl) {
+    let d = 1e9;
+    if (ux > 1e-9) { const e = (xl - bx) / ux; if (e < d) d = e; } else if (ux < -1e-9) { const e = (-xl - bx) / ux; if (e < d) d = e; }
+    if (uz > 1e-9) { const e = (zl - bz) / uz; if (e < d) d = e; } else if (uz < -1e-9) { const e = (-zl - bz) / uz; if (e < d) d = e; }
+    if (d < 1e9) {
+      MEET.x = bx + ux * d;
+      MEET.z = bz + uz * d;
+    }
+  }
+  if (MEET.x > xl) MEET.x = xl;
+  else if (MEET.x < -xl) MEET.x = -xl;
+  if (MEET.z > zl) MEET.z = zl;
+  else if (MEET.z < -zl) MEET.z = -zl;
+}
+
+/** [QF-13] Clamp a receiver's target point to the pitch + T_TOUCH.meetPitchMargin (MEET is the in / out point). */
+export function clampMeetTarget(): void {
+  const m = T_TOUCH.meetPitchMargin;
+  const xl = HALF_LENGTH + m;
+  const zl = HALF_WIDTH + m;
+  if (MEET.x > xl) MEET.x = xl;
+  else if (MEET.x < -xl) MEET.x = -xl;
+  if (MEET.z > zl) MEET.z = zl;
+  else if (MEET.z < -zl) MEET.z = -zl;
 }
 
 /** True while slot is the intended receiver of a teammate's pass in flight. */

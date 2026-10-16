@@ -38,7 +38,9 @@
  *  segment of this tick. Hands (ball and keeper inside his own area, not a deliberate foot pass from a teammate)
  *  catch when the ball is slow enough (T_GK.catchSpeed scaled by gkHandling, stretch and height) and GKP-05
  *  canHandle agrees (keeperPickUp -> GK_HOLD); otherwise tip over (high, near the bar) or parry (good keepers wide
- *  and away, poor keepers back into the middle; small deterministic s.rng noise). No hands (outside the area,
+ *  and away, poor keepers back into the middle; small deterministic s.rng noise; [QF-13] met beyond
+ *  T_GK.parryPostBand toward a post, often pushed round it and behind, crossing the line T_GK.parryPostClear outside
+ *  the post). No hands (outside the area,
  *  back-pass, unready keeper, the legs of a dive): body block (deflection, never on into the goal). The ball is
  *  played from the contact point, so a save on the tick it crossed the line undoes that crossing; a ball wholly over
  *  the line before the contact point stays a goal. Missing the volume = beaten. SAVE only for balls that were going
@@ -74,10 +76,10 @@ import { createKickLaunch, MAX_PREDICT_TICKS } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
 import { T_BALL, T_GK, T_LEVEL } from '../../contracts/tuning';
 import { ballStepTick } from '../ball/contact';
-import { attr, clamp, clamp01, dcos, dsin, lerp } from '../core/dmath';
+import { attr, clamp, clamp01, datan2, dcos, dsin, lerp, PI } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
 import { isHumanSlot } from '../core/query';
-import { rngRange } from '../core/rng';
+import { rngFloat, rngRange } from '../core/rng';
 import { canHandle, keeperPickUp } from './handling';
 
 export { keeperDiveSpeed, keeperDiveTicks, keeperMaxReach, keeperReactTicks } from './saveKinematics';
@@ -792,6 +794,22 @@ function parry(s: SimState, team: number, k: number, stretch: number, sp: number
   else side = b.vz >= 0 ? 1 : -1;
   let speed = sp * lerp(L.parryRestPoor, L.parryRestGood, q);
   if (speed < L.parryMinSpeed) speed = L.parryMinSpeed;
+  // [QF-13] Round the post: met toward a post, often pushed round it and behind (a corner) instead of back into play.
+  const az = cz < 0 ? -cz : cz;
+  if (az > T_GK.parryPostBand) {
+    const near = clamp01((az - T_GK.parryPostBand) / (GOAL_HALF_WIDTH - T_GK.parryPostBand));
+    if (rngFloat(s.rng) < T_GK.parryPostChance * near * (0.5 + 0.5 * q)) {
+      // Back past square by delta, crossing the goal line parryPostClear outside the post: tan(delta) <= u / lateral.
+      const u = depthOf(dir, b.x);
+      const lat = GOAL_HALF_WIDTH + T_GK.parryPostClear - az;
+      let back = lat > 0 ? 0.75 * datan2(u > 0 ? u : 0, lat) : T_GK.parryPostBackMax;
+      if (back > T_GK.parryPostBackMax) back = T_GK.parryPostBackMax;
+      if (back >= T_GK.parryPostBackMin) {
+        side = cz > 0 ? 1 : -1;
+        ang = 0.5 * PI + back;
+      }
+    }
+  }
   const hx = dir * dcos(ang);
   const hz = side * dsin(ang);
   const vy = lerp(L.parryLiftPoor, L.parryLiftGood, q) + (b.y > L.headHeight ? L.parryHighLift : 0);

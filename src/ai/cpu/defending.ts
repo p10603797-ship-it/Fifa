@@ -16,7 +16,9 @@
  *  1. Our pass in flight: neutral stick so SIM-15 moves the receiver (SIM-16 already switched to him) to meet the
  *     ball; SPRINT held when an opponent can contest the reception. A ball rolling away from the receiver (ahead of him,
  *     moving away: overhit, or past his meeting point) is run onto with the stick at full speed + SPRINT (an arrival
- *     into a target that moves away would leave him trailing it). No reaction delay (it is our own pass).
+ *     into a target that moves away would leave him trailing it). No reaction delay (it is our own pass). [QF-13
+ *     skeptic] Receiving near a touchline / goal line while running or steering at it, the stick turns into the pitch on
+ *     the tick SIM-07 takes the ball (receiveTurn; also branch 6), so the trap does not settle it over the line.
  *  2. Reaction delay running (reactT > 0): keep the current run (stick along his velocity), no buttons.
  *  3. Opponent carrier at his feet (the main case):
  *     - Player choice (every switchEvalTicks, staggered by team, only when SIM-16's lock-out is over and the current
@@ -40,6 +42,9 @@
  *       still exposed and in reach at the contact tick; a noisy one (decisionNoise, one draw per exposure window)
  *       lunges anyway. Rarely (decisionNoise x rashLungeChance per rashBucketTicks) a CPU lunges at a carrier whose
  *       ball is at his feet. Mistimed tackles are what make fouls: nothing scripts a card.
+ *       [QF-13] In our own penalty area no rash lunges or slides from Professional up (T_LEVEL.boxRashMul /
+ *       boxSlideMul); [QF-13 skeptic] a careful tackle there also needs the ball clear of the carrier's body at contact
+ *       (boxClear: out of body contact, his body off the line to the ball), so a miss is no penalty.
  *     - Slide (LOB press) only when goal-side, the ball loose-ish (between touches, beyond standing reach but within
  *       slide reach) in our half, one draw per window; from behind only for a carrier through on goal in our third
  *       with a tiny chance (slideBehindChance x decisionNoise).
@@ -69,16 +74,18 @@ import type { EventSink } from '../../contracts/events';
 import { AXIS_SCALE, Btn, GESTURE_POS_SCALE, type InputFrame } from '../../contracts/input';
 import type { ControllerState, CpuBrainState, PlayerState, SimState } from '../../contracts/state';
 import type { LevelParams } from '../../contracts/systems';
-import { T_CPU, T_PLAYER, T_SKILL, T_TACKLE, T_TOUCH } from '../../contracts/tuning';
+import { T_AI, T_CPU, T_DRIBBLE, T_LEVEL, T_PLAYER, T_SKILL, T_TACKLE, T_TOUCH } from '../../contracts/tuning';
 import { isFree } from '../../sim/actions/dispatch';
 import { tackleKind } from '../../sim/control/resolveActions';
 import { ballEta, controlContext, Ctx } from '../../sim/control/resolveShared';
 import { aerialChance } from '../../sim/kicks/aerial';
 import { inSkillVulnerableWindow } from '../../sim/kicks/skills';
+import { inPenaltyArea } from '../../sim/pitch/geometry';
 import { comeOutWanted } from '../../sim/keeper/sweeperHooks';
+import { LOCAL_TUNING as FIRST_TOUCH_LT } from '../../sim/players/firstTouch';
 import { ticksToReach } from '../../sim/players/locomotion';
 import { createInterceptEstimate, estimateIntercept } from '../steer';
-import { composureNoiseMul, levelParams } from './levels';
+import { composureNoiseMul, levelParams, levelValue } from './levels';
 
 export const LOCAL_TUNING = {
   // ---- approach and jockey
@@ -202,9 +209,23 @@ export const LOCAL_TUNING = {
   momentumEdgeMargin: T_CPU.defendMomentumEdgeMargin,
   /** [QF-11 skeptic] ... or his braking distance toward it + this, whichever is more, m. */
   momentumBrakeSlack: T_CPU.defendMomentumBrakeSlack,
+  /** [QF-13 skeptic] Box care: a careful tackle in our area keeps this clear of the carrier's body (boxClear), m. */
+  boxClearMargin: T_CPU.defendBoxClearMargin,
+  /** ... and the carrier at least two body radii + this from the tackler at contact, m. */
+  boxBodyGap: T_CPU.defendBoxBodyGap,
+  /** [QF-13 skeptic] Reception near a line: the stick turned into the pitch (receiveTurn; T_CPU.defendReceive*). m,
+   *  ticks, m/s, 0..1, 0..1. */
+  receiveEdge: T_CPU.defendReceiveEdge,
+  receiveLead: T_CPU.defendReceiveLead,
+  receiveOutSpeed: T_CPU.defendReceiveOutSpeed,
+  receiveOutStick: T_CPU.defendReceiveOutStick,
+  receiveInward: T_CPU.defendReceiveInward,
 } as const; // TUNING-CR
 
 const L = LOCAL_TUNING;
+/** [QF-13 skeptic] brain.seenOwner while our own pass is in flight to a teammate (tickBrain): the same situation as a
+ *  loose ball (-1), but an opponent taking it is a turnover. */
+const OUR_PASS = -2;
 const BIG = 1e9;
 const EPS = 1e-6;
 /** Target clamp: never behind our own goal line; a little room past the touchlines. */
@@ -339,20 +360,62 @@ function nearestOpponentDist(s: SimState, team: number, x: number, z: number): n
 
 // ---------------------------------------------------------------- brain upkeep
 
-/** Countdowns and the reaction delay on a situation change (ball owner / keeper in hands / loose = -1). */
-function tickBrain(s: SimState, brain: CpuBrainState, lv: LevelParams): void {
+/**
+ * Countdowns and the reaction delay on a situation change (ball owner / keeper in hands / loose = -1). [QF-13] Every
+ * owner change of an opponent's passing chain re-armed the delay, so Beginner's controlled defender (80 ticks) kept
+ * his old run, often standing, for up to 29 s with gaps under 0.25 s. Now a change re-arms it only when no delay is
+ * running and the defender has been awake for T_AI.reactRearmGapFrac x the level's delay since the last one ran out
+ * (that awake time is counted as a negative reactT; the readers only act on reactT > 0), or when the previous
+ * situation was our own ball (the turnover itself, which also ends the carrier module's leftover delay). [QF-13
+ * skeptic] An opponent taking our pass in flight (seen as OUR_PASS while it flies) is a turnover too: the delay armed
+ * when the pass left the foot ran down in flight (branch 1 ignores it) and the interception found it spent, so a
+ * Beginner defender reacted to an intercepted pass after 46-58 of his 80 ticks, and at once in 1 of 10.
+ */
+function tickBrain(s: SimState, team: number, brain: CpuBrainState, lv: LevelParams): void {
   if (brain.tackleCd > 0) brain.tackleCd = brain.tackleCd > 1 ? brain.tackleCd - 1 : 0;
   else brain.tackleCd = 0;
   const b = s.ball;
   const key = b.heldBy >= 0 ? b.heldBy : b.owner >= 0 ? b.owner : -1;
-  if (key !== brain.seenOwner) {
-    brain.seenOwner = key;
-    brain.reactT = lv.reactionTicks > 0 ? lv.reactionTicks : 0;
-  } else if (brain.reactT > 0) {
-    brain.reactT = brain.reactT > 1 ? brain.reactT - 1 : 0;
+  const delay = lv.reactionTicks > 0 ? lv.reactionTicks : 0;
+  const seen = brain.seenOwner === OUR_PASS ? -1 : brain.seenOwner;
+  if (key !== seen) {
+    const prev = brain.seenOwner;
+    const ours = validSlot(prev) && s.players[prev]!.team === team;
+    // [QF-13 skeptic] An opponent taking our pass in flight (an interception) is a turnover too.
+    const intercepted = prev === OUR_PASS && validSlot(key) && s.players[key]!.team !== team;
+    // Our own pass leaving the passer's foot starts the delay as any change (branch 1 ignores it while the pass flies)
+    // and is remembered as OUR_PASS while it is in flight.
+    brain.seenOwner = ours && key === -1 && ownPassInFlight(s, team) ? OUR_PASS : key;
+    if (ours || intercepted || brain.reactT === 0 || !(brain.reactT === brain.reactT)) {
+      brain.reactT = delay;
+      return;
+    }
+  } else if (brain.seenOwner === OUR_PASS && !ownPassInFlight(s, team)) {
+    // The pass is over while the ball is still loose (deflected, overrun, dead): a plain loose ball, whose delay (armed
+    // when the pass left the foot) now holds his run; a pick-up by an opponent follows the chain rule above.
+    brain.seenOwner = -1;
+  }
+  if (brain.reactT > 0) {
+    if (brain.reactT > 1) {
+      brain.reactT = brain.reactT - 1;
+    } else {
+      // The delay runs out: awake for at least the re-arm gap before an owner change counts again.
+      const gap = Math.round(delay * T_AI.reactRearmGapFrac);
+      brain.reactT = gap > 0 ? -gap : 0;
+    }
+  } else if (brain.reactT < 0) {
+    brain.reactT = brain.reactT < -1 ? brain.reactT + 1 : 0;
   } else {
     brain.reactT = 0;
   }
+}
+
+
+/** Our own pass in flight to an active teammate (branch 1 of cpuDefend). Pure. */
+function ownPassInFlight(s: SimState, team: number): boolean {
+  const b = s.ball;
+  return b.owner < 0 && b.heldBy < 0 && validSlot(b.passTarget) && b.lastTouchTeam === team &&
+    s.players[b.passTarget]!.team === team && s.players[b.passTarget]!.active === 1;
 }
 
 // ---------------------------------------------------------------- exposure of the carrier's ball
@@ -412,6 +475,35 @@ function wellTimed(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerStat
   const ex = bx - qx, ez = bz - qz;
   const lim = L.exposeDist * L.exposeAtContactFrac;
   return ex * ex + ez * ez >= lim * lim;
+}
+
+/**
+ * [QF-13 skeptic] In our own penalty area a careful tackle also wants the ball clear of the carrier's body at contact
+ * (the positions wellTimed predicts): the carrier further from the tackler than body contact (two body radii +
+ * boxBodyGap) and his body (bodyRadius + boxClearMargin) off the line from the tackler to the ball or beyond the ball,
+ * never across it. SIM-14 makes a tackle that meets the body before the ball a foul, here a penalty: the careful
+ * tackles of the top levels (no rash ones in the box) conceded 1.6-2.0 penalties a match at Legend, 0.75 at World Class
+ * (Professional 0.38), nearly half of Legend's goals; now about 0.4 at Legend. Pure.
+ */
+function boxClear(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState>): boolean {
+  const t = (T_TACKLE.standWindup + (T_TACKLE.standContactTicks >> 1)) / TICK_HZ;
+  const b = s.ball;
+  const px = p.x + p.vx * t, pz = p.z + p.vz * t;
+  let ux = b.x + b.vx * t - px, uz = b.z + b.vz * t - pz;
+  const lb = Math.sqrt(ux * ux + uz * uz);
+  if (!(lb > EPS)) return false;
+  ux /= lb; uz /= lb;
+  const vx = q.x + q.vx * t - px, vz = q.z + q.vz * t - pz;
+  const along = vx * ux + vz * uz;
+  const lat = vx * uz - vz * ux;
+  const alat = lat < 0 ? -lat : lat;
+  const rv = T_PLAYER.bodyRadius + L.boxClearMargin;
+  // Not within body contact of him either (SIM-14 bodyInZone: a missed tackle with his body that close is a foul).
+  const gap = 2 * T_PLAYER.bodyRadius + L.boxBodyGap;
+  if (vx * vx + vz * vz < gap * gap) return false;
+  if (along > 0 && along - rv < lb && alat < rv) return false;
+  // Clear: beyond the ball (by the margin) or off the line to it.
+  return along - lb > L.boxClearMargin || alat >= rv;
 }
 
 // ---------------------------------------------------------------- player choice
@@ -530,7 +622,7 @@ function defendCarrier(
   let switched = false;
   const cos0 = d0 > EPS ? (d0x * gx + d0z * gz) / d0 : 1;
   const engaged = cos0 >= L.goalSideCos && d0 <= L.engagedDist;
-  if (!engaged && ctl.switchLockT === 0 && brain.reactT === 0 && (s.tick + team * 3) % L.switchEvalTicks === 0 &&
+  if (!engaged && ctl.switchLockT === 0 && !(brain.reactT > 0) && (s.tick + team * 3) % L.switchEvalTicks === 0 &&
     !committedToBall(p0)) {
     const mover = chooseDefender(s, team, ci, ctl, lv, slot, q, guardX, guardZ, out);
     if (mover !== slot) { slot = mover; switched = true; }
@@ -584,7 +676,11 @@ function defendCarrier(
   const seed = s.config.seed | 0;
   const who = team * 64 + carrier;
   // [QF-11] A nervous defender lunges more, a calm one less (T_AI.composureNoise*).
-  const noisy = lv.decisionNoise * composureNoiseMul(s.attrs[slot]!.composure, brain.level);
+  let noisy = lv.decisionNoise * composureNoiseMul(s.attrs[slot]!.composure, brain.level);
+  // [QF-13] In our own penalty area a foul is a penalty: no rash lunges, no slides from Professional up
+  // (T_LEVEL.boxRashMul / boxSlideMul).
+  const inBox = inPenaltyArea(q.x, q.z, -dir);
+  if (inBox) noisy *= levelValue(s, team, T_LEVEL.boxRashMul);
 
   // Standing tackle / shoulder (never from behind: that would be a push or pull).
   const kind = tackleKind(s, p, carrier);
@@ -593,7 +689,8 @@ function defendCarrier(
     if (expOn === 1) {
       if (expAge >= lv.tackleTimingTicks && dBall <= T_TACKLE.standReach + L.tackleApproach) {
         const rash = noise01(seed, who, expKey * 4 + 1) < noisy;
-        if (rash || wellTimed(s, p, q)) { pressTackle(brain, lv); return; }
+        // [QF-13 skeptic] In our own area a careful tackle also wants the ball clear of the carrier's body (boxClear).
+        if (rash || (wellTimed(s, p, q) && (!inBox || boxClear(s, p, q)))) { pressTackle(brain, lv); return; }
       }
     } else if (dBall <= T_TACKLE.standReach && goalSide) {
       const bucket = Math.floor(s.tick / L.rashBucketTicks);
@@ -608,11 +705,12 @@ function defendCarrier(
   if (expOn !== 1 || expSkill === 1 || expAge < lv.tackleTimingTicks) return;
   if (!(dBall > T_TACKLE.standReach && dBall <= T_TACKLE.slideReach * L.slideReachFrac)) return;
   const u = noise01(seed, who, expKey * 4 + 3);
+  const slideMul = inBox ? levelValue(s, team, T_LEVEL.boxSlideMul) : 1;
   if (goalSide) {
     // The ball must be on our side of him (nearer to us than he is): never slide through the carrier to reach it.
-    if (dBall < d && (qs > jogP || goalLineDist <= L.secondDefDist) && u < L.slideChance) pressSlide(brain, lv);
+    if (dBall < d && (qs > jogP || goalLineDist <= L.secondDefDist) && u < L.slideChance * slideMul) pressSlide(brain, lv);
   } else if (cosG <= L.behindCos && throughOnGoal(s, team, q, L.slideBehindDist)) {
-    if (u < L.slideBehindChance * noisy) pressSlide(brain, lv);
+    if (u < L.slideBehindChance * noisy * slideMul) pressSlide(brain, lv);
   }
 }
 
@@ -672,12 +770,14 @@ function ownPass(s: SimState, team: number, p: Readonly<PlayerState>): void {
       steerTo(p, b.x + b.vx * L.trailLeadSec, b.z + b.vz * L.trailLeadSec, 0);
       stM = 1;
       wantSprint = 1;
+      receiveTurn(s, p);
       return;
     }
   }
   if (nearestOpponentDist(s, team, b.passX, b.passZ) <= L.contestDist) {
     btn |= Btn.SPRINT; // idle stick + SPRINT: the receiver meets the ball at top speed
   }
+  if (p.slot === b.passTarget) receiveTurn(s, p);
 }
 
 function opponentPass(s: SimState, team: number, p: Readonly<PlayerState>): void {
@@ -724,6 +824,89 @@ function chaseLoose(s: SimState, p: Readonly<PlayerState>): void {
     else if (stM < L.chaseMinStick && d > L.chaseHoldDist) stM = L.chaseMinStick;
   }
   if (d > L.chaseSprintDist) wantSprint = 1;
+  lineBrake(p);
+  receiveTurn(s, p);
+}
+
+/**
+ * [QF-13 skeptic] Receiving near a touchline / goal line (SIM-07 takes the ball this tick or the next: a moving ball at
+ * most trap height coming within his reach, he free to take it) with the stick, his run or (stick
+ * released: SIM-15 meets the ball) the ball going at the line: the stick's component toward it becomes receiveInward
+ * into the pitch (the rest kept: his stick, else the ball's direction) and SPRINT is let go, so SIM-07's clean settle (in
+ * the stick direction, at the trap lead) keeps the ball in play. The receiver of an overhit pass sprinted onto it at
+ * the line with the stick on the ball, or met it there with the stick released (SIM-15's meeting point on the line),
+ * and trapped it over the line: 1.4 throw-ins a match, 18% of all (Professional). "Near" is receiveEdge or his braking
+ * distance toward the line + momentumBrakeSlack + receiveLead (the settled ball runs ahead of him), whichever is more.
+ */
+function receiveTurn(s: SimState, p: Readonly<PlayerState>): void {
+  const b = s.ball;
+  // Only a reception SIM-07 makes: a moving ball he is free to take (a turn that is not followed by the touch slows his
+  // chase, the ball gets away and he turns back after it: a stick flip-flop every tick).
+  // Feet, or thigh / chest up to trap height (SIM-07's reach is shorter there), at the ball's height after this tick.
+  const y = b.y + b.vy / TICK_HZ;
+  const reach = y <= T_DRIBBLE.controlHeight ? T_TOUCH.receiveRadius : T_TOUCH.receiveRadius * FIRST_TOUCH_LT.chestReachMul;
+  if (y > T_TOUCH.trapHeight || !isFree(p) || p.noTouchT > 0) return;
+  if (b.vx * b.vx + b.vz * b.vz <= FIRST_TOUCH_LT.minTrapSpeed * FIRST_TOUCH_LT.minTrapSpeed) return;
+  if (b.lastKickBy === p.slot && s.tick - b.lastKickTick < FIRST_TOUCH_LT.selfKickTicks) return;
+  const bv = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
+  let sx: number, sz: number;
+  const free = stM > 0 ? 0 : 1;
+  if (free === 0) { sx = stX * stM; sz = stZ * stM; } else if (bv > EPS) { sx = b.vx / bv; sz = b.vz / bv; } else return;
+  const brake = 0.5 / T_PLAYER.decel;
+  let ez = p.vz * p.vz * brake + L.momentumBrakeSlack + L.receiveLead;
+  if (ez < L.receiveEdge) ez = L.receiveEdge;
+  let ex = p.vx * p.vx * brake + L.momentumBrakeSlack + L.receiveLead;
+  if (ex < L.receiveEdge) ex = L.receiveEdge;
+  const os = L.receiveOutStick, ov = L.receiveOutSpeed;
+  let turned = 0;
+  if (p.z > HALF_WIDTH - ez && (sz > os || p.vz > ov || (free === 1 && b.vz > ov))) { sz = -L.receiveInward; turned = 1; }
+  else if (p.z < -HALF_WIDTH + ez && (sz < -os || p.vz < -ov || (free === 1 && b.vz < -ov))) { sz = L.receiveInward; turned = 1; }
+  if (p.x > HALF_LENGTH - ex && (sx > os || p.vx > ov || (free === 1 && b.vx > ov))) { sx = -L.receiveInward; turned = 1; }
+  else if (p.x < -HALF_LENGTH + ex && (sx < -os || p.vx < -ov || (free === 1 && b.vx < -ov))) { sx = L.receiveInward; turned = 1; }
+  if (turned === 0) return;
+  const m = Math.sqrt(sx * sx + sz * sz);
+  if (!(m > EPS)) return;
+  const ux = sx / m, uz = sz / m;
+  // SIM-07 must take the ball with the turned stick (after the tick's movement, the stick the settle direction) this
+  // tick or the next: the ball's segment of that tick within his reach of where he will be, his velocity
+  // changed toward the turned stick by at most T_PLAYER.decel a tick. A turn that is not followed by the touch slows
+  // his chase, the ball gets away and he turns back after it: a stick flip-flop every tick.
+  const jog = s.attrs[p.slot]!.topSpeed * T_PLAYER.jogFraction;
+  const cap = T_PLAYER.decel / TICK_HZ;
+  let vx = p.vx, vz = p.vz, px = p.x, pz = p.z, ok = 0;
+  for (let k = 0; k < 2 && ok === 0; k++) {
+    let dvx = ux * jog - vx, dvz = uz * jog - vz;
+    const dv = Math.sqrt(dvx * dvx + dvz * dvz);
+    if (dv > cap) { dvx *= cap / dv; dvz *= cap / dv; }
+    vx += dvx; vz += dvz;
+    px += vx / TICK_HZ; pz += vz / TICK_HZ;
+    const qx = b.x + b.vx * k / TICK_HZ - px, qz = b.z + b.vz * k / TICK_HZ - pz;
+    let t = bv > EPS ? -(qx * b.vx + qz * b.vz) / (bv * bv) : 0;
+    if (t < 0) t = 0; else if (t > 1 / TICK_HZ) t = 1 / TICK_HZ;
+    const cx = qx + b.vx * t, cz = qz + b.vz * t;
+    if (cx * cx + cz * cz <= reach * reach) ok = 1;
+  }
+  if (ok === 0) return;
+  stX = ux; stZ = uz; stM = 1;
+  wantSprint = 0;
+  btn &= ~Btn.SPRINT;
+}
+
+/**
+ * [QF-13] A chase at full stick (no arrival ramp into a moving ball) ran on over the touchline: within his braking
+ * distance of a touchline / goal line (v^2 / (2 x T_PLAYER.decel) + momentumBrakeSlack, as momentum()) and running at
+ * it, the stick's component toward it is let go (a CPU defender chasing a high ball to the line stood 2.3 m off the
+ * pitch, seed 33 #16).
+ */
+function lineBrake(p: Readonly<PlayerState>): void {
+  if (!(stM > 0)) return;
+  const brake = 0.5 / T_PLAYER.decel;
+  const ez = p.vz * p.vz * brake + L.momentumBrakeSlack, ex = p.vx * p.vx * brake + L.momentumBrakeSlack;
+  let sx = stX * stM, sz = stZ * stM;
+  if ((p.z > HALF_WIDTH - ez && p.vz > 0 && sz > 0) || (p.z < -HALF_WIDTH + ez && p.vz < 0 && sz < 0)) sz = 0;
+  if ((p.x > HALF_LENGTH - ex && p.vx > 0 && sx > 0) || (p.x < -HALF_LENGTH + ex && p.vx < 0 && sx < 0)) sx = 0;
+  const m = Math.sqrt(sx * sx + sz * sz);
+  if (m > EPS) { stX = sx / m; stZ = sz / m; stM = m < 1 ? m : 1; } else { stX = 0; stZ = 0; stM = 0; wantSprint = 0; }
 }
 
 /** A loose ball a teammate chases (team.chaser): cover goal-side of it instead of a second chase. */
@@ -781,7 +964,7 @@ export function cpuDefend(s: SimState, team: number, out: InputFrame, ev: EventS
   const ctl = s.ctrl[ci];
   if (!ctl || ctl.kind !== ControllerKind.CPU || ctl.side !== team) return;
   const lv = levelParams(brain.level);
-  tickBrain(s, brain, lv);
+  tickBrain(s, team, brain, lv);
   stX = 0; stZ = 0; stM = 0; btn = 0; wantSprint = 0;
   const slot = ctl.slot;
   if (!validSlot(slot)) return;
