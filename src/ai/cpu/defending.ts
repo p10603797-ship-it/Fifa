@@ -216,6 +216,10 @@ export const LOCAL_TUNING = {
   boxClearMargin: T_CPU.defendBoxClearMargin,
   /** ... and the carrier at least two body radii + this from the tackler at contact, m. */
   boxBodyGap: T_CPU.defendBoxBodyGap,
+  /** [QF-14 resume] Patience with a carrier standing on the ball (T_CPU.defendStill*): ticks since his last touch (+ the
+   *  level's tackleTimingTicks) and the speed under which he and the ball count as standing, m/s. */
+  stillTouchTicks: T_CPU.defendStillTouchTicks,
+  stillSpeed: T_CPU.defendStillSpeed,
   /** [QF-13 skeptic] Reception near a line (receiveTurn): when the clean settle would end less than this inside a line,
    *  the stick's component toward it becomes receiveInward into the pitch. m, 0..1. */
   receiveSettleMargin: T_CPU.defendReceiveSettleMargin,
@@ -714,6 +718,15 @@ function defendCarrier(
         if (rash || (wellTimed(s, p, q) && careful)) { pressTackle(brain, lv); return; }
       }
     } else if (dBall <= T_TACKLE.standReach && goalSide) {
+      // [QF-14 resume] Patience with a carrier standing on the ball: he never exposes it (no touch, no turn), so a
+      // noise-free defender (Legend: no rash lunge) held his ground in front of him for ever. Standing still, not
+      // shielding, untouched for stillTouchTicks + the level's tackle timing: the challenge.
+      if (patient && q.shielding !== 1 && q.act !== ActionKind.SHIELD && qs < L.stillSpeed &&
+        b.vx * b.vx + b.vz * b.vz < L.stillSpeed * L.stillSpeed &&
+        (q.lastTouchTick >= 0 ? s.tick - q.lastTouchTick : b.ownerT) >= L.stillTouchTicks + lv.tackleTimingTicks) {
+        pressTackle(brain, lv);
+        return;
+      }
       const bucket = Math.floor(s.tick / L.rashBucketTicks);
       if (noise01(seed, who, bucket * 4 + 2) < noisy * L.rashLungeChance) { pressTackle(brain, lv); return; }
     }

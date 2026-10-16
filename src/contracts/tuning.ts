@@ -551,6 +551,13 @@ export const T_CPU = {
    *  Professional); now about 0.4 at Legend. m, m. */
   defendBoxClearMargin: 0.3,
   defendBoxBodyGap: 0.6,
+  /** [QF-14 resume] TAI-11 patience with a carrier standing on the ball: the ball never gets exposed (no touch, no turn),
+   *  so a noise-free defender (Legend) held his ground in front of him for ever. Once the patience is over, the carrier
+   *  has not touched the ball for this many ticks (+ the level's tackleTimingTicks) and he and the ball move slower than
+   *  defendStillSpeed (m/s), the controlled defender goal-side with the ball in reach makes the challenge. Bot carriers
+   *  never stand that long (no such second in 20 Professional soak matches). Ticks, m/s. */
+  defendStillTouchTicks: 45,
+  defendStillSpeed: 1.0,
 } as const;
 
 /** Per-difficulty AI parameters, indexed by Difficulty (0 Beginner .. 5 Legend). Never physics. */

@@ -4,7 +4,7 @@
  * (TAI-11 patience, qf-14-escort) the CPU still drove at him with the drive credit (driveShotShare of the shot at the
  * carry's end), and lost it, instead of the open pass. In the attacking half the loss now also grows with the lack of
  * room, x (1 + dribbleTightAttackMul x (1 - TAI-10 dribble score)), as it did in our own half
- * (dribbleTightLossMul); how much the room counts is a level skill (a top level reads it, a beginner does not).
+ * (dribbleTightLossMul), the same at every level.
  */
 import { describe, expect, it } from 'vitest';
 import { CPU_CONTROLLER_BASE } from '../../src/contracts/constants';

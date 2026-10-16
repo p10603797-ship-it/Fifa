@@ -433,15 +433,21 @@ function planIntercept(s: SimState, team: number, k: number): void {
   let diveI = -1, diveD = NEVER;
   let hopeI = -1, hopeD = NEVER;
   const end = PLAN.g;
+  const arm = kinStandReach(kin, 0);
   for (let i = 0; i < end; i++) {
     const x = PX[i]!, y = PY[i]!, z = PZ[i]!;
     const dx = x - p.x, dz = z - p.z;
     const d = Math.sqrt(dx * dx + dz * dz);
     const t = i + 1;
     // Standing: 3D distance to the standing capsule axis (same shape as the contact volume) within arms + step.
+    // [QF-14 resume] The step closes the horizontal gap only: added to the 3D distance it let a ball up to 0.8 m over
+    // his standing reach (3.1 m high for a 1.88 m keeper) count as a standing catch a second ahead, so he set himself
+    // under a lob or a dipping long shot and watched it go over him (no dive, no drop back).
     const dy = y > axTop ? y - axTop : y < STAND_AXIS_LOW ? STAND_AXIS_LOW - y : 0;
     const ds = dy > 0 ? Math.sqrt(d * d + dy * dy) : d;
-    if (ds < standD - EPS && ds <= kinStandReach(kin, t)) { standI = i; standD = ds; }
+    const step = kinStandReach(kin, t) - arm;
+    const dh = d > step ? d - step : 0;
+    if (ds < standD - EPS && dh * dh + dy * dy <= arm * arm) { standI = i; standD = ds; }
     if (d <= reach && d < diveD - EPS && y <= kinDiveTop(kin, d) && kinDiveTicks(kin, d) <= t) { diveI = i; diveD = d; }
     if (y <= hopeTop && d < hopeD - EPS) { hopeI = i; hopeD = d; }
   }
@@ -458,16 +464,24 @@ function planIntercept(s: SimState, team: number, k: number): void {
     let vb = (a.topSpeed > 0 ? a.topSpeed : T_PLAYER.topSpeedMin) * T_PLAYER.jockeySpeedFraction;
     if (!(vb > 0.5)) vb = 0.5;
     const ab = kin.accel > 0.5 ? kin.accel : 0.5;
-    const tAcc = vb / ab;
     const top = kinDiveTop(kin, 0);
     const arms = kin.ar + CAP_TOL;
+    // [QF-14 resume] Already dropping back (re-planned every tick): no start-up slack again and his current speed toward
+    // the spot counts. Re-applying the slack from rest on every tick made the spot unreachable two ticks into the drop,
+    // so he gave it up for a track / hopeless dive where he was (a paired A/B over 597 soak shots: 105 v 106 goals).
+    const dropping = p.act === ActionKind.GK_CATCH && p.actA === CATCH_DROP;
+    const slack = dropping ? 0 : L.dropSlackTicks;
     for (let i = 0; i < end; i++) {
       if (!(depthOf(dir, PX[i]!) < kd) || PY[i]! > top) continue;
       const dx = PX[i]! - p.x, dz = PZ[i]! - p.z;
       const d = Math.sqrt(dx * dx + dz * dz);
+      let v0 = dropping && d > EPS ? (p.vx * dx + p.vz * dz) / d : 0;
+      if (!(v0 > 0)) v0 = 0; else if (v0 > vb) v0 = vb;
+      const tAcc = (vb - v0) / ab;
       // He gets there backpedalling, then has the arms-only leap (diveWindupTicks) left.
-      const tau = (i + 1 - L.dropSlackTicks - L.diveWindupTicks) * DT;
-      const run = tau <= 0 ? 0 : tau <= tAcc ? 0.5 * ab * tau * tau : 0.5 * vb * tAcc + vb * (tau - tAcc);
+      const tau = (i + 1 - slack - L.diveWindupTicks) * DT;
+      const run = tau <= 0 ? 0 : tau <= tAcc ? v0 * tau + 0.5 * ab * tau * tau
+        : v0 * tAcc + 0.5 * ab * tAcc * tAcc + vb * (tau - tAcc);
       if (d <= arms + run) { dropI = i; break; }
     }
   }
