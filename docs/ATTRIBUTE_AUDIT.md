@@ -48,9 +48,10 @@ Two halves, both re-runnable by QA:
     keeper rather than misses. Tuning is for SIM-11 / Wave 4.
   - **dribbling on the ball**: the sprint-dribble touch barely changes (mean ball distance 2.04 to 2.01 m: dribbling is
     45% of the touch quality and the touch lead moves only +-10%). Its visible effect is tackle resistance (standing
-    tackles against the carrier win 44% vs 28%) and the skill-move steal window.
-  - **gkPositioning**: the keeper stands 0.23 m off his ideal spot at 40 vs 0.03 m at 90: visible in replays, small
-    in save rate.
+    tackles against the carrier win 61% vs 44%) and the skill-move steal window.
+  - **gkPositioning**: the keeper stands 0.16 m off his ideal spot at 40 vs 0.02 m at 90 ([QF-14] 0.23 / 0.03 m
+    before GKP-01's far depth came in from 4.5 to 3 m: nearer his line the same error is fewer metres): visible in
+    replays, small in save rate.
   - **skillMoves 3, 4 and 5 give the same human move set** (`T_SKILL.minStars` tops out at 3 stars); 4 and 5 stars
     differ only in the CPU's skill-move success estimate (`ai/cpu/carrier` skillPerStar). Suggest a 4-star tier (e.g.
     roulette / heel flick at 4) in Wave 4.
@@ -66,7 +67,7 @@ dynamic micro-test (table further down has the exact numbers and levels).
 | sprintSpeed | locomotion `topSpeedFor` (7.0-9.6 m/s) | reach / run timing via `topSpeed`; set-piece "stay back" choice | peak sprint 8.15 -> 9.28 m/s | keep |
 | agility | locomotion turn rate; 20% of dribble touch quality; skill-move exit speed; aerial jump (with heading) and turn; 1 - interceptAttrW of interception chance | (via derived speeds) | 18 -> 14 ticks to turn a sprint 75 deg | keep |
 | ballControl | first-touch quality (clean / heavy / miss); 35% of dribble touch quality; tackle resistance; skill-move steal radius; volley skill | CPU passing (receiver touch) | clean first-touch chance on a 14 m/s pass 33% -> 100% (20 m/s: 0% -> 82%) | keep |
-| dribbling | 45% of dribble touch quality; tackle resistance (largest weight); skill-move steal radius | CPU carrier dribble / skill success; set-piece short option | standing tackles against him win 44% -> 28%; sprint-dribble ball distance 2.04 -> 2.01 m | keep (touch effect weak) |
+| dribbling | 45% of dribble touch quality; tackle resistance (largest weight); skill-move steal radius | CPU carrier dribble / skill success; set-piece short option | standing tackles against him win 61% -> 44%; sprint-dribble ball distance 2.04 -> 2.01 m | keep (touch effect weak) |
 | shortPassing | pass accuracy up to 12 m (`passAccuracy`); volley / header passes; free-kick taker choice | CPU pass choice; set-piece short taker | 15 m ground pass direction spread 4.1 -> 1.3 deg | keep |
 | longPassing | pass accuracy from 35 m; lob error; clearance quality; free-kick taker choice | CPU pass choice | 38 m lob spread 4.5 -> 1.3 deg | keep |
 | crossing | cross error; corner taker choice; free-kick taker choice | CPU cross choice | cross spread 4.5 -> 1.3 deg | keep |
@@ -75,17 +76,17 @@ dynamic micro-test (table further down has the exact numbers and levels).
 | shotPower | shot speed (x0.92-1.0); header / volley shot speed; clearance speed; free-kick / penalty power and taker choice | set-piece shooter choice | launch speed at 80% power 27.8 -> 29.0 m/s | keep, **weak: tune** |
 | longShots | shot accuracy from 20 m; free-kick shot accuracy; free-kick taker choice | CPU shot range; set-piece shooter | 28 m shot on target 84% -> 100%, placement 1.29 -> 0.37 m | keep |
 | curve | finesse-shot accuracy and curl spin; free-kick curl; corner taker choice | CPU finesse choice; set-piece shooter | finesse side spin 8.4 -> 10.4 rad/s | keep |
-| heading | header jump, duel score, header accuracy and AI timing; corner / free-kick / goal-kick aerial target choice | CPU aerial pass targets; set-piece aerial / marker roles | aerial duel win rate 17% -> 90% | keep |
-| standingTackle | standing / hard tackle win chance and keep-the-ball chance | set-piece marker choice | standing-tackle win rate 19% -> 47% | keep |
-| slidingTackle | slide tackle win chance | - | sliding-tackle win rate 31% -> 60% | keep |
+| heading | header jump, duel score, header accuracy and AI timing; corner / free-kick / goal-kick aerial target choice | CPU aerial pass targets; set-piece aerial / marker roles | aerial duel win rate 20% -> 97% | keep |
+| standingTackle | standing / hard tackle win chance and keep-the-ball chance | set-piece marker choice | standing-tackle win rate 33% -> 69% | keep |
+| slidingTackle | slide tackle win chance | - | sliding-tackle win rate 47% -> 87% | keep |
 | interceptions | interception chance (`interceptChance`) | - | passes cut out 0.75 m off the line 43% -> 58% | keep |
 | strength | body mass in collisions, shielding; shoulder / push duels; tackle resistance; clearance; aerial duel and the beaten jumper's stumble; keeper punch | CPU shielding | shoulder-challenge win rate 21% -> 81% | keep |
 | stamina | drain and recovery rate of the condition (which scales speed, acceleration and kick accuracy when low) | - | condition drained per minute of sprinting 0.51 -> 0.32 | keep |
 | composure | shot pressure relief; 40% of penalty accuracy; penalty-taker choice; penalty keeper's read | CPU shot decision; [QF-11] CPU decision noise (carrier options, rash / noisy tackles) | 14 m shot under a 1 m press: placement error 0.59 -> 0.45 m; CPU option noise x1.23 -> x0.78 (57 -> 87) | keep |
-| gkDiving | dive speed, max reach, get-up time; claim jump height; best keeper for a sub | CPU shot placement against the keeper | save rate, hard corner shots 16-22 m: 36% -> 78% | keep |
+| gkDiving | dive speed, max reach, get-up time; claim jump height; best keeper for a sub | CPU shot placement against the keeper | save rate, hard corner shots 16-22 m: 6% -> 78% | keep |
 | gkHandling | catch-speed limit (catch vs parry), parry quality (angle, rest speed and, [QF-13], the chance a parry by the post goes round it for a corner); throw accuracy; claim catch limit; punch speed | - | share of saves held 58% -> 92% | keep |
-| gkReflexes | reaction delay (`keeperReactTicks`); parry quality (as gkHandling, round-the-post chance included) | CPU shot placement against the keeper | save rate, close-range shots 8-11 m: 67% -> 89% | keep |
-| gkPositioning | positioning accuracy (`idealKeeperSpot` error); free-kick spot | - | distance from the ideal spot 0.23 -> 0.03 m | keep (moderate) |
+| gkReflexes | reaction delay (`keeperReactTicks`); parry quality (as gkHandling, round-the-post chance included) | CPU shot placement against the keeper | save rate, close-range shots 8-11 m: 56% -> 92% | keep |
+| gkPositioning | positioning accuracy (`idealKeeperSpot` error); free-kick spot | - | distance from the ideal spot 0.16 -> 0.02 m | keep (moderate) |
 | gkKicking | drop-kick / kick accuracy and distance error; sweeper clearance speed | - | drop-kick direction spread 1.95 -> 0.83 deg | keep |
 | height | body radius; standing head height in aerials; keeper reach heights; throw-in release height; wall blocking height; aerial target choice | set-piece aerial / marker roles | aerial duel win rate 23% (170 cm) -> 93% (195 cm) | keep |
 | foot | which side is the weak foot for passes, shots, volleys and skills; natural finesse curl side; penalty keeper's read | CPU shot foot / angle; set-piece taker side | 15 m pass off the left side: spread 3.6 (right-footed) -> 2.0 deg (left-footed) | keep |
@@ -100,7 +101,12 @@ role and the shirt is shown on the kit; neither is audited here.
 From `DAT05_REPORT=1 npx vitest run tests/sim/dat-05-attributes.test.ts --disableConsoleIntercept` (seeded, deterministic; numbers move when
 the consuming modules are retuned, the assertions only require the direction and a visible margin). Refreshed by QF-11
 (Wave 4 round 2) on the tree with QF-9 / QF-10's sim changes: stamina, ballControl, shotPower, composure, heading,
-height and gkDiving rows moved; every row still moves the right way.
+height and gkDiving rows moved; every row still moves the right way. Refreshed by QF-14 (Wave 4 round 4): standingTackle, slidingTackle and
+dribbling's tackle resistance moved with SIM-14's base chance (0.5 -> 0.7: a front standing tackle at the ball won
+about 30%) and attribute weight (0.55 -> 0.8), gkDiving and gkReflexes with GKP-01 / GKP-02's long-shot fixes and the
+wider keeper ranges (T_GK react 6 / 19 -> 4 / 25 ticks, dive speed 4.6-7.0 -> 3.7-7.3 m/s, reach 2.2-3.2 -> 1.82-3.32 m,
+about the same at 75: the club-rating gap showed less in a lower-scoring match), gkPositioning with GKP-01's far depth
+(4.5 -> 3 m); heading and height had moved since QF-11's refresh. Every row still moves the right way.
 
 | Attribute | Level | Measured outcome | Low | High |
 |---|---|---|---|---|
@@ -109,7 +115,7 @@ height and gkDiving rows moved; every row still moves the right way.
 | agility | pipeline | ticks to turn a sprint 75 deg | 18.0 (40) | 14.0 (90) |
 | stamina | pipeline | condition (0..1) drained per minute of sprinting | 0.32 (40) | 0.20 (90) |
 | ballControl | model | clean first-touch chance, 14 m/s pass | 0.50 (40) | 1.00 (90) |
-| dribbling | pipeline | standing-tackle win rate against him | 0.44 (40) | 0.28 (90) |
+| dribbling | pipeline | standing-tackle win rate against him | 0.61 (40) | 0.44 (90) |
 | dribbling | pipeline | mean ball-to-feet distance, sprint dribble, m | 2.04 (40) | 2.01 (90) |
 | skillMoves | model | skill moves available (of 7 stick moves) | 2.00 (1 star) | 7.00 (5 stars) |
 | shortPassing | solver | direction spread, 15 m ground pass, deg | 4.12 (40) | 1.34 (90) |
@@ -125,16 +131,16 @@ height and gkDiving rows moved; every row still moves the right way.
 | shotPower | solver | launch speed at 80% power, m/s | 25.7 (40) | 28.7 (90) |
 | curve | solver | side spin of a curled finesse shot, rad/s | 8.36 (40) | 10.4 (90) |
 | composure | solver | placement error at the line, 14 m shot under pressure, m | 0.59 (40) | 0.45 (90) |
-| heading | pipeline | aerial duel win rate | 0.17 (40) | 0.83 (90) |
-| height | pipeline | aerial duel win rate | 0.17 (170 cm) | 0.83 (195 cm) |
+| heading | pipeline | aerial duel win rate | 0.20 (40) | 0.97 (90) |
+| height | pipeline | aerial duel win rate | 0.23 (170 cm) | 0.93 (195 cm) |
 | strength | pipeline | shoulder-challenge win rate | 0.21 (40) | 0.81 (90) |
-| standingTackle | pipeline | standing-tackle win rate | 0.19 (40) | 0.47 (90) |
-| slidingTackle | pipeline | sliding-tackle win rate | 0.31 (40) | 0.60 (90) |
+| standingTackle | pipeline | standing-tackle win rate | 0.33 (40) | 0.69 (90) |
+| slidingTackle | pipeline | sliding-tackle win rate | 0.47 (40) | 0.87 (90) |
 | interceptions | pipeline | passes cut out by a defender 0.75 m off the line | 0.43 (40) | 0.58 (90) |
-| gkDiving | pipeline | save rate, hard corner shots 16-22 m | 0.31 (40) | 0.72 (90) |
-| gkReflexes | pipeline | save rate, close-range shots 8-11 m | 0.67 (40) | 0.89 (90) |
+| gkDiving | pipeline | save rate, hard corner shots 16-22 m | 0.06 (40) | 0.78 (90) |
+| gkReflexes | pipeline | save rate, close-range shots 8-11 m | 0.56 (40) | 0.92 (90) |
 | gkHandling | pipeline | share of saves held | 0.58 (40) | 0.92 (90) |
-| gkPositioning | model | distance from the ideal spot, m | 0.23 (40) | 0.03 (90) |
+| gkPositioning | model | distance from the ideal spot, m | 0.16 (40) | 0.02 (90) |
 | gkKicking | solver | direction spread, drop kick, deg | 1.95 (40) | 0.83 (90) |
 
 ## Static audit: readers in src/sim and src/ai

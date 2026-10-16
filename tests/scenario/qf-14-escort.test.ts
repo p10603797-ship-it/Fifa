@@ -5,15 +5,15 @@
  * off at the carrier's speed. A carrier jogging with close control (the ball 0.45-0.55 m ahead) was never exposed: in a
  * Professional soak match (seed 1 #0) two defenders escorted one carrier from the halfway line into the six-yard box for
  * 27 s without a tackle and he scored (0.6 such escorts a match, 1.35 once the rushed long shots were gone). Once the
- * carrier has had the ball T_LEVEL.patienceTicks the defender holds his ground defendStepInStandoff in front of where the
- * carrier is: the dribbler is held up, has to turn (an exposure the careful tackle takes) or pass.
+ * carrier has had the ball T_LEVEL.patienceTicks the defender holds his ground (T_LEVEL.patienceStandoff in front of
+ * where the carrier is, no velocity lead, and no step back toward his goal once goal-side): the dribbler is held up, has
+ * to turn (an exposure the careful tackle takes) or pass.
  */
 import { describe, expect, it } from 'vitest';
 import { ActionKind, Difficulty, MatchPhase } from '../../src/contracts/enums';
 import { EventType, type SimEvent } from '../../src/contracts/events';
 import { MoveMode, type SimState } from '../../src/contracts/state';
-import { T_CPU, T_LEVEL } from '../../src/contracts/tuning';
-import { DEFEND_TUNING } from '../../src/ai/cpu/defending';
+import { T_LEVEL } from '../../src/contracts/tuning';
 import { makeScenario, runTicks } from '../harness/scenario';
 
 const C = 9; // human carrier, team 0 (attacks +x)
@@ -56,8 +56,8 @@ function jog(s: SimState, n: number): { events: SimEvent[]; lostAt: number; maxX
 describe('QF-14 TAI-11: patience with a close-control dribbler', () => {
   it('reads the tables and is on at every level', () => {
     for (let lv = 0; lv < T_LEVEL.patienceTicks.length; lv++) expect(T_LEVEL.patienceTicks[lv]).toBeGreaterThan(0);
-    expect(DEFEND_TUNING.stepInStandoff).toBe(T_CPU.defendStepInStandoff);
-    expect(DEFEND_TUNING.patienceGoalDist).toBe(T_CPU.defendPatienceGoalDist);
+    for (let lv = 0; lv < T_LEVEL.patienceStandoff.length; lv++) expect(T_LEVEL.patienceStandoff[lv]).toBeLessThanOrEqual(1.5);
+    expect(T_LEVEL.patienceStandoff[Difficulty.LEGEND]).toBeLessThanOrEqual(0.9);
   });
 
   it('glitch: defender jockeys a dribbler for ever — a Legend CPU defender holds up a jogging close-control carrier in midfield and wins the ball', () => {

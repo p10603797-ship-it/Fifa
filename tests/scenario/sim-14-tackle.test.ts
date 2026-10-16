@@ -476,7 +476,10 @@ describe('SIM-14 in a bot match', () => {
           const p = st.players[i]!;
           if (p.isKeeper === 1 || Math.hypot(p.x - b.x, p.z - b.z) > 3.5) continue;
           if (b.owner >= 0 && st.players[b.owner]!.team === p.team) continue;
-          started += startTackle(st, i, KINDS[(t + i) % KINDS.length]!, -1, EV);
+          // [QF-14] A tackle forced on the tick the whistle goes (an advantage brought back) is pending too.
+          const ok = startTackle(st, i, KINDS[(t + i) % KINDS.length]!, -1, EV);
+          started += ok;
+          if (ok) pending[i] = 1;
         }
       }, {
         check: 'all',

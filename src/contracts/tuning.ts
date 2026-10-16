@@ -240,14 +240,17 @@ export const T_SKILL = {
 } as const;
 
 export const T_GK = {
-  /** Reaction delay ticks at reflexes 99 / 1. */
-  reactBest: 6, // [QF-2] was 8 (INT-A): full matches saved 52-58% of on-target shots (band 65-78%)
-  reactWorst: 19, // [QF-2] was 22
-  /** Dive reach m and dive speed m/s at diving 99 / 1. */
-  reachBest: 3.2,
-  reachWorst: 2.2,
-  diveSpeedBest: 7.0,
-  diveSpeedWorst: 4.6,
+  /** Reaction delay ticks at reflexes 99 / 1. [QF-2] 8 / 22 -> 6 / 19 (full matches saved 52-58% of on-target shots,
+   *  band 65-78%). [QF-14] 4 / 25, and the dive ranges below widened, all about the same values at 75 (the GKP-02 save
+   *  rate batch's typical keeper is unchanged): with fewer goals a match the rating gap showed less (88-rated v
+   *  62-rated club 72-76% wins, BRIEF section 15 wants 80%); a keeper's attributes now carry more of it (84% over 300). */
+  reactBest: 4,
+  reactWorst: 25,
+  /** Dive reach m and dive speed m/s at diving 99 / 1. [QF-14] 3.2 / 2.2 and 7.0 / 4.6 before (see reactBest). */
+  reachBest: 3.32,
+  reachWorst: 1.82,
+  diveSpeedBest: 7.3,
+  diveSpeedWorst: 3.7,
   /** Catch vs parry: catch if handling-scaled speed below this m/s. */
   catchSpeed: 18,
   /** [QF-11 skeptic] GKP-02 gather: an idle AI keeper takes a loose ball he may handle into his hands when it comes
@@ -477,11 +480,14 @@ export const T_CPU = {
   carrierQuickShotMargin: 0.05,
   /** [QF-14] TAI-08: beyond carrierQuickShotDist no shot is offered whose power hold the quick-shot cut would take below
    *  this share of the planned hold (a 17-20 m/s tap lofted at up to 35 degrees: 5.3 a match beyond 12 m, 0 goals in
-   *  318; 0.3-0.6 power still scored 7%), 0..1. */
-  carrierShotMinPowerShare: 0.4,
+   *  318; 0.3-0.6 power still scored 7%; docs/TUNING.md QF-14: 0.3 / 0.4 / 0.5 / 0.7 measured), 0..1. */
+  carrierShotMinPowerShare: 0.3,
   carrierDribbleLossMax: 0.15,
   carrierDribbleTightLossMul: 1.4,
-  carrierDribbleTightAttackMul: 0,
+  /** [QF-14] TAI-08: in the attacking half a carry's loss chance x (1 + this x (1 - TAI-10 room score)), as
+   *  dribbleTightLossMul in our own half (0 before: a carry into a defender holding his ground was priced as safe;
+   *  docs/TUNING.md QF-14: 0.25 / 0.5 / 1 / 2 measured). */
+  carrierDribbleTightAttackMul: 0.25,
   carrierDriveShotShare: 0.35, // [QF-14] was 0.7: carriers dribbled into the crowd instead of shooting (with the rushed taps gone)
   carrierKeeperDribblePenalty: 0.01,
   carrierShieldRestMinTicks: 60,
@@ -545,12 +551,6 @@ export const T_CPU = {
    *  Professional); now about 0.4 at Legend. m, m. */
   defendBoxClearMargin: 0.3,
   defendBoxBodyGap: 0.6,
-  /** [QF-14] TAI-11 patience: once the carrier has had the ball this long (0 = off) the CPU's controlled defender stops
-   *  backing off at the carrier's speed and holds his ground defendStepInStandoff goal-side of him (no velocity lead). A
-   *  close-control dribbler is never exposed, so he was jockeyed from the halfway line into the six-yard box (up to 27 s;
-   *  0.6 such escorts a match, 1.35 without the rushed long shots); 90 / 0.9: 0.45 a match, the longest 10 s. Ticks, m. */
-  defendPatienceGoalDist: 200,
-  defendStepInStandoff: 0.9,
 } as const;
 
 /** Per-difficulty AI parameters, indexed by Difficulty (0 Beginner .. 5 Legend). Never physics. */
@@ -558,8 +558,9 @@ export const T_LEVEL = {
   /** [QF-11] Ticks a CPU carrier keeps running the way he is going after he gets the ball, and a CPU defender after a
    *  change of ball owner, before deciding (head down): measured the strongest lever below Professional. [QF-13]
    *  Semi-Pro 24 -> 18: with the reaction-delay chain fixed, Semi-Pro v Amateur fell to 64% (400); 18 gives 76.5% (400)
-   *  and Professional v Semi-Pro 72% (200). */
-  reactionTicks: [80, 42, 18, 11, 6, 1] as readonly number[],
+   *  and Professional v Semi-Pro 72% (200). [QF-14] Beginner 80 -> 100: on the lower-scoring tree Amateur v Beginner
+   *  was 64.3% (400); 68.3% (docs/TUNING.md QF-14). */
+  reactionTicks: [100, 42, 18, 11, 6, 1] as readonly number[],
   /** [QF-11] Option noise (TAI-08 carrier utilities, TAI-11 rash / noisy tackles, TAI-13 set-piece targets, GKP-04
    *  distribution): a noisy carrier picks the safe square pass among many near-equal ones and never makes the chance;
    *  the strongest lever above Professional (Legend decides without noise). */
@@ -569,7 +570,11 @@ export const T_LEVEL = {
   /** [QF-11] was 0.35 .. 0.95: a harder press measured no better (slightly worse) in this sim, so the spread is small. */
   pressIntensity: [0.6, 0.65, 0.7, 0.75, 0.78, 0.8] as readonly number[],
   tackleTimingTicks: [14, 11, 8, 6, 4, 3] as readonly number[],
-  shotThresholdXg: [0.0018, 0.002, 0.0025, 0.003, 0.0035, 0.004] as readonly number[],
+  /** [QF-14] World Class / Legend 0.0035 / 0.004 -> 0.008 / 0.02: the top levels wait for better chances (no 30 m+
+   *  pot shot from a priced xG of 0.005 that scores 0.4%; they keep the ball instead). The other levels' threshold does
+   *  not bind (the shot competes with the possession value). World Class v Professional 57-65% -> 69-70%, Legend v
+   *  World Class 59-62% -> 68.5-72.5% (docs/TUNING.md QF-14). */
+  shotThresholdXg: [0.0018, 0.002, 0.0025, 0.003, 0.008, 0.02] as readonly number[],
   /** [QF-2] Extra save-reaction ticks of a CPU team's keeper by level (GKP-02; 0 at Professional and for a human
    *  side): reaction time is one of the level differences (BRIEF §7), the keeper's included. Not in LevelParams
    *  (contracts/systems.ts): GKP-02 reads it here. [QF-11] was 10 / 6 / 3 / 0 / -2 / -3: a low level's keeper is
@@ -601,9 +606,16 @@ export const T_LEVEL = {
    *  (real football about 0.3), 1.2 in the 88 v 62 balance pair, half the weaker club's goals. A low level keeps its
    *  rash lunges in the box (a beginner's mistake, which the ladder needs); Professional and up are careful. */
   boxRashMul: [1, 1, 0.5, 0, 0, 0] as readonly number[],
-  /** [QF-14] TAI-11 patience by level (T_CPU.defendStepInStandoff): ticks the carrier has had the ball before the CPU's
-   *  controlled defender holds his ground instead of backing off at his speed (0 = never). */
+  /** [QF-14] TAI-11 patience: once the carrier has had the ball this many ticks (0 = never) the CPU's controlled
+   *  defender stops backing off at the carrier's speed and holds his ground patienceStandoff m goal-side of where the
+   *  carrier is (no velocity lead). A close-control dribbler is never exposed, so he was jockeyed from the halfway line
+   *  into the six-yard box (up to 27 s; 0.6 such escorts a match, 1.35 without the rushed long shots; 0.42 now). Ticks /
+   *  m (docs/TUNING.md QF-14: 60 / 90 / 120 / 150 ticks and 0.6 / 0.9 / 1.2 / 1.5 m measured). */
   patienceTicks: [90, 90, 90, 90, 90, 90] as readonly number[],
+  /** ... the levels below Professional hold looser (escorts at Beginner / Amateur / Semi-Pro 0 / 0 / 0.1 -> 0.27 / 0.17
+   *  / 0.2 a match, the longest 13 s, still under Professional's 0.42); closer than 0.9 is no better (at 0.6 a Legend
+   *  defender let the jogging carrier of qf-14-escort through). */
+  patienceStandoff: [1.5, 1.3, 1.1, 0.9, 0.9, 0.9] as readonly number[],
   boxSlideMul: [1, 1, 0.5, 0, 0, 0] as readonly number[],
   /** [QF-13 skeptic] TAI-11 boxClear (1 = on): in the own area a careful tackle also needs the ball clear of the
    *  carrier's body. On where the quick careful tackles conceded the penalties (World Class 0.75, Legend 1.6-2.0 a match);

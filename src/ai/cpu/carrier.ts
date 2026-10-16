@@ -369,6 +369,8 @@ export const CARRIER_DEBUG = {
 /** [QF-11] The chosen option's TAI-09 completion, -1 for no pass (typed: a double kept in an object field churned V8's
  *  field representation on the per-decision path and made the TAI-08 allocation budget flaky). */
 export const CARRIER_PASS_C = new Float64Array(1);
+/** [QF-14] The last dribble option's keep chance and TAI-10 dribble score (typed: per-decision doubles, see above). */
+export const CARRIER_DRIBBLE = new Float64Array(2);
 /** CARRIER_DEBUG.shotWhy codes. */
 export const SHOT_OFFERED = 0, SHOT_NOT_ATTACKING = 1, SHOT_NO_XG = 2, SHOT_OUT_OF_RANGE = 3, SHOT_BELOW_THRESHOLD = 4, SHOT_FAILED = 5;
 /** [QF-14] CARRIER_DEBUG.shotWhy: the quick-shot cut would leave less than shotMinPowerShare of the planned hold. */
@@ -658,7 +660,7 @@ function shotOptionInto(s: SimState, p: Readonly<PlayerState>, lv: Readonly<Leve
   if (xg < thr) { CARRIER_DEBUG.shotWhy = SHOT_BELOW_THRESHOLD; return; }
   // [QF-14] Priced as commitShot will strike it: under pressure the power hold is cut to the time before a man ahead
   // can step onto the line (quickShotTicks). Beyond quickShotDist a shot cut below shotMinPowerShare of its planned
-  // hold is no shot (an 17-20 m/s tap lofted at up to 35 degrees that the keeper gathers or the man blocks).
+  // hold is no shot (a 17-20 m/s tap lofted at up to 35 degrees that the keeper gathers or the man blocks).
   if (dist > LT.quickShotDist && LT.shotMinPowerShare > 0) {
     const fd = clamp01((dist - LT.shotNearDist) / (LT.shotFarDist - LT.shotNearDist));
     const h0 = holdFor(LT.shotPowerNear + (LT.shotPowerFar - LT.shotPowerNear) * fd, powerFill(s, C.team));
@@ -738,9 +740,12 @@ function dribbleOptionInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<S
   const nprog = (C.dir * (p.x + dx * step)) / HALF_LENGTH;
   // [QF-2] In our own half a carry into little space (TAI-10 score sc near 0) risks more: up to x (1 +
   // dribbleTightLossMul). In the attacking half a tight dribble is how chances are made (and the drive credit prices it).
-  // [QF-14] ... and in the attacking half x (1 + dribbleTightAttackMul x (1 - sc)) (a defender holding his ground).
-  const lossMax = LT.dribbleLossMax * (1 + (C.prog > 0 ? LT.dribbleTightAttackMul : LT.dribbleTightLossMul) * (1 - sc));
+  // [QF-14] ... and in the attacking half x (1 + dribbleTightAttackMul x (1 - sc)): a carry into a defender holding his
+  // ground was priced as safe there.
+  const tight = C.prog > 0 ? LT.dribbleTightAttackMul : LT.dribbleTightLossMul;
+  const lossMax = LT.dribbleLossMax * (1 + tight * (1 - sc));
   const keep = clamp01(1 - lossMax * C.pressure * (1.2 - (0.4 * s.attrs[p.slot]!.dribbling) / 99));
+  CARRIER_DRIBBLE[0] = keep; CARRIER_DRIBBLE[1] = sc;
   const nz = p.z + dz * step;
   let vN = posValue(nprog, nz);
   if (C.prog > 0 && p.isKeeper === 0) {

@@ -29,10 +29,9 @@
  *     - Approach goal-side with the stick: the guard point is standoff (by pressIntensity) goal-side of the carrier
  *       (on the line to the centre of our goal), led by his velocity (look-ahead capped by lookAheadTicks). Not yet
  *       goal-side: a recovery point deeper and to his side of the carrier, sprinting. Arrival ramp near the point.
- *       [QF-14] Patience: once the carrier has had the ball T_LEVEL.patienceTicks (within patienceGoalDist of our
- *       goal), no lead and a standoff of at most
- *       stepInStandoff: he holds his ground instead of backing off at the carrier's speed (a close-control dribbler is
- *       never exposed, so he was escorted into the six-yard box).
+ *       [QF-14] Patience: once the carrier has had the ball T_LEVEL.patienceTicks, no lead and a standoff of at most
+ *       T_LEVEL.patienceStandoff: he holds his ground instead of backing off at the carrier's speed (a close-control
+ *       dribbler is never exposed, so he was escorted into the six-yard box).
  *     - Contain (PASS held) when he dribbles at speed (containSpeed) and we are goal-side within containDist.
  *     - Jockey (SHIELD held) when goal-side within jockeyDist (~3 m); sprint jockey when he is quick.
  *     - Second defender (MOD_R held) while he is in our final third (secondDefDist from our goal line).
@@ -164,14 +163,6 @@ export const LOCAL_TUNING = {
   turnCos: 0.6,
   /** Standing tackle: ball within standReach + this of the defender now, m. */
   tackleApproach: 0.4,
-  /** [QF-14] Patience: once the carrier has had the ball T_LEVEL.patienceTicks (0 = off) within patienceGoalDist of our
-   *  goal, the engaged defender stops backing off
-   *  at the carrier's speed: his guard point is stepInStandoff goal-side of where the carrier is (no velocity lead). A
-   *  close-control dribbler is never exposed (exposeDist), so the CPU used to jockey him, backing off, from the halfway
-   *  line into the six-yard box (27 s, seed 1 #0) without a tackle; held up, he must turn (an exposure), pass or shoot.
-   *  Ticks, m. */
-  patienceGoalDist: T_CPU.defendPatienceGoalDist,
-  stepInStandoff: T_CPU.defendStepInStandoff,
   /** Rash lunge at a carrier with the ball at his feet: chance per rashBucketTicks = decisionNoise x this. */
   rashLungeChance: T_CPU.defendRashLungeChance,
   rashBucketTicks: 30,
@@ -489,13 +480,10 @@ function wellTimed(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerStat
   return ex * ex + ez * ez >= lim * lim;
 }
 
-/**
- * [QF-14] The carrier (not a keeper) has had the ball the defending team's T_LEVEL.patienceTicks (0 = never) and is
- * within patienceGoalDist of our goal centre (`gl`): the defender holds his ground.
- */
-function patienceOver(s: SimState, team: number, q: Readonly<PlayerState>, gl: number): boolean {
+/** [QF-14] The carrier (not a keeper) has had the ball the defending team's T_LEVEL.patienceTicks (0 = never). */
+function patienceOver(s: SimState, team: number, q: Readonly<PlayerState>): boolean {
   const pt = levelValue(s, team, T_LEVEL.patienceTicks);
-  return pt > 0 && q.isKeeper !== 1 && s.ball.ownerT >= pt && gl <= L.patienceGoalDist;
+  return pt > 0 && q.isKeeper !== 1 && s.ball.ownerT >= pt;
 }
 
 /**
@@ -629,9 +617,16 @@ function defendCarrier(
   gX = gx; gZ = gz;
   const qs = Math.sqrt(q.vx * q.vx + q.vz * q.vz);
   let standoff = L.standoffLow + (L.standoffHigh - L.standoffLow) * (lv.pressIntensity < 0 ? 0 : lv.pressIntensity > 1 ? 1 : lv.pressIntensity);
-  // [QF-14] Patience over (see patienceTicks): hold the ground stepInStandoff in front of him, no lead.
-  const patient = patienceOver(s, team, q, gl);
-  if (patient && standoff > L.stepInStandoff) standoff = L.stepInStandoff;
+  // [QF-14] Patience: once the carrier has had the ball T_LEVEL.patienceTicks (0 = off) the engaged defender stops
+  // backing off at the carrier's speed: his guard point is T_LEVEL.patienceStandoff goal-side of where the carrier is
+  // (no velocity lead). A close-control dribbler is never exposed (exposeDist), so the CPU used to jockey him, backing
+  // off, from the halfway line into the six-yard box (27 s, soak seed 1 #0) without a tackle; held up, he must turn (an
+  // exposure), pass or shoot.
+  const patient = patienceOver(s, team, q);
+  if (patient) {
+    const hold = levelValue(s, team, T_LEVEL.patienceStandoff);
+    if (standoff > hold) standoff = hold;
+  }
 
   // Guard point for player choice: from the current player's distance.
   let d0x = p0.x - q.x, d0z = p0.z - q.z;
@@ -671,7 +666,15 @@ function defendCarrier(
   const side = d0x * -gz + d0z * gx >= 0 ? 1 : -1;
   const depth = standoff + L.recoverDepth * w;
   const off = L.recoverSide * w * side;
-  steerTo(p, lx + gx * depth - gz * off, lz + gz * depth + gx * off, 1);
+  let tgX = lx + gx * depth - gz * off, tgZ = lz + gz * depth + gx * off;
+  // [QF-14] Patience, goal-side: he holds his ground. The point patienceStandoff in front of the carrier moves back with
+  // him, so a carrier jogging at 4 m/s with the ball tight still pushed the defender 30 m into the six-yard box (14 s,
+  // soak seed 1 #14): no step toward our goal, only across; the carrier runs into him, turns (an exposure) or passes.
+  if (patient && w <= 0) {
+    const back = (tgX - p.x) * gx + (tgZ - p.z) * gz;
+    if (back > 0) { tgX -= back * gx; tgZ -= back * gz; }
+  }
+  steerTo(p, tgX, tgZ, 1);
   if (w > 0) wantSprint = 1;
 
   // Contain / jockey.
@@ -722,6 +725,10 @@ function defendCarrier(
       const bucket = Math.floor(s.tick / L.rashBucketTicks);
       if (noise01(seed, who, bucket * 4 + 2) < noisy * L.rashLungeChance) { pressTackle(brain, lv); return; }
     }
+    // [QF-14] Patience over and running alongside him: the shoulder challenge (SIM-14: a strength duel, never a foul)
+    // needs no exposed ball. A controlled defender pinned beside a close-control dribbler ran with him for 14 s into
+    // the box without a challenge (soak seed 1 #14).
+    if (patient && kind === ActionKind.SHOULDER && expOn !== 1) { pressTackle(brain, lv); return; }
   }
 
   // Slide: goal-side, the ball loose-ish (between touches), beyond standing reach, in our half and urgent (a quick

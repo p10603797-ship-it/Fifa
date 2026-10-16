@@ -673,7 +673,9 @@ describe('DAT-05 attributes: goalkeeping', () => {
       }
       return sum / n;
     };
-    moved('gkPositioning', 'model', 'distance from the ideal spot, m', off(LO), off(HI), -1, 0.15);
+    // [QF-14] T_GK.depthFar 4.5 -> 3: a keeper nearer his line strays less in metres (40 -> 90: 0.163 -> 0.025 m now,
+    // a 0.138 m gap; 0.23 -> 0.03 m before).
+    moved('gkPositioning', 'model', 'distance from the ideal spot, m', off(LO), off(HI), -1, 0.12);
   });
 
   it('gkKicking: launch-direction spread of a drop kick (solver)', () => {

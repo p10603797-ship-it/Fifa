@@ -482,9 +482,11 @@ function planIntercept(s: SimState, team: number, k: number): void {
   } else { PLAN.kind = PLAN_NONE; PLAN.i = -1; return; }
   PLAN.i = i;
   PLAN.arrive = i + 1;
-  // Hopeless: time the despairing dive so full stretch coincides with the ball's arrival.
+  // Hopeless: time the despairing dive so full stretch coincides with the ball's arrival. [QF-14] Full stretch of the
+  // dive he makes: toward a sample within his reach (a ball just over his dive top) that dive is short, and timing it
+  // as a full-reach one put him on the grass up to 20 ticks before a lob floated over him (31 of 80 such dives).
   PLAN.need = PLAN.kind === PLAN_DIVE ? kinDiveTicks(kin, PLAN.d)
-    : PLAN.kind === PLAN_HOPELESS ? kinDiveTicks(kin, reach) : 1;
+    : PLAN.kind === PLAN_HOPELESS ? kinDiveTicks(kin, hopeD < reach ? hopeD : reach) : 1;
   PLAN.x = PX[i]!; PLAN.y = PY[i]!; PLAN.z = PZ[i]!;
 }
 
