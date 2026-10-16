@@ -244,7 +244,7 @@ export const T_GK = {
    *  band 65-78%). [QF-14] 4 / 25, and the dive ranges below widened, all about the same values at 75 (the GKP-02 save
    *  rate batch's typical keeper is unchanged): with fewer goals a match the rating gap showed less (88-rated v
    *  62-rated club 72-76% wins, BRIEF section 15 wants 80%); a keeper's attributes now carry more of it (84% over 300). */
-  reactBest: 6,
+  reactBest: 4,
   reactWorst: 25,
   /** Dive reach m and dive speed m/s at diving 99 / 1. [QF-14] 3.2 / 2.2 and 7.0 / 4.6 before (see reactBest). */
   reachBest: 3.32,
@@ -551,14 +551,6 @@ export const T_CPU = {
    *  Professional); now about 0.4 at Legend. m, m. */
   defendBoxClearMargin: 0.3,
   defendBoxBodyGap: 0.6,
-  /** [QF-14] TAI-11 patience: a carrier within this distance of our goal line who has had the ball
-   *  T_LEVEL.shoulderAfterTicks gets a shoulder challenge (SIM-14 strength duel, no foul) from the controlled defender
-   *  running alongside him, ball exposed or not: a defender pinned beside a close-control dribbler ran with him for
-   *  14 s into the box (soak seed 1 #14), m. */
-  defendShoulderZone: 25,
-  /** [QF-14] TAI-11 patience, goal-side: 1 = the controlled defender takes no step back toward our goal (he holds his
-   *  ground and the carrier runs into him), 0 = he keeps patienceStandoff in front of the carrier. */
-  defendHoldGround: 1,
 } as const;
 
 /** Per-difficulty AI parameters, indexed by Difficulty (0 Beginner .. 5 Legend). Never physics. */
@@ -624,9 +616,6 @@ export const T_LEVEL = {
    *  / 0.2 a match, the longest 13 s, still under Professional's 0.42); closer than 0.9 is no better (at 0.6 a Legend
    *  defender let the jogging carrier of qf-14-escort through). */
   patienceStandoff: [1.5, 1.3, 1.1, 0.9, 0.9, 0.9] as readonly number[],
-  /** [QF-14] TAI-11: ticks a carrier near our goal (T_CPU.defendShoulderZone) has had the ball before the controlled
-   *  defender running alongside him shoulders him without an exposed ball (tackle timing by level). */
-  shoulderAfterTicks: [900, 720, 600, 480, 360, 240] as readonly number[],
   boxSlideMul: [1, 1, 0.5, 0, 0, 0] as readonly number[],
   /** [QF-13 skeptic] TAI-11 boxClear (1 = on): in the own area a careful tackle also needs the ball clear of the
    *  carrier's body. On where the quick careful tackles conceded the penalties (World Class 0.75, Legend 1.6-2.0 a match);

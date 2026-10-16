@@ -19,6 +19,9 @@ open; those are fixed with a regression test. Each line names the area and where
 - A reloaded guest's first match frame pops from the initial state to the snapshot.
 - When the same guest re-dials while in the lobby, the host may briefly see "Your friend left the room" just before the
   friend reappears.
+- After a final-whistle hard-sync (the two games disagreed after the last 30-tick check), the late side jumps to the
+  friend's final state: it does not hear the final whistle, the renderer blends one frame from the old state, and its
+  full-time statistics are counted on its own timeline. Score, winner and goals match on both devices.
 
 ## Rendering and animation (QF-4)
 - Swipe-hint labels of a held big button can sit over a neighbouring button's label (first matches only, while held).
