@@ -217,7 +217,9 @@ Total assignments: 201.
 | QF-13 | done (19 defects: 11 + 8; 500-match soak PASS goals 3.55 shots 19.0 passes 78.5% fouls 12.4 blow-outs 2.6%; fuzz 60 PASS) | header flick-ons, reaction chains, off-pitch receivers, balance, shot bodies, FK slide |
 | QF-14 | done (11 defects: rushed shots, keeper lob catches/backpedal, front tackle odds, still and held carriers, box care; 500-match soak PASS goals 2.65 shots 15.31 saves 68.9% blow-outs 2.0%; ladder over 400 66.75/74.5/70.75/68.75/69.75%; balance 81.0% over 800, equal 57.2%; fuzz PASS) | goal-band margin (3.55 -> 2.6-3.2) and shot quality, ladder/balance kept |
 | QF-15 | done (6 defects: final-whistle divergence that moves the whistle, snapshot overtaken by the final, garbled final message, unusable final state, reload at full time with the link down; tests/net 183 pass; netsim seeds 3/7/11/19 0 desyncs; online e2e pass) | online final-whistle desync detection |
-| TUN-1 | queued (after QF-14) | gameplay constants into tuning.ts, hash-identical (BRIEF §4 rule 6) |
+| QF-16 | running | CPU defending v human dribbler (escort exploit), low-level shot volume, Legend keeper attribute floor |
+| QF-7R | running | render/app performance (allocation, throttled frame time, warm-up) |
+| TUN-1 | queued (after QF-16) | gameplay constants into tuning.ts, hash-identical (BRIEF §4 rule 6) |
 | QF-7 | queued (after TUN-1) | performance |
 | SGN-05 | done | originality and licence audit: names screened against ~1,700 famous names + Wikidata (98k footballers, 37k clubs); 6 player names renamed (names only, attributes identical); visuals, audio, dependencies, licence notices in dist, runtime network (proxy + NetLog logs: no request outside online 1v1) all PASS |
 | QF-8 | queued (last) | determinism, soak 2000, fuzz 500 |
