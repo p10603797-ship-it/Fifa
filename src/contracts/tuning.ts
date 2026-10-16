@@ -553,11 +553,20 @@ export const T_CPU = {
   defendBoxBodyGap: 0.6,
   /** [QF-14 resume] TAI-11 patience with a carrier standing on the ball: the ball never gets exposed (no touch, no turn),
    *  so a noise-free defender (Legend) held his ground in front of him for ever. Once the patience is over, the carrier
-   *  has not touched the ball for this many ticks (+ the level's tackleTimingTicks) and he and the ball move slower than
-   *  defendStillSpeed (m/s), the controlled defender goal-side with the ball in reach makes the challenge. Bot carriers
+   *  has not touched the ball for this many ticks (+ the level's tackleTimingTicks), he is in no action (not shielding,
+   *  not winding up or charging a kick) and he and the ball move slower than defendStillSpeed (m/s), the controlled
+   *  defender goal-side with the ball in reach makes the challenge. Bot carriers
    *  never stand that long (no such second in 20 Professional soak matches). Ticks, m/s. */
   defendStillTouchTicks: 45,
   defendStillSpeed: 1.0,
+  /** [QF-14 skeptic] ... and a carrier walking the ball into him: slower than defendHeldSpeed (m/s), between touches
+   *  (the last one at least the level's tackleTimingTicks ago) with the ball presented to the defender (at mid-contact of
+   *  a standing tackle within his reach and his side of the carrier's body: SIM-14 ball-first), the same challenge. A
+   *  carrier walking with close control (the ball 0.5 m ahead, touched every 10 ticks) was never exposed and never
+   *  still: he pushed a Legend defender 23 m back in 25 s without a tackle. Only once he has had the ball
+   *  defendHeldTicks (a bot carrier rarely keeps it that long). m/s, ticks. */
+  defendHeldSpeed: 2.5,
+  defendHeldTicks: 180,
 } as const;
 
 /** Per-difficulty AI parameters, indexed by Difficulty (0 Beginner .. 5 Legend). Never physics. */
@@ -566,8 +575,9 @@ export const T_LEVEL = {
    *  change of ball owner, before deciding (head down): measured the strongest lever below Professional. [QF-13]
    *  Semi-Pro 24 -> 18: with the reaction-delay chain fixed, Semi-Pro v Amateur fell to 64% (400); 18 gives 76.5% (400)
    *  and Professional v Semi-Pro 72% (200). [QF-14] Beginner 80 -> 100: on the lower-scoring tree Amateur v Beginner
-   *  was 64.3% (400); 68.3% (docs/TUNING.md QF-14). */
-  reactionTicks: [100, 42, 18, 11, 6, 1] as readonly number[],
+   *  was 64.3% (400); 68.3% (docs/TUNING.md QF-14). [QF-14 resume] Amateur 42 -> 36: with the resume's fixes Amateur v
+   *  Beginner measured 65.5% over 400 (Semi-Pro v Amateur 75.25%); 67.0% (74.5%) with this. */
+  reactionTicks: [100, 36, 18, 11, 6, 1] as readonly number[],
   /** [QF-11] Option noise (TAI-08 carrier utilities, TAI-11 rash / noisy tackles, TAI-13 set-piece targets, GKP-04
    *  distribution): a noisy carrier picks the safe square pass among many near-equal ones and never makes the chance;
    *  the strongest lever above Professional (Legend decides without noise). */
@@ -580,15 +590,19 @@ export const T_LEVEL = {
   /** [QF-14] World Class / Legend 0.0035 / 0.004 -> 0.008 / 0.02: the top levels wait for better chances (no 30 m+
    *  pot shot from a priced xG of 0.005 that scores 0.4%; they keep the ball instead). The other levels' threshold does
    *  not bind (the shot competes with the possession value). World Class v Professional 57-65% -> 69-70%, Legend v
-   *  World Class 59-62% -> 68.5-72.5% (docs/TUNING.md QF-14). */
-  shotThresholdXg: [0.0018, 0.002, 0.0025, 0.003, 0.008, 0.02] as readonly number[],
+   *  World Class 59-62% -> 68.5-72.5% (docs/TUNING.md QF-14). [QF-14 resume] Legend 0.02 -> 0.03: on the final tree
+   *  Legend v World Class measured 63.0% over 400 (66.75% before the resume's keeper fixes, the same configs); 67.3%
+   *  with this alone, 71.0% with Legend's keeperReactTicks -12 as well. */
+  shotThresholdXg: [0.0018, 0.002, 0.0025, 0.003, 0.008, 0.03] as readonly number[],
   /** [QF-2] Extra save-reaction ticks of a CPU team's keeper by level (GKP-02; 0 at Professional and for a human
    *  side): reaction time is one of the level differences (BRIEF §7), the keeper's included. Not in LevelParams
    *  (contracts/systems.ts): GKP-02 reads it here. [QF-11] was 10 / 6 / 3 / 0 / -2 / -3: a low level's keeper is
    *  visibly slow to react (Beginner +30 ticks on top of his reflexes), a top level's sharper. [QF-13] Beginner /
    *  Amateur 30 / 21 -> 45 / 30: the reaction-delay chain fix (T_AI.reactRearmGapFrac) gave the low levels' defenders
-   *  back most of their reactions (Amateur v Beginner 71 -> ~61%, Semi-Pro v Amateur 76 -> ~59%). */
-  keeperReactTicks: [45, 30, 10, 0, -3, -8] as readonly number[],
+   *  back most of their reactions (Amateur v Beginner 71 -> ~61%, Semi-Pro v Amateur 76 -> ~59%). [QF-14 resume]
+   *  Legend -8 -> -12 (with shotThresholdXg, above: Legend v World Class 63.0 -> 71.0% over 400; -12 alone 67.3%;
+   *  World Class 0 instead gave 70.5% but World Class v Professional 71.75 -> 69.3% and equal keepers). */
+  keeperReactTicks: [45, 30, 10, 0, -3, -12] as readonly number[],
   /** [QF-11] Extra AI tables (read through ai/cpu/levels levelValue: a human side's AI always uses the Professional
    *  entry, which is the pre-QF-11 behaviour). CPU carrier re-decision period, ticks (TAI-08; T_AI.carrierEvalInterval
    *  for every level before): a top level is patient and carries the ball to the better option (re-deciding every few

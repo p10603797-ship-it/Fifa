@@ -74,6 +74,8 @@ describe('QF-14 TAI-11: patience with a close-control dribbler', () => {
     // Backing off at his speed, the defender let him jog 24 m upfield in 7 s every time (maxX 14, no ball won).
     expect(reach[3]!, reach.join(', ')).toBeLessThan(8);
     expect(won).toBeGreaterThanOrEqual(2);
-    expect(fouls).toBeLessThanOrEqual(1);
+    // [QF-14 skeptic] Held up (T_CPU.defendHeldTicks), the jogger is challenged at his feet too (qf-14-held-carrier): a
+    // fair contest, about as many fouls as balls won (was <= 1 when only an exposed ball was challenged).
+    expect(fouls).toBeLessThanOrEqual(won);
   });
 });

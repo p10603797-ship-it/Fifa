@@ -30,6 +30,7 @@ function scene(seed: number, level: Difficulty): SimState {
   }
   const q = s.players[C]!;
   q.x = 10 - seed; q.z = 5 - seed; q.fx = 1;
+  q.lastTouchTick = s.tick; // he has just taken the ball (a carrier's last touch is always known in play)
   const d = s.players[D]!;
   d.x = q.x + 3; d.z = q.z + 0.3; d.fx = -1;
   const b = s.ball;

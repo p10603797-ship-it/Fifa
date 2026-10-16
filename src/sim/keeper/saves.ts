@@ -14,13 +14,13 @@
  *  reactBest ticks after the last touch, + LOCAL_TUNING.screenTicks per player screening the sight line) he only
  *  plants his feet (GK_CATCH ready stance on his spot, body only, so positioning cannot move him early). Then he
  *  plans against every predicted sample until the ball would be over the line:
- *   - STAND: a sample within his standing reach (the standing capsule + a short step) -> GK_CATCH, he steps into
- *     the line and takes it standing.
+ *   - STAND: a sample within his standing reach (the standing capsule + a short step; [QF-14] the step closes the
+ *     horizontal gap only, never the height) -> GK_CATCH, he steps into the line and takes it standing.
  *   - DIVE: a sample his hands can reach in time -> GK_CATCH tracking toward it until the latest tick that still
  *     gets the hands there (commitSlackTicks), then GK_DIVE toward that point (the nearest reachable sample).
  *   - [QF-14] DROP: nothing reachable where he stands but the ball comes down behind his plane (a dipping long shot):
  *     the first such sample he reaches by backpedalling (the sprint jockey cap) with an arms-only leap left -> GK_CATCH
- *     in CATCH_DROP toward it (re-planned every tick).
+ *     in CATCH_DROP toward it (re-planned every tick; once dropping, without the start-up slack and from his speed).
  *   - nothing reachable -> he moves toward the ball's path (GK_CATCH, re-planning every tick; [QF-14] at the sprint
  *     jockey cap, saveKinematics trackSprint) and, close to the ball's arrival, makes a despairing GK_DIVE toward the
  *     closest approach timed to full stretch (beaten).

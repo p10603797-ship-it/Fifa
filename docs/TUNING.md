@@ -856,3 +856,359 @@ other pairs have no Beginner):
 The same runs on the tree before the last two fixes and the Beginner lever (free-kick slide, set-up shove): top-bottom
 171 / 165 / 159 / 164 = 82.4% over 800, equal 57.9%; soak goals 3.57 (PASS); ladder seed 1 64.5 / 77.0 / 75.5 / 69.0 /
 70.0%, seed 2 World Class v Professional 73.0%, Legend v World Class 62.0% (66.0% over 400).
+
+## QF-14 (Wave 4 round 4: goal-band margin and shot quality)
+
+Measured with a scratch runner over `tools/headless.ts` / `tools/ladder.ts` / `tools/balance.ts` that applies tuning
+overrides in every worker before the sim loads (with no override it reproduces the tools' seeded configs match for
+match) and records every shot (distance, kind, power at the kick, the CPU's priced xG, pressure, outcome). "Soak" rows:
+the 500-match soak's first 150 configs (soak seed 1, Professional, 4-minute halves; standard error about 0.13 goals);
+"save%" = saves / (saves + goals) of non-penalty shots on target; ladder / balance screens: `--matches 100` a seed
+(mirror legs; a 200-match row has a standard error of about 3.4 points). Every change below changes sim behaviour
+(state hashes).
+
+### Where the goals and the long shots came from (baseline tree, 150 matches)
+
+Goals 3.47, shots 19.2 (12.9 on target), save% 63.3. CPU carrier shots by power at the kick: beyond 12 m, 5.3 a match
+were struck at under 10% power (a 1-tick hold: TAI-08's quick-shot cut under pressure), 17-20 m/s and lofted at up to
+35 degrees, 0 goals in 318 (60 matches); 2.0 a match at 10-30% power, 1 goal in 122. About half the shots from 28 m+
+were these taps. The "speculative long shots" were rushed shots: the option was priced as a full-power shot while the
+execution cut it to a tap.
+
+Refusing them (the rushed-shot gate below) raised goals to 4.8-5.4 a match and dropped save% to 35-47%: each refused tap
+left the carrier on the ball, and the taps had been the defence's turnovers. Followed up (13.8 refusals a match): he
+dribbled on in 99.5% of cases; 15% scored within 10 s, 23% won a free kick, 6.5% a penalty, 28% still had the ball 10 s
+later. The causes, each a defect fixed below: the CPU's defender never challenged a close-control dribbler (escorts),
+the keeper was beaten by full-power long shots dipping in behind him, and the carrier priced a carry into a crowd in
+the attacking half as safe.
+
+### Defects fixed (each with a regression test `tests/scenario/qf-14-*.test.ts`)
+
+| Defect | Measured before | Fix | After / test |
+|---|---|---|---|
+| Long shot struck as a tap (TAI-08 decision / execution mismatch) | above | `shotOptionInto`: beyond `quickShotDist` (10 m) no shot is offered when the quick-shot cut would leave less than `T_CPU.carrierShotMinPowerShare` (0.3) of the planned hold (`SHOT_RUSHED`) | no taps beyond 10 m; `qf-14-rushed-shot` |
+| CPU defender escorts a close-control dribbler (TAI-11) | TAI-11 tackled only an exposed ball or on a rash lunge (none at Legend, none in the box from Professional up), its guard point led by the carrier's velocity: two defenders escorted one carrier from the halfway line into the six-yard box for 27 s (soak seed 1 #0) and he scored; escorts (5 s+, an opponent within 2.5 m 80% of the time, no tackle) 0.6 a match, 1.35 with the taps gone | patience: once the carrier has had the ball `T_LEVEL.patienceTicks` (90) the controlled defender holds his ground `T_LEVEL.patienceStandoff` (0.9 m from Professional up) goal-side of where the carrier is, no velocity lead: the carrier must turn (an exposure the careful tackle takes), pass or shoot | the goal-side escort is gone: `qf-14-escort` (a Legend defender holds up a jogging close-control carrier within 8 m and wins the ball; before: 24 m in 7 s, every seed); escorts 0.50 a match on the first pass's final tree (40 matches), the longest 17 s (0.55, the longest 14.3 s, on the resume's): a defender pinned alongside the dribbler, below |
+| Keeper lobbed off his line by a dipping long shot (GKP-01 / GKP-02) | 10 goals from 80 shots from 28 m+ in 25 Professional matches (real football: about 3%): 24-28 m/s long shots rise to 4-5 m and dip under the bar; the keeper stood `T_GK.depthFar` 4.5 m out, the ball passed over his reach, he shuffled across at the jog jockey cap (2 m/s) and made a hopeless dive where he stood | `T_GK.depthFar` 3 m; GKP-02 `planIntercept` drop back (a ball coming down behind his plane that he can reach backpedalling: GK_CATCH in `CATCH_DROP`); GK_CATCH tracking / dropping back at the sprint jockey cap (`saveKinematics` `dropBack`, `dropSlackTicks` 8, `trackSprint`) | 3 goals from 83 (same 25 matches); a grid of 18 dipping 29-35 m shots 44% -> 0% goals; `qf-14-keeper-long-shot`. Resume review: the far depth alone carries this (the test passes with the drop back or the sprint tracking switched off, fails with depthFar 4.5); in matches the drop back and the sprint tracking made no measurable difference (each soak shot replayed from a copy of the state: 597 shots in 40 matches, 105 goals with both, 106 without the drop back, 107 without the sprint tracking), and the drop back had two planning defects of its own (fixed below) |
+| Keeper dives early at a lob and lies down as it floats over him (GKP-02) | a hopeless dive at a ball just over his dive top near him was timed as a full-reach dive while the dive went to the nearer sample: over 7-26 ticks before the ball came (31 of 80 such dives in a grid of lobs) | a hopeless dive's `PLAN.need` is the dive time of the distance he dives (`min(hopeD, reach)`) | 3 of 79 (each at a ball he had touched first); `qf-14-keeper-lob-dive` |
+| Carry into a crowd priced as safe in the attacking half (TAI-08) | the dribble's loss chance there ignored the room (TAI-10 dribble score), so a noise-free carrier drove into a defender holding his ground | loss x (1 + `T_CPU.carrierDribbleTightAttackMul` (0.25) x (1 - score)) in the attacking half, as in our own half | `qf-14-tight-dribble` |
+| SIM-14 front standing tackle at a close ball too weak | `baseChance` 0.5: a front standing tackle at the ball won about 30% (22% of all tackles), every lost one with the carrier's body in the zone a foul | `baseChance` 0.7 | 28% of all tackles won, fouls 13.5 -> 12.8 a match (DAT-05 standing-tackle rows refreshed); `qf-14-front-tackle` (added on the resume: an equal-rated front tackle at the ball at his feet: win chance 0.51, 0.33 with 0.5) |
+| [resume] Keeper set for a standing catch of a lob over his head (GKP-02) | `planIntercept` added the standing step allowance (up to `stepMax` 0.8 m, a horizontal step) to the 3D distance from the standing capsule, so a ball up to 0.8 m above his standing reach (3.1 m for a 1.88 m keeper) counted as a standing catch a second ahead: in a grid of lobs over a 75-rated keeper put 4.5 / 5.5 m off his line, 61 of 172 had him set under a ball he could not reach (`actCurve` over his `standTop`), no dive or drop back while there was time | the step closes the horizontal gap only: reachable standing when (max(0, d - step))^2 + dy^2 <= (standArm + ball radius)^2 | 0 of 172; that grid 87 -> 76 goals with this fix alone; `qf-14-keeper-drop` |
+| [resume] Keeper gives up backpedalling under a lob (GKP-02, QF-14's drop back) | the drop back is re-planned every tick, and every re-plan assumed he set off from rest after `dropSlackTicks` again: two ticks in, the spot he was backpedalling to stopped counting as reachable, the target jumped 0.5-0.6 m or he gave the drop up for a track / hopeless dive where he stood | while already dropping (GK_CATCH `CATCH_DROP`): no start-up slack again, and his current speed toward the spot counts | no jumps; that grid 87 -> 82 goals with this fix alone, 69 with both; `qf-14-keeper-drop` |
+| [resume] Carrier standing on the ball never challenged (TAI-11) | a human who stops with the ball at his feet exposes nothing (no touch, no turn) and Legend has no decision noise (no rash lunge): its defender stood 1.2 m in front of him for ever (in 48 such scenes, 8 per level, the carrier kept the ball for 10 s in 1 / 1 / 1 / 4 / 5 / 8 from Beginner to Legend) | after the patience, the carrier untouched for `T_CPU.defendStillTouchTicks` 45 + the level's `tackleTimingTicks`, he and the ball slower than `defendStillSpeed` 1 m/s, in no action (not shielding, not winding up or charging a kick), the controlled defender goal-side with the ball in reach challenges | 1 of 48 kept (a Beginner defender), shielding carriers unchanged (44 of 48 keep it); bot carriers never stand that long at Professional (8 soak matches hash-identical); `qf-14-still-carrier` |
+| [skeptic] Carrier walking the ball into a patient defender never challenged (TAI-11; the still-carrier fix's nearby input) | a human walking at the goal with the stick part-way (1-2 m/s, the ball 0.5 m ahead, touched every ~10 ticks) is neither exposed (exposeDist 0.7 m) nor still (1 m/s, 45 ticks untouched): the patient guard point (0.9 m in front of him) moved with him, so a Legend defender was pushed back 23 m in 25 s with the ball 0.25 m from his own feet, never challenged; 8 of 8 Legend scenes kept the ball for 10 s (6-11 m gained), World Class 5 of 8 | the still challenge also fires for a carrier who has had the ball `T_CPU.defendHeldTicks` (180), is slower than `defendHeldSpeed` (2.5 m/s), between touches (the last one at least the level's `tackleTimingTicks` ago) with the ball presented to the defender: within his reach and his side of the carrier's body now and at mid-contact (SIM-14 `bodyBlocksBall` geometry: ball-first) | 0 of 16 kept (World Class / Legend, stick 35 / 50), won 12, fouls 12 (a front challenge at a ball at his feet: a fair contest; ~13 fouls from ~35 tackles a Professional match); a strafing carrier is not hacked down (a ball-first test at contact only, the dribbled ball predicted linearly, gave 17 fouls in 8 scenes; 1 now); `qf-14-held-carrier` |
+| [skeptic] Still challenge gives a penalty away in the World Class / Legend area (TAI-11 box care) | the resume's still challenge did not ask the QF-13 box care (`T_LEVEL.boxBodyClear`: careful tackles in our own area at World Class / Legend want the carrier's body clear of the ball and out of body contact); a human standing on the ball in the box facing the defender was given a penalty in 2 of 12 scenes at each of World Class and Legend (and Professional, whose careful tackles take no box care either) | the still / held challenge in our own area takes the same care as a careful tackle (`boxClear` at the levels with `boxBodyClear`) | 0 of 24; `qf-14-held-carrier` |
+
+Area tests refreshed for the behaviour change: `gkp-01-positioning` (lateral / step-across thresholds for the 3 m far
+depth), `dat-05-attributes` (gkPositioning margin 0.15 -> 0.12 m: 0.16 -> 0.02 m now), `qf-14-tight-dribble`, and
+`sim-14-tackle`'s bot-match accounting (a tackle forced on the whistle tick is pending too; the test counted it started
+and never resolved). On the resume: `qf-13-sk-react-intercept`'s deflected-pass case counts its ticks from the
+Amateur delay (it ran 20 + 20 ticks against Amateur's 42; 36 now). On the skeptic pass: `qf-14-escort`'s foul bound
+(<= 1 in 6 scenes, when only an exposed ball was challenged) is now fouls <= balls won: the held jogger is challenged at
+his feet as well (4 fouls, 5 won; 12 scenes: 10 won, 6 fouls, the carrier kept the ball in 1 of 12 against 4 before).
+
+### Resume after a container restart: review of the first pass
+
+The first pass had finished its changes (in the tree at 5b262ff, its last experiment, a per-level shoulder challenge,
+already backed out) and was re-running its final measurements; the 500-match soak replays bit-identically on that tree
+(hash 9214fb55, goals 2.77, shots 15.49) and so do its two ladder runs. Each qf-14 test was run on a copy of the tree
+with its fix switched off, and fails: rushed shot (`carrierShotMinPowerShare` 0), tight dribble
+(`carrierDribbleTightAttackMul` 0), escort (`patienceTicks` 0), keeper long shot (`depthFar` 4.5; it passes with only
+`dropBack` 0 or only `trackSprint` 0, see the row above), lob dive (full-reach timing), and the resume's tests: front
+tackle (`baseChance` 0.5, or `attrWeight` 0.55), keeper drop (each of the two planner fixes), still carrier
+(`defendStillTouchTicks` 100000). The patience hold was probed for jitter (a still, a walking and a shielding human
+carrier, Professional and Legend, 6 seeds each): no velocity reversals of the defender, closest 0.74 m. The resume's
+three fixes change sim behaviour (the still-carrier challenge does not reach Professional bot matches; it does reach
+Beginner ones, whose carriers stand through their 100-tick reaction delay), so every final number below is from the
+tree with them.
+
+### Settings measured (soak, 150 matches)
+
+"gate" = `T_CPU.carrierShotMinPowerShare`, "dss" = `carrierDriveShotShare`, "bc" = SIM-14 `baseChance`, "tight" =
+`carrierDribbleTightAttackMul`, "react" = `T_GK.reactBest` / `reactWorst`.
+
+| Row | Goals | Shots | save% | Fouls | Pens | Note |
+|---|---|---|---|---|---|---|
+| baseline tree | 3.47 | 19.18 | 63.3 | 12.63 | 0.51 | |
+| gate 0.3 / 0.4 / 0.5 / 0.7 only | 4.81 / 5.03 / 5.41 / 5.37 | 14.34 / 13.97 / 13.66 / 12.89 | 46.5 / 42.8 / 38.4 / 34.8 | 13.4-13.9 | 1.16 (0.4) | taps gone, the carrier walks in |
+| gate 0.4 + react 4 / 15, 2 / 11 | 4.73, 4.39 | 14.5, 14.6 | 48.1, 52.9 | | | |
+| gate 0.4 + aim inset 1.0, pressure error x2.5, boxBodyClear at Professional, dive windup 3, error base share 1 | 5.03, 4.64, 5.45, 4.87, 4.75 | 13.7-14.6 | 39-49 | | | none addresses the cause |
+| gate 0.4 + patience 90 / 150 / 60 with an at-feet tackle | 4.12 / 4.42 / 4.23 | 14.2-15.2 | 61-63 | 30.6 / 26.6 / 32.2 | 2+ | the at-feet tackle fouls: removed |
+| gate 0.4 + patience hold (no tackle), standoff 0.9 / 0.6 | 4.41 / 4.59 | 13.2 / 13.4 | 47.1 / 47.5 | 17.2 / 18.4 | 1.21 / 1.17 | hold kept (0.9) |
+| gate 0.4 + bc 0.6 / 0.7 | 5.17 / 4.84 | 14.1 / 13.7 | 42.2 / 41.8 | 13.3 / 12.8 | | 0.7 kept |
+| gate 0.4, bc 0.7, hold + dss 0.5 / 0.35 (was 0.7) | 3.83 / 3.39 | 14.5 / 15.0 | 55.5 / 58.9 | 14.8 / 13.4 | 0.59 / 0.32 | dss 0.35 kept |
+| same + shotXgMul 25 (dss 0.5) | 4.16 | 12.4 | 47.1 | | | |
+| gate 0.4, hold, dss 0.35, bc 0.7 + keeper depthFar 3, drop back, sprint tracking | 2.75 | 14.51 | 67.7 | 13.50 | 0.37 | |
+| same, depthFar 3 only | 3.02 | 14.79 | 64.6 | | | |
+| same, react 4 / 15 | 2.78 | 15.86 | 69.3 | | | GKP-02 batch save rate 81.5% (band 65-78): not taken |
+| same, bc 0.5 | 2.98 | 15.27 | 65.6 | 15.06 | 0.47 | |
+| same, gate 0.3 / dss 0.3 / boxShotBonus 0.05 | 2.86 / 3.02 / 2.87 | 15.75 / 14.76 / 14.61 | 67.2 / 62.8 / 66.8 | | | |
+| same, patience only within 35 / 25 m of goal | 2.63 / 3.01 | 15.3 / 15.5 | 70.2 / 66.0 | | | |
+| same, tight 2.0 | 2.32 | 13.14 | 68.6 | 11.41 | | |
+| gate 0.3, tight 1.0, bc 0.7 / 0.5 | 2.51 / 2.51 | 14.69 / 15.59 | 67.9 / 68.8 | 12.47 / 13.42 | 0.27 | |
+| gate 0.3, tight 1.0, bc 0.5 + dss 0.5 | 2.85 | 14.57 | 64.6 | 14.55 | 0.59 | |
+| ... + long-shot threshold per metre 0.1 / 0.2, no shot beyond 34 m | 2.57 / 2.83 / 2.59 | 13.49 / 12.34 / 13.53 | 68.2 / 62.1 / 67.0 | 14.5 / 14.9 / 15.1 | | long shots, below |
+| ... + dss 0.5 + per metre 0.15; + boxShotBonus 0.05 + per metre 0.15 | 3.07; 2.71 | 12.43; 12.05 | 59.4; 62.8 | 16.08; 14.8 | 0.71 | |
+| ... + patience standoff 1.2 / 1.5 | 2.83 / 2.95 | 14.25 / 14.57 | 66.1 / 64.8 | | | escorts 0.68 a match at 1.2 (0.38 at 0.9): not taken |
+| ... + patience 150 ticks (120) | 2.67 | 15.03 | 69.4 | | | escorts 0.63 (0.55), the longest 19 s: not taken |
+| ... + boxShotBonus 0.06 / tight 0.5 / gate 0.25 | 2.53 / 2.66 / 2.51 | 15.49 / 14.87 / 15.33 | 69.5 | | | |
+| gate 0.3, tight 0.5, bc 0.7; + react 7 / 21 | 2.59; 2.80 | 14.77; 14.49 | 68.8; 66.3 | 12.80; 12.72 | 0.37 | |
+| gate 0.3, tight 0.25, bc 0.7 + react 7 / 20 | 2.87 | 15.37 | 64.8 | 13.56 | 0.33 | save% below the band |
+| gate 0.3, tight 0.25, bc 0.7, react 6 / 19; 6 / 20 | 2.59; 2.69 | 15.63; 15.47 | 70.7; 68.9 | 13.26; 12.89 | 0.38 | the keeper range then widened to 4 / 25 for club balance (below) |
+
+### Long shots
+
+On the gate 0.3 / tight 1 / bc 0.5 tree, CPU carrier shots by distance (150 matches): 0-12 m 1.81 a match (58.5%
+scored), 12-16.5 m 0.83 (15.2%), 16.5-22 m 1.03 (3.9%), 22-28 m 1.35 (3.0%), 28-34 m 1.91 (4.2%), 34 m+ 3.80 (0.4%,
+2 goals in 570; struck at full power under pressure, median nearest opponent 1.4 m). The CPU's priced xG at the kick
+ranks the shots the right way (priced under 0.01 -> 1.7% scored, 0.04-0.07 -> 12%, 0.1-0.15 -> 36%, 0.25+ -> 75%),
+under-pricing the close ones about 2x. A shot from 34 m+ is chosen because `shotXgMul` (18) puts any priced chance
+above the possession value of a midfield ball. Taking them away at every level (long-shot threshold per metre 0.1 /
+0.2, or no shot beyond 34 m) cuts 2-3 shots a match and the carrier, kept on the ball, dribbles into the box: shots
+12.3-13.5 (below the section 7 band), save% down to 62, fouls up to 16. At Professional they stay: the speculative
+shots that were taps are gone (28 m+ shots 9.5 -> 5.8 a match, a third of them from 34 m+ at full power) and the rest
+keep shots in the band. World Class and Legend now wait for a better chance (`T_LEVEL.shotThresholdXg` 0.008 / 0.02, Legend 0.03 on
+the resume: no pot shot from a priced 0.005), which is also what separates them from the level below (next section).
+
+### Ladder / balance screens (100 a seed; L0 = Amateur v Beginner ... L4 = Legend v World Class, wins %)
+
+| Tree | L0 | L1 | L2 | L3 | L4 | top-bottom | equal points |
+|---|---|---|---|---|---|---|---|
+| gate 0.4, hold, dss 0.35, bc 0.7, keeper fixes, react 4 / 15 | 69 | 80 | 71.5 | 70 | 53.5 (200) | 78.5 | 59 |
+| L4 only (200), on that tree: dss 0.7 / react 6 / 19 / patience off / gate off / bc 0.5 / old keeper | | | | | 56 / 58.5 / 70.5 / 49.5 / 59.5 / 61.5 | | |
+| L4: patience Legend 45 / Legend 60 + World Class 120 / within 35 m / within 25 m | | | | 68 (L3, second) | 54 / 56 / 53 / 50.5 | | |
+| L4: Legend re-decision 8 / 6 ticks, Legend keeper -12, World Class keeper 0 | | | | 65 (L3, keeper) | 60.5 / 61 / 58 / 63 | | |
+| L4: tight 1.0 / 2.0 / 2.0 + Legend re-decision 6 | | | | | 66 / 61.5 / 58.5 | | |
+| L4: Legend execution error 0.55 / + re-decision 6 / + tackle timing 2; World Class noise 0.12 | | | | 56 (L3, noise) | 54 / 60 / 56 / 65.5 | | |
+| gate 0.3, tight 1.0, bc 0.7 | 69 | 75 | 66 | 59 (200) | 64.5 (200) | 79 | 57 |
+| gate 0.3, tight 1.0, bc 0.5 | 58 | 69 | 60.5 (200) | 64.5 (200) | 67 (200) | 79 | 53 |
+| ... + dss 0.5 | 65 | 84 | 61.5 | 56 | 67.5 | 80 | 64.5 |
+| ... + Legend re-decision 6 | 58 | 69 | 60.5 | 64.5 | 58.5 | 79 | 53 |
+| ... + a level-graded room read in the tight-carry price (x 0 / 0.3 / 0.6 / 1 / 1.4 / 1.8) | 61 | 71 | 67 | 59.5 | 59.5 | 79 | 53 |
+| gate 0.3, tight 0.5, bc 0.7 (`tools/ladder.ts --matches 200 --seed 1`) | 62.5 | 72 | 66 | 57 | 61.5 | | |
+| ... + `patienceStandoff` 1.5 / 1.3 / 1.1 / 0.9 / 0.75 / 0.6 (200 a pair) | 62 | 77.5 | 68 | 65 | 59 | | |
+| ... + `patienceStandoff` 1.8 / 1.5 / 1.2 / 0.9 / 0.7 / 0.5 | 62 | 72 | 71 | 62 | 62.5 | | |
+| standoff 1.5 ... 0.6 + `shotThresholdXg` World Class / Legend 0.006 / 0.012 | | | | 70 | 67.5 | | |
+| ... 0.008 / 0.02 | | | | 69 | 72.5 | | |
+| gate 0.3, tight 0.25, bc 0.7, react 7 / 20, standoff 1.5 ... 0.6, thresholds 0.008 / 0.02, Beginner keeper +60 (200 a pair) | 69.5 | 76 | 74 | 70 | 68.5 | 86 (200) | 55.5 |
+| react 6 / 19, Beginner keeper +45, top standoffs 0.9 (400) | 64.3 | | | | | | |
+| ... + Beginner re-decision 1 tick / Amateur keeper +22 / Beginner reaction 100 / Beginner keeper +52 (400 each) | 64.5 / 63.8 / 68.3 / 66.8 | | | | | | |
+
+Fewer goals compress the ladder (more draws between neighbours): the levers that removed goals at Professional
+(patience above all: off, Legend v World Class 70.5% against 53.5%) also brought the top pairs together, and the levels'
+other differences (noise, reaction, keeper, re-decision period) moved them by no more than the noise of a 200-match
+screen. What separates World Class and Legend again is the shot threshold: they keep the ball rather than shoot from a
+priced 0.005, and score more (Legend v World Class goals 1.56-0.70 -> 2.13-0.81). A level-graded room read (top levels
+more careful) lowered the top pairs' scoring and was not kept. Below Professional the defenders hold looser
+(`patienceStandoff` 1.5 / 1.3 / 1.1 m: escorts at Beginner / Amateur / Semi-Pro 0 / 0 / 0.1 -> 0.27 / 0.17 / 0.2 a match,
+the longest 13 s, under Professional's 0.42); closer than 0.9 m at the top was no better and let the qf-14-escort carrier
+through at 0.6 m. Amateur v Beginner: Beginner reaction 80 -> 100 ticks (a Beginner keeper +60 measured as well, and
+not taken: a keeper a second late, and qf-11-keeper-levels' Beginner scan saw no dive in its 4 matches).
+
+### Escorts: what remains (open)
+
+The escorts left on the final tree (0.50 a match of 5 s+, 0.35 reaching 18 m from goal, the longest 17 s; soak seed 1
+#14: 14 s from 19 m out on the wing into the box, then a shot) are a different picture: the controlled defender is
+beside the dribbler (cosine to his goal side about 0.3, 0.8 m away) and stays pinned there by the body contact; a
+standing tackle needs an exposed ball (never, at a jog with the ball tight) and the shoulder challenge TAI-11 never
+asks for without one. Measured fixes:
+
+| Variant (on the final tree) | Escorts 5 s+ a match (40) | Goals (150) | Tackles | World Class v Pro / Legend v World Class (400 a pair, the final ladder's configs) |
+|---|---|---|---|---|
+| none (final) | 0.50, longest 17 s | 2.62 | 33 | 69.0 / 66.75 (`tools/ladder.ts`) |
+| patience holds the ground (no step back toward goal once goal-side) | 0.30, longest 14 s | (40) 2.55 | 34 | - |
+| + shoulder challenge without an exposed ball, alongside in our final third after 3 s / 5 s | 0 / 0 | 2.41 / 2.37 | 44 / 40 | 51 / 61 (100, after 5 s + keeper 6 / 28) |
+| shoulder only within 20 m after 8 s (no hold) | 0.25, longest 8 s | (40) 2.60 | 39 | 65.8 / 61.0 |
+| shoulder only in the box after 10 s (no hold) | 0.35, longest 10 s | (40) 2.70 | 37 | 68.3 / 56.5 |
+
+Every variant that ends the alongside escort takes 4-10 points off Legend v World Class (below the 65% target) and,
+the stronger ones, 0.2-0.3 goals off Professional: the top levels' edge had been the long carry that the lower level's
+defender does not challenge. Not kept; this needs the top pairs re-separated by other levers first (the shoulder by
+level, earlier at the top, 900 / 720 / 600 / 480 / 360 / 240 ticks: Legend v World Class 56%, no better).
+
+Resume, on the final tree (40 matches, soak seed 1): escorts of 5 s+ 0.55 a match, 0.42 reaching 18 m from goal, 5 of
+10 s+ (the longest 14.3 s), a goal within 3 s of one 0.17 a match (of 3.13). Traced (#14, ticks 1404-2250): the
+controlled defender sits at a cosine of 0.28-0.32 to the carrier's goal side (the goal-side boundary is 0.3) 0.8-1.3 m
+away, a second defender 0.8 m behind; the patience guard point (0.9 m in front of the carrier) lies behind the
+carrier's body from where he is, so body contact keeps him alongside at the carrier's 4.1 m/s, and `tackleKind` gives
+a standing tackle (cosine at the boundary), which waits for an exposed ball that a jogging close-control dribbler never
+shows. Tried on the resume, none kept: the patience only once well goal-side (cosine 0.7): escorts 0.82 a match; a
+sprint without the jockey cap between cosine 0.3 and 0.6, or a ball-first block tackle when the carrier runs at a
+patient defender (`boxClear` safe): the same escorts (0.53). Open for the lead: ending the alongside escort needs the
+top pairs re-separated (above) or SIM-14 / RUL-09 to let a ball-first challenge into a carrier's path go unpunished.
+
+Skeptic pass, with a human carrier (`qf-14-held-carrier`'s scene, 8 seeds a level, 10 s): walking straight at the
+defender is now challenged (the held challenge, above); walking across him is the same open picture at walking pace.
+Stick (30, 15), 1.1-1.4 m/s: the Legend defender is goal-side (cosine 0.84) in body contact, the ball ahead of the
+carrier to the defender's side of the line but behind the carrier's body from where the defender is (SIM-14 would meet
+the man first), so neither challenge fires: kept 6 / 7 / 6 of 8 at Professional / World Class / Legend, 11-14 m gained
+in 10 s (before the skeptic pass 8 / 8 / 8). A stick of 65 straight on (2.8 m/s, faster than `defendHeldSpeed`) slides
+the defender alongside (cosine 0.27) and keeps the ball in 4 of 8 Legend scenes (26 m in 10 s). Tried: a held guard
+point on the ball instead of the man (the defender steps across): 5 of 8 kept, not kept.
+
+### Ladder on the resume (`tools/ladder.ts` seeds 1 and 2 and the scratch runner on the same configs, 400 a pair)
+
+With the resume's three fixes the ladder moved by more than its noise in two pairs (every match is a different match
+once a state hash moves): Amateur v Beginner 69.5 -> 65.5%, Legend v World Class 66.75 -> 63.0% (the others 76.0 ->
+75.25, 70.75 -> 71.75, 69.0 -> 71.75%). The still-carrier challenge is not what moved the top pair (it can trigger 1-2
+times in 12 Legend or World Class matches; Legend v World Class without it: 64.3%). Screens (400 a pair; the runner
+reproduces `tools/ladder.ts` match for match):
+
+| Lever | Amateur v Beginner | Semi-Pro v Amateur | World Class v Professional | Legend v World Class | Kept |
+|---|---|---|---|---|---|
+| none (the resume's tree) | 65.5 | 75.25 | 71.75 | 63.0 | |
+| `T_CPU.defendStillTouchTicks` off | | | | 64.3 | - |
+| Legend `shotThresholdXg` 0.02 -> 0.03 | | | | 67.3 | with the next |
+| Legend `keeperReactTicks` -8 -> -12 | | | | 67.3 | with the previous |
+| both Legend levers | | | | 71.0 | yes |
+| World Class `keeperReactTicks` -3 -> 0 | | | 69.3 | 70.5 | - (World Class's keeper no quicker than Professional's; `qf-2-keeper-level` wants the table strictly falling) |
+| Amateur `reactionTicks` 42 -> 36 | 67.0 | 74.5 | | | yes |
+
+Both kept levers act at one level each (Legend, Amateur): Professional matches are hash-identical (the 500-match soak,
+the balance runs and the save-rate run below are on this tree).
+
+### Club balance (BRIEF section 15)
+
+On the lower-scoring tree the 88-rated club beat the 62-rated one in 72.5-75.5% (200 a seed; target 80%, QF-13 83.6% at
+3.5 goals a match): more draws. Screens (`--matches 100`, seeds 1-2 or 1-3; equal = SND v GLA points, target 40-60%):
+
+| Lever | top-bottom wins | equal points |
+|---|---|---|
+| none | 72.5 (200) | 61.3 |
+| `T_AI.composureNoiseSlope` 0.45 -> 0.6 | 82.0 | 65.5 |
+| keeper reaction 5 / 21; 4 / 22 | 77.5; 79.0 | 61.5; 57.3 |
+| SIM-14 `attrWeight` 0.55 -> 0.8 | 76.5 | 60.3 |
+| keeper 4 / 22 + attrWeight 0.8 (300) | 76.0 | 60.0 |
+| keeper 7 / 22 + attrWeight 0.8 (300) | 81.3 | 59.2 |
+| keeper 4 / 25, dive speed 3.7-7.3 m/s, reach 1.82-3.32 m + attrWeight 0.8 (300): kept | 84.0 | 55.8 |
+
+The keeper ranges widen around the same values at 75 (GKP-02's typical-keeper save-rate batch is unchanged); the
+88-rated club's keeper (reflexes 96, diving 90) gets quicker and longer, the 62-rated club's (64 / 56) slower and
+shorter; the equal pair's keepers have the same reflexes (77) and GLA's better diving (88 v 79) pulls it toward even.
+A 4 / 22 range took the GKP-02 batch's typical keeper to 78.9% saves (band 65-78%) and 6 / 28 made a 20-rated keeper
+too slow to parry GKP-02's unit-test shot: not taken.
+
+### Constants (`src/contracts/tuning.ts` unless named)
+
+| Constant | Was | Now |
+|---|---|---|
+| `T_CPU.carrierShotMinPowerShare` (new, TAI-08 rushed-shot gate) | - | 0.3 |
+| `T_CPU.carrierDribbleTightAttackMul` (new, TAI-08) | (0) | 0.25 |
+| `T_CPU.carrierDriveShotShare` | 0.7 | 0.35 |
+| `T_LEVEL.patienceTicks` (new, TAI-11) | - | 90 at every level |
+| `T_LEVEL.patienceStandoff` (new, TAI-11, m) | - | 1.5 / 1.3 / 1.1 / 0.9 / 0.9 / 0.9 |
+| `T_LEVEL.shotThresholdXg` | 0.0018 / 0.002 / 0.0025 / 0.003 / 0.0035 / 0.004 | 0.0018 / 0.002 / 0.0025 / 0.003 / 0.008 / 0.03 (Legend 0.02 in the first pass, 0.03 on the resume) |
+| `T_LEVEL.reactionTicks` | 80 / 42 / 18 / 11 / 6 / 1 | 100 / 36 / 18 / 11 / 6 / 1 (Amateur 36 on the resume) |
+| `T_LEVEL.keeperReactTicks` | 45 / 30 / 10 / 0 / -3 / -8 | 45 / 30 / 10 / 0 / -3 / -12 (resume) |
+| `T_GK.depthFar` (GKP-01, m) | 4.5 | 3.0 |
+| `T_GK.reactBest` / `reactWorst` (ticks at reflexes 99 / 1) | 6 / 19 | 4 / 25 |
+| `T_GK.diveSpeedBest` / `diveSpeedWorst` (m/s) | 7.0 / 4.6 | 7.3 / 3.7 |
+| `T_GK.reachBest` / `reachWorst` (m) | 3.2 / 2.2 | 3.32 / 1.82 |
+| `sim/keeper/saveKinematics` `dropBack` / `dropSlackTicks` / `trackSprint` (new, GKP-02) | - | 1 / 8 / 1 |
+| `sim/defend/tackle` `baseChance` / `attrWeight` (SIM-14) | 0.5 / 0.55 | 0.7 / 0.8 |
+| `T_CPU.defendStillTouchTicks` / `defendStillSpeed` (new, TAI-11 still carrier, resume; ticks, m/s) | - | 45 / 1.0 |
+| `T_CPU.defendHeldSpeed` / `defendHeldTicks` (new, TAI-11 held carrier, skeptic pass; m/s, ticks) | - | 2.5 / 180 |
+
+### Final measurement of the resume (superseded: the skeptic pass's held challenge changes Professional play; the final numbers are in the last section)
+
+`tools/soak.ts --matches 500 --difficulty 3 --enforce all` (Professional): PASS; 500 finished, 0 exceptions / invariant
+failures / watchdogs, determinism PASS (hash 5da3b690); goals 2.82 (QF-13: 3.55; target 2.6-3.2), shots 15.40
+(19.02; target 15-22), dominant possession 56.73%, home possession 50.52%, pass completion 78.12%, fouls 13.47,
+offsides 0.23, blow-outs 2.80%. The same 500 configs through the scratch runner (identical match for match): shots on
+target 10.0 a match, keeper saves 68.0% of the non-penalty shots on target (2541 kept of 3738 saved or scored; BRIEF
+section 6: 65-78%), penalties 0.38, corners 1.12. CPU carrier shots by distance (a match): 0-12 m 1.98 (59.8% scored),
+12-16.5 m 1.14 (10.0%), 16.5-22 m 1.02 (6.1%), 22-28 m 1.20 (4.8%), 28-34 m 1.76 (2.8%), 34 m+ 3.69 (0.7%): 5.45 a
+match from 28 m+ (about 9.5 before, half the shots; now 35%), still scoring about 1.4% (2 of 134 before): the volume
+that went is the rushed taps, what is left are full-power strikes the keeper saves (34 m+: 54% on target, 824 saves in
+500 matches). By priced xG at the kick: under 0.01 -> 1.5% scored, 0.04-0.07 -> 10%, 0.1-0.15 -> 45%, 0.25-0.4 -> 76%.
+
+`tools/ladder.ts --matches 200`, seeds 1 and 2 (W / D / L; 400 a pair):
+
+| Pair | Seed 1 | Seed 2 | Over 400 | Target 65% (aim 67%) |
+|---|---|---|---|---|
+| Amateur v Beginner | 142 / 27 / 31 = 71.0% | 125 / 40 / 35 = 62.5% | 66.75% | meets (aim 67: 0.25 short) |
+| Semi-Pro v Amateur | 148 / 31 / 21 = 74.0% | 150 / 28 / 22 = 75.0% | 74.5% | meets |
+| Professional v Semi-Pro | 137 / 41 / 22 = 68.5% | 150 / 31 / 19 = 75.0% | 71.75% | meets |
+| World Class v Professional | 133 / 33 / 34 = 66.5% | 154 / 27 / 19 = 77.0% | 71.75% | meets |
+| Legend v World Class | 143 / 42 / 15 = 71.5% | 141 / 33 / 26 = 70.5% | 71.0% | meets |
+
+(The first pass's final tree, the same seeds: 69.5 / 76.0 / 70.75 / 69.0 / 66.75%. The screens above ran before the
+still-carrier challenge was limited to a carrier in no action with a known last touch (a CPU clearance being charged
+under pressure was challenged in `tai-08-carrier`'s scene); with it a handful of ladder matches below Professional
+changed: Amateur v Beginner 67.0 -> 66.75%, the other pairs as screened. Professional matches are unchanged.)
+
+`tools/balance.ts --matches 200`, seeds 1-4 (seed 1 all suites, seeds 2-4 `--suite top-bottom,equal`; Professional, so
+the same on this tree):
+
+| Matchup | Seed 1 | Seed 2 | Seed 3 | Seed 4 | Over 800 | Target |
+|---|---|---|---|---|---|---|
+| top-bottom MOS (88) v ROO (62), wins | 162 / 29 / 9 = 81.0% | 160 / 30 / 10 = 80.0% | 164 / 26 / 10 = 82.0% | 159 / 27 / 14 = 79.5% | 80.6% | >= 80%: meets |
+| equal SND (76) v GLA (75), points | 53.0% | 56.0% | 57.3% | 55.5% | 55.5% | 40-60%: meets |
+| mirror GLA v GLA, home points | 42.3% | - | - | - | - | 40-60%: meets |
+
+On the tree before the resume's fixes (the first pass's final tree): top-bottom 83.5% on seed 1, equal 53.5%, mirror
+45.8%. The top-bottom margin over 800 is thin (0.6 points, a standard error of about 1.4): the lead may want a
+balance lever with more margin before the 2,000-match campaign (the keeper ranges and SIM-14 attrWeight above are the
+ones measured).
+
+`tools/fuzz.ts --matches 60 --enforce all`: PASS (60 runs + 15 rematches, 59 finished, 0 exceptions / invariant
+failures / watchdogs, determinism PASS).
+
+### Skeptic pass (an independent QA+fix agent after the resume)
+
+Verified on the resume's tree: the qf-14 tests pass (`npx vitest run tests/scenario/qf-14-*.test.ts`: 22 + 2 expected
+fail), and each of the resume's fixes holds on nearby inputs: the standing-catch reach fix and the drop-back fix on the
+resume's lob grid with a 40-rated 1.72 m and a 92-rated 1.96 m keeper at 3 / 4.5 / 5.5 m off his line (0 standing
+catches set over his reach, 0 drop-target jumps), and a new grid of 7776 chips / lofted shots (9-20 m out, the keeper
+3-7 m off his line, 2 m off centre either side, standing or rushing out at 4 m/s, aimed at both posts and the centre;
+invariants `all`): 0 invariant failures, the keeper never behind his line inside the posts, 1 goal with no save action
+(a ball out of reach). The still challenge was attacked with a human carrier walking, strafing, circling, nudging the
+ball, backing away and standing with his back to the defender, at Professional, World Class and Legend (8 seeds each);
+two defects (the `[skeptic]` rows above) and the open walking-across case (Escorts, above). A carrier standing with his
+back to the defender (the ball on the far side of his body) is not challenged at any level: like a shielding carrier,
+the ball is never presented (unchanged; the first pass's shielding test).
+
+The held challenge reaches Professional bot matches (a carrier on the ball for 3 s, slow, the ball presented), so every
+number below is from the tree with it. `T_CPU.defendHeldTicks` screened on the first 150 soak configs (goals / shots;
+the resume's tree 2.77 / 15.22): 90 (the patience only) 2.47 / 14.71, 135 2.56 / 15.11, 180 2.63 / 14.79 (kept), 300
+2.72 / 15.15; a carrier walking straight at a Legend defender is challenged after about 3 s at 180.
+
+Observations for the lead (no change made): Beginner v Beginner takes 4.6 shots a match (the tree before QF-14: 10.5,
+45 matches): within 25 m of goal the Beginner carrier's shot is refused as rushed (`carrierShotMinPowerShare`) about
+twice as often as it is offered, because his 100-tick reaction delay lets the defence close in, so the quick-shot cut
+always applies; and with `keeperReactTicks` Legend -12 a Legend keeper with gkReflexes 62 or more reacts at 0 ticks
+(the delay is floored at 0), so reflexes above 62 make no difference at Legend (-8: above 80).
+
+### Final measurement (this tree)
+
+`tools/soak.ts --matches 500 --difficulty 3 --enforce all --workers 3` (Professional): PASS; 500 finished, 0
+exceptions / invariant failures / watchdogs, determinism PASS (hash f8c9489f); goals 2.65 (QF-13: 3.55; target
+2.6-3.2), shots 15.31 (19.02; target 15-22), dominant possession 56.69%, home possession 50.60%, pass completion
+78.39%, fouls 13.38, offsides 0.22, blow-outs 2.00%. The same 500 configs through the scratch runner (identical match
+for match): shots on target 9.92 a match, keeper saves 68.9% of the non-penalty shots on target (2526 kept of 3667
+saved or scored; BRIEF section 6: 65-78%), penalties 0.33, corners 1.12, tackles 35.3 (9.5 won). CPU carrier shots by
+distance (a match): 0-12 m 1.87 (59.1% scored), 12-16.5 m 1.09 (8.4%), 16.5-22 m 1.05 (6.3%), 22-28 m 1.25 (4.8%),
+28-34 m 1.78 (2.6%), 34 m+ 3.64 (0.8%): 5.42 a match from 28 m+ (about 9.5 before QF-14), scoring 1.4%. By priced xG
+at the kick: under 0.01 -> 1.5% scored, 0.04-0.07 -> 8.9%, 0.1-0.15 -> 42.8%, 0.25-0.4 -> 73.6%.
+
+`tools/ladder.ts --matches 200 --workers 3`, seeds 1 and 2 (W / D / L; 400 a pair):
+
+| Pair | Seed 1 | Seed 2 | Over 400 | Target 65% (aim 67%) |
+|---|---|---|---|---|
+| Amateur v Beginner | 142 / 30 / 28 = 71.0% | 125 / 40 / 35 = 62.5% | 66.75% | meets (aim: 0.25 short) |
+| Semi-Pro v Amateur | 146 / 33 / 21 = 73.0% | 152 / 30 / 18 = 76.0% | 74.5% | meets |
+| Professional v Semi-Pro | 142 / 35 / 23 = 71.0% | 141 / 40 / 19 = 70.5% | 70.75% | meets |
+| World Class v Professional | 138 / 37 / 25 = 69.0% | 137 / 39 / 24 = 68.5% | 68.75% | meets |
+| Legend v World Class | 139 / 41 / 20 = 69.5% | 140 / 41 / 19 = 70.0% | 69.75% | meets |
+
+(Seed 2's Amateur v Beginner leg is match for match the resume's: no carrier is held 3 s there.)
+
+`tools/balance.ts --matches 200 --workers 3`, seeds 1-4 (seed 1 all suites, seeds 2-4 `--suite top-bottom,equal`):
+
+| Matchup | Seed 1 | Seed 2 | Seed 3 | Seed 4 | Over 800 | Target |
+|---|---|---|---|---|---|---|
+| top-bottom MOS (88) v ROO (62), wins | 164 / 21 / 15 = 82.0% | 160 / 28 / 12 = 80.0% | 159 / 30 / 11 = 79.5% | 165 / 26 / 9 = 82.5% | 81.0% | >= 80%: meets |
+| equal SND (76) v GLA (75), points | 58.0% | 61.3% | 57.5% | 52.0% | 57.2% | 40-60%: meets (seed 2 alone over) |
+| mirror GLA v GLA, home points | 42.5% | - | - | - | - | 40-60%: meets |
+
+`tools/fuzz.ts --matches 60 --enforce all --workers 3`: PASS (60 runs + 15 rematches, 59 finished, 0 exceptions /
+invariant failures / watchdogs, determinism PASS, hash 8001b817).

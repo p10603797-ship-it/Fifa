@@ -167,6 +167,16 @@ function installDriver(): void {
       const a = att();
       const k = s.players[(1 - a) * 11]!;
       k.x = 51.5; k.z = -3.4;
+      // Clear outfield players off the scripted shot's path (36, 4) -> goal (QF-14 CR 3: a defender stood on it).
+      for (let i = 0; i < 22; i++) {
+        const p = s.players[i]!;
+        if (i === (1 - a) * 11) continue;
+        const t = (p.x! - 36) / 16.5;
+        if (t > -0.1 && t < 1.05 && Math.abs(p.z! - (4 - 0.44 * t)) < 2) {
+          p.z = p.z! < 4 - 0.44 * t ? p.z! - 3 : p.z! + 3;
+          p.vx = 0; p.vz = 0;
+        }
+      }
       looseBall(36, 4, 0.6, 26, 1.5, -0.7, a, a * 11 + 9);
       s.ball.shotBy = a * 11 + 9; s.ball.shotTick = s.tick;
     },

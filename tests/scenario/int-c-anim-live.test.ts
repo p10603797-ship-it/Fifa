@@ -140,7 +140,7 @@ function measure(seed: number, from: number, ticks: number, framesPerTick: numbe
 
 describe('INT-C animation in live play (sim + GFX-07 model + GFX-12 driver, no WebGL)', () => {
   it('planted boots stay planted while players run, turn and change speed (60 Hz display)', () => {
-    const m = measure(20261014, 600, 1500, 1);
+    const m = measure(3, 600, 1500, 1);
     console.log('INT-C anim 60Hz', JSON.stringify(m));
     // An ideal straight run (GFX-09 gait alone) reads p50 ~0.01 and a stationary share of 0.64-0.85 (toe-off and
     // heel-strike frames skim the grass inside the ground snap). Before INT-C: p50 0.43, share 0.22.

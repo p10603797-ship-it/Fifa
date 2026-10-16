@@ -48,6 +48,9 @@
  *       [QF-13] In our own penalty area no rash lunges or slides from Professional up (T_LEVEL.boxRashMul /
  *       boxSlideMul); [QF-13 skeptic] a careful tackle there also needs the ball clear of the carrier's body at contact
  *       (boxClear: out of body contact, his body off the line to the ball), so a miss is no penalty.
+ *       [QF-14] Once the patience is over, a carrier who never exposes the ball is challenged too: standing on it
+ *       (T_CPU.defendStill*) or [QF-14 skeptic] walking it into the defender (T_CPU.defendHeld*: on the ball 3 s, slow,
+ *       the ball presented ball-first), with the box care above.
  *     - Slide (LOB press) only when goal-side, the ball loose-ish (between touches, beyond standing reach but within
  *       slide reach) in our half, one draw per window; from behind only for a carrier through on goal in our third
  *       with a tiny chance (slideBehindChance x decisionNoise).
@@ -80,6 +83,7 @@ import type { LevelParams } from '../../contracts/systems';
 import { T_AI, T_CPU, T_DRIBBLE, T_LEVEL, T_PLAYER, T_SKILL, T_TACKLE, T_TOUCH } from '../../contracts/tuning';
 import { isFree } from '../../sim/actions/dispatch';
 import { tackleKind } from '../../sim/control/resolveActions';
+import { LOCAL_TUNING as TACKLE_LT } from '../../sim/defend/tackle';
 import { ballEta, controlContext, Ctx } from '../../sim/control/resolveShared';
 import { aerialChance } from '../../sim/kicks/aerial';
 import { inSkillVulnerableWindow } from '../../sim/kicks/skills';
@@ -220,6 +224,10 @@ export const LOCAL_TUNING = {
    *  level's tackleTimingTicks) and the speed under which he and the ball count as standing, m/s. */
   stillTouchTicks: T_CPU.defendStillTouchTicks,
   stillSpeed: T_CPU.defendStillSpeed,
+  /** [QF-14 skeptic] ... and walking the ball into him (T_CPU.defendHeldSpeed): under this speed, the ball presented, m/s. */
+  heldSpeed: T_CPU.defendHeldSpeed,
+  /** ... once he has had the ball this long (ball.ownerT), ticks. */
+  heldTicks: T_CPU.defendHeldTicks,
   /** [QF-13 skeptic] Reception near a line (receiveTurn): when the clean settle would end less than this inside a line,
    *  the stick's component toward it becomes receiveInward into the pitch. m, 0..1. */
   receiveSettleMargin: T_CPU.defendReceiveSettleMargin,
@@ -519,6 +527,31 @@ function boxClear(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState
   return along - lb > L.boxClearMargin || alat >= rv;
 }
 
+/**
+ * [QF-14 skeptic] The carrier's ball is presented to defender p: now and at mid-contact of a standing tackle (positions
+ * predicted linearly, as wellTimed: a dribbled ball being pulled back to his feet is not) the ball is within standReach
+ * of him and the carrier's body does not lie between them (SIM-14 bodyBlocksBall: his near edge beyond the ball less
+ * ballFirstMargin, or off the line by more than bodyRadius + blockLateral), so the challenge meets the ball first. Pure.
+ */
+function ballPresented(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState>): boolean {
+  return ballFirstAt(s, p, q, 0) && ballFirstAt(s, p, q, (T_TACKLE.standWindup + (T_TACKLE.standContactTicks >> 1)) / TICK_HZ);
+}
+
+/** ballPresented at t seconds ahead (linear). Pure. */
+function ballFirstAt(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState>, t: number): boolean {
+  const b = s.ball;
+  const px = p.x + p.vx * t, pz = p.z + p.vz * t;
+  let ux = b.x + b.vx * t - px, uz = b.z + b.vz * t - pz;
+  const lb = Math.sqrt(ux * ux + uz * uz);
+  if (!(lb > EPS) || lb > T_TACKLE.standReach) return false;
+  ux /= lb; uz /= lb;
+  const vx = q.x + q.vx * t - px, vz = q.z + q.vz * t - pz;
+  const along = vx * ux + vz * uz;
+  const lat = vx * uz - vz * ux;
+  const rv = T_PLAYER.bodyRadius;
+  return !(along > 0) || along - rv > lb - TACKLE_LT.ballFirstMargin || (lat < 0 ? -lat : lat) > rv + TACKLE_LT.blockLateral;
+}
+
 // ---------------------------------------------------------------- player choice
 
 /**
@@ -719,13 +752,22 @@ function defendCarrier(
       }
     } else if (dBall <= T_TACKLE.standReach && goalSide) {
       // [QF-14 resume] Patience with a carrier standing on the ball: he never exposes it (no touch, no turn), so a
-      // noise-free defender (Legend: no rash lunge) held his ground in front of him for ever. Standing still, not
-      // shielding, untouched for stillTouchTicks + the level's tackle timing: the challenge.
-      if (patient && q.shielding !== 1 && q.act !== ActionKind.SHIELD && qs < L.stillSpeed &&
-        b.vx * b.vx + b.vz * b.vz < L.stillSpeed * L.stillSpeed &&
-        (q.lastTouchTick >= 0 ? s.tick - q.lastTouchTick : b.ownerT) >= L.stillTouchTicks + lv.tackleTimingTicks) {
-        pressTackle(brain, lv);
-        return;
+      // noise-free defender (Legend: no rash lunge) held his ground in front of him for ever. Standing still in no
+      // action (not shielding, not winding up or charging a kick), untouched for stillTouchTicks + the level's tackle
+      // timing: the challenge. [QF-14 skeptic] Walking the ball into him is no better: on the ball heldTicks, slower
+      // than heldSpeed, between touches (tackle timing) with the ball presented to him (ball-first, now and at
+      // contact): the same challenge. And in our own area with the same box care as a careful tackle
+      // (T_LEVEL.boxBodyClear: the still challenge at a carrier stood in the box gave World Class / Legend penalties
+      // away, 2 in 12).
+      if (patient && q.shielding !== 1 && q.act === ActionKind.NONE && q.lastTouchTick >= 0) {
+        const age = s.tick - q.lastTouchTick;
+        const still = qs < L.stillSpeed && b.vx * b.vx + b.vz * b.vz < L.stillSpeed * L.stillSpeed &&
+          age >= L.stillTouchTicks + lv.tackleTimingTicks;
+        if ((still || (qs < L.heldSpeed && b.ownerT >= L.heldTicks && age >= lv.tackleTimingTicks && ballPresented(s, p, q))) &&
+          (!inBox || !(levelValue(s, team, T_LEVEL.boxBodyClear) > 0) || boxClear(s, p, q))) {
+          pressTackle(brain, lv);
+          return;
+        }
       }
       const bucket = Math.floor(s.tick / L.rashBucketTicks);
       if (noise01(seed, who, bucket * 4 + 2) < noisy * L.rashLungeChance) { pressTackle(brain, lv); return; }

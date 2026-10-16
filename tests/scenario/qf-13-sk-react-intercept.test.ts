@@ -98,10 +98,12 @@ describe('QF-13 skeptic TAI-11: an intercepted pass arms the full reaction delay
     own(s, 17);
     ourPass(s, 17, 19);
     think(s);
-    for (let t = 0; t < 20; t++) think(s);
+    // [QF-14 resume] Two halves of the delay less a few ticks (was 20 + 20 for Amateur's 42; 36 now).
+    const half = Math.floor((delay - 4) / 2);
+    for (let t = 0; t < half; t++) think(s);
     // Deflected off a team 0 player: no longer our pass in flight, still loose; then he picks it up.
     s.ball.lastTouch = 5; s.ball.lastTouchTeam = 0; s.ball.passTarget = -1;
-    for (let t = 0; t < 20; t++) think(s);
+    for (let t = 0; t < half; t++) think(s);
     expect(brain.reactT).toBeGreaterThan(0); // the delay from the pass holds his run now (branch 2)
     expect(brain.reactT).toBeLessThan(delay - 30);
     const before = brain.reactT;
