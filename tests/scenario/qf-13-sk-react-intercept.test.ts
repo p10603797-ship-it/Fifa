@@ -62,8 +62,11 @@ function own(s: SimState, owner: number): void {
 }
 
 describe('QF-13 skeptic TAI-11: an intercepted pass arms the full reaction delay', () => {
-  it('at every level the interception of our pass (after a long flight too) arms the whole delay', () => {
+  it('below Professional the interception of our pass (after a long flight too) arms the whole delay', () => {
+    // [QF-13 skeptic, second run] T_LEVEL.interceptRearm: Beginner .. Semi-Pro (the long delays); Professional and up
+    // keep the first pass's chain rule (the section 7 bands' reference).
     for (let lv = Difficulty.BEGINNER; lv <= Difficulty.LEGEND; lv++) {
+      const rearm = T_LEVEL.interceptRearm[lv]! > 0;
       for (const flight of [5, 40, 90]) {
         const s = scene(lv as Difficulty);
         const brain = s.teams[1]!.cpu;
@@ -75,11 +78,16 @@ describe('QF-13 skeptic TAI-11: an intercepted pass arms the full reaction delay
         expect(brain.reactT, `level ${lv}: our ball going loose starts the delay as before`).toBe(delay);
         for (let t = 1; t < flight; t++) think(s);
         expect(brain.reactT).toBeLessThan(delay > 1 ? delay : 2); // running down (or spent) while the pass flies
+        const left = brain.reactT;
         own(s, 4); // intercepted by team 0
         think(s);
-        expect(brain.reactT, `level ${lv} flight ${flight}`).toBe(delay);
+        if (rearm) expect(brain.reactT, `level ${lv} flight ${flight}`).toBe(delay);
+        // The first pass's chain rule: a change re-arms only once he has been awake for the re-arm gap (reactT 0).
+        else if (left === 0) expect(brain.reactT, `level ${lv} flight ${flight}`).toBe(delay);
+        else expect(brain.reactT, `level ${lv} flight ${flight}: no re-arm`).toBeLessThan(left > 0 ? left : 1);
       }
     }
+    expect(T_LEVEL.interceptRearm.slice(0, 3)).toEqual([1, 1, 1]);
   });
 
   it('a pass deflected loose first is a plain loose ball: the delay from the pass holds, the pick-up does not chain it', () => {

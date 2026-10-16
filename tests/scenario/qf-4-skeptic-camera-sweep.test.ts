@@ -139,8 +139,8 @@ describe('QF-4 skeptic QA-31: camera settings, aspects and frame pacing', () => 
   }, 600000);
 
   it('goal replays and establishing shots stay in front of the stands, above the grass and out of the goals', () => {
-    // Seed 3 scores early (a goal around tick 1900): its replay plays both angles.
-    const g = createLiveRig({ seed: 3, config: { halfMinutes: 3 } });
+    // Seed 8 scores early (a goal around tick 1630): its replay plays both angles.
+    const g = createLiveRig({ seed: 8, config: { halfMinutes: 3 } });
     let replay = 0, est = 0, angleCuts = 0;
     let last: { x: number; y: number; z: number } | null = null;
     for (let t = 0; t < 3000; t++) {

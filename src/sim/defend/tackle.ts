@@ -68,7 +68,8 @@
  * downBodyHalf either side of his centre along his facing, downBodyRadius wide) of a slider on the ground, a FALLEN or
  * a GET_UP player squirts out sideways at squirtSpeed (DEFLECTION, recordTouch on him) at once.
  * Keeper fights a defender (glitch list, with GKP-03): an outfield player leaves a loose ball to his own keeper while
- * the keeper is in a GK_RUSH / GK_CATCH / GK_DIVE / GK_PUNCH within keeperPriorityDist of it (tackles and interceptions).
+ * the keeper is in a GK_RUSH / GK_CATCH / GK_DIVE / GK_PUNCH within keeperPriorityDist of it (tackles and interceptions;
+ * [QF-13 skeptic] his body in a fresh shot's path still blocks it: the shot went through him into the net).
  *
  * CLEARANCE: startClearance starts SIM-08's KICK action with KickKind.CLEARANCE (no charging): his own ball, a loose
  * ball in reach (contact before it leaves reach), or a low ball arriving within clearMaxLeadTicks on a path within
@@ -92,7 +93,8 @@
  * Hi, ballControl)) -> controlled (takePossession, cushioned to his feet), else blocked (DEFLECTION off him). A ball
  * whose path runs through his body (interceptBodyBlock x body radius) on any tick cannot slip past even when the roll
  * failed: trapped below bodyControlFrac of that speed, else blocked. Both emit INTERCEPT (a = interceptor, b =
- * passer). The passing team never intercepts its own pass (receptions are SIM-07's).
+ * passer). The passing team never intercepts its own pass (receptions are SIM-07's). [QF-13 skeptic] Header passes
+ * count as passes here, and a body stops a pass up to shotBlockHeight (the roll stays below interceptMaxHeight).
  *
  * Determinism / cost: plain arithmetic, Math.sqrt and dmath, s.rng only, slot-order loops with strict tie breaks, module
  * scratch only. Per tick O(22) plus O(11) when a pass is in flight; a tackle resolution is O(1).
@@ -1130,8 +1132,10 @@ export function tackleContacts(s: SimState, ev: EventSink): void {
 /** Untouched pass (SIM-07 definition): a pass kind that nobody has touched since the kick. */
 function untouchedPass(s: SimState): boolean {
   const b = s.ball;
-  return isFootPassKind(b.lastKickKind) && b.lastTouch === b.lastKickBy && b.lastTouchTick === b.lastKickTick &&
-    validSlot(b.lastKickBy);
+  // [QF-13 skeptic] A header pass too (isFootPassKind leaves it out): a flick-on dropping at 7-14 m/s passed straight
+  // through opponents' legs, 2.6 times a match (Professional), with no interception roll and no body contact.
+  return (isFootPassKind(b.lastKickKind) || b.lastKickKind === KickKind.HEADER_PASS) && b.lastTouch === b.lastKickBy &&
+    b.lastTouchTick === b.lastKickTick && validSlot(b.lastKickBy);
 }
 
 /** Chance that j intercepts the pass whose path passes d from him at speed sp, height y. Pure. */
@@ -1231,12 +1235,20 @@ export function interceptContacts(s: SimState, ev: EventSink): void {
     const body = d <= bodyRadiusOf(s, j) * L.interceptBodyBlock ? 1 : 0;
     if ((entry === 0 || free === 0) && body === 0) continue;
     const yAt = b.py + (b.y - b.py) * t;
-    if (!(yAt <= maxH)) continue;
+    // [QF-13 skeptic] His body stops a pass up to torso height too (shotBlockHeight): a lofted pass went through an
+    // opponent's chest / head about once a match.
+    if (!(yAt <= (body === 1 ? L.shotBlockHeight : maxH))) continue;
     // Above interceptMaxHeight (a shot at his chest): only his body stops it, no stretched-leg roll; nor for a busy
     // man.
-    const roll = free === 1 && entry === 1 && yAt <= L.interceptMaxHeight ? 1 : 0;
+    let roll = free === 1 && entry === 1 && yAt <= L.interceptMaxHeight ? 1 : 0;
+    // His keeper claiming the ball (glitch list: keeper fights a defender) calls off a pass interception and his
+    // stretched leg, never his body in a shot's path: [QF-13 skeptic] a volley went through a defender's chest into the
+    // net while his keeper dived for it behind him (seed 801 #4).
+    if (keeperClaims(s, j)) {
+      if (shot === 0) continue;
+      roll = 0;
+    }
     if (roll === 0 && body === 0) continue;
-    if (keeperClaims(s, j)) continue;
     // insertion by path order (ties: lower slot first, already in slot order)
     let k = n;
     while (k > 0 && CAND_T[k - 1]! > t) {

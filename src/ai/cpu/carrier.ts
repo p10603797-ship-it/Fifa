@@ -49,7 +49,9 @@
  *       - CLEAR: LOB held clearPower x powerFillTicks, the stick upfield toward the ball's touchline.
  *       - DRIBBLE: stick along the plan direction (turned along a line within edgeMargin of it); turning more than
  *         acos(leashCos) away from the ball: no sprint, and run to the ball first while it is beyond his touch reach (so
- *         SIM-06's next touch takes it the new way instead of leaving it behind); SPRINT only with space ahead (no
+ *         SIM-06's next touch takes it the new way instead of leaving it behind; [QF-13 skeptic] latched until it is
+ *         leashInner inside that reach, a ball above control height always counts as out of reach, and SPRINT while a
+ *         heavy touch would otherwise roll beyond the lose radius); SPRINT only with space ahead (no
  *         opponent within sprintSpaceDist in the cone, none within tightDist) and stamina; never SPRINT or MOD_L with a
  *         released stick (those are stop-ball inputs).
  *       - SKILL: frame.skill edge with the stick on the exit side away from the nearest opponent, then dribble on.
@@ -73,7 +75,8 @@ import type { EventSink } from '../../contracts/events';
 import { Btn, GESTURE_POS_SCALE, type InputFrame } from '../../contracts/input';
 import { CpuPlan, type CpuBrainState, type PlayerState, type SimState } from '../../contracts/state';
 import type { LevelParams, StyleWeights } from '../../contracts/systems';
-import { T_CPU, T_DRIBBLE, T_LEVEL, T_PASS, T_PLAYER, T_SKILL } from '../../contracts/tuning';
+import { T_BALL, T_CPU, T_DRIBBLE, T_LEVEL, T_PASS, T_PLAYER, T_SKILL } from '../../contracts/tuning';
+import { dlog } from '../../sim/core/dmath';
 import { rngGauss } from '../../sim/core/rng';
 import { inPenaltyArea } from '../../sim/pitch/geometry';
 import { composureNoiseMul, levelParams, levelValue, styleWeights, visionNoiseMul } from './levels';
@@ -218,6 +221,12 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
    *  there (lead = distance / max(his speed, leashLeadMinSpeed m/s)). Ticks, m/s. */
   leashLeadTicks: T_CPU.carrierLeashLeadTicks,
   leashLeadMinSpeed: T_CPU.carrierLeashLeadMinSpeed,
+  /** [QF-13 skeptic] ... at most this far ahead (a high ball: until it comes down to T_DRIBBLE.controlHeight), s; in a
+   *  turn, SPRINT after a ball that would otherwise get further than T_DRIBBLE.loseRadius - leashLoseMargin from him, m. */
+  leashMaxLead: T_CPU.carrierLeashMaxLead,
+  leashLoseMargin: T_CPU.carrierLeashLoseMargin,
+  /** [QF-13 skeptic] Once set off, the leash holds until the ball is this far inside his reach, m. */
+  leashInner: T_CPU.carrierLeashInner,
   // ---- skill moves
   /** Success estimate: base + per star + x dribbling / 99, capped. */
   skillBase: 0.3,
@@ -1087,22 +1096,36 @@ function runDribble(s: SimState, team: number, brain: CpuBrainState, p: Readonly
   const b = s.ball;
   const bx = b.x - p.x, bz = b.z - p.z;
   const bd = Math.sqrt(bx * bx + bz * bz);
+  nearestOpponent(s, p);
+  const v = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
+  const reach = T_DRIBBLE.controlRadius + v * LT.reachLookahead;
+  const lt = LT.leashLeadTicks / TICK_HZ;
+  const nx = bx + (b.vx - p.vx) * lt, nz = bz + (b.vz - p.vz) * lt;
+  const nd = Math.sqrt(nx * nx + nz * nz);
+  const dd = nd < bd ? nd : bd;
+  // [QF-13 skeptic] SIM-06 touches only a ball at most controlHeight high: a bouncing ball (a first touch that popped
+  // it up) is not in his reach however close, so the leash below keeps him at it instead of letting go and running off
+  // along the plan (a carrier orbited his bouncing ball by the touchline for 1.6 s without a touch).
+  const high = b.y > T_DRIBBLE.controlHeight;
   if (bd > 1e-6 && (bx * dx + bz * dz) / bd < LT.leashCos) {
     turning = true;
     // [QF-13] Run to the ball until it is about to come into his reach: judged LT.leashLeadTicks ahead (SIM-06 touches
     // after this tick's movement, along the stick), and once he has set off (brain.p3 = 1) not let go before then.
     // With a fixed margin he turned away 0.2 m short of a ball rolling away from him, then back after it: a carrier
     // hovered by his ball rolling into the corner for 5 s without a touch and walked off the pitch (seed 33 #17).
-    const v = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
-    const reach = T_DRIBBLE.controlRadius + v * LT.reachLookahead;
-    const lt = LT.leashLeadTicks / TICK_HZ;
-    const nx = bx + (b.vx - p.vx) * lt, nz = bz + (b.vz - p.vz) * lt;
-    const nd = Math.sqrt(nx * nx + nz * nz);
-    const dd = nd < bd ? nd : bd;
-    if (dd > reach + (brain.p3 === 1 ? 0 : LT.leashMargin)) {
+    // [QF-13 skeptic] Latched until the ball is leashInner inside his reach: let go at its edge, he turned along the
+    // plan, slowed (his reach shrinks with his speed) and the ball ran on out of it, again and again (a Legend carrier
+    // 1.5 m behind a ball rolling at 6 m/s for 100 ticks without a touch).
+    if (high || dd > reach + (brain.p3 === 1 ? -LT.leashInner : LT.leashMargin)) {
       brain.p3 = 1;
-      // Toward where the ball will be when he gets there (it rolls on meanwhile).
-      const lead = bd / (v > LT.leashLeadMinSpeed ? v : LT.leashLeadMinSpeed);
+      // Toward where the ball will be when he gets there (it rolls on meanwhile); a high ball: where it comes down to
+      // control height (no drag).
+      let lead = bd / (v > LT.leashLeadMinSpeed ? v : LT.leashLeadMinSpeed);
+      if (high) {
+        const g = T_BALL.gravity;
+        lead = (b.vy + Math.sqrt(b.vy * b.vy + 2 * g * (b.y - T_DRIBBLE.controlHeight))) / g;
+      }
+      if (lead > LT.leashMaxLead) lead = LT.leashMaxLead;
       const px = bx + b.vx * lead, pz = bz + b.vz * lead;
       const pd = Math.sqrt(px * px + pz * pz);
       if (pd > 1e-6) { dx = px / pd; dz = pz / pd; } else { dx = bx / bd; dz = bz / bd; }
@@ -1112,10 +1135,27 @@ function runDribble(s: SimState, team: number, brain: CpuBrainState, p: Readonly
   } else {
     brain.p3 = 0;
   }
-  nearestOpponent(s, p);
   SV[0] = dx; SV[1] = dz;
-  const sprint = !turning && canSprint(s, team, p);
-  SV[2] = sprint ? 1 : C.nearD <= LT.tightDist ? LT.tightStick : LT.jogStick;
+  const stick = C.nearD <= LT.tightDist ? LT.tightStick : LT.jogStick;
+  // [QF-13 skeptic] Turning with the leash on (no sprint in a turn), a heavy touch ahead would run out of his control at
+  // his dribbling pace: rolling on (SIM-02 roll model) until it slows to that pace, it gets further than the lose radius
+  // - leashLoseMargin from him (he jogged 2-2.5 m behind it for up to 2 s until possession was released, 9.5 times a
+  // match at Legend). Then he sprints after it until that no longer holds; any other turn keeps its jog (sprinting
+  // after every escaping turn doubled a Legend carrier's sprinting).
+  let chase = false;
+  if (turning && brain.p3 === 1 && !high && bd > 1e-6 && p.isKeeper !== 1 && p.stamina > LT.sprintMinStamina) {
+    const u = (b.vx * bx + b.vz * bz) / bd;
+    const vj = s.attrs[p.slot]!.topSpeed * T_PLAYER.jogFraction * stick;
+    if (u > vj) {
+      const a = T_BALL.rollDecel, c = T_BALL.rollDamping;
+      // Time for the ball to slow from u to vj, and the gap it opens meanwhile.
+      const t1 = c > 0 ? dlog((a + c * u) / (a + c * vj)) / c : (u - vj) / a;
+      const run = c > 0 ? (u - vj) / c - (a / (c * c)) * dlog((a + c * u) / (a + c * vj)) : (u * u - vj * vj) / (2 * a);
+      if (bd + run - vj * t1 > T_DRIBBLE.loseRadius - LT.leashLoseMargin) chase = true;
+    }
+  }
+  const sprint = chase || (!turning && canSprint(s, team, p));
+  SV[2] = sprint ? 1 : stick;
   stickOut(out);
   if (sprint) out.buttons |= Btn.SPRINT;
   brain.planT++;

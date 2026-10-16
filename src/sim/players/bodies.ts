@@ -16,7 +16,8 @@
  *  right unless their intents/velocities prefer a side, so nobody runs in place and same-target players do not orbit.
  *  3. Up to LOCAL_TUNING.iterations Gauss-Seidel passes over all active pairs in fixed slot order (i < j); another
  *     pass runs only while the last one met an overlap above passOverlap. Positional separation split by priority
- *     (anchor / shield hold > constraint pin > free) and inverse mass: a soft fraction of the overlap, hard to at
+ *     (a man down in a restart set-up [QF-13 skeptic] > anchor / shield hold > constraint pin > free) and inverse
+ *     mass: a soft fraction of the overlap, hard to at
  *     least hardMin when the overlap is beyond tolerance. On the first pass also: velocity damping along the contact
  *     normal, the slide-around nudge for players pushing into a body that blocks their way (anti "run in place"),
  *     BODY_CONTACT events. After each pass: SIM-04 confinePlayer (boards, goal frame and net) for every player the
@@ -172,6 +173,13 @@ const sImRaw = new Float64Array(NS);
 const sAnc = new Uint8Array(NS);
 /** 1 = clamped by a constraint this tick (immovable for the remaining passes unless the other body is anchored). */
 const sPin = new Uint8Array(NS);
+/**
+ * [QF-13 skeptic] 1 = lying on the ground (FALLEN / GET_UP) during a restart set-up: outranks everything, the walkers
+ * go round him. The set-up walkers (the anchored taker first) shoved a man lying by the foul spot up to 2 m along the
+ * ground (the closing speed handed to him, then his LOCKED slide), at 0.8 set-ups a match, twice onto the free-kick
+ * ball placed beside him.
+ */
+const sDown = new Uint8Array(NS);
 /** Position at the start of the stage (after locomotion). */
 const sX0 = new Float64Array(NS);
 const sZ0 = new Float64Array(NS);
@@ -467,11 +475,13 @@ function prepare(s: SimState): void {
   const b = s.ball;
   sShielder = b.owner >= 0 && b.owner < NS && isShielding(s, b.owner) ? b.owner : -1;
   sEvents = 0;
+  const setup = s.match.restart.taken === 0 && isRestartPhase(s.match.phase);
   for (let i = 0; i < NS; i++) {
     const p = s.players[i]!;
     sActive[i] = p.active === 1 ? 1 : 0;
     sPin[i] = 0;
     sAnc[i] = 0;
+    sDown[i] = 0;
     sHold[i] = 0;
     sDrive[i] = 0;
     if (p.active !== 1) continue;
@@ -480,6 +490,7 @@ function prepare(s: SimState): void {
     sImRaw[i] = 1 / m;
     sIm[i] = i === sShielder ? 1 / (m * L.shieldMassMul) : 1 / m;
     sAnc[i] = isAnchored(s, i) ? 1 : 0;
+    if (setup && (p.act === ACT_FALLEN || p.act === ACT_GET_UP)) sDown[i] = 1;
     // Movement intent for the slide-around (not for players holding a facing: jockey, contain, shield).
     if (p.lookAt === 1 || p.stunT > 0 || i === sShielder) continue;
     if (p.moveMode === MODE_DIRECT) {
@@ -520,10 +531,11 @@ function resolvePairs(s: SimState, first: boolean, ev: EventSink): void {
       if (d < 1e-6) { nx = -a.fz; nz = a.fx; d = 0; } else { nx = dx / d; nz = dz / d; }
       if (rs - d > maxOverlap) maxOverlap = rs - d;
 
-      // Weights by priority level (anchor or shield hold 2 > constraint pin 1 > free 0): the lower level moves.
-      // Same level: free bodies split by inverse mass (strength, shield), immovable ones by strength alone.
-      let lvA = sAnc[i] === 1 ? 2 : sPin[i]!;
-      let lvB = sAnc[j] === 1 ? 2 : sPin[j]!;
+      // Weights by priority level (a man down in a set-up 3 > anchor or shield hold 2 > constraint pin 1 > free 0):
+      // the lower level moves. Same level: free bodies split by inverse mass (strength, shield), immovable ones by
+      // strength alone.
+      let lvA = sDown[i] === 1 ? 3 : sAnc[i] === 1 ? 2 : sPin[i]!;
+      let lvB = sDown[j] === 1 ? 3 : sAnc[j] === 1 ? 2 : sPin[j]!;
       if (sShielder === i && sHold[j] === 1) lvA = 2;
       else if (sShielder === j && sHold[i] === 1) lvB = 2;
       let wA: number;

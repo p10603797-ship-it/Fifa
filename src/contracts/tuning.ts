@@ -489,6 +489,16 @@ export const T_CPU = {
    *  aimed at where it will be (lead at least at this speed), not letting go once set off. Ticks, m/s. */
   carrierLeashLeadTicks: 2,
   carrierLeashLeadMinSpeed: 4,
+  /** [QF-13 skeptic] TAI-08 dribble: the leash aims at most this far ahead (a ball above T_DRIBBLE.controlHeight, which
+   *  SIM-06 cannot touch, at where it comes down to that height), s; and in a turn the carrier SPRINTs after his ball
+   *  while, rolling on until it slows to his dribbling pace, it would get further than T_DRIBBLE.loseRadius -
+   *  carrierLeashLoseMargin from him (he jogged 2-2.5 m behind a heavy touch for up to 2 s after a turn until
+   *  possession was released, 9.5 times a match at Legend), m. */
+  carrierLeashMaxLead: 1,
+  carrierLeashLoseMargin: 0.3,
+  /** [QF-13 skeptic] TAI-08 dribble: once on, the leash holds until the ball is this far inside his touch reach; let go
+   *  at its edge, he turned, slowed (his reach shrinks with his speed) and the ball ran out of his reach again, m. */
+  carrierLeashInner: 0.3,
   // ---- passing.ts
   passGroundArriveMin: 7,
   passGroundArriveMax: 12,
@@ -514,19 +524,14 @@ export const T_CPU = {
    *  [QF-11 skeptic] Or within his braking distance toward the line (v^2 / (2 x T_PLAYER.decel)) + brake slack, m. */
   defendMomentumEdgeMargin: 2,
   defendMomentumBrakeSlack: 0.5,
-  /** [QF-13 skeptic] TAI-11 reception near a line: when SIM-07 takes the ball this tick (a moving ball at the feet of the
-   *  CPU's controlled player comes within T_TOUCH.receiveRadius of him, also with the turn's braking; a turn that is
-   *  not followed by the touch slowed his chase, he missed the ball and turned back after it, a stick flip-flop every
-   *  tick) within defendReceiveEdge of a touchline / goal line (or his braking distance toward it + defendMomentumBrakeSlack +
-   *  defendReceiveLead, the room the settled ball runs ahead of him, whichever is more) while he runs or steers at it
-   *  (faster than defendReceiveOutSpeed, or a stick component over defendReceiveOutStick; with the stick released, also
-   *  the ball going at it), the stick's component toward the line becomes defendReceiveInward into the pitch (SPRINT let
-   *  go), so SIM-07's clean settle (stick direction) keeps the ball in play: the receiver of an overhit pass sprinted
-   *  onto it at the line and trapped it over (1.4 throw-ins a match, 18% of all). m, m, m/s, 0..1, 0..1. */
-  defendReceiveEdge: 3,
-  defendReceiveLead: 1.5,
-  defendReceiveOutSpeed: 0.5,
-  defendReceiveOutStick: 0.1,
+  /** [QF-13 skeptic] TAI-11 reception near a line (receiveTurn): on the tick SIM-07 takes the ball (this tick or the
+   *  next, checked exactly), when its clean settle (T_TOUCH.firstTouchTicks of carry at his velocity, then the trap
+   *  lead along the stick) would end less than defendReceiveSettleMargin inside a touchline / goal line, the stick's
+   *  component toward that line becomes defendReceiveInward into the pitch and SPRINT is let go: the receiver of an
+   *  overhit pass sprinted onto it at the line and trapped it over (1.4 throw-ins a match, 18% of all). The first version
+   *  turned every reception within 3 m of a line with any stick component toward it, also those that stayed in (goals
+   *  3.72 against 3.53 without the turn and 3.61 now, 150-match soak). m, 0..1. */
+  defendReceiveSettleMargin: 1.5,
   defendReceiveInward: 0.8,
   /** [QF-13 skeptic] TAI-11 box care: in the own penalty area a careful (well-timed) tackle also needs, at contact, the
    *  carrier at least 2 x T_PLAYER.bodyRadius + defendBoxBodyGap from the tackler and his body (bodyRadius +
@@ -565,8 +570,10 @@ export const T_LEVEL = {
    *  entry, which is the pre-QF-11 behaviour). CPU carrier re-decision period, ticks (TAI-08; T_AI.carrierEvalInterval
    *  for every level before): a top level is patient and carries the ball to the better option (re-deciding every few
    *  ticks takes the first pass that edges ahead). [QF-13] Beginner / Amateur 5 -> 3 / 4 (with keeperReactTicks, after
-   *  the reaction-delay chain fix; see docs/TUNING.md QF-13). */
-  carrierEvalTicks: [3, 4, 5, 5, 6, 12] as readonly number[],
+   *  the reaction-delay chain fix; see docs/TUNING.md QF-13). [QF-13 skeptic] Beginner 3 -> 2: with the skeptic runs'
+   *  fixes Amateur v Beginner had fallen to 64.0% over 400 (69.8% on the first pass's tree); 68.8% with this (Beginner
+   *  keeperReactTicks 60 instead: 68.5%, a keeper a second late; Beginner markGapMul 2.6 / lineRateMul 0.35: 63.8%). */
+  carrierEvalTicks: [2, 4, 5, 5, 6, 12] as readonly number[],
   /** [QF-11] TAI-04 marking distance multiplier of a CPU side (markGap / markGapMid x this): a low level marks loose. */
   markGapMul: [2.0, 1.6, 1.26, 1, 1, 1] as readonly number[],
   /** [QF-11] TAI-04 back-line speed multiplier of a CPU side (lineUpRate / lineDownRate x this): a low level's line
@@ -584,6 +591,15 @@ export const T_LEVEL = {
    *  rash lunges in the box (a beginner's mistake, which the ladder needs); Professional and up are careful. */
   boxRashMul: [1, 1, 0.5, 0, 0, 0] as readonly number[],
   boxSlideMul: [1, 1, 0.5, 0, 0, 0] as readonly number[],
+  /** [QF-13 skeptic] TAI-11 boxClear (1 = on): in the own area a careful tackle also needs the ball clear of the
+   *  carrier's body. On where the quick careful tackles conceded the penalties (World Class 0.75, Legend 1.6-2.0 a match);
+   *  Professional's 0.38 was no excess, and Professional keeps the first pass's tackles (the section 7 bands' reference). */
+  boxBodyClear: [0, 0, 0, 0, 1, 1] as readonly number[],
+  /** [QF-13 skeptic] TAI-11 (1 = on): an opponent intercepting our pass in flight re-arms the reaction delay in full (the
+   *  delay armed when the pass left the foot ran down in flight: a Beginner defender reacted after 46-58 of his 80
+   *  ticks). Below Professional, where the delays are long; Professional and up keep the first pass's chain rule (the
+   *  section 7 bands' reference: goals 3.61 with the re-arm, 3.51 without, 150-match soak). */
+  interceptRearm: [1, 1, 1, 0, 0, 0] as readonly number[],
 } as const;
 
 export const T_INPUT = {

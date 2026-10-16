@@ -141,6 +141,7 @@ import { startPass } from '../kicks/pass';
 import { startShot } from '../kicks/shot';
 import { startThrough } from '../kicks/through';
 import { bodyRadiusOf } from '../players/bodies';
+import { LOCAL_TUNING as LOCO_TUNING } from '../players/locomotion';
 import { COMMON_TUNING, SET_PIECE_RUN, restartLookPoint, takerRunning } from './restartCommon';
 import { LOCAL_TUNING as RESTART_TUNING, isValidTaker, isWalkedSetup, prepareTakerKick, restartTakerSpot } from './restart';
 
@@ -1966,13 +1967,32 @@ function lineUp(s: SimState, p: PlayerState): void {
 
 // ---------------------------------------------------------------- restart API
 
-/** No active player who is down (falling, lying, getting up) within LT.downClear of (x, z). */
+/**
+ * No active player who is down (falling, lying, getting up) within LT.downClear of (x, z). [QF-13 skeptic] Of the
+ * stretch he still slides: a man knocked down at a run is LOCKED on SIM-04's lockedFriction, so the fouled player
+ * slid on up to 2 m from the foul spot after the award, onto (or past) a ball placed beside his starting point (the
+ * ball within 0.95 m of a lying player at 8 of 56 such free kicks, 0.04 m once). The test is on the segment from where
+ * he is to where the slide stops (v^2 / 2 lockedFriction ahead); a spot at exactly LT.downClear is clear (the
+ * candidates below sit there: the rounding of the squared distance no longer rejects them).
+ */
 function clearOfDown(s: SimState, x: number, z: number): boolean {
-  const c2 = LT.downClear * LT.downClear;
+  const c2 = LT.downClear * LT.downClear - 1e-6; // rounding tolerance, m^2
   for (let i = 0; i < NUM_SLOTS; i++) {
     const q = s.players[i]!;
     if (q.active !== 1 || !isDown(q)) continue;
-    const dx = q.x - x, dz = q.z - z;
+    let dx = x - q.x, dz = z - q.z;
+    if (q.moveMode === MoveMode.LOCKED) {
+      const v2 = q.vx * q.vx + q.vz * q.vz;
+      if (v2 > 1e-12) {
+        // Nearest point of the slide [0, len] along his velocity.
+        const sp = Math.sqrt(v2);
+        const len = v2 / (2 * LOCO_TUNING.lockedFriction);
+        const ux = q.vx / sp, uz = q.vz / sp;
+        let a = dx * ux + dz * uz;
+        if (a > len) a = len;
+        if (a > 0) { dx -= ux * a; dz -= uz * a; }
+      }
+    }
     if (dx * dx + dz * dz < c2) return false;
   }
   return true;

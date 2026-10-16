@@ -88,11 +88,15 @@ function scan(n: number, seed: number, level: Difficulty): Scan {
 
 for (const [name, level, seed] of [['Beginner', Difficulty.BEGINNER, 0x11b0], ['Legend', Difficulty.LEGEND, 0x11e0]] as const) {
   describe(`QF-11 whole-match scan at ${name} (2-minute halves)`, () => {
-    const r = scan(4, seed, level);
+    // [QF-13 skeptic] Beginner over 12 matches: QA-13's ratio over its first 4 is a handful of shots (8 of 21 into the
+    // man on the QF-13 skeptic tree, 4 of them in one match), while 16 matches give 0.19 (0.15 on the WIP tree).
+    const r = scan(level === Difficulty.BEGINNER ? 12 : 4, seed, level);
 
     it('the scan saw open play: passes, shots and loose balls', () => {
-      // (A control on the sample, not a band: a patient Legend carrier makes 75-90 ground / driven passes here.)
-      expect(r.passes).toBeGreaterThan(60);
+      // (A control on the sample, not a band: a patient Legend carrier made 75-90 ground / driven passes here; since QF-13
+      // skeptic 50-65: header passes can be intercepted and a turning carrier no longer loses his ball to re-collect it
+      // (16 short Legend matches: 21.6 -> 16.5 a match).)
+      expect(r.passes).toBeGreaterThan(40);
       expect(r.shots).toBeGreaterThan(5);
       expect(r.chaserTicks).toBeGreaterThan(1000);
     });

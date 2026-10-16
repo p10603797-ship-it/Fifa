@@ -200,11 +200,11 @@ describe('QF-4 QA-32 animation in live play', () => {
   });
 
   it('ball contact: kicks meet the ball, dribble touches and first touches reach it (A/B against the reach switched off)', () => {
-    const on = live(4, 2400, 1);
+    const on = live(8, 2400, 1);
     const sw = { ...REACH_SWITCH };
     REACH_SWITCH.kick = 0; REACH_SWITCH.touch = 0; REACH_SWITCH.align = 0;
     let off: Live;
-    try { off = live(4, 2400, 1); } finally { Object.assign(REACH_SWITCH, sw); }
+    try { off = live(8, 2400, 1); } finally { Object.assign(REACH_SWITCH, sw); }
     const kick = (L: Live): number[] => [...(L.contact['KICK/GROUND_PASS'] ?? []), ...(L.contact['KICK/CROSS'] ?? []), ...(L.contact['SHOT/SHOT_NORMAL'] ?? [])];
     const summary = {
       kickOn: median(kick(on)), kickOff: median(kick(off)),

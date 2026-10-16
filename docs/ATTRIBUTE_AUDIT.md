@@ -181,20 +181,21 @@ matchup, preferred formations, offside and fouls on; top-bottom and equal play e
 swapped). Exit code 0 = every target met. Useful flags: `--matches N`, `--suite top-bottom,equal,mirror`,
 `--workers W`, `--seed S`, `--halfMinutes M`, `--difficulty D`, `--cup`, `--json out.json`, `--max-ticks T` (smoke).
 
-Current numbers (QF-13, `npx tsx tools/balance.ts --matches 200 --workers 3`, seeds 1-4, 4-minute halves; seed 1 all
-three suites, seeds 2-4 top-bottom and equal; no failed match). **RESULT: PASS on every seed.**
+Current numbers (QF-13 skeptic, `npx tsx tools/balance.ts --matches 200 --workers 3`, seeds 1-4, 4-minute halves;
+seed 1 all three suites, seeds 2-4 top-bottom and equal; no failed match). **Over 800 every target is met** (seed 1's
+equal pair alone came out at 60.8%, just over its band; the target is judged over the four seeds).
 
 | Matchup | n | A W / D / L | Judged value | Target | Verdict | Goals A-B | Shots A-B | On target A-B |
 |---|---|---|---|---|---|---|---|---|
-| top-bottom: MOS (88) v ROO (62), seed 1 | 200 | 166 / 20 / 14 | wins 83.0% (77.2-87.6) | wins >= 80% | PASS | 2.63-0.58 | 12.6-3.5 | 9.2-2.1 |
-| top-bottom, seeds 1-4 | 800 | 671 / 76 / 53 | wins 83.9% (83.0 / 86.5 / 84.5 / 81.5) | wins >= 80% | PASS | 2.65-0.55 | 13.1-3.6 | 9.6-2.1 |
-| equal: SND (76) v GLA (75), seed 1 | 200 | 90 / 34 / 76 | points 53.5% (46.6-60.3) | points 40-60% | PASS | 1.59-1.39 | 9.0-7.9 | 6.3-5.1 |
-| equal, seeds 1-4 | 800 | 370 / 160 / 270 | points 56.3% (53.5 / 57.3 / 60.0 / 54.3) | points 40-60% | PASS | 1.66-1.39 | 9.0-7.7 | 6.3-5.1 |
-| mirror: GLA (75) v GLA (75), seed 1 | 200 | 83 / 51 / 66 | home points 54.3% (47.3-61.0) | points 40-60% | PASS | - | - | - |
+| top-bottom: MOS (88) v ROO (62), seed 1 | 200 | 165 / 25 / 10 | wins 82.5% (76.6-87.1) | wins >= 80% | PASS | 2.65-0.60 | 12.5-3.7 | 9.3-2.1 |
+| top-bottom, seeds 1-4 | 800 | 669 / 85 / 46 | wins 83.6% (82.5 / 82.0 / 83.5 / 86.5) | wins >= 80% | PASS | 2.66-0.59 | 12.6-3.7 | 9.3-2.1 |
+| equal: SND (76) v GLA (75), seed 1 | 200 | 96 / 51 / 53 | points 60.8% (53.8-67.3) | points 40-60% | (one seed) | 1.74-1.29 | 9.1-7.2 | 6.3-4.6 |
+| equal, seeds 1-4 | 800 | 364 / 179 / 257 | points 56.7% (60.8 / 52.3 / 55.8 / 58.0) | points 40-60% | PASS | 1.72-1.40 | 9.0-7.5 | 6.2-4.8 |
+| mirror: GLA (75) v GLA (75), seed 1 | 200 | 79 / 49 / 72 | home points 51.7% (44.9-58.6) | points 40-60% | PASS | 1.43-1.46 | 8.3-8.8 | 5.5-5.8 |
 
-Reading: the 88-rated club wins in more than four of five matches on every seed (draws 7.5-11%, losses 6-7.5%), with
-60% of the ball and 3.6 times the shots; the closest-rated pair splits points near evenly (SND's 84-rated striker
+Reading: the 88-rated club wins in more than four of five matches on every seed (draws 8-13.5%, losses 4.5-8%), with
+60% of the ball and 3.4 times the shots; the closest-rated pair splits points near evenly (SND's 84-rated striker
 against GLA's 70 keeps it above half). History: 20% at Wave 2 (0-0 matches), 76.9% over 800 after QF-11 (55.3%
-equal), 83.9% now: the rating gap shows through attributes (finishing, shot power, keeper ratings) and the
-composure / vision decision noise (QF-11), and since QF-13 AI defenders no longer clear shots faster than a human
+equal), 83.9% after the QF-13 first pass (56.3% equal), 83.6% now (56.7% equal): the rating gap shows through
+attributes (finishing, shot power, keeper ratings) and the composure / vision decision noise (QF-11), and since QF-13 AI defenders no longer clear shots faster than a human
 could react, which had hidden much of the stronger side's chance creation (docs/TUNING.md, QF-13).

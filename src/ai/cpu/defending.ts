@@ -17,8 +17,8 @@
  *     ball; SPRINT held when an opponent can contest the reception. A ball rolling away from the receiver (ahead of him,
  *     moving away: overhit, or past his meeting point) is run onto with the stick at full speed + SPRINT (an arrival
  *     into a target that moves away would leave him trailing it). No reaction delay (it is our own pass). [QF-13
- *     skeptic] Receiving near a touchline / goal line while running or steering at it, the stick turns into the pitch on
- *     the tick SIM-07 takes the ball (receiveTurn; also branch 6), so the trap does not settle it over the line.
+ *     skeptic] When the trap would settle the ball at a touchline / goal line, the stick turns into the pitch on the
+ *     tick SIM-07 takes the ball (receiveTurn; also branch 6), so the trap does not settle it over the line.
  *  2. Reaction delay running (reactT > 0): keep the current run (stick along his velocity), no buttons.
  *  3. Opponent carrier at his feet (the main case):
  *     - Player choice (every switchEvalTicks, staggered by team, only when SIM-16's lock-out is over and the current
@@ -82,7 +82,7 @@ import { aerialChance } from '../../sim/kicks/aerial';
 import { inSkillVulnerableWindow } from '../../sim/kicks/skills';
 import { inPenaltyArea } from '../../sim/pitch/geometry';
 import { comeOutWanted } from '../../sim/keeper/sweeperHooks';
-import { LOCAL_TUNING as FIRST_TOUCH_LT } from '../../sim/players/firstTouch';
+import { LOCAL_TUNING as FIRST_TOUCH_LT, trapLead } from '../../sim/players/firstTouch';
 import { ticksToReach } from '../../sim/players/locomotion';
 import { createInterceptEstimate, estimateIntercept } from '../steer';
 import { composureNoiseMul, levelParams, levelValue } from './levels';
@@ -213,12 +213,9 @@ export const LOCAL_TUNING = {
   boxClearMargin: T_CPU.defendBoxClearMargin,
   /** ... and the carrier at least two body radii + this from the tackler at contact, m. */
   boxBodyGap: T_CPU.defendBoxBodyGap,
-  /** [QF-13 skeptic] Reception near a line: the stick turned into the pitch (receiveTurn; T_CPU.defendReceive*). m,
-   *  ticks, m/s, 0..1, 0..1. */
-  receiveEdge: T_CPU.defendReceiveEdge,
-  receiveLead: T_CPU.defendReceiveLead,
-  receiveOutSpeed: T_CPU.defendReceiveOutSpeed,
-  receiveOutStick: T_CPU.defendReceiveOutStick,
+  /** [QF-13 skeptic] Reception near a line (receiveTurn): when the clean settle would end less than this inside a line,
+   *  the stick's component toward it becomes receiveInward into the pitch. m, 0..1. */
+  receiveSettleMargin: T_CPU.defendReceiveSettleMargin,
   receiveInward: T_CPU.defendReceiveInward,
 } as const; // TUNING-CR
 
@@ -382,7 +379,10 @@ function tickBrain(s: SimState, team: number, brain: CpuBrainState, lv: LevelPar
     const prev = brain.seenOwner;
     const ours = validSlot(prev) && s.players[prev]!.team === team;
     // [QF-13 skeptic] An opponent taking our pass in flight (an interception) is a turnover too.
-    const intercepted = prev === OUR_PASS && validSlot(key) && s.players[key]!.team !== team;
+    // [QF-13 skeptic, second run] Only where T_LEVEL.interceptRearm says so (below Professional: the long delays the
+    // defect was about); Professional and up keep the first pass's chain rule (the section 7 bands' reference).
+    const intercepted = prev === OUR_PASS && validSlot(key) && s.players[key]!.team !== team &&
+      levelValue(s, team, T_LEVEL.interceptRearm) > 0;
     // Our own pass leaving the passer's foot starts the delay as any change (branch 1 ignores it while the pass flies)
     // and is remembered as OUR_PASS while it is in flight.
     brain.seenOwner = ours && key === -1 && ownPassInFlight(s, team) ? OUR_PASS : key;
@@ -689,8 +689,10 @@ function defendCarrier(
     if (expOn === 1) {
       if (expAge >= lv.tackleTimingTicks && dBall <= T_TACKLE.standReach + L.tackleApproach) {
         const rash = noise01(seed, who, expKey * 4 + 1) < noisy;
-        // [QF-13 skeptic] In our own area a careful tackle also wants the ball clear of the carrier's body (boxClear).
-        if (rash || (wellTimed(s, p, q) && (!inBox || boxClear(s, p, q)))) { pressTackle(brain, lv); return; }
+        // [QF-13 skeptic] In our own area a careful tackle also wants the ball clear of the carrier's body (boxClear), at
+        // the levels whose quick careful tackles gave away the penalties (T_LEVEL.boxBodyClear: World Class, Legend).
+        const careful = !inBox || !(levelValue(s, team, T_LEVEL.boxBodyClear) > 0) || boxClear(s, p, q);
+        if (rash || (wellTimed(s, p, q) && careful)) { pressTackle(brain, lv); return; }
       }
     } else if (dBall <= T_TACKLE.standReach && goalSide) {
       const bucket = Math.floor(s.tick / L.rashBucketTicks);
@@ -830,13 +832,12 @@ function chaseLoose(s: SimState, p: Readonly<PlayerState>): void {
 
 /**
  * [QF-13 skeptic] Receiving near a touchline / goal line (SIM-07 takes the ball this tick or the next: a moving ball at
- * most trap height coming within his reach, he free to take it) with the stick, his run or (stick
- * released: SIM-15 meets the ball) the ball going at the line: the stick's component toward it becomes receiveInward
- * into the pitch (the rest kept: his stick, else the ball's direction) and SPRINT is let go, so SIM-07's clean settle (in
- * the stick direction, at the trap lead) keeps the ball in play. The receiver of an overhit pass sprinted onto it at
- * the line with the stick on the ball, or met it there with the stick released (SIM-15's meeting point on the line),
- * and trapped it over the line: 1.4 throw-ins a match, 18% of all (Professional). "Near" is receiveEdge or his braking
- * distance toward the line + momentumBrakeSlack + receiveLead (the settled ball runs ahead of him), whichever is more.
+ * most trap height coming within his reach, he free to take it) when SIM-07's clean settle (in the stick direction, or
+ * the ball's with the stick released, at the trap lead ahead of where his carry takes him) would end less than
+ * receiveSettleMargin inside the line: the stick's component toward it becomes receiveInward into the pitch (the rest
+ * kept) and SPRINT is let go, so the trap keeps the ball in play. The receiver of an overhit pass sprinted onto it at the
+ * line with the stick on the ball, or met it there with the stick released (SIM-15's meeting point on the line), and
+ * trapped it over the line: 1.4 throw-ins a match, 18% of all (Professional).
  */
 function receiveTurn(s: SimState, p: Readonly<PlayerState>): void {
   const b = s.ball;
@@ -852,17 +853,21 @@ function receiveTurn(s: SimState, p: Readonly<PlayerState>): void {
   let sx: number, sz: number;
   const free = stM > 0 ? 0 : 1;
   if (free === 0) { sx = stX * stM; sz = stZ * stM; } else if (bv > EPS) { sx = b.vx / bv; sz = b.vz / bv; } else return;
-  const brake = 0.5 / T_PLAYER.decel;
-  let ez = p.vz * p.vz * brake + L.momentumBrakeSlack + L.receiveLead;
-  if (ez < L.receiveEdge) ez = L.receiveEdge;
-  let ex = p.vx * p.vx * brake + L.momentumBrakeSlack + L.receiveLead;
-  if (ex < L.receiveEdge) ex = L.receiveEdge;
-  const os = L.receiveOutStick, ov = L.receiveOutSpeed;
+  // [QF-13 skeptic] Only when the trap would end at the line: SIM-07's clean settle leaves the ball trapLead ahead
+  // (along the stick) of where he is when the FIRST_TOUCH window ends (his carry taken at his present velocity, an upper
+  // bound: the window slows him). When that point is less than receiveSettleMargin inside a line, the stick's component
+  // toward it becomes receiveInward into the pitch (a heavy touch goes his way, bent by the incoming ball, so the turn
+  // is a firm one). Turning every reception within 3 m of a line whose stick had any component toward it also turned
+  // receptions that would have stayed in, the attacking ones inside (goals 3.72 against 3.61 now, 150-match soak).
+  const lead = trapLead(s, p.slot);
+  const tw = T_TOUCH.firstTouchTicks / TICK_HZ;
+  const cx = p.x + p.vx * tw, cz = p.z + p.vz * tw;
+  const limX = HALF_LENGTH - L.receiveSettleMargin, limZ = HALF_WIDTH - L.receiveSettleMargin;
   let turned = 0;
-  if (p.z > HALF_WIDTH - ez && (sz > os || p.vz > ov || (free === 1 && b.vz > ov))) { sz = -L.receiveInward; turned = 1; }
-  else if (p.z < -HALF_WIDTH + ez && (sz < -os || p.vz < -ov || (free === 1 && b.vz < -ov))) { sz = L.receiveInward; turned = 1; }
-  if (p.x > HALF_LENGTH - ex && (sx > os || p.vx > ov || (free === 1 && b.vx > ov))) { sx = -L.receiveInward; turned = 1; }
-  else if (p.x < -HALF_LENGTH + ex && (sx < -os || p.vx < -ov || (free === 1 && b.vx < -ov))) { sx = L.receiveInward; turned = 1; }
+  if (cz + sz * lead > limZ) { sz = -L.receiveInward; turned = 1; }
+  else if (cz + sz * lead < -limZ) { sz = L.receiveInward; turned = 1; }
+  if (cx + sx * lead > limX) { sx = -L.receiveInward; turned = 1; }
+  else if (cx + sx * lead < -limX) { sx = L.receiveInward; turned = 1; }
   if (turned === 0) return;
   const m = Math.sqrt(sx * sx + sz * sz);
   if (!(m > EPS)) return;

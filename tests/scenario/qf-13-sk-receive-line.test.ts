@@ -3,8 +3,11 @@
  * sprinted onto it at the line with the stick on the ball (cpuDefend branch 1, the trailing run), or met it there with
  * the stick released (SIM-15's meeting point, clamped onto the line by the first pass), and SIM-07's clean settle (in
  * the stick / arrival direction, at the trap lead) put the ball over the line ahead of him: 1.4 throw-ins a match (18% of
- * all, 16 Professional matches) were a CPU player trapping the ball out of play. Now, about to receive near a line, his
- * stick's component toward it is turned into the pitch (receiveTurn) and the trap keeps the ball in.
+ * all, 16 Professional matches) were a CPU player trapping the ball out of play. Now, about to receive with the trap's
+ * settle point at the line, his stick's component toward it is turned into the pitch (receiveTurn) and the trap keeps
+ * the ball in. [QF-13 skeptic, second run] The turn now triggers only when the predicted clean settle would end less
+ * than T_CPU.defendReceiveSettleMargin inside the line (it turned every reception within 3 m of a line with any stick
+ * component toward it, also those that stayed in, and the goals band went up).
  */
 import { describe, expect, it } from 'vitest';
 import { HALF_LENGTH, HALF_WIDTH } from '../../src/contracts/constants';
@@ -122,7 +125,7 @@ describe('QF-13 skeptic TAI-11: the CPU receiver keeps an overhit pass in at the
         },
       });
     }
-    expect(throwIns).toBeGreaterThan(10);
+    expect(throwIns).toBeGreaterThan(5); // (a control on the sample: 8 here once the traps out are gone)
     expect(trappedOut).toBeLessThanOrEqual(1); // 9 in these 4 matches on the first pass tree
   });
 });
