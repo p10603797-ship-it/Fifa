@@ -26,7 +26,8 @@
  *         style progress (forward), directness (through / long balls), width (crosses); counter-attack bonus per metre
  *         gained (x completion); a settling penalty for a pass right after gaining the ball unless pressed;
  *       - shoot (TAI-10 estimateXg, only when xG >= the level's shotThresholdXg, raised / lowered for long shots by
- *         style longShot): shotXgMul * xG + (1 - xG) * shotMissValue (+ boxShotBonus in the box);
+ *         style longShot): shotXgMul * xG + (1 - xG) * shotMissValue (+ boxShotBonus in the box); [QF-14] beyond
+ *         quickShotDist not offered when the quick-shot cut would leave less than shotMinPowerShare of its hold;
  *       - dribble (TAI-10 bestDribble direction and score; toward goal, away from the nearest opponent ahead when it
  *         gives none): keep chance (pressure x dribbling) * PV(a step ahead) - risk, gain x style dribble;
  *       - skill move (TAI-10 chooseSkill): success estimate from stars and dribbling, beats the man by skillGain m;
@@ -170,6 +171,9 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
   quickShotReach: T_CPU.carrierQuickShotReach,
   quickShotMinClose: T_CPU.carrierQuickShotMinClose,
   quickShotMargin: T_CPU.carrierQuickShotMargin,
+  /** [QF-14] Beyond quickShotDist no shot is offered whose power hold the quick-shot cut would take below this share of
+   *  the planned hold (shotPowerNear..Far for its distance), 0..1. */
+  shotMinPowerShare: T_CPU.carrierShotMinPowerShare,
   /** Finesse shot (MOD_R): distance window m, |z| of the shooter at least m, curve attribute at least. */
   finesseMinDist: 10,
   finesseMaxDist: 24,
@@ -188,7 +192,9 @@ export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* 
    *  risk, so a carrier pressed with no option shields instead of dribbling into the presser [QF-2]. */
   dribbleTightLossMul: T_CPU.carrierDribbleTightLossMul,
   /** Share of the shot value (shotXgMul x xG at the carry's end) a dribble is credited with in the attacking half [INT-A]. */
-  driveShotShare: T_CPU.carrierDriveShotShare, // [QF-2] was 0.8: lower shoots before carrying into the crowd
+  /** [QF-14] In the attacking half a carry into little space risks up to x (1 + this) too (TAI-10 dribble score). */
+  dribbleTightAttackMul: T_CPU.carrierDribbleTightAttackMul,
+  driveShotShare: T_CPU.carrierDriveShotShare, // [QF-2] was 0.8: lower shoots before carrying into the crowd; [QF-14] 0.7 -> 0.35
   /** Score assumed when bestDribble gives no direction. */
   fallbackDribbleScore: 0.4,
   /** Fallback dribble: an opponent within this distance ahead turns the run aside by fallbackTurn (cos/sin of 45 deg), m. */
@@ -365,6 +371,8 @@ export const CARRIER_DEBUG = {
 export const CARRIER_PASS_C = new Float64Array(1);
 /** CARRIER_DEBUG.shotWhy codes. */
 export const SHOT_OFFERED = 0, SHOT_NOT_ATTACKING = 1, SHOT_NO_XG = 2, SHOT_OUT_OF_RANGE = 3, SHOT_BELOW_THRESHOLD = 4, SHOT_FAILED = 5;
+/** [QF-14] CARRIER_DEBUG.shotWhy: the quick-shot cut would leave less than shotMinPowerShare of the planned hold. */
+export const SHOT_RUSHED = 6;
 
 /** [QF-2] Aim side picked by shotOptionInto (-1 / +1 = the post at z < 0 / z > 0), read by commitShot. */
 const SHOT = { side: 1, valid: 0 };
@@ -648,6 +656,15 @@ function shotOptionInto(s: SimState, p: Readonly<PlayerState>, lv: Readonly<Leve
     : 1);
   CARRIER_DEBUG.shotClean = clean; CARRIER_DEBUG.shotClear = clear;
   if (xg < thr) { CARRIER_DEBUG.shotWhy = SHOT_BELOW_THRESHOLD; return; }
+  // [QF-14] Priced as commitShot will strike it: under pressure the power hold is cut to the time before a man ahead
+  // can step onto the line (quickShotTicks). Beyond quickShotDist a shot cut below shotMinPowerShare of its planned
+  // hold is no shot (an 17-20 m/s tap lofted at up to 35 degrees that the keeper gathers or the man blocks).
+  if (dist > LT.quickShotDist && LT.shotMinPowerShare > 0) {
+    const fd = clamp01((dist - LT.shotNearDist) / (LT.shotFarDist - LT.shotNearDist));
+    const h0 = holdFor(LT.shotPowerNear + (LT.shotPowerFar - LT.shotPowerNear) * fd, powerFill(s, C.team));
+    const q = quickShotTicks(s, p, SHOT.side * (GOAL_HALF_WIDTH - LT.shotInset));
+    if (q < h0 * LT.shotMinPowerShare) { CARRIER_DEBUG.shotWhy = SHOT_RUSHED; return; }
+  }
   const blocked = 1 - clear;
   const miss = 1 - xg - blocked;
   let u = xg * LT.shotXgMul + (miss > 0 ? miss : 0) * LT.shotMissValue +
@@ -721,7 +738,8 @@ function dribbleOptionInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<S
   const nprog = (C.dir * (p.x + dx * step)) / HALF_LENGTH;
   // [QF-2] In our own half a carry into little space (TAI-10 score sc near 0) risks more: up to x (1 +
   // dribbleTightLossMul). In the attacking half a tight dribble is how chances are made (and the drive credit prices it).
-  const lossMax = C.prog > 0 ? LT.dribbleLossMax : LT.dribbleLossMax * (1 + LT.dribbleTightLossMul * (1 - sc));
+  // [QF-14] ... and in the attacking half x (1 + dribbleTightAttackMul x (1 - sc)) (a defender holding his ground).
+  const lossMax = LT.dribbleLossMax * (1 + (C.prog > 0 ? LT.dribbleTightAttackMul : LT.dribbleTightLossMul) * (1 - sc));
   const keep = clamp01(1 - lossMax * C.pressure * (1.2 - (0.4 * s.attrs[p.slot]!.dribbling) / 99));
   const nz = p.z + dz * step;
   let vN = posValue(nprog, nz);

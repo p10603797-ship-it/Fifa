@@ -160,6 +160,8 @@ export interface LockstepProvider extends TickInputProvider {
    * until this is true (or a short timeout), so a peer a few ticks behind never waits for a frame nobody resends.
    */
   readonly drained: boolean;
+  /** Every remote frame up to this tick has arrived (stats.remoteContiguous without building the stats object). */
+  readonly remoteContiguous: number;
   /** Packed frames of ticks from..to for both humans (diagnostics, desync reports). */
   describeInputs(fromTick: number, toTick: number): { tick: number; h0: number[] | null; h1: number[] | null }[];
 }
@@ -338,6 +340,7 @@ export function createLockstepProvider(opts: LockstepOptions): LockstepProvider 
     timeSync,
     get holding() { return lastNow < holdUntil; },
     get drained() { return remoteAck >= lastTaken; },
+    get remoteContiguous() { return remoteRing.contiguous; },
     get stats(): LockstepStats {
       return {
         stalls: st.stalls, maxStallMs: Math.max(st.maxStallMs, waiting ? lastNow - stallStart : 0), totalStallMs: st.totalStallMs,

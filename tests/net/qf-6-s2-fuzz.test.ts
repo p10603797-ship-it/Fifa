@@ -10,7 +10,7 @@ import { createOnlinePair, hashState } from './net-06-harness';
 
 const TYPES = [
   'lobby:hello', 'lobby:state', 'lobby:config', 'lobby:leave', 'lobby:reject', 'lobby:x',
-  'session:pause', 'session:resume', 'session:sync', 'session:final', 'session:x',
+  'session:pause', 'session:resume', 'session:sync', 'session:final', 'session:final-req', 'session:final-state', 'session:x',
   'ls:hash', 'ls:snap', 'ls:snap-ok', 'ls:delay', 'ls:target', 'ls:x', 'x', '',
 ];
 const FIELDS = ['human', 'used', 'paused', 'tick', 'h', 'e', 'z', 'i', 'n', 'codec', 'data', 'delay', 'at', 'target', 'mt',

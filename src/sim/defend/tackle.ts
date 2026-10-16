@@ -159,7 +159,9 @@ export const LOCAL_TUNING = { // TUNING-CR
   /** ... and his centre within his radius + this of that line, m. */
   blockLateral: 0.25,
   // ---- success model
-  baseChance: 0.5,
+  /** [QF-14] was 0.5: a front standing tackle at a close ball won about 30% (22% of all tackles), every lost one with the
+   *  carrier's body in the zone a foul; 0.7: 28% of all tackles, fouls 13.5 -> 12.8 a match (docs/TUNING.md QF-14). */
+  baseChance: 0.7,
   /** Weight of (tackle skill - resistance), both 0..1. */
   attrWeight: 0.55,
   /** Resistance = weights x (dribbling, ballControl, strength) (attr 1..99 -> 0..1). */

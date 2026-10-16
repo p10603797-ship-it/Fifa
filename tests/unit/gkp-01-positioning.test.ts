@@ -111,9 +111,10 @@ describe('GKP-01 spot geometry: angles', () => {
         expect(lateral).toBeGreaterThanOrEqual(prev - EPS);
         prev = lateral;
       }
-      expect(prev).toBeGreaterThan(3);
+      // [QF-14] T_GK.depthFar 4.5 -> 3: a keeper nearer his line needs less lateral shift to cover (was > 3).
+      expect(prev).toBeGreaterThan(2.5);
       // ... then holding the near-post side.
-      for (let w = 19; w <= 34; w += 0.25) expect(side * spotFor(1, 11, side * w).z).toBeGreaterThan(3);
+      for (let w = 19; w <= 34; w += 0.25) expect(side * spotFor(1, 11, side * w).z).toBeGreaterThan(2.5);
     }
   });
 
@@ -322,7 +323,8 @@ describe('GKP-01 idealKeeperSpot', () => {
       s.attrs[k]!.gkPositioning = pos;
       s.ball.vz = 0; idealKeeperSpot(s, 0, still);
       s.ball.vz = 6; idealKeeperSpot(s, 0, moving);
-      expect(sign * (moving.z - still.z)).toBeGreaterThan(0.1);
+      // [QF-14] depthFar 4.5 -> 3: the anticipation shift scales with his depth (was > 0.1).
+      expect(sign * (moving.z - still.z)).toBeGreaterThan(0.06);
     }
   });
 

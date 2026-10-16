@@ -397,7 +397,10 @@ export function createLobby(opts: LobbyOptions): Lobby {
       // finishing our last ticks: matchEnded() brings us to the lobby).
       if (isHost) notices.emit({ kind: 'rejoin-request', nickname, token: typeof m.token === 'string' ? m.token.slice(0, 64) : '' });
       else sendHello();
-      return;
+      if (phase === 'playing' || !isHost) return;
+      // The session had finished its match and went back to the room on this request (QF-15: the friend's page reloaded
+      // after our full time): the new page joins as a fresh guest and needs our hello.
+      helloSent = false;
     }
     if (!helloSent) sendHello();
     const fresh = peer === null;

@@ -276,7 +276,7 @@ export const T_GK = {
   /** Auto release for humans after this many ticks. */
   autoReleaseTicks: 330,
   /** Positioning: depth off the line, m, at long range / close range. */
-  depthFar: 4.5,
+  depthFar: 3.0, // [QF-14] was 4.5: dipping long shots (24-28 m/s, up to 4-5 m high) dropped in behind him
   depthNear: 1.2,
   /** Rush threshold: through ball arrives within this many m of goal. */
   rushDistance: 18,
@@ -475,9 +475,14 @@ export const T_CPU = {
   carrierQuickShotReach: 1.1,
   carrierQuickShotMinClose: 3,
   carrierQuickShotMargin: 0.05,
+  /** [QF-14] TAI-08: beyond carrierQuickShotDist no shot is offered whose power hold the quick-shot cut would take below
+   *  this share of the planned hold (a 17-20 m/s tap lofted at up to 35 degrees: 5.3 a match beyond 12 m, 0 goals in
+   *  318; 0.3-0.6 power still scored 7%), 0..1. */
+  carrierShotMinPowerShare: 0.4,
   carrierDribbleLossMax: 0.15,
   carrierDribbleTightLossMul: 1.4,
-  carrierDriveShotShare: 0.7,
+  carrierDribbleTightAttackMul: 0,
+  carrierDriveShotShare: 0.35, // [QF-14] was 0.7: carriers dribbled into the crowd instead of shooting (with the rushed taps gone)
   carrierKeeperDribblePenalty: 0.01,
   carrierShieldRestMinTicks: 60,
   carrierShieldHoldMul: 0.93,
@@ -540,6 +545,12 @@ export const T_CPU = {
    *  Professional); now about 0.4 at Legend. m, m. */
   defendBoxClearMargin: 0.3,
   defendBoxBodyGap: 0.6,
+  /** [QF-14] TAI-11 patience: once the carrier has had the ball this long (0 = off) the CPU's controlled defender stops
+   *  backing off at the carrier's speed and holds his ground defendStepInStandoff goal-side of him (no velocity lead). A
+   *  close-control dribbler is never exposed, so he was jockeyed from the halfway line into the six-yard box (up to 27 s;
+   *  0.6 such escorts a match, 1.35 without the rushed long shots); 90 / 0.9: 0.45 a match, the longest 10 s. Ticks, m. */
+  defendPatienceGoalDist: 200,
+  defendStepInStandoff: 0.9,
 } as const;
 
 /** Per-difficulty AI parameters, indexed by Difficulty (0 Beginner .. 5 Legend). Never physics. */
@@ -590,6 +601,9 @@ export const T_LEVEL = {
    *  (real football about 0.3), 1.2 in the 88 v 62 balance pair, half the weaker club's goals. A low level keeps its
    *  rash lunges in the box (a beginner's mistake, which the ladder needs); Professional and up are careful. */
   boxRashMul: [1, 1, 0.5, 0, 0, 0] as readonly number[],
+  /** [QF-14] TAI-11 patience by level (T_CPU.defendStepInStandoff): ticks the carrier has had the ball before the CPU's
+   *  controlled defender holds his ground instead of backing off at his speed (0 = never). */
+  patienceTicks: [90, 90, 90, 90, 90, 90] as readonly number[],
   boxSlideMul: [1, 1, 0.5, 0, 0, 0] as readonly number[],
   /** [QF-13 skeptic] TAI-11 boxClear (1 = on): in the own area a careful tackle also needs the ball clear of the
    *  carrier's body. On where the quick careful tackles conceded the penalties (World Class 0.75, Legend 1.6-2.0 a match);

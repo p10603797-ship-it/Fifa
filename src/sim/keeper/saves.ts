@@ -18,8 +18,12 @@
  *     the line and takes it standing.
  *   - DIVE: a sample his hands can reach in time -> GK_CATCH tracking toward it until the latest tick that still
  *     gets the hands there (commitSlackTicks), then GK_DIVE toward that point (the nearest reachable sample).
- *   - nothing reachable -> he moves toward the ball's path (GK_CATCH, re-planning every tick) and, close to the
- *     ball's arrival, makes a despairing GK_DIVE toward the closest approach timed to full stretch (beaten).
+ *   - [QF-14] DROP: nothing reachable where he stands but the ball comes down behind his plane (a dipping long shot):
+ *     the first such sample he reaches by backpedalling (the sprint jockey cap) with an arms-only leap left -> GK_CATCH
+ *     in CATCH_DROP toward it (re-planned every tick).
+ *   - nothing reachable -> he moves toward the ball's path (GK_CATCH, re-planning every tick; [QF-14] at the sprint
+ *     jockey cap, saveKinematics trackSprint) and, close to the ball's arrival, makes a despairing GK_DIVE toward the
+ *     closest approach timed to full stretch (beaten).
  *  Never a new save action once the ball is planeBackReach behind his plane (it has passed him). [QF-11 skeptic] While
  *  such a ball is still on its way into the mouth at threat speed (passedHim) he stays put (a running GK_CATCH is kept,
  *  an idle keeper plants), so SIM-07 never gives him a first touch on it from behind.
@@ -66,7 +70,7 @@ import {
 // actions/dispatch (-> registry) before keeper/handling so the registry never meets a half-evaluated handler module.
 import { beginAction, endAction } from '../actions/dispatch';
 import {
-  BALL_RADIUS, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, NUM_SLOTS,
+  BALL_RADIUS, DT, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, NUM_SLOTS,
   PENALTY_AREA_DEPTH, PENALTY_AREA_HALF_WIDTH,
 } from '../../contracts/constants';
 import { ActionKind, CrossKind, KickKind, MatchPhase, SaveKind, isFootPassKind } from '../../contracts/enums';
@@ -74,7 +78,7 @@ import { EventType, type EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type BallState, type PlayerAttrs, type SimState } from '../../contracts/state';
 import { createKickLaunch, MAX_PREDICT_TICKS } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_GK, T_LEVEL } from '../../contracts/tuning';
+import { T_BALL, T_GK, T_LEVEL, T_PLAYER } from '../../contracts/tuning';
 import { ballStepTick } from '../ball/contact';
 import { attr, clamp, clamp01, datan2, dcos, dsin, lerp, PI } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
@@ -98,7 +102,8 @@ const KIN = createKeeperKin();
 const PLAN = {
   /** Index of the first predicted sample with the whole ball over the goal line (-1 none). */
   g: -1,
-  /** 0 none, 1 stand, 2 dive, 3 hopeless dive, 4 track (move toward the ball's path, nothing reachable yet). */
+  /** 0 none, 1 stand, 2 dive, 3 hopeless dive, 4 track (move toward the ball's path, nothing reachable yet), 5 drop
+   *  back (QF-14). */
   kind: 0,
   /** Chosen sample, its distance from the keeper and the ticks until it arrives / the hands need. */
   i: -1,
@@ -112,10 +117,15 @@ const PLAN_STAND = 1;
 const PLAN_DIVE = 2;
 const PLAN_HOPELESS = 3;
 const PLAN_TRACK = 4;
-/** GK_CATCH actA: tracking toward a save spot (a dive may follow) / set to take it standing / planted, not reacted. */
+/** [QF-14] Drop back toward a sample behind his plane (GK_CATCH in CATCH_DROP). */
+const PLAN_DROP = 5;
+/** GK_CATCH actA: tracking toward a save spot (a dive may follow) / set to take it standing / planted, not reacted /
+ *  [QF-14] dropping back. */
 const CATCH_TRACK = 0;
 const CATCH_STAND = 1;
 const CATCH_PLANTED = 2;
+/** [QF-14] Dropping back behind his plane (saveKinematics catchHandler: backpedal at sprint). */
+const CATCH_DROP = 3;
 
 /** Segment-segment closest points. */
 const SEG = { s: 0, t: 0, d2: 0, ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0 };
@@ -435,9 +445,36 @@ function planIntercept(s: SimState, team: number, k: number): void {
     if (d <= reach && d < diveD - EPS && y <= kinDiveTop(kin, d) && kinDiveTicks(kin, d) <= t) { diveI = i; diveD = d; }
     if (y <= hopeTop && d < hopeD - EPS) { hopeI = i; hopeD = d; }
   }
+  // [QF-14] Drop back: nothing reachable where he stands, but the ball comes down behind his plane (a lofted long shot
+  // over a keeper off his line) where he can get to it: the first such sample he reaches standing after backpedalling
+  // (facing the ball, sprinting: SIM-04 caps that at topSpeed x jockeySpeedFraction, from rest at his acceleration,
+  // starting dropSlackTicks late) is tracked with GK_CATCH in CATCH_DROP (re-planned every tick, so the standing or
+  // diving save takes over as he gets there). He used to make a hopeless dive where he stood while the ball dropped in
+  // behind him (long shots from 28 m+: 10 goals from 80 in 25 Professional matches).
+  let dropI = -1;
+  if (standI < 0 && diveI < 0 && L.dropBack > 0) {
+    const dir = s.teams[team]!.dir;
+    const kd = depthOf(dir, p.x);
+    let vb = (a.topSpeed > 0 ? a.topSpeed : T_PLAYER.topSpeedMin) * T_PLAYER.jockeySpeedFraction;
+    if (!(vb > 0.5)) vb = 0.5;
+    const ab = kin.accel > 0.5 ? kin.accel : 0.5;
+    const tAcc = vb / ab;
+    const top = kinDiveTop(kin, 0);
+    const arms = kin.ar + CAP_TOL;
+    for (let i = 0; i < end; i++) {
+      if (!(depthOf(dir, PX[i]!) < kd) || PY[i]! > top) continue;
+      const dx = PX[i]! - p.x, dz = PZ[i]! - p.z;
+      const d = Math.sqrt(dx * dx + dz * dz);
+      // He gets there backpedalling, then has the arms-only leap (diveWindupTicks) left.
+      const tau = (i + 1 - L.dropSlackTicks - L.diveWindupTicks) * DT;
+      const run = tau <= 0 ? 0 : tau <= tAcc ? 0.5 * ab * tau * tau : 0.5 * vb * tAcc + vb * (tau - tAcc);
+      if (d <= arms + run) { dropI = i; break; }
+    }
+  }
   let i: number;
   if (standI >= 0) { PLAN.kind = PLAN_STAND; i = standI; PLAN.d = standD; }
   else if (diveI >= 0) { PLAN.kind = PLAN_DIVE; i = diveI; PLAN.d = diveD; }
+  else if (dropI >= 0) { PLAN.kind = PLAN_DROP; i = dropI; PLAN.d = 0; }
   else if (hopeI >= 0 && hopeD <= reach * L.hopelessReachMul && hopeI + 1 <= L.hopelessMaxTicks) {
     PLAN.kind = PLAN_HOPELESS; i = hopeI; PLAN.d = hopeD;
   } else if (hopeI >= 0) {
@@ -579,6 +616,10 @@ export function keeperSaveDecision(s: SimState, team: number, ev: EventSink): vo
   if (act === ActionKind.GK_RUSH) endAction(s, k, 1);
   if (PLAN.kind === PLAN_STAND) {
     setCatch(s, team, k, PLAN.x, PLAN.y, PLAN.z, PLAN.arrive, CATCH_STAND);
+    return;
+  }
+  if (PLAN.kind === PLAN_DROP) {
+    setCatch(s, team, k, PLAN.x, PLAN.y, PLAN.z, PLAN.arrive, CATCH_DROP);
     return;
   }
   const commit = PLAN.kind !== PLAN_TRACK && PLAN.arrive - PLAN.need <= L.commitSlackTicks;

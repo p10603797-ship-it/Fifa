@@ -181,6 +181,12 @@ export interface DesyncGuard {
   readonly stats: Readonly<DesyncStats>;
   readonly reports: readonly DesyncReport[];
   /**
+   * Guest: while held, a received snapshot is kept but not applied (QF-15: the online session passed the friend's
+   * final whistle and waits for its final state instead; a snapshot applied then rewound the game). Default false.
+   */
+  hold(on: boolean): void;
+  readonly held: boolean;
+  /**
    * The link dropped and came back (transport 'connected' again): reliable messages in flight died with the old link.
    * Host: a snapshot still unacknowledged is sent again (fresh state, next epoch). Guest: partial snapshot chunks are
    * dropped (the rest never comes).
@@ -223,6 +229,7 @@ export function createDesyncGuard(opts: DesyncGuardOptions): DesyncGuard {
   let seed = 0;
   let busy = 0;
   let disposed = false;
+  let held = false;
   let verifyAfter = -1;
   // host
   let snapRequested = false;
@@ -434,8 +441,12 @@ export function createDesyncGuard(opts: DesyncGuardOptions): DesyncGuard {
           return false;
       }
     },
+    hold(on) {
+      held = on;
+    },
+    get held() { return held; },
     applyPending(s) {
-      if (isHost || disposed || !pending || s.tick < pending.tick) return false;
+      if (isHost || disposed || held || !pending || s.tick < pending.tick) return false;
       const p = pending;
       pending = null;
       const fromTick = s.tick;

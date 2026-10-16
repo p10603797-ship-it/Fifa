@@ -10,6 +10,7 @@ import { encodeSnapshotSync } from '../../src/net/desync';
 import type { SimState } from '../../src/contracts/state';
 import { cloneState } from '../../src/sim/core/clone';
 import { createOnlinePair, hashState } from './net-06-harness';
+import { finalWhistleTick, lastHashedTick } from './qf-15-harness';
 
 type Pair = ReturnType<typeof createOnlinePair>;
 
@@ -90,23 +91,59 @@ describe('QF-6 glitch list: online', () => {
   }, 120_000);
 
   it('glitch: desync — a divergence after the last 30-tick hash (the final whistle) is caught at full time and reported on both sides', async () => {
+    // [QF-15] Since T_RULES.fullTimeMinTicks (90) the whistle phase lasts >= 90 ticks, so the first FULL_TIME tick (this
+    // test's old nudge point) is no longer after the last periodic hash: three hash ticks follow it, the host's snapshot
+    // repairs it and 'ok' is the right verdict (checked below). The nudge now goes to the first tick after the last
+    // hash the exchange computes before POST_MATCH, found by a dry run of the same deterministic pair.
+    const post = await finalWhistleTick();
+    const last = lastHashedTick(post);
+    const at = last + 1;
+    expect(at).toBeLessThanOrEqual(post);
     const h = createOnlinePair();
     await h.startMatch();
     let hit = -1;
     h.guest.onTick = (s) => {
-      if (hit < 0 && s.match.phase === MatchPhase.FULL_TIME) {
+      if (hit < 0 && s.tick === at) {
+        expect(s.match.phase).toBe(MatchPhase.FULL_TIME);
         hit = s.tick;
-        s.players[7]!.x += 0.4; // diverges during the full-time whistle, a tick or two before POST_MATCH
+        s.players[7]!.x += 0.4; // diverges during the full-time whistle, after the last state-hash exchange
       }
     };
     await toFullTime(h);
     await h.run(500);
-    expect(hit).toBeGreaterThan(0);
+    expect(hit).toBe(at);
+    expect(h.host.state!.tick).toBe(post);
+    expect(hashState(h.host.state!)).not.toBe(hashState(h.guest.state!)); // the 30-tick exchange never saw it
     // was: nothing noticed it (no hash exchange after the final tick): two different final states, no report
     expect(h.host.os!.stats.finalCheck).toBe('mismatch');
     expect(h.guest.os!.stats.finalCheck).toBe('mismatch');
     expect(h.host.logs.some((l) => l.includes('desync at full time'))).toBe(true);
+    expect(h.guest.logs.some((l) => l.includes('desync at full time'))).toBe(true);
+    expect(h.host.notices.some((n) => n.includes('did not agree at the final whistle'))).toBe(true);
     expect(h.guest.notices.some((n) => n.includes('did not agree at the final whistle'))).toBe(true);
+    expect(h.host.os!.status.kind).toBe('finished');
+    expect(h.guest.os!.status.kind).toBe('finished');
+    expect(h.host.lobby.phase).toBe('lobby'); // ended cleanly: the room stays open for a rematch
+    expect(h.guest.lobby.phase).toBe('lobby');
+
+    // The old nudge point (the first FULL_TIME tick) is now inside the repair window: caught, resynced, verdict 'ok'.
+    const r = createOnlinePair();
+    await r.startMatch();
+    let early = -1;
+    r.guest.onTick = (s) => {
+      if (early < 0 && s.match.phase === MatchPhase.FULL_TIME) {
+        early = s.tick;
+        s.players[7]!.x += 0.4;
+      }
+    };
+    await toFullTime(r);
+    await r.run(500);
+    expect(early).toBeGreaterThan(0);
+    expect(post - early).toBeGreaterThanOrEqual(90);
+    expect(r.guest.os!.stats.resyncs).toBe(1);
+    expectInSync(r);
+    expect(r.host.os!.stats.finalCheck).toBe('ok');
+    expect(r.guest.os!.stats.finalCheck).toBe('ok');
   }, 120_000);
 
   it('glitch: rematch starting with stale state — late packets, hashes and a whole snapshot of match 1 never reach match 2', async () => {

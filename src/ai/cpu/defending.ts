@@ -29,6 +29,10 @@
  *     - Approach goal-side with the stick: the guard point is standoff (by pressIntensity) goal-side of the carrier
  *       (on the line to the centre of our goal), led by his velocity (look-ahead capped by lookAheadTicks). Not yet
  *       goal-side: a recovery point deeper and to his side of the carrier, sprinting. Arrival ramp near the point.
+ *       [QF-14] Patience: once the carrier has had the ball T_LEVEL.patienceTicks (within patienceGoalDist of our
+ *       goal), no lead and a standoff of at most
+ *       stepInStandoff: he holds his ground instead of backing off at the carrier's speed (a close-control dribbler is
+ *       never exposed, so he was escorted into the six-yard box).
  *     - Contain (PASS held) when he dribbles at speed (containSpeed) and we are goal-side within containDist.
  *     - Jockey (SHIELD held) when goal-side within jockeyDist (~3 m); sprint jockey when he is quick.
  *     - Second defender (MOD_R held) while he is in our final third (secondDefDist from our goal line).
@@ -160,6 +164,14 @@ export const LOCAL_TUNING = {
   turnCos: 0.6,
   /** Standing tackle: ball within standReach + this of the defender now, m. */
   tackleApproach: 0.4,
+  /** [QF-14] Patience: once the carrier has had the ball T_LEVEL.patienceTicks (0 = off) within patienceGoalDist of our
+   *  goal, the engaged defender stops backing off
+   *  at the carrier's speed: his guard point is stepInStandoff goal-side of where the carrier is (no velocity lead). A
+   *  close-control dribbler is never exposed (exposeDist), so the CPU used to jockey him, backing off, from the halfway
+   *  line into the six-yard box (27 s, seed 1 #0) without a tackle; held up, he must turn (an exposure), pass or shoot.
+   *  Ticks, m. */
+  patienceGoalDist: T_CPU.defendPatienceGoalDist,
+  stepInStandoff: T_CPU.defendStepInStandoff,
   /** Rash lunge at a carrier with the ball at his feet: chance per rashBucketTicks = decisionNoise x this. */
   rashLungeChance: T_CPU.defendRashLungeChance,
   rashBucketTicks: 30,
@@ -478,6 +490,15 @@ function wellTimed(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerStat
 }
 
 /**
+ * [QF-14] The carrier (not a keeper) has had the ball the defending team's T_LEVEL.patienceTicks (0 = never) and is
+ * within patienceGoalDist of our goal centre (`gl`): the defender holds his ground.
+ */
+function patienceOver(s: SimState, team: number, q: Readonly<PlayerState>, gl: number): boolean {
+  const pt = levelValue(s, team, T_LEVEL.patienceTicks);
+  return pt > 0 && q.isKeeper !== 1 && s.ball.ownerT >= pt && gl <= L.patienceGoalDist;
+}
+
+/**
  * [QF-13 skeptic] In our own penalty area a careful tackle also wants the ball clear of the carrier's body at contact
  * (the positions wellTimed predicts): the carrier further from the tackler than body contact (two body radii +
  * boxBodyGap) and his body (bodyRadius + boxClearMargin) off the line from the tackler to the ball or beyond the ball,
@@ -607,14 +628,17 @@ function defendCarrier(
   if (gl > EPS) { gx /= gl; gz /= gl; } else { gx = -dir; gz = 0; }
   gX = gx; gZ = gz;
   const qs = Math.sqrt(q.vx * q.vx + q.vz * q.vz);
-  const standoff = L.standoffLow + (L.standoffHigh - L.standoffLow) * (lv.pressIntensity < 0 ? 0 : lv.pressIntensity > 1 ? 1 : lv.pressIntensity);
+  let standoff = L.standoffLow + (L.standoffHigh - L.standoffLow) * (lv.pressIntensity < 0 ? 0 : lv.pressIntensity > 1 ? 1 : lv.pressIntensity);
+  // [QF-14] Patience over (see patienceTicks): hold the ground stepInStandoff in front of him, no lead.
+  const patient = patienceOver(s, team, q, gl);
+  if (patient && standoff > L.stepInStandoff) standoff = L.stepInStandoff;
 
   // Guard point for player choice: from the current player's distance.
   let d0x = p0.x - q.x, d0z = p0.z - q.z;
   let d0 = Math.sqrt(d0x * d0x + d0z * d0z);
   const leadCap = (lv.lookAheadTicks * L.leadLookAheadFrac) / TICK_HZ;
   let lead = d0 / L.leadRefSpeed;
-  if (lead > leadCap) lead = leadCap;
+  if (patient) lead = 0; else if (lead > leadCap) lead = leadCap;
   const guardX = q.x + q.vx * lead + gx * standoff;
   const guardZ = q.z + q.vz * lead + gz * standoff;
 
@@ -633,7 +657,7 @@ function defendCarrier(
     d0x = p.x - q.x; d0z = p.z - q.z;
     d0 = Math.sqrt(d0x * d0x + d0z * d0z);
     lead = d0 / L.leadRefSpeed;
-    if (lead > leadCap) lead = leadCap;
+    if (patient) lead = 0; else if (lead > leadCap) lead = leadCap;
   }
   const d = d0;
   const cosG = d > EPS ? (d0x * gx + d0z * gz) / d : 1;

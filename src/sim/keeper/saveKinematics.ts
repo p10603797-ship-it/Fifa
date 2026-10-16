@@ -81,6 +81,12 @@ export const LOCAL_TUNING = {
   setHoldTicks: 4,
   /** Commit a dive when (ticks until the ball arrives) - (ticks the hands need) <= this. */
   commitSlackTicks: 2,
+  /** [QF-14] Drop back (GKP-02 planIntercept, 1 = on): with nothing reachable where he stands, track the first sample
+   *  behind his plane he can reach standing after backpedalling (SIM-04 jockey cap at sprint), starting this late. */
+  dropBack: 1,
+  dropSlackTicks: 8,
+  /** [QF-14] GK_CATCH tracking / dropping back moves at the sprint jockey cap (1) instead of the jog one (0). */
+  trackSprint: 1,
   // ---- perception
   /** Screening: radius around the sight line m, extra reaction ticks per screening player, max players counted. */
   screenRadius: 0.7,
@@ -373,7 +379,9 @@ export const catchHandler: ActionHandler = {
     p.lookAt = 1;
     p.lookX = b.x;
     p.lookZ = b.z;
-    p.wantSprint = 0;
+    // [QF-14] Tracking a shot's path or dropping back (GKP-02 CATCH_TRACK 0 / CATCH_DROP 3): shuffle at sprint (SIM-04's
+    // jockey cap of top speed, not of jog: 2 m/s sideways let a long shot's path run 3-5 m from him).
+    p.wantSprint = p.actA === 0 || p.actA === 3 ? L.trackSprint : 0;
     if (p.actDone === 1) {
       p.moveMode = MoveMode.STOP;
       return;

@@ -47,18 +47,29 @@
  * Rematch: every match gets a new session and provider. Messages of the lockstep ('ls:') carry a match tag and input
  * packets from another match are dropped by tick range, so a late packet of the last match never reaches the new one.
  * At full time the provider keeps pumping until the other side holds every frame (provider.drained, ~2 s at most).
+ *
+ * Final whistle (QF-6, QF-15): the 30-tick hash exchange never sees the last ticks before POST_MATCH (both apps stop
+ * ticking there), so each side sends 'session:final' { tick, h } with the hash of its POST_MATCH state and compares it
+ * with the friend's: a mismatch is logged ('desync at full time', seed, both hashes, the inputs) and noticed on both
+ * sides (stats.finalCheck). A divergence there that moves the final whistle itself (the full-time timer, a skip) left
+ * one side finished and the other in FULL_TIME waiting for frames that never come: nothing was reported and the late
+ * side showed "not responding" after 20 s. Now the late side notices as soon as it passes the friend's final tick
+ * without its own whistle (the friend's frames end there too), reports the mismatch, holds resync snapshots and asks
+ * for the friend's final state ('session:final-req' { tick, h }); the finished side reports it as well and answers
+ * with its POST_MATCH state ('session:final-state' { tick, i, n, data } JSON chunks); the late side hard-syncs to it on
+ * its next tick, so both reach the full-time screen with the same final state and the room stays open for a rematch.
  */
 import { ANY_DEVICE, createCommandQueue, createLocalInputProvider, mergeInputFrame } from '../app/localInput';
 import type { AppContext, MatchHooks, MatchSetup, MatchSummary, SessionControl, TickInputProvider } from '../contracts/app';
 import { MAX_HUMANS } from '../contracts/constants';
-import { Command, ControllerKind } from '../contracts/enums';
+import { Command, ControllerKind, MatchPhase } from '../contracts/enums';
 import {
   clearInputFrame, copyInputFrame, createInputFrame, type CameraProjector, type InputFrame, type InputSampleContext,
   type InputSource,
 } from '../contracts/input';
 import type { MatchConfig, ReadonlySimState, SimState } from '../contracts/state';
 import { T_NET } from '../contracts/tuning';
-import { copyState } from '../sim/core/clone';
+import { cloneState, copyState } from '../sim/core/clone';
 import { hashHex, hashState } from '../sim/core/hash';
 import { deserializeState } from '../sim/core/serialize';
 import { computeTargetDelay, NET_DELAY_MAX } from './adaptive';
@@ -102,6 +113,9 @@ const LOCAL_TUNING = {
   startWaitMs: 45_000,
   /** Silence grace announced to the transport for the match warm-up (both sides), ms. */
   loadBusyMs: 30_000,
+  /** Finished side: answers to 'session:final-req' sent at most this many times per match (a garbled peer cannot make
+   *  it send its whole state again and again), count. */
+  finalStateReplies: 4,
 } as const; // TUNING-CR
 
 export const SESSION_PAUSE = 'session:pause';
@@ -113,6 +127,13 @@ export const SESSION_END = 'session:end';
 export const SESSION_FINAL = 'session:final';
 /** { human, used }: host -> guest, the guest's pause number `used` lost a tie with the host's and does not count. */
 export const SESSION_VOID = 'session:void';
+/**
+ * { tick, h, mt }: this side went past the friend's final tick (its 'session:final') without reaching POST_MATCH; tick
+ * and h are its own state now. The finished side answers with SESSION_FINAL_STATE.
+ */
+export const SESSION_FINAL_REQ = 'session:final-req';
+/** { tick, i, n, data, mt }: chunk i of n of the finished side's POST_MATCH state (serializeState JSON). */
+export const SESSION_FINAL_STATE = 'session:final-state';
 
 export const STALL_INDICATOR_MS: number = LOCAL_TUNING.stallIndicatorMs;
 export const DRAIN_MS: number = LOCAL_TUNING.drainMs;
@@ -168,8 +189,11 @@ export interface OnlineStats {
   /**
    * Full-time check: the hashes of both final states ('pending' until both are known). The 30-tick hash exchange never
    * sees the last ticks (the app stops ticking at POST_MATCH), so a divergence there would otherwise go unnoticed.
+   * Also 'mismatch' as soon as this side passes the friend's final tick without its own final whistle.
    */
   finalCheck: 'pending' | 'ok' | 'mismatch';
+  /** This side took the friend's final state at full time (its own game had not reached the final whistle). */
+  finalAdopted: boolean;
 }
 
 /** The TickInputProvider of an online match (lockstep, then local play after Finish against CPU). */
@@ -406,6 +430,16 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
   let finalLocal: { tick: number; h: number } | null = null;
   let finalRemote: { tick: number; h: number } | null = null;
   let finalCheck: 'pending' | 'ok' | 'mismatch' = 'pending';
+  /** Finished side: a copy of our POST_MATCH state, sent to a friend whose game went past our final whistle. */
+  let finalState: SimState | null = null;
+  let finalReplies = 0;
+  /** Late side: our state when we passed the friend's final tick (sent with every request), and that final tick. */
+  let passedFinal: { tick: number; h: number } | null = null;
+  let passedFinalOf = -1;
+  /** Late side: chunks of the friend's final state being collected, then the state to hard-sync to on the next tick. */
+  let finalIn: { tick: number; n: number; parts: (string | undefined)[]; got: number } | null = null;
+  let pendingFinal: SimState | null = null;
+  let finalAdopted = false;
   const status: OnlineStatus = {
     kind: 'starting', waitingMs: 0, pausedBy: -1, pauseLeftMs: 0, rejoinLeftMs: 0, reason: null, opponent: opponentName(),
   };
@@ -457,6 +491,8 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
   let lockstepFirst = firstTick;
   let inner: LockstepProvider | null = makeLockstep(firstTick, start.delay);
   let lastTaken = firstTick - 1;
+  /** Highest tick ever taken (a resync may rewind lastTaken a few ticks; frames we sent reach past this one). */
+  let maxTaken = lastTaken;
 
   function makeLockstep(first: number, delay: number): LockstepProvider {
     view.lastTaken = first - 1;
@@ -764,34 +800,163 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
     const paused = !finished && ctx.session.paused && ctx.session.pausedBy === local;
     send({ type: SESSION_SYNC, paused, used: used[local], tick: lastTaken });
     sendFinal(); // (again) after a drop at full time
+    if (passedFinal && !pendingFinal && !finished) requestFinalState(); // the answer may have died with the old link
   }
 
   function sendFinal(): void {
     if (finalLocal) send({ type: SESSION_FINAL, tick: finalLocal.tick, h: finalLocal.h, mt: view.tag });
   }
 
+  /** A final tick / hash pair from the wire, or null when garbled. */
+  function finalOf(m: ControlMessage): { tick: number; h: number } | null {
+    if (m.mt !== view.tag || typeof m.h !== 'number' || !Number.isFinite(m.h)) return null;
+    const tick = intIn(m.tick, 0, 0x7fffffff, -1);
+    return tick < 0 ? null : { tick, h: m.h >>> 0 };
+  }
+
+  /**
+   * The friend's own frames contradict a final whistle at f.tick (QF-15 skeptic): a game that finished there generated
+   * frames up to f.tick + its input delay (<= NET_DELAY_MAX), or up to NET_DELAY_MAX more when a resync snapshot or the
+   * final hard-sync rewound it after it had gone past that tick. Frames beyond that mean it played on: the final is
+   * stale or garbled, and kept it would spoil the comparison at our own whistle (a false 'mismatch' on one side).
+   */
+  function contradicted(f: { tick: number }): boolean {
+    return inner !== null && inner.remoteContiguous > f.tick + 2 * NET_DELAY_MAX;
+  }
+
+  function dropContradictedFinal(): void {
+    const fr = finalRemote;
+    if (!fr || fr.tick === passedFinalOf || !contradicted(fr)) return;
+    log('net', `a final whistle at tick ${fr.tick} from ${opponentName()} is contradicted by its frames (to tick ` +
+      `${inner!.remoteContiguous}): ignored`);
+    finalRemote = null;
+  }
+
   function onRemoteFinal(m: ControlMessage): void {
-    if (m.mt !== view.tag || typeof m.tick !== 'number' || typeof m.h !== 'number') return;
-    finalRemote = { tick: m.tick, h: m.h >>> 0 };
+    const f = finalOf(m);
+    if (!f) return;
+    // The friend cannot have taken a tick we have not sent a frame for (ours reach at most NET_DELAY_MAX past our
+    // newest tick): a final whistle beyond that is garbled and would only spoil the comparison at our own whistle.
+    if (f.tick > maxTaken + NET_DELAY_MAX + 1) {
+      log('net', `a final whistle at tick ${f.tick} from ${opponentName()} is impossible here (tick ${maxTaken}): ignored`);
+      return;
+    }
+    // Nor can it have finished well behind the frames it already sent us. Was: kept, and the comparison at our whistle
+    // reported a false 'mismatch' (with the notice) although both games ended identically.
+    if (contradicted(f)) {
+      log('net', `a final whistle at tick ${f.tick} from ${opponentName()} is contradicted by its frames (to tick ` +
+        `${inner!.remoteContiguous}): ignored`);
+      return;
+    }
+    finalRemote = f;
     compareFinal();
+    checkPassedFinal();
   }
 
   /** Both final states known: they must be identical (same tick, same hash). */
   function compareFinal(): void {
     if (!finalLocal || !finalRemote || finalCheck !== 'pending') return;
+    dropContradictedFinal(); // one that arrived a moment before the friend's later frames did
+    if (!finalRemote) return;
     if (finalLocal.tick === finalRemote.tick && finalLocal.h === finalRemote.h) {
       finalCheck = 'ok';
       return;
     }
+    reportFinalMismatch(finalLocal, finalRemote, '');
+  }
+
+  function reportFinalMismatch(loc: { tick: number; h: number }, rem: { tick: number; h: number }, why: string): void {
+    if (finalCheck !== 'pending') return;
     finalCheck = 'mismatch';
     const st = ctx.session.getState();
-    const from = Math.max(firstTick, Math.min(finalLocal.tick, finalRemote.tick) - 30);
-    log('net', `desync at full time (seed ${config.seed}): local tick ${finalLocal.tick} ${hashHex(finalLocal.h)} != remote tick ` +
-      `${finalRemote.tick} ${hashHex(finalRemote.h)}`, {
-      seed: config.seed, local: finalLocal, remote: finalRemote, score: st ? [st.teams[0]!.goals, st.teams[1]!.goals] : null,
-      inputs: inner ? inner.describeInputs(from, finalLocal.tick) : null,
+    const from = Math.max(firstTick, Math.min(loc.tick, rem.tick) - 30);
+    log('net', `desync at full time (seed ${config.seed}): local tick ${loc.tick} ${hashHex(loc.h)} != remote tick ` +
+      `${rem.tick} ${hashHex(rem.h)}${why}`, {
+      seed: config.seed, local: loc, remote: rem, score: st ? [st.teams[0]!.goals, st.teams[1]!.goals] : null,
+      inputs: inner ? inner.describeInputs(from, Math.max(loc.tick, rem.tick)) : null,
     });
     notice('The two games did not agree at the final whistle (a sync error); a report was saved');
+  }
+
+  /**
+   * Late side (QF-15): the friend's game reached POST_MATCH at finalRemote.tick and ours went past that tick without
+   * the final whistle, so the two final states differ (a divergence after the last 30-tick hash moved the whistle).
+   * Our state at that tick was not POST_MATCH, the friend's was. Report it and ask for the friend's final state; the
+   * sim plays on to the end of the friend's last frames and waits there. Resync snapshots are held from now on (the
+   * friend's final can overtake a gzip snapshot: applied late, it rewound this game, which replayed to the friend's
+   * final on its own after the mismatch had been reported). The friend's frames must end there too: a friend that
+   * goes on sending frames well past its "final" tick has not finished (a garbled message), and the suspicion is
+   * withdrawn. Should the answer never come, the unresponsive watchdog offers Finish against CPU.
+   */
+  function checkPassedFinal(): void {
+    if (!inner || finished || ended || disposed || mode !== 'lockstep') return;
+    if (passedFinal && !pendingFinal && inner.remoteContiguous > passedFinalOf + NET_DELAY_MAX) {
+      log('net', `a final whistle at tick ${passedFinalOf} from ${opponentName()} did not hold (its frames go on): ignored`);
+      passedFinal = null;
+      finalIn = null;
+      if (finalRemote && finalRemote.tick === passedFinalOf) finalRemote = null;
+      inner.guard.hold(false);
+      finalCheck = 'pending'; // that report was wrong (only a final compare or a final state can set it now)
+    }
+    dropContradictedFinal(); // a stale or garbled one just behind us: the friend's frames have gone on since
+    const fr = finalRemote;
+    if (!fr || fr.tick === passedFinalOf) return;
+    if (lastTaken < fr.tick || inner.remoteContiguous > fr.tick + NET_DELAY_MAX) return;
+    const st = ctx.session.getState() as SimState | null;
+    if (!st || ctx.session.getSetup()?.inputProvider !== provider || st.tick < fr.tick) return;
+    passedFinalOf = fr.tick;
+    passedFinal = { tick: st.tick, h: hashState(st) };
+    inner.guard.hold(true);
+    reportFinalMismatch(passedFinal, fr, ' (this game passed the friend\'s final whistle without its own)');
+    requestFinalState();
+  }
+
+  function requestFinalState(): void {
+    if (passedFinal) send({ type: SESSION_FINAL_REQ, tick: passedFinal.tick, h: passedFinal.h, mt: view.tag });
+  }
+
+  /** Finished side: the friend's game went past our final whistle; report and send it our final state. */
+  function onFinalRequest(m: ControlMessage): void {
+    const f = finalOf(m);
+    if (!f || !finished || !finalState || !finalLocal || finalReplies >= LOCAL_TUNING.finalStateReplies) return;
+    if (f.tick < finalLocal.tick) return; // the friend's game is not past our final tick: garbled
+    finalReplies++;
+    finalRemote = f;
+    compareFinal();
+    const snap = encodeSnapshotSync(finalState);
+    const n = snap.chunks.length;
+    for (let i = 0; i < n; i++) send({ type: SESSION_FINAL_STATE, tick: snap.tick, i, n, data: snap.chunks[i]!, mt: view.tag });
+    log('net', `full time: our final state (tick ${snap.tick}) sent to ${opponentName()}, whose game went past it (tick ${f.tick})`);
+  }
+
+  /** Late side: a chunk of the friend's final state. */
+  function onFinalStateChunk(m: ControlMessage): void {
+    const fr = finalRemote;
+    if (!passedFinal || !fr || pendingFinal || finished || ended || disposed || mode !== 'lockstep' || m.mt !== view.tag) return;
+    const tick = intIn(m.tick, 0, 0x7fffffff, -1);
+    const n = intIn(m.n, 1, 10_000, -1);
+    const i = intIn(m.i, 0, n - 1, -1);
+    if (tick !== fr.tick || n < 0 || i < 0 || typeof m.data !== 'string') return;
+    if (!finalIn || finalIn.tick !== tick || finalIn.n !== n) finalIn = { tick, n, parts: new Array<string | undefined>(n), got: 0 };
+    if (finalIn.parts[i] !== undefined) return;
+    finalIn.parts[i] = m.data;
+    if (++finalIn.got < n) return;
+    const json = finalIn.parts.join('');
+    finalIn = null;
+    let st: SimState;
+    try {
+      st = deserializeState(json);
+      if (st.tick !== tick || st.match.phase !== MatchPhase.POST_MATCH || st.config.seed !== config.seed) {
+        throw new Error(`tick ${st.tick} phase ${st.match.phase} seed ${st.config.seed}`);
+      }
+    } catch (err) {
+      // Never applied (nor does garbage end a match that may still be running): this game keeps waiting, and should
+      // nothing usable come, the unresponsive watchdog offers Finish against CPU / End match.
+      log('net', `full time: the friend's final state is unusable (${String(err)}): ignored`);
+      return;
+    }
+    pendingFinal = st;
+    log('net', `full time: taking ${opponentName()}'s final state (tick ${tick}) on the next tick`);
   }
 
   function onSync(m: ControlMessage): void {
@@ -824,6 +989,16 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
 
   /** Host: the guest's page reloaded and it said hello with the match token: restart the lockstep here and send it a snapshot. */
   function onRejoinRequest(token: string): void {
+    if (local === 0 && finished && mode === 'lockstep' && matchEndPending && !ended && !disposed && !!token &&
+      token === start!.token) {
+      // The friend's page reloaded after our final whistle, which we reached while its old link was down (QF-15): the
+      // old page needs no frames any more, so the room goes back to the lobby now and the new page joins it fresh. Was:
+      // refused silently until the 20 s rejoin window ended, and the new page failed with 'disconnected' (no hello).
+      log('net', `${opponentName()} reloaded after full time: back to the room`);
+      restoreLink();
+      endPendingMatch();
+      return;
+    }
     if (local !== 0 || mode !== 'lockstep' || finished || ended || disposed) return;
     if (!token || token !== start!.token) {
       log('net', 'a different guest tried to join during the match: refused');
@@ -928,6 +1103,12 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
           break;
         case SESSION_FINAL:
           onRemoteFinal(m);
+          break;
+        case SESSION_FINAL_REQ:
+          onFinalRequest(m);
+          break;
+        case SESSION_FINAL_STATE:
+          onFinalStateChunk(m);
           break;
         case SESSION_END:
           if (m.reason === 'desync') endMatch('desync', false);
@@ -1040,10 +1221,27 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
     ready(tick) {
       if (mode === 'solo') return true;
       if (mode !== 'lockstep' || !inner || providerDisposed) return false;
+      if (pendingFinal) return true; // the friend's final state: no frames needed
       return inner.ready(pendingSnapshot ? firstTick : tick);
     },
     take(tick, frames, state: ReadonlySimState) {
       const s = state as unknown as SimState;
+      if (pendingFinal && mode === 'lockstep') {
+        // Late side at full time (QF-15): hard-sync to the friend's POST_MATCH state; the app session sees POST_MATCH
+        // after this tick and shows the same final as the friend. The extra tick of a finished match needs no input.
+        const from = s.tick;
+        copyState(s, pendingFinal);
+        pendingFinal = null;
+        finalAdopted = true;
+        for (let h = 0; h < frames.length; h++) {
+          const f = frames[h];
+          if (f) clearInputFrame(f);
+        }
+        lastTaken = s.tick + 1;
+        view.lastTaken = lastTaken;
+        log('net', `full time: state set to ${opponentName()}'s final state of tick ${s.tick} (was tick ${from})`);
+        return;
+      }
       if (pendingSnapshot) {
         copyState(s, pendingSnapshot); // a reloaded guest's first tick: hard-sync to the host's snapshot
         pendingSnapshot = null;
@@ -1057,6 +1255,7 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
       if (!inner) throw new Error('online provider: take() after the lockstep ended');
       inner.take(tick, frames, s);
       lastTaken = s.tick + 1;
+      if (lastTaken > maxTaken) maxTaken = lastTaken;
       view.lastTaken = lastTaken;
     },
     pump(nowMs) {
@@ -1079,6 +1278,7 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
       }
       if (deferredRejoin !== null) onRejoinRequest(deferredRejoin);
       if (liftRemotePause) retryLiftRemotePause();
+      if ((finalRemote !== null || passedFinal !== null) && !finished) checkPassedFinal();
       checkResyncs();
       checkUnresponsive(nowMs);
       refresh();
@@ -1173,9 +1373,10 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
         goneReason = null;
       }
       if (mode === 'lockstep') {
-        const fs = ctx.session.getState();
+        const fs = ctx.session.getState() as SimState | null;
         if (fs) {
-          finalLocal = { tick: fs.tick, h: hashState(fs as SimState) };
+          finalLocal = { tick: fs.tick, h: hashState(fs) };
+          finalState = cloneState(fs); // for a friend whose game goes past our final whistle (QF-15)
           sendFinal();
           compareFinal();
         }
@@ -1272,7 +1473,7 @@ export function createOnlineSession(ctx: AppContext, lobby: Lobby, opts: OnlineS
       return {
         lastTaken, delay: inner ? inner.delay : 0, stalls: st?.stalls ?? 0, maxStallMs: st?.maxStallMs ?? 0,
         desyncs: g?.desyncs ?? 0, resyncs: g?.resyncs ?? 0, verified: g?.verified ?? 0, hashesCompared: g?.hashesCompared ?? 0,
-        failedResyncs, rejoins, finalCheck,
+        failedResyncs, rejoins, finalCheck, finalAdopted,
       };
     },
     setup() {
