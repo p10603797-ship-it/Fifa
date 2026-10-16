@@ -204,7 +204,7 @@ Total assignments: 201.
 | SGN-02 | 5 | queued |  |  |
 | SGN-03 | 5 | queued |  |  |
 | SGN-04 | 5 | queued |  |  |
-| SGN-05 | 5 | queued |  |  |
+| SGN-05 | 5 | done | originality and licence audit with an independent second auditor; 6 renames (names only); network and licence e2e | repository name "Fifa": user decision before any public deploy |
 | SGN-06 | 5 | queued |  |  |
 
 ## Wave 4 round 2 (D-020 follow-up charters)
