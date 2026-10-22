@@ -90,7 +90,7 @@ import { inSkillVulnerableWindow } from '../../sim/kicks/skills';
 import { inPenaltyArea } from '../../sim/pitch/geometry';
 import { comeOutWanted } from '../../sim/keeper/sweeperHooks';
 import { LOCAL_TUNING as FIRST_TOUCH_LT, trapLead } from '../../sim/players/firstTouch';
-import { ticksToReach } from '../../sim/players/locomotion';
+import { LOCAL_TUNING as LOCO_LT, ticksToReach } from '../../sim/players/locomotion';
 import { createInterceptEstimate, estimateIntercept } from '../steer';
 import { composureNoiseMul, levelParams, levelValue } from './levels';
 
@@ -228,6 +228,18 @@ export const LOCAL_TUNING = {
   heldSpeed: T_CPU.defendHeldSpeed,
   /** ... once he has had the ball this long (ball.ownerT), ticks. */
   heldTicks: T_CPU.defendHeldTicks,
+  blockOn: T_CPU.defendBlockOn,
+  blockDist: T_CPU.defendBlockDist,
+  blockGain: T_CPU.defendBlockGain,
+  blockMaxSpeed: T_CPU.defendBlockMaxSpeed,
+  blockPokeDist: T_CPU.defendBlockPokeDist,
+  blockPathMinOffset: T_CPU.defendBlockPathMinOffset,
+  blockRoundAhead: T_CPU.defendBlockRoundAhead,
+  blockRoundSpan: T_CPU.defendBlockRoundSpan,
+  blockRoundGap: T_CPU.defendBlockRoundGap,
+  blockAlign: T_CPU.defendBlockAlign,
+  blockPathCos0: T_CPU.defendBlockPathCos0,
+  blockPokeMargin: T_CPU.defendBlockPokeMargin,
   /** [QF-13 skeptic] Reception near a line (receiveTurn): when the clean settle would end less than this inside a line,
    *  the stick's component toward it becomes receiveInward into the pitch. m, 0..1. */
   receiveSettleMargin: T_CPU.defendReceiveSettleMargin,
@@ -265,6 +277,8 @@ let expSkill = 0;
 /** Goal-side unit of the latest carrier evaluation (defendCarrier): from the carrier toward our goal centre. */
 let gX = 0;
 let gZ = 0;
+/** Debug (tests / tools): the latest carrier evaluation's hold flag and guard target. */
+export const DEFEND_DEBUG = { hold: 0, tx: 0, tz: 0, w: 0, why0: 0, why1: 0 };
 
 // ---------------------------------------------------------------- small helpers
 
@@ -533,12 +547,13 @@ function boxClear(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState
  * of him and the carrier's body does not lie between them (SIM-14 bodyBlocksBall: his near edge beyond the ball less
  * ballFirstMargin, or off the line by more than bodyRadius + blockLateral), so the challenge meets the ball first. Pure.
  */
-function ballPresented(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState>): boolean {
-  return ballFirstAt(s, p, q, 0) && ballFirstAt(s, p, q, (T_TACKLE.standWindup + (T_TACKLE.standContactTicks >> 1)) / TICK_HZ);
+function ballPresented(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState>, margin = 0): boolean {
+  return ballFirstAt(s, p, q, 0, margin) &&
+    ballFirstAt(s, p, q, (T_TACKLE.standWindup + (T_TACKLE.standContactTicks >> 1)) / TICK_HZ, margin);
 }
 
 /** ballPresented at t seconds ahead (linear). Pure. */
-function ballFirstAt(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState>, t: number): boolean {
+function ballFirstAt(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState>, t: number, margin: number): boolean {
   const b = s.ball;
   const px = p.x + p.vx * t, pz = p.z + p.vz * t;
   let ux = b.x + b.vx * t - px, uz = b.z + b.vz * t - pz;
@@ -549,7 +564,8 @@ function ballFirstAt(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerSt
   const along = vx * ux + vz * uz;
   const lat = vx * uz - vz * ux;
   const rv = T_PLAYER.bodyRadius;
-  return !(along > 0) || along - rv > lb - TACKLE_LT.ballFirstMargin || (lat < 0 ? -lat : lat) > rv + TACKLE_LT.blockLateral;
+  return !(along > 0) || along - rv > lb - TACKLE_LT.ballFirstMargin + margin ||
+    (lat < 0 ? -lat : lat) > rv + TACKLE_LT.blockLateral + margin;
 }
 
 // ---------------------------------------------------------------- player choice
@@ -641,6 +657,54 @@ function keeperRush(s: SimState, team: number, ctl: ControllerState, q: Readonly
 
 // ---------------------------------------------------------------- the carrier
 
+/** [QF-16] blockPlan output: guard point, hold direction (unit, toward our goal along the ball's path), rounding 0..1. */
+const BLK = { tx: 0, tz: 0, ax: 0, az: 0, k: 0, h: 0 };
+
+/**
+ * [QF-16] Patient block against carrier q (the patience is over): the guard point blockDist beyond the ball on the
+ * hold direction (from the ball toward our goal, turned onto the carrier -> ball line when that heads for our goal:
+ * the ball must come at the defender, not past him beside the carrier's body). While defender p is not yet ahead of the
+ * carrier's body along that direction (blockRoundAhead, over blockRoundSpan: k 1 -> 0) the point is moved off the
+ * path to his side by two body radii + blockRoundGap, so he goes round the carrier instead of pushing into him and
+ * steps across once ahead. False (no ball hold) when the ball is not on our goal's side of the carrier (shielding, back
+ * to goal). Fills BLK. Pure.
+ */
+function blockPlan(s: SimState, dir: number, p: Readonly<PlayerState>, q: Readonly<PlayerState>, gx: number, gz: number): boolean {
+  const b = s.ball;
+  const ox = b.x - q.x, oz = b.z - q.z;
+  if (ox * gx + oz * gz <= 0) return false;
+  let hx = -dir * HALF_LENGTH - b.x, hz = -b.z;
+  let hl = Math.sqrt(hx * hx + hz * hz);
+  if (hl > EPS) { hx /= hl; hz /= hl; } else { hx = gx; hz = gz; }
+  const ol = Math.sqrt(ox * ox + oz * oz);
+  if (ol > L.blockPathMinOffset) {
+    const vx0 = ox / ol, vz0 = oz / ol;
+    let wp = (vx0 * hx + vz0 * hz - L.blockPathCos0) / (1 - L.blockPathCos0);
+    wp = wp < 0 ? 0 : wp > 1 ? 1 : wp;
+    if (wp > 0) {
+      hx = hx * (1 - wp) + vx0 * wp; hz = hz * (1 - wp) + vz0 * wp;
+      hl = Math.sqrt(hx * hx + hz * hz);
+      if (hl > EPS) { hx /= hl; hz /= hl; } else { hx = gx; hz = gz; }
+    }
+  }
+  const nx = -hz, nz = hx;
+  const ahead = (p.x - q.x) * hx + (p.z - q.z) * hz;
+  const lat = (p.x - b.x) * nx + (p.z - b.z) * nz;
+  let k = (L.blockRoundAhead - ahead) / L.blockRoundSpan;
+  k = k < 0 ? 0 : k > 1 ? 1 : k;
+  const o = k * (2 * T_PLAYER.bodyRadius + L.blockRoundGap) * (lat >= 0 ? 1 : -1);
+  BLK.tx = b.x + hx * L.blockDist + nx * o;
+  BLK.tz = b.z + hz * L.blockDist + nz * o;
+  BLK.ax = hx; BLK.az = hz; BLK.k = k;
+  // Holding the ground (blockRetreat) only once in the ball's path: ahead of the carrier and within blockAlign of the
+  // line (he outruns the carrier to get there; holding before that let the carrier push him along beside the ball).
+  const al = lat < 0 ? -lat : lat;
+  const a = 1 - al / L.blockAlign;
+  BLK.h = (1 - k) * (a < 0 ? 0 : a);
+  return true;
+}
+
+
 function defendCarrier(
   s: SimState, team: number, ci: number, ctl: ControllerState, brain: CpuBrainState, lv: LevelParams,
   p0: PlayerState, carrier: number, out: InputFrame,
@@ -703,11 +767,36 @@ function defendCarrier(
   const side = d0x * -gz + d0z * gx >= 0 ? 1 : -1;
   const depth = standoff + L.recoverDepth * w;
   const off = L.recoverSide * w * side;
-  steerTo(p, lx + gx * depth - gz * off, lz + gz * depth + gx * off, 1);
-  if (w > 0) wantSprint = 1;
+  let tgx = lx + gx * depth - gz * off, tgz = lz + gz * depth + gx * off;
+  // [QF-16] Patient block (blockPlan): the guard point in the ball's path goal-side of it, reached round the carrier's
+  // body, tracked with his velocity, and in front of him the ground held.
+  const hold = L.blockOn > 0 && patient && q.shielding !== 1 && qs < L.blockMaxSpeed && blockPlan(s, dir, p, q, gx, gz);
+  if (hold) { tgx = BLK.tx; tgz = BLK.tz; }
+  DEFEND_DEBUG.hold = hold ? 1 : 0; DEFEND_DEBUG.tx = tgx; DEFEND_DEBUG.tz = tgz; DEFEND_DEBUG.w = hold ? BLK.k : w;
+  steerTo(p, tgx, tgz, 1);
+  if (w > 0 && !hold) wantSprint = 1;
 
   // Contain / jockey.
   const jogP = s.attrs[slot]!.topSpeed * T_PLAYER.jogFraction;
+  const topP = s.attrs[slot]!.topSpeed;
+  let holdV = -1;
+  if (hold) {
+    // Track the guard point: the carrier's velocity plus a correction toward it (blockGain per second, at most top).
+    let cx = (tgx - p.x) * L.blockGain, cz = (tgz - p.z) * L.blockGain;
+    const cm = Math.sqrt(cx * cx + cz * cz);
+    if (cm > topP) { cx *= topP / cm; cz *= topP / cm; }
+    let fx = q.vx, fz = q.vz;
+    // In front of him (BLK.k 0) he holds the ground: of the carrier's speed toward our goal (and of the correction that
+    // way) he gives up only the level's blockRetreat share; sideways he steps across in full. Rounding him (k 1): all.
+    const r0 = levelValue(s, team, T_LEVEL.blockRetreat);
+    const keep = (1 - r0) * BLK.h;
+    const va = fx * BLK.ax + fz * BLK.az, ca = cx * BLK.ax + cz * BLK.az;
+    if (va > 0) { fx -= keep * va * BLK.ax; fz -= keep * va * BLK.az; }
+    if (ca > 0) { cx -= keep * ca * BLK.ax; cz -= keep * ca * BLK.az; }
+    const vx = fx + cx, vz = fz + cz;
+    holdV = Math.sqrt(vx * vx + vz * vz);
+    if (holdV > EPS) { stX = vx / holdV; stZ = vz / holdV; stM = 1; } else { stX = 0; stZ = 0; stM = 0; holdV = 0; }
+  }
   const wasContain = (ctl.buttons & Btn.PASS) !== 0;
   const wasJockey = (ctl.buttons & Btn.SHIELD) !== 0;
   if (cosG > L.behindCos && d <= L.containDist && qs >= (wasContain ? L.containKeepSpeed : L.containSpeed)) {
@@ -716,6 +805,19 @@ function defendCarrier(
   } else if (goalSide && d <= (wasJockey ? L.jockeyKeepDist : L.jockeyDist)) {
     btn |= Btn.SHIELD;
     wantSprint = qs > L.sprintJockeyFrac * jogP ? 1 : 0;
+  }
+  if (holdV >= 0) {
+    // SIM-04: a jockeying (or auto-jockeying) player is capped at jockeySpeedFraction of jog, of top with SPRINT.
+    const capNo = jogP * T_PLAYER.jockeySpeedFraction;
+    if (holdV > capNo) {
+      wantSprint = 1;
+      stM = topP > EPS ? holdV / topP * LOCO_LT.sprintStickFull : 1;
+      if (stM > 1) stM = 1;
+      if (stM < L.sprintMinStick) stM = L.sprintMinStick;
+    } else {
+      wantSprint = 0;
+      stM = jogP > EPS ? holdV / jogP : 0;
+    }
   }
 
   // Second defender in our final third.
@@ -748,7 +850,7 @@ function defendCarrier(
         // [QF-13 skeptic] In our own area a careful tackle also wants the ball clear of the carrier's body (boxClear), at
         // the levels whose quick careful tackles gave away the penalties (T_LEVEL.boxBodyClear: World Class, Legend).
         const careful = !inBox || !(levelValue(s, team, T_LEVEL.boxBodyClear) > 0) || boxClear(s, p, q);
-        if (rash || (wellTimed(s, p, q) && careful)) { pressTackle(brain, lv); return; }
+        if (rash || (wellTimed(s, p, q) && careful)) { why(team, rash ? 2 : 1); pressTackle(brain, lv); return; }
       }
     } else if (dBall <= T_TACKLE.standReach && goalSide) {
       // [QF-14 resume] Patience with a carrier standing on the ball: he never exposes it (no touch, no turn), so a
@@ -763,14 +865,18 @@ function defendCarrier(
         const age = s.tick - q.lastTouchTick;
         const still = qs < L.stillSpeed && b.vx * b.vx + b.vz * b.vz < L.stillSpeed * L.stillSpeed &&
           age >= L.stillTouchTicks + lv.tackleTimingTicks;
-        if ((still || (qs < L.heldSpeed && b.ownerT >= L.heldTicks && age >= lv.tackleTimingTicks && ballPresented(s, p, q))) &&
+        const held = (qs < L.heldSpeed || holdV >= 0) && b.ownerT >= L.heldTicks && ballPresented(s, p, q);
+        const poke = holdV >= 0 && dBall <= L.blockPokeDist && ballPresented(s, p, q, L.blockPokeMargin) &&
+          (!inBox || boxClear(s, p, q));
+        if ((still || ((held || poke) && age >= lv.tackleTimingTicks)) &&
           (!inBox || !(levelValue(s, team, T_LEVEL.boxBodyClear) > 0) || boxClear(s, p, q))) {
+          why(team, still ? 3 : poke && !held ? 5 : 4);
           pressTackle(brain, lv);
           return;
         }
       }
       const bucket = Math.floor(s.tick / L.rashBucketTicks);
-      if (noise01(seed, who, bucket * 4 + 2) < noisy * L.rashLungeChance) { pressTackle(brain, lv); return; }
+      if (noise01(seed, who, bucket * 4 + 2) < noisy * L.rashLungeChance) { why(team, 6); pressTackle(brain, lv); return; }
     }
   }
 
@@ -784,11 +890,13 @@ function defendCarrier(
   const slideMul = inBox ? levelValue(s, team, T_LEVEL.boxSlideMul) : 1;
   if (goalSide) {
     // The ball must be on our side of him (nearer to us than he is): never slide through the carrier to reach it.
-    if (dBall < d && (qs > jogP || goalLineDist <= L.secondDefDist) && u < L.slideChance * slideMul) pressSlide(brain, lv);
+    if (dBall < d && (qs > jogP || goalLineDist <= L.secondDefDist) && u < L.slideChance * slideMul) { why(team, 7); pressSlide(brain, lv); }
   } else if (cosG <= L.behindCos && throughOnGoal(s, team, q, L.slideBehindDist)) {
-    if (u < L.slideBehindChance * noisy * slideMul) pressSlide(brain, lv);
+    if (u < L.slideBehindChance * noisy * slideMul) { why(team, 8); pressSlide(brain, lv); }
   }
 }
+
+function why(team: number, r: number): void { if (team === 0) DEFEND_DEBUG.why0 = r; else DEFEND_DEBUG.why1 = r; }
 
 function pressTackle(brain: CpuBrainState, lv: LevelParams): void {
   btn |= Btn.SHOOT;

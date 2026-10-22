@@ -18,6 +18,7 @@ import {
 import { fillInterp } from '../../src/render/index';
 import { createInterpState, type RenderContext, type RenderFrame } from '../../src/render/types';
 import { initMatch } from '../../src/sim/init';
+import { ALLOC_FLAGS } from '../perf/qf-7r-alloc-flags';
 
 function makeCtx(tier = QualityTier.BALANCED): RenderContext {
   const s = createDefaultSettings();
@@ -279,7 +280,7 @@ describe('GFX-13 ball module (headless)', () => {
 describe('GFX-13 no per-frame allocation', () => {
   it('ball, blob shadows and every on-pitch aid (landing target, labels, off-screen arrow) allocate nothing per frame', () => {
     // Child process: V8 sampling heap profiler, allocations under the modules' update() only (tests/unit/gfx-13-alloc-probe.ts).
-    const r = spawnSync(process.execPath, ['--import', 'tsx', 'tests/unit/gfx-13-alloc-probe.ts', '30000'], {
+    const r = spawnSync(process.execPath, [...ALLOC_FLAGS, '--import', 'tsx', 'tests/unit/gfx-13-alloc-probe.ts', '30000'], {
       cwd: process.cwd(), encoding: 'utf8', timeout: 150_000,
     });
     expect(r.status, r.stderr).toBe(0);

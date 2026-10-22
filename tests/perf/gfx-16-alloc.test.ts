@@ -13,6 +13,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { ALLOC_FLAGS } from './qf-7r-alloc-flags';
 
 describe('GFX-16 zero allocation per frame', () => {
   it('replay record / playback and effects allocate nothing per frame', () => {
@@ -133,7 +134,7 @@ describe('GFX-16 zero allocation per frame', () => {
       console.log(JSON.stringify({ steady, full, firstGoal, usPerFrame: us, playbackFrames: st[3], steadyPlayback, recorded: rep.ring.count }));
     `;
     const r = spawnSync(process.execPath, [
-      '--expose-gc', '--no-concurrent-recompilation', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', code,
+      ...ALLOC_FLAGS, '--expose-gc', '--no-concurrent-recompilation', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', code,
     ], { cwd: root, encoding: 'utf8', timeout: 240_000 });
     expect(r.status, r.stderr).toBe(0);
     const res = JSON.parse(r.stdout.trim().split('\n').pop()!) as {

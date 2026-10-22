@@ -10,6 +10,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { ALLOC_FLAGS } from './qf-7r-alloc-flags';
 
 describe('GFX-02 zero allocation per frame', () => {
   it('update() and the end-of-render mark allocate nothing; a few microseconds per frame', () => {
@@ -96,7 +97,7 @@ describe('GFX-02 zero allocation per frame', () => {
     // Calibration: the clean module measures 0; one small object, array, closure or string per frame in update()
     // measures 0.76-1.56 here (the profiler under-reports small objects), so 0.25 keeps a 3x margin.
     const r = spawnSync(process.execPath, [
-      '--expose-gc', '--no-concurrent-recompilation', '--min-semi-space-size=256', '--max-semi-space-size=256',
+      ...ALLOC_FLAGS, '--expose-gc', '--no-concurrent-recompilation', '--min-semi-space-size=256', '--max-semi-space-size=256',
       '--import', 'tsx', '--input-type=module', '-e', code,
     ], { cwd: root, encoding: 'utf8', timeout: 240_000 });
     expect(r.status, r.stderr).toBe(0);

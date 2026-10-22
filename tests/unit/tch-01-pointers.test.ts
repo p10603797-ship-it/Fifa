@@ -15,6 +15,7 @@ import {
   createPointerManager, createPointerRouter, MAX_POINTERS, PointerKind, pointerKindOf, type PointerManager,
 } from '../../src/input/touch/pointers';
 import { createStick, type StickControl } from '../../src/input/touch/stick';
+import { ALLOC_FLAGS } from '../perf/qf-7r-alloc-flags';
 
 // ------------------------------------------------------------------ recording controls
 
@@ -416,7 +417,7 @@ describe('TCH-01 pointer router (pure core)', () => {
       }
       console.log(JSON.stringify({ clean: probe(noop), allocating: probe(alloc) }));
     `;
-    const out = execFileSync(process.execPath, ['--expose-gc', '--min-semi-space-size=64', '--max-semi-space-size=64', '--import', 'tsx', '--input-type=module', '-e', script], {
+    const out = execFileSync(process.execPath, [...ALLOC_FLAGS, '--expose-gc', '--min-semi-space-size=64', '--max-semi-space-size=64', '--import', 'tsx', '--input-type=module', '-e', script], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     });
     const res = JSON.parse(out.trim().split('\n').pop()!) as { clean: number; allocating: number };

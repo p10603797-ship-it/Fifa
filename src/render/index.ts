@@ -68,6 +68,7 @@ import { createRenderer, type RebuildReport, type RendererCore, type RendererCor
 import { createReplay, type ReplayModule } from './replay';
 import { createStadium } from './stadium';
 import { createInterpState, type InterpState, type RenderContext, type RenderFrame, type RenderModule } from './types';
+import { runWarmScript, type WarmTarget } from './warmScript';
 
 declare global {
   interface Window {
@@ -356,6 +357,11 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
   let lastRebuild: RebuildReport | null = null;
   let msaa = false;
   let lowPower = false;
+  /** [QF-7R] The match of the latest setMatch (warm-up script source and re-apply after it). */
+  let matchState: ReadonlySimState | null = null;
+  let matchClubs: readonly Club[] = [];
+  /** [QF-7R] The JIT warm-up script ran (once per renderer: compiled code outlives a match). */
+  let scriptDone = false;
 
   const projector: CameraProjector = {
     screenToPitch: (sx, sy, out) => (cinematic.active ? cinematic : broadcast).screenToPitch(sx, sy, out),
@@ -420,6 +426,64 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
     if (report.missingTextures > 0) {
       console.warn(`[render] context restored: ${report.missingTextures} texture(s) have no CPU copy and draw blank`);
     }
+  }
+
+  /** One animation frame of every module (GameRenderer.render without the draw). `skip`: a module left out. */
+  function updateModules(prev: ReadonlySimState, curr: ReadonlySimState, alpha: number, frame: FrameInfo, skip: RenderModule | null): void {
+    fillInterp(interp, prev, curr, alpha);
+    snapTeleports(interp, prev, curr);
+    frameObj.prev = prev;
+    frameObj.curr = curr;
+    frameObj.alpha = alpha;
+    frameObj.frame = frame;
+    replay!.update(frameObj);
+    broadcast.update(frameObj);
+    cinematic.update(frameObj);
+    for (let i = 0; i < modules.length; i++) {
+      const m = modules[i]!;
+      if (m !== skip) m.update(frameObj);
+    }
+  }
+
+  /** [QF-7R] Warm-up script frame info (one object, reused). */
+  const warmInfo: FrameInfo = { nowMs: 0, dtMs: 0, frame: 0, ticks: 1, paused: false };
+  /** [QF-7R] The module stack as the warm-up script drives it: everything but the quality module (whose frame-time
+   *  signal must only see real frames), no draw. */
+  const warmTarget: WarmTarget = {
+    frame(prev, curr, alpha, nowMs, dtMs, frame) {
+      warmInfo.nowMs = nowMs;
+      warmInfo.dtMs = dtMs;
+      warmInfo.frame = frame;
+      warmInfo.ticks = alpha < 1 ? 1 : 0;
+      updateModules(prev, curr, alpha, warmInfo, quality);
+    },
+    events(ev, state) {
+      cinematic.onEvents?.(ev, state);
+      broadcast.onEvents?.(ev, state);
+      for (let i = 0; i < modules.length; i++) {
+        const m = modules[i]!;
+        if (m !== quality) m.onEvents?.(ev, state);
+      }
+      replay?.onEvents?.(ev, state);
+    },
+  };
+
+  /**
+   * [QF-7R] Run the JIT warm-up script (render/warmScript.ts) once per renderer, then re-apply the live match to
+   * every module, so nothing of the script remains. Returns the frames run (0 when skipped).
+   */
+  function runScriptOnce(): number {
+    if (scriptDone || !matchActive || !matchState || !replay) return 0;
+    scriptDone = true;
+    const live = matchState, clubs = matchClubs;
+    let n = 0;
+    try {
+      n = runWarmScript(live, warmTarget);
+    } catch (err) {
+      console.warn('[render] warm-up script failed', err);
+    }
+    api.setMatch(live, clubs);
+    return n;
   }
 
   const api: DotkickRenderer = {
@@ -497,6 +561,8 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
     },
 
     setMatch(state: ReadonlySimState, clubs: readonly Club[]) {
+      matchState = state;
+      matchClubs = clubs;
       ctx.clubs = clubs;
       ctx.night = state.config.night === 1;
       if (!core || !core.available) {
@@ -514,6 +580,8 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
 
     async warmUp() {
       if (!core || !core.available || !core.renderer || core.lost) return;
+      // JIT first (every module's per-frame path, off screen), then shaders and uploads with the live match restored.
+      runScriptOnce();
       const r = core.renderer;
       // Compile every material against the scene's lights with all match objects visible. compileAsync only when
       // parallel compilation exists (three.js warns otherwise, and e2e requires a clean console).
@@ -544,16 +612,7 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
 
     render(prev: ReadonlySimState, curr: ReadonlySimState, alpha: number, frame: FrameInfo) {
       if (!matchActive || !core || !core.renderer || core.lost || lost) return;
-      fillInterp(interp, prev, curr, alpha);
-      snapTeleports(interp, prev, curr);
-      frameObj.prev = prev;
-      frameObj.curr = curr;
-      frameObj.alpha = alpha;
-      frameObj.frame = frame;
-      replay!.update(frameObj);
-      broadcast.update(frameObj);
-      cinematic.update(frameObj);
-      for (let i = 0; i < modules.length; i++) modules[i]!.update(frameObj);
+      updateModules(prev, curr, alpha, frame, null);
       core.renderer.render(ctx.scene, ctx.camera);
     },
 
@@ -591,6 +650,7 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
       broadcast.clearMatch?.();
       cinematic.clearMatch?.();
       matchActive = false;
+      matchState = null;
       showUnavailable(canvasEl, '', false);
       if (core && core.renderer && !core.lost) {
         core.renderer.setRenderTarget(null);

@@ -567,6 +567,19 @@ export const T_CPU = {
    *  defendHeldTicks (a bot carrier rarely keeps it that long). m/s, ticks. */
   defendHeldSpeed: 2.5,
   defendHeldTicks: 180,
+  /** [QF-16] TAI-11 patient block (experimental switches; documented when settled). */
+  defendBlockOn: 1,
+  defendBlockDist: 0.9,
+  defendBlockGain: 2.5,
+  defendBlockMaxSpeed: 6.0,
+  defendBlockPokeDist: 0.8,
+  defendBlockPathMinOffset: 0.25,
+  defendBlockRoundAhead: 0.9,
+  defendBlockRoundSpan: 0.5,
+  defendBlockRoundGap: 0.15,
+  defendBlockAlign: 0.5,
+  defendBlockPathCos0: 0.3,
+  defendBlockPokeMargin: 0.1,
 } as const;
 
 /** Per-difficulty AI parameters, indexed by Difficulty (0 Beginner .. 5 Legend). Never physics. */
@@ -637,6 +650,8 @@ export const T_LEVEL = {
    *  / 0.2 a match, the longest 13 s, still under Professional's 0.42); closer than 0.9 is no better (at 0.6 a Legend
    *  defender let the jogging carrier of qf-14-escort through). */
   patienceStandoff: [1.5, 1.3, 1.1, 0.9, 0.9, 0.9] as readonly number[],
+  /** [QF-16] (experimental) patient block: share of the carrier's speed toward goal the defender gives up. */
+  blockRetreat: [1, 0.8, 0.6, 0.3, 0.15, 0] as readonly number[],
   boxSlideMul: [1, 1, 0.5, 0, 0, 0] as readonly number[],
   /** [QF-13 skeptic] TAI-11 boxClear (1 = on): in the own area a careful tackle also needs the ball clear of the
    *  carrier's body. On where the quick careful tackles conceded the penalties (World Class 0.75, Legend 1.6-2.0 a match);

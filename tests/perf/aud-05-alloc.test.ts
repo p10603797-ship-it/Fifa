@@ -9,6 +9,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { ALLOC_FLAGS } from './qf-7r-alloc-flags';
 
 describe('AUD-05 zero allocation on the audio hot path', () => {
   it('frames allocate nothing; events allocate only boxed numbers (no objects/closures); a tick costs microseconds', () => {
@@ -137,7 +138,7 @@ describe('AUD-05 zero allocation on the audio hot path', () => {
       console.log(JSON.stringify({ perFrame, mine, perEvent: mine / eventsPerTick, usPerTick: us, bed: registry.crowd.bedRunning, sfx: Array.from(registry.sfx.stats.played).reduce((a, b) => a + b, 0), whistles: Array.from(registry.whistles.stats.whistles).reduce((a, b) => a + b, 0) }));
     `;
     const r = spawnSync(process.execPath, [
-      '--expose-gc', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', code,
+      ...ALLOC_FLAGS, '--expose-gc', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', code,
     ], { cwd: root, encoding: 'utf8', timeout: 240_000 });
     expect(r.status, r.stderr).toBe(0);
     const res = JSON.parse(r.stdout.trim().split('\n').pop()!) as { perFrame: number; mine: number; perEvent: number; usPerTick: number; bed: boolean; sfx: number; whistles: number };

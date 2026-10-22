@@ -28,6 +28,7 @@ import { cloneState, copyState } from '../../src/sim/core/clone';
 import { createEventBuffer } from '../../src/sim/core/events';
 import { initMatch } from '../../src/sim/init';
 import { step } from '../../src/sim/step';
+import { ALLOC_FLAGS } from '../perf/qf-7r-alloc-flags';
 
 const T = GOAL_TUNING;
 const GL = HALF_LENGTH;
@@ -683,7 +684,7 @@ describe('GFX-04 scenario: a real shot into the net', () => {
 describe('GFX-04 no per-frame allocation', () => {
   it('update() allocates nothing per frame (ripples, frame shake, ball near the net); events and impacts stay small', () => {
     // Child process: V8 sampling heap profiler, allocations under update() / onEvents() only (tests/unit/gfx-04-alloc-probe.ts).
-    const r = spawnSync(process.execPath, ['--import', 'tsx', 'tests/unit/gfx-04-alloc-probe.ts', '30000'], {
+    const r = spawnSync(process.execPath, [...ALLOC_FLAGS, '--import', 'tsx', 'tests/unit/gfx-04-alloc-probe.ts', '30000'], {
       cwd: process.cwd(), encoding: 'utf8', timeout: 150_000,
     });
     expect(r.status, r.stderr).toBe(0);

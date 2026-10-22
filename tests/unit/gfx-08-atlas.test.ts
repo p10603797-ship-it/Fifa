@@ -23,6 +23,7 @@ import {
 } from '../../src/render/kits';
 import type { NumberAtlas } from '../../src/render/players/model';
 import { initMatch } from '../../src/sim/init';
+import { ALLOC_FLAGS } from '../perf/qf-7r-alloc-flags';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -270,7 +271,7 @@ describe('GFX-08 UV lookups', () => {
   });
 
   it('the lookups allocate nothing (safe per frame)', () => {
-    const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', 'tests/unit/gfx-08-alloc-probe.ts', '50000'], {
+    const r = spawnSync(process.execPath, [...ALLOC_FLAGS, '--expose-gc', '--import', 'tsx', 'tests/unit/gfx-08-alloc-probe.ts', '50000'], {
       cwd: ROOT, encoding: 'utf8', timeout: 120_000,
     });
     expect(r.status, r.stderr).toBe(0);

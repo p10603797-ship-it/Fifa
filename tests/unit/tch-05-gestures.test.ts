@@ -25,6 +25,7 @@ import {
 } from '../../src/input/touch/gestures';
 import { createPointerRouter } from '../../src/input/touch/pointers';
 import { createStick } from '../../src/input/touch/stick';
+import { ALLOC_FLAGS } from '../perf/qf-7r-alloc-flags';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const W = 1180;
@@ -863,7 +864,7 @@ describe('TCH-05 no allocation per pointer event', () => {
       w.sort((a, b) => a - b);
       console.log(JSON.stringify({ bytesPerEvent: w[2], windows: w }));
     `;
-    const r = spawnSync(process.execPath, ['--expose-gc', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', script], {
+    const r = spawnSync(process.execPath, [...ALLOC_FLAGS, '--expose-gc', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', script], {
       cwd: ROOT, encoding: 'utf8', timeout: 90_000,
     });
     expect(r.status, r.stderr).toBe(0);

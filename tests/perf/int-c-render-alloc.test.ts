@@ -15,6 +15,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { ALLOC_FLAGS } from './qf-7r-alloc-flags';
 
 describe('INT-C renderer: allocation per frame in steady play', () => {
   it('render() + onEvents() of the full module stack stay within the per-frame allocation budget', () => {
@@ -103,7 +104,7 @@ describe('INT-C renderer: allocation per frame in steady play', () => {
       console.log(JSON.stringify({ perFrame: m.bytes / (2 * N), heapPerFrame: (process.memoryUsage().heapUsed - h0) / (2 * N), usPerFrameInclSim: us, phase: curr.match.phase, top: Object.entries(m.by).sort((a, b) => b[1] - a[1]).slice(0, 30).map((e) => [e[0], Math.round(e[1] / (2 * N))]) }));
     `;
     const r = spawnSync(process.execPath, [
-      '--expose-gc', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', code,
+      ...ALLOC_FLAGS, '--expose-gc', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', code,
     ], { cwd: root, encoding: 'utf8', timeout: 240_000 });
     expect(r.status, r.stderr).toBe(0);
     const res = JSON.parse(r.stdout.trim().split('\n').pop()!) as { perFrame: number; heapPerFrame: number; usPerFrameInclSim: number; top: [string, number][] };

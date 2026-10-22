@@ -24,6 +24,7 @@ import {
 } from '../../src/input/touch/stick';
 import { initMatch } from '../../src/sim/init';
 import { makeScenario, runTicks } from '../harness/scenario';
+import { ALLOC_FLAGS } from '../perf/qf-7r-alloc-flags';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const R = 70;
@@ -757,7 +758,7 @@ describe('TCH-02 no allocation per pointer event', () => {
       const h1 = process.memoryUsage().heapUsed;
       console.log(JSON.stringify({ bytesPerEvent: (h1 - h0) / (20000 * 25) }));
     `;
-    const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', '--input-type=module', '-e', script], {
+    const r = spawnSync(process.execPath, [...ALLOC_FLAGS, '--expose-gc', '--import', 'tsx', '--input-type=module', '-e', script], {
       cwd: ROOT, encoding: 'utf8', timeout: 60_000,
     });
     expect(r.status, r.stderr).toBe(0);

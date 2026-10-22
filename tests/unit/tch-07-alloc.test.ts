@@ -8,12 +8,13 @@ import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { ALLOC_FLAGS } from '../perf/qf-7r-alloc-flags';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 describe('TCH-07 allocation', () => {
   it('mapper.sample allocates nothing per tick', () => {
-    const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', 'tests/unit/tch-07-alloc-probe.ts', '20000'], {
+    const r = spawnSync(process.execPath, [...ALLOC_FLAGS, '--expose-gc', '--import', 'tsx', 'tests/unit/tch-07-alloc-probe.ts', '20000'], {
       cwd: ROOT, encoding: 'utf8', timeout: 240_000,
     });
     expect(r.status, r.stderr).toBe(0);
