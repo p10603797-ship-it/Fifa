@@ -41,8 +41,41 @@ describe('QF-16 TAI-11: a human cannot walk past a top-level CPU defender', () =
       }
     }
     expect(kept, rows.join('\n')).toBeLessThanOrEqual(3);
-    // A fair contest: the challenges meet the ball first; fewer fouls than balls won.
+    // A fair contest: the challenges meet the ball first; fewer fouls than balls won. [QF-16 third attempt] The poke
+    // wants the ball first by T_CPU.defendBlockPokeMargin: with none, 34 fouls in these 96 scenes (18 now).
     expect(fouls, rows.join('\n')).toBeLessThan(won);
+    expect(fouls, rows.join('\n')).toBeLessThanOrEqual(26);
+  });
+
+  it('glitch: defender jockeys a dribbler for ever — a human jogging diagonally past him (stick (80, 40)) is blocked too', () => {
+    // [QF-16 third attempt] Before: kept 8 of 8 at every level, 33 m in 10 s: above defendBlockWalkSpeed the block never
+    // came and the defender ran pinned alongside him (the QF-14 escort). A human carrier is blocked up to
+    // T_CPU.defendBlockJogSpeed.
+    const rows: string[] = [];
+    for (const level of TOP) {
+      let kept = 0;
+      const gains: number[] = [];
+      for (const name of ['diagJog', 'diagJogM', 'diagJog45']) {
+        const r = runScript(name, level, 8);
+        rows.push(`level ${level} ${name}: kept ${r.kept}/8, gained ${mean(r.gained).toFixed(1)} m, won ${r.won}, fouls ${r.fouls}`);
+        kept += r.kept; gains.push(mean(r.gained));
+      }
+      const all = rows.join('\n');
+      // Professional may be beaten now and then (a 45-degree jog toward the touchline: 3 of 8).
+      expect(kept, all).toBeLessThanOrEqual(level === Difficulty.PROFESSIONAL ? 4 : 1);
+      expect(mean(gains), all).toBeLessThan(level === Difficulty.PROFESSIONAL ? 20 : 16);
+    }
+  });
+
+  it('a zig-zag walk (stick (25, +-25) every 1/3 s) does not walk a top-level defender back', () => {
+    // [QF-16 third attempt] Before: Legend kept 6 of 8 (9.3 m): the walker pushed the defender standing in front of him
+    // back, his ball under the defender's feet (SIM-05 brace, SIM-06 under-the-feet steal now).
+    for (const level of TOP) {
+      const r = runScript('shuffle', level, 8);
+      const row = `level ${level}: kept ${r.kept}/8, gained ${mean(r.gained).toFixed(1)} m, won ${r.won}, fouls ${r.fouls}`;
+      expect(r.kept, row).toBeLessThanOrEqual(1);
+      expect(mean(r.gained), row).toBeLessThan(5);
+    }
   });
 
   it('a carrier walking or jogging straight at him is stopped too (stick 65 / 100)', () => {

@@ -32,7 +32,12 @@ import { HALF_LENGTH, NUM_SLOTS, PLAYERS_PER_TEAM } from '../contracts/constants
 import type { PlayerData } from '../contracts/data';
 import { ActionKind, KickKind, MatchPhase, RestartKind, SkillMove } from '../contracts/enums';
 import { EventType, type EventBuffer, type SimEvent } from '../contracts/events';
+import { createPose } from '../contracts/render';
 import { createSimState, MoveMode, type MatchConfig, type PlayerState, type ReadonlySimState, type SimState } from '../contracts/state';
+import { ACTION_POSES } from './anim/actions';
+import { CONTACT_POSES } from './anim/contact';
+import { LOCOMOTION_POSES } from './anim/locomotion';
+import type { PoseTable } from './types';
 
 export const WARM_TUNING = { // TUNING-CR (render-only: loading-screen warm-up)
   /** Scripted sim ticks (two animation frames each). */
@@ -43,6 +48,13 @@ export const WARM_TUNING = { // TUNING-CR (render-only: loading-screen warm-up)
   speedSpan: 23,
   /** Radius of the loops players run around their spots (m). */
   loopRadius: 5,
+  /**
+   * [QF-7R] Calls of every pose function (locomotion, action and contact tables) in a tight loop after the scripted
+   * match: past V8's ~400-call optimisation threshold, so a pose first met in play (a shielding run, a keeper's set
+   * position) runs optimised from its first frame instead of interpreted (a boxed double per operation for its
+   * first few hundred frames: tests/perf/int-c-render-alloc.test.ts).
+   */
+  poseCalls: 450,
 } as const;
 
 /** Locomotion speed bands (m/s): idle, walk, jog, run, sprint, flat out. */
@@ -418,5 +430,31 @@ export function runWarmScript(live: ReadonlySimState, target: WarmTarget, ticks:
       frames++;
     }
   }
+  warmPoses();
   return frames;
+}
+
+/**
+ * [QF-7R] Every pose function of the animation tables, WARM_TUNING.poseCalls times each over its parameter range
+ * (normalised time, cycle, speed 0-9 m/s, both sides, both feet), into a private pose. Pose functions are pure in
+ * (parameters -> pose): nothing of this reaches the live animation (tests/unit/qf-7r-warm.test.ts). Returns the calls.
+ */
+export function warmPoses(calls: number = WARM_TUNING.poseCalls): number {
+  const out = createPose();
+  const tables: readonly PoseTable[] = [LOCOMOTION_POSES, ACTION_POSES, CONTACT_POSES];
+  let n = 0;
+  for (let k = 0; k < tables.length; k++) {
+    const table = tables[k]!;
+    const ids = Object.keys(table);
+    for (let j = 0; j < ids.length; j++) {
+      const fn = table[Number(ids[j]) as keyof PoseTable];
+      if (!fn) continue;
+      for (let i = 0; i < calls; i++) {
+        const u = i / calls;
+        fn(out, u, (i * 0.137) % 1, 9 * u, (i & 1) === 0 ? 1 : -1, (i >> 1) & 1);
+        n++;
+      }
+    }
+  }
+  return n;
 }

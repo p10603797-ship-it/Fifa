@@ -80,9 +80,18 @@ import { T_BALL, T_CPU, T_DRIBBLE, T_LEVEL, T_PASS, T_PLAYER, T_SKILL } from '..
 import { dlog } from '../../sim/core/dmath';
 import { rngGauss } from '../../sim/core/rng';
 import { inPenaltyArea } from '../../sim/pitch/geometry';
-import { composureNoiseMul, levelParams, levelValue, styleWeights, visionNoiseMul } from './levels';
+import { composureNoiseMul, levelParams, levelValue, styleWeights, teamLevel, visionNoiseMul } from './levels';
 import { createPassOptions, scorePassOptions, type PassOption } from './passing';
 import { bestDribble, chooseSkill, estimateXg, lastXgBlock, shotLaneClear, SKILL_CHOICE } from './shooting';
+
+/** [QF-16] T_LEVEL.shotRushedGateMul by Difficulty, typed: indexed by teamLevel (an integer) so the per-evaluation read
+ *  boxes no double at a call boundary (tests/perf/tai-08-budget's source-allocation check sat at its limit with
+ *  levelValue there). Non-finite entries read as 1 (the full gate). */
+const SHOT_GATE_MUL = new Float64Array(T_LEVEL.shotRushedGateMul.length);
+for (let i = 0; i < SHOT_GATE_MUL.length; i++) {
+  const v = T_LEVEL.shotRushedGateMul[i]!;
+  SHOT_GATE_MUL[i] = Number.isFinite(v) ? v : 1;
+}
 
 export const LOCAL_TUNING = { // TUNING-CR (TAI-08): move into T_AI as carrier* (utilities are goal-probability units)
   // ---- possession value model
@@ -664,7 +673,7 @@ function shotOptionInto(s: SimState, p: Readonly<PlayerState>, lv: Readonly<Leve
   // [QF-16] Per level (T_LEVEL.shotRushedGateMul): the low levels still shoot, badly (Beginner v Beginner took 4.6 shots
   // a match with the gate at full strength: their long reaction delay lets the defence close in, so the cut always
   // applied).
-  const minShare = LT.shotMinPowerShare * levelValue(s, C.team, T_LEVEL.shotRushedGateMul);
+  const minShare = LT.shotMinPowerShare * SHOT_GATE_MUL[teamLevel(s, C.team)]!;
   if (dist > LT.quickShotDist && minShare > 0) {
     const fd = clamp01((dist - LT.shotNearDist) / (LT.shotFarDist - LT.shotNearDist));
     const h0 = holdFor(LT.shotPowerNear + (LT.shotPowerFar - LT.shotPowerNear) * fd, powerFill(s, C.team));

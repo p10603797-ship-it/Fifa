@@ -23,8 +23,13 @@
  *
  * THRESHOLD: < 2 B per frame of render allocation in the window, counted exactly (every allocation is a sample). The
  * smallest allocation V8 can make is 16 B (a boxed double): anything allocated every frame adds >= 16 B/frame, every
- * tick >= 8, every 8th frame >= 2. What remains (~0.3 B/frame) is event-time code (a camera cut, a replay plan, a
- * deoptimisation's boxed values) run a few times a minute.
+ * tick >= 8, every 8th frame >= 2. And < 20 allocations per 1000 frames whatever their size (QF-7R): a periodic
+ * allocation shows by its rate (every 50th frame = 20). What remains (0.02 B and 0.5 allocations per 1000 frames) is
+ * event-time code (a camera cut, a replay plan) run a few times a minute.
+ * prev is built as the app builds it (src/app/liveState.ts), and warmUp() includes the pose-function warm loop
+ * (render/warmScript.ts warmPoses): with QF-16's shielding in the sim, the shield pose ran interpreted in the window
+ * (2.1 B/frame, 41 allocations per 1000 frames) until the loading screen warmed every pose function past V8's
+ * optimisation threshold.
  *
  * HISTORY: 1.3-2.5 KB/frame at INT-C (deopts on insufficient type feedback, rare paths in the interpreter, doubles
  * crossing non-inlined calls: three.js position.set / euler.set in the camera writers, smoothstep / finite-guard
@@ -47,7 +52,9 @@ describe('INT-C renderer: allocation per frame in steady play', () => {
       const { createMatchConfig } = await import(${mod('src/contracts/state.ts')});
       const { CLUBS } = await import(${mod('src/data/clubs.ts')});
       const { createGameRenderer } = await import(${mod('src/render/index.ts')});
-      const { cloneState, copyState } = await import(${mod('src/sim/core/clone.ts')});
+      const { copyState } = await import(${mod('src/sim/core/clone.ts')});
+      // [QF-7R] prev as the app builds it (src/app/session.ts): the live state's own hidden classes.
+      const { cloneLiveState } = await import(${mod('src/app/liveState.ts')});
       const { createEventBuffer } = await import(${mod('src/sim/core/events.ts')});
       const { initMatch } = await import(${mod('src/sim/init.ts')});
       const { step } = await import(${mod('src/sim/step.ts')});
@@ -81,7 +88,7 @@ describe('INT-C renderer: allocation per frame in steady play', () => {
       let curr = null, prev = null;
       const load = async () => {
         curr = initMatch(cfg);
-        prev = cloneState(curr);
+        prev = cloneLiveState(curr);
         r.setMatch(curr, CLUBS);
         await r.warmUp();
       };
@@ -114,7 +121,7 @@ describe('INT-C renderer: allocation per frame in steady play', () => {
       const nodes = new Map();
       const index = (nd) => { nodes.set(nd.id, nd); for (const c of nd.children) index(c); };
       index(profile.head);
-      let bytes = 0, numbers = 0, objects = 0;
+      let bytes = 0, numbers = 0, objects = 0, count = 0;
       const by = {};
       for (const smp of profile.samples) {
         const nd = nodes.get(smp.nodeId);
@@ -122,6 +129,7 @@ describe('INT-C renderer: allocation per frame in steady play', () => {
         if (!u.includes('/src/render/')) continue;
         // Every allocation is a sample of its exact size (EXACT_INTERVAL is below the smallest object).
         const size = smp.size;
+        count++;
         const est = size;
         bytes += est;
         if (size === 16) numbers += est; else objects += est;
@@ -130,7 +138,7 @@ describe('INT-C renderer: allocation per frame in steady play', () => {
       }
       const f = 2 * N;
       console.log(JSON.stringify({
-        perFrame: bytes / f, numbersPerFrame: numbers / f, objectsPerFrame: objects / f, usPerFrameInclSim: us,
+        perFrame: bytes / f, allocsPerKFrame: count / f * 1000, numbersPerFrame: numbers / f, objectsPerFrame: objects / f, usPerFrameInclSim: us,
         phase: curr.match.phase, top: Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 30).map((e) => [e[0], Math.round(e[1] / f * 100) / 100]),
       }));
       process.exit(0);
@@ -141,9 +149,12 @@ describe('INT-C renderer: allocation per frame in steady play', () => {
     ], { cwd: root, encoding: 'utf8', timeout: 480_000 });
     expect(r.status, r.stderr).toBe(0);
     const res = JSON.parse(r.stdout.trim().split('\n').pop()!) as {
-      perFrame: number; numbersPerFrame: number; objectsPerFrame: number; usPerFrameInclSim: number; top: [string, number][];
+      perFrame: number; allocsPerKFrame: number; numbersPerFrame: number; objectsPerFrame: number; usPerFrameInclSim: number; top: [string, number][];
     };
     console.log(`INT-C renderer per frame: ${JSON.stringify(res)}`);
     expect(res.perFrame, JSON.stringify(res.top)).toBeLessThan(2);
+    // [QF-7R] And by count, whatever the size: anything allocated every frame is 1000 per 1000 frames, every 8th frame
+    // 125, at 20 Hz on a 120 Hz display 167; event-time code a handful.
+    expect(res.allocsPerKFrame, JSON.stringify(res.top)).toBeLessThan(20);
   }, 500_000);
 });

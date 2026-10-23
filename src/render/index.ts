@@ -68,6 +68,7 @@ import { createRenderer, type RebuildReport, type RendererCore, type RendererCor
 import { createReplay, type ReplayModule } from './replay';
 import { createStadium } from './stadium';
 import { createInterpState, type InterpState, type RenderContext, type RenderFrame, type RenderModule } from './types';
+import { createUniformCacheRetyper } from './uniformCache';
 import { runWarmScript, type WarmTarget } from './warmScript';
 
 declare global {
@@ -341,6 +342,8 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
   /** Scene modules in the fixed order (cameras and replay handled explicitly). */
   const modules: RenderModule[] = [];
   let matchActive = false;
+  /** [QF-7R] three.js float uniforms uploaded without boxing (render/uniformCache.ts: no heap number per draw in V8). */
+  const uniformCaches = createUniformCacheRetyper();
   const interp = createInterpState();
   const frameObj: RenderFrame = {
     prev: null as unknown as ReadonlySimState,
@@ -594,6 +597,8 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
       } catch {
         r.compile(ctx.scene, ctx.camera);
       }
+      // [QF-7R] Convert the new programs' float uniforms before their first draw (render/uniformCache.ts).
+      uniformCaches.sync(r as unknown as Parameters<typeof uniformCaches.sync>[0]);
       for (let i = 0; i < modules.length; i++) {
         const w = modules[i]!.warmUp;
         if (w) await w();
@@ -616,6 +621,7 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
     render(prev: ReadonlySimState, curr: ReadonlySimState, alpha: number, frame: FrameInfo) {
       if (!matchActive || !core || !core.renderer || core.lost || lost) return;
       updateModules(prev, curr, alpha, frame, null);
+      uniformCaches.sync(core.renderer as unknown as Parameters<typeof uniformCaches.sync>[0]);
       core.renderer.render(ctx.scene, ctx.camera);
     },
 

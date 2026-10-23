@@ -56,9 +56,16 @@
  *       body and body contact pinned the defender alongside). A carrier walking (slower than defendBlockWalkSpeed) on
  *       the ball T_LEVEL.blockTicks is met in the ball's path (reached round his body, tracked with his velocity), where the defender holds his ground
  *       (T_LEVEL.blockRetreat) and pokes at a ball within defendBlockPokeDist presented ball-first from where the
- *       wind-up and lunge take him (lungePresented), the carrier dribbling steadily (steadyDribble). A shielding carrier
- *       is held (the ground, not the ball). Careful tackles while blocking also want the ball first; rash lunges never go
- *       at a shielding carrier or at a ball his body hides (they were fouls nobody could win the ball with).
+ *       wind-up and lunge take him (lungePresented). A shielding carrier is not blocked (SIM-05 holds him off a
+ *       challenger he backs into). Rash lunges never go at a shielding carrier or at a ball his body hides (they
+ *       were fouls nobody could win the ball with). [QF-16 third attempt] A human carrier is blocked at a jog as well
+ *       (defendBlockJogSpeed); the poke wants the ball first by defendBlockPokeMargin. SIM-05's brace and SIM-06's
+ *       under-the-feet steal (sim/players) take the ball from a walker who runs it into the blocking defender.
+ *       [QF-16 skeptic] Against a human carrier only (the bot game is bit-identical): the jog block reaches every jog
+ *       (defendBlockJogSpeed 6); blocking a jogger he runs instead of jockeying when a sprint jockey is too slow; a
+ *       shielder is held at the guard point (defendBlockShieldCos0); no poke at a ball already at his feet
+ *       (defendBlockFeetDist: SIM-06 gives it to him); careful tackles while blocking want the ball first
+ *       (lungePresented), and rash tackles want it not hidden behind his body (ballHidden).
  *     - Slide (LOB press) only when goal-side, the ball loose-ish (between touches, beyond standing reach but within
  *       slide reach) in our half, one draw per window; from behind only for a carrier through on goal in our third
  *       with a tiny chance (slideBehindChance x decisionNoise).
@@ -239,6 +246,7 @@ export const LOCAL_TUNING = {
   // ---- [QF-16] the block (blockPlan): a walking (or long-dribbling) carrier is met in the ball's path
   /** A carrier slower than blockWalkSpeed is blocked once he has had the ball T_LEVEL.blockTicks, m/s. */
   blockWalkSpeed: T_CPU.defendBlockWalkSpeed,
+  blockJogSpeed: T_CPU.defendBlockJogSpeed,
   /** Guard point this far beyond the ball on the hold direction, m; tracked with a correction of blockGain per second. */
   blockDist: T_CPU.defendBlockDist,
   blockGain: T_CPU.defendBlockGain,
@@ -256,18 +264,16 @@ export const LOCAL_TUNING = {
   blockAlign: T_CPU.defendBlockAlign,
   blockHoldSpan: T_CPU.defendBlockHoldSpan,
   blockAlignBody: T_CPU.defendBlockAlignBody,
-  /** A shielding carrier: the ground held from this cosine to the goal side (full at 1), 0..1. */
+  /** [QF-16 skeptic] A human shielding carrier: the ground held from this cosine to the goal side (full at 1), 0..1. */
   blockShieldCos0: T_CPU.defendBlockShieldCos0,
 
   /** The poke: the ball within blockPokeDist of him (m), his rounding at most blockPokeMaxRound (0..1). */
   blockPokeDist: T_CPU.defendBlockPokeDist,
   blockPokeMaxRound: T_CPU.defendBlockPokeMaxRound,
-  /** steadyDribble: moving faster than steadyMinSpeed (m/s) the way he faces (cos), the ball ahead along his run (cos),
-   *  the ball rolling with him (relative speed at most steadyRelSpeed, m/s). */
-  steadyMinSpeed: T_CPU.defendSteadyMinSpeed,
-  steadyFaceCos: T_CPU.defendSteadyFaceCos,
-  steadyBallCos: T_CPU.defendSteadyBallCos,
-  steadyRelSpeed: T_CPU.defendSteadyRelSpeed,
+  /** ... and the ball presented ball-first by blockPokeMargin (m). */
+  blockPokeMargin: T_CPU.defendBlockPokeMargin,
+  /** [QF-16 skeptic] A human carrier's ball nearer than this to the blocking defender is left to SIM-06 (no poke), m. */
+  blockFeetDist: T_CPU.defendBlockFeetDist,
   /** [QF-13 skeptic] Reception near a line (receiveTurn): when the clean settle would end less than this inside a line,
    *  the stick's component toward it becomes receiveInward into the pitch. m, 0..1. */
   receiveSettleMargin: T_CPU.defendReceiveSettleMargin,
@@ -585,26 +591,6 @@ function ballPresented(s: SimState, p: Readonly<PlayerState>, q: Readonly<Player
 }
 
 /**
- * [QF-16] The carrier dribbles steadily: moving (faster than steadyMinSpeed) the way he faces (steadyFaceCos), the ball
- * ahead of him along his run (steadyBallCos) and rolling with him (relative speed at most steadyRelSpeed), so the linear
- * prediction of ballPresented holds through the wind-up. A carrier turning, pulling the ball back or strafing (the ball
- * beside or behind his run) is not challenged by the held / block challenges. Pure.
- */
-function steadyDribble(s: SimState, q: Readonly<PlayerState>): boolean {
-  const qs = Math.sqrt(q.vx * q.vx + q.vz * q.vz);
-  const b = s.ball;
-  const rx = b.vx - q.vx, rz = b.vz - q.vz;
-  if (rx * rx + rz * rz > L.steadyRelSpeed * L.steadyRelSpeed) return false;
-  // Nearly standing: nothing to mispredict.
-  if (!(qs > L.steadyMinSpeed)) return true;
-  const vx = q.vx / qs, vz = q.vz / qs;
-  if (vx * q.fx + vz * q.fz < L.steadyFaceCos) return false;
-  const ox = b.x - q.x, oz = b.z - q.z;
-  const ol = Math.sqrt(ox * ox + oz * oz);
-  return ol > EPS && (ox * vx + oz * vz) / ol >= L.steadyBallCos;
-}
-
-/**
  * [QF-16] ballPresented for a challenge from where the tackler will be: SIM-14's stand tackle turns his run onto the
  * ball and keeps windupSpeedKeep of the speed along it per wind-up tick, then lunges at standLungeSpeed (or that speed
  * if faster), so his sideways speed is gone at the contact. Ball-first (the carrier's body not between him and the
@@ -647,6 +633,20 @@ function ballFirstFrom(s: SimState, px: number, pz: number, q: Readonly<PlayerSt
   const rv = T_PLAYER.bodyRadius;
   return !(along > 0) || along - rv > lb - TACKLE_LT.ballFirstMargin + margin ||
     (lat < 0 ? -lat : lat) > rv + TACKLE_LT.blockLateral + margin;
+}
+
+/** [QF-16 skeptic] The carrier's body hides the ball from p now (ballFirstAt's body test, at any range). Pure. */
+function ballHidden(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState>): boolean {
+  const b = s.ball;
+  let ux = b.x - p.x, uz = b.z - p.z;
+  const lb = Math.sqrt(ux * ux + uz * uz);
+  if (!(lb > EPS)) return false;
+  ux /= lb; uz /= lb;
+  const vx = q.x - p.x, vz = q.z - p.z;
+  const along = vx * ux + vz * uz;
+  const lat = vx * uz - vz * ux;
+  const rv = T_PLAYER.bodyRadius;
+  return along > 0 && along - rv <= lb - TACKLE_LT.ballFirstMargin && (lat < 0 ? -lat : lat) <= rv + TACKLE_LT.blockLateral;
 }
 
 /** ballPresented at t seconds ahead (linear). Pure. */
@@ -876,12 +876,20 @@ function defendCarrier(
   // his body, tracked with his velocity, the ground held. Not a dribbler: blocking the bot carriers' 3-6 m/s dribbles
   // took the top levels' attacking edge (Legend v World Class 67 -> 51% over 100) and, in our last 35 m only, gave
   // goals away (2.87 -> 3.25 a match at Professional: the defender in the path is beaten by the cut inside).
-  const blockT = patient && qs < L.blockWalkSpeed && s.ball.ownerT >= levelValue(s, team, T_LEVEL.blockTicks);
+  // [QF-16 third attempt] A human carrier is blocked at a jog too (blockJogSpeed): jogging diagonally past the defender
+  // he kept the ball at every level (pinned alongside, the QF-14 escort at a human's hands).
+  const humanQ = q.ctrl >= 0 && q.ctrl < CPU_CONTROLLER_BASE;
+  const blockT = patient && qs < (humanQ ? L.blockJogSpeed : L.blockWalkSpeed) &&
+    s.ball.ownerT >= levelValue(s, team, T_LEVEL.blockTicks);
+  // A shielding carrier is not blocked (the ball is behind the man): SIM-05 holds a shielder off a challenger he backs
+  // into (shieldDriveSpeed).
   let hold = blockT && q.shielding !== 1 && blockPlan(s, dir, p, q, gx, gz);
   if (hold) { tgx = BLK.tx; tgz = BLK.tz; }
-  else if (blockT && q.shielding === 1) {
-    // A shielding carrier backing into him: the guard point as before, in front of him the ground held (no challenge:
-    // the ball is behind the man; SIM-05 holds a shielder off a challenger he backs into).
+  else if (blockT && humanQ && q.shielding === 1) {
+    // [QF-16 skeptic] ... but a human shielder is not let through either: the guard point as before, in front of him the
+    // ground held (no challenge: the ball is behind the man). The guard point alone (patienceStandoff goal-side of the
+    // carrier) walked the defender back at the shielder's pace, so SIM-05's hold never came into it: a human
+    // shielding forward walked a Legend defender from the edge of his area back to the goal line (7 of 8 kept).
     hold = true;
     BLK.tx = tgx; BLK.tz = tgz; BLK.ax = gx; BLK.az = gz; BLK.k = 0;
     const f = (cosG - L.blockShieldCos0) / (1 - L.blockShieldCos0);
@@ -930,6 +938,12 @@ function defendCarrier(
       stM = topP > EPS ? holdV / topP * LOCO_LT.sprintStickFull : 1;
       if (stM > 1) stM = 1;
       if (stM < L.sprintMinStick) stM = L.sprintMinStick;
+      // [QF-16 skeptic] Faster than even a sprint jockey goes sideways (jockeySpeedFraction of top): run, not jockey.
+      // Jockeying (facing the carrier) capped him at 0.55 x top, 5.1 m/s, so a human jogging diagonally at full stick
+      // (5.5 m/s) outran the block alongside him and kept the ball 3-4 of 8 at Legend, 29-36 m in 10 s. A jogging
+      // human carrier only (faster than blockWalkSpeed): a walker, and every bot carrier (blocked at a walk only), a
+      // sprint jockey keeps up with, so the walking blocks and the bot game are unchanged.
+      if (humanQ && qs >= L.blockWalkSpeed && holdV > topP * T_PLAYER.jockeySpeedFraction) btn &= ~Btn.SHIELD;
     } else {
       wantSprint = 0;
       stM = jogP > EPS ? holdV / jogP : 0;
@@ -962,13 +976,19 @@ function defendCarrier(
     exposure(s, q);
     if (expOn === 1) {
       if (expAge >= lv.tackleTimingTicks && dBall <= T_TACKLE.standReach + L.tackleApproach) {
-        const rash = noise01(seed, who, expKey * 4 + 1) < noisy;
+        // [QF-16 skeptic] A rash tackle at a human carrier still wants the ball not hidden behind his body (ballHidden,
+        // as the rash lunge below wants it ball-first): a Semi-Pro defender hacked a human strafing across him 8-9 times
+        // in 8 scenes with no ball won. Bot carriers unchanged.
+        const rash = noise01(seed, who, expKey * 4 + 1) < noisy && (!humanQ || !ballHidden(s, p, q));
         // [QF-13 skeptic] In our own area a careful tackle also wants the ball clear of the carrier's body (boxClear), at
         // the levels whose quick careful tackles gave away the penalties (T_LEVEL.boxBodyClear: World Class, Legend).
         const careful = !inBox || !(levelValue(s, team, T_LEVEL.boxBodyClear) > 0) || boxClear(s, p, q);
-        // [QF-16] Blocking (holdV >= 0: close in front of him) a careful tackle also wants the ball first from where
-        // the lunge takes him (lungePresented): a strafer turning in front of him was tackled through his body.
-        const first = holdV < 0 || lungePresented(s, p, q, 0);
+        // [QF-16 skeptic] Blocking a human carrier (holdV >= 0), a careful tackle also wants the ball first by
+        // blockPokeMargin from where the wind-up and lunge take him (lungePresented), as the poke does: a human strafing
+        // across the defender (MOD_L, 3 m/s, the ball on his far side) is blocked since the jog block, and the careful
+        // tackle on his touches went through his body (6-7 fouls in 8 scenes at World Class / Legend; 0-2 before).
+        // Bot carriers (blocked at a walk only) keep the old careful tackle: the bot game is unchanged.
+        const first = holdV < 0 || !humanQ || lungePresented(s, p, q, L.blockPokeMargin);
         if (rash || (wellTimed(s, p, q) && careful && first)) { why(team, rash ? CH_RASH : CH_CAREFUL); pressTackle(brain, lv); return; }
       }
     } else if (dBall <= T_TACKLE.standReach && goalSide) {
@@ -984,14 +1004,15 @@ function defendCarrier(
         const age = s.tick - q.lastTouchTick;
         const still = qs < L.stillSpeed && b.vx * b.vx + b.vz * b.vz < L.stillSpeed * L.stillSpeed &&
           age >= L.stillTouchTicks + lv.tackleTimingTicks;
-        // [QF-16] Both want a steady dribble (steadyDribble: the linear prediction holds through the wind-up). The
-        // held challenge is for a carrier who is not blocked; a blocked one is poked: the ball within blockPokeDist,
-        // the defender round the carrier (rounding at most blockPokeMaxRound) and the ball presented ball-first from
-        // where the wind-up and lunge take him (lungePresented), in our area only with the carrier's body clear.
-        const steady = steadyDribble(s, q);
-        const held = holdV < 0 && qs < L.heldSpeed && b.ownerT >= L.heldTicks && steady && ballPresented(s, p, q);
-        const poke = holdV >= 0 && BLK.k <= L.blockPokeMaxRound && dBall <= L.blockPokeDist && steady &&
-          lungePresented(s, p, q, 0) && (!inBox || boxClear(s, p, q));
+        // [QF-16] The held challenge is for a carrier who is not blocked; a blocked one is poked: the ball within
+        // blockPokeDist, the defender round the carrier (rounding at most blockPokeMaxRound) and the ball presented
+        // ball-first by blockPokeMargin from where the wind-up and lunge take him (lungePresented), in our area only with
+        // the carrier's body clear.
+        const held = holdV < 0 && qs < L.heldSpeed && b.ownerT >= L.heldTicks && ballPresented(s, p, q);
+        // [QF-16 skeptic] Not at a human carrier's ball already at his feet (blockFeetDist): SIM-06 gives it to him.
+        const poke = holdV >= 0 && BLK.k <= L.blockPokeMaxRound && dBall <= L.blockPokeDist &&
+          !(humanQ && dBall < L.blockFeetDist) &&
+          lungePresented(s, p, q, L.blockPokeMargin) && (!inBox || boxClear(s, p, q));
         if ((still || ((held || poke) && age >= lv.tackleTimingTicks)) &&
           (!inBox || !(levelValue(s, team, T_LEVEL.boxBodyClear) > 0) || boxClear(s, p, q))) {
           why(team, still ? CH_STILL : held ? CH_HELD : CH_POKE);

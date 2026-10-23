@@ -17,7 +17,9 @@
  * Options: --dpr N (default 1), --warm S (seconds of play before measuring, default 8), --seed N, --scale-test (6x
  * throttling for --seconds, then 1x: the resolution steps down and back up), --first S (measure the first S seconds
  * after the match is shown instead of steady play: warm-up hitches), --cpu (CDP CPU profile: self time by area and
- * function), --lines <regex> (with --cpu: samples per source line of the functions matching file:function).
+ * function), --lines <regex> (with --cpu: samples per source line of the functions matching file:function), --timeline
+ * (main-thread ms per frame by trace event: script, style, layout, paint, GPU tasks), --events (a goal with its
+ * celebration and replay, then half time, forced into the measured window: frame stats around each phase change).
  */
 import { createServer as createHttp, type Server } from 'node:http';
 import { dirname, resolve } from 'node:path';
@@ -51,6 +53,7 @@ const RECORDER = `
     on: false, n: 0,
     t: new Float64Array(N), work: new Float32Array(N), sim: new Float32Array(N), render: new Float32Array(N), ticks: new Uint8Array(N),
     calls: new Uint16Array(N), tris: new Uint32Array(N), scale: new Float32Array(N), tier: new Uint8Array(N),
+    phase: new Uint8Array(N),
   };
   window.__qf7r = q;
   const loop = (now) => {
@@ -61,6 +64,8 @@ const RECORDER = `
       if (fs) { q.work[i] = (fs.ticks > 0 ? fs.simMsLast * fs.ticks : 0) + fs.renderMsLast; q.sim[i] = fs.ticks > 0 ? fs.simMsLast : 0; q.render[i] = fs.renderMsLast; q.ticks[i] = fs.ticks; }
       const rs = window.__dotkickRendererStats ? window.__dotkickRendererStats() : null;
       if (rs) { q.calls[i] = rs.drawCalls; q.tris[i] = rs.triangles; q.scale[i] = rs.resolutionScale; q.tier[i] = rs.qualityTier; }
+      const d = window.__dotkick, st = d && d.ctx.session.getState();
+      q.phase[i] = st ? st.match.phase : 255;
     }
     requestAnimationFrame(loop);
   };
@@ -84,7 +89,7 @@ const NODRAW = `
 })();
 `;
 
-interface Window { t: number[]; work: number[]; render: number[]; ticks: number[]; calls: number[]; tris: number[]; scale: number[]; tier: number[] }
+interface Window { t: number[]; work: number[]; render: number[]; ticks: number[]; calls: number[]; tris: number[]; scale: number[]; tier: number[]; phase: number[] }
 
 function pct(sorted: number[], q: number): number {
   if (sorted.length === 0) return NaN;
@@ -119,6 +124,64 @@ function summarize(w: Window): Record<string, number | string> {
   };
 }
 
+/** Phases named in transition reports. */
+const PHASE_NAMES: Record<number, string> = { 1: 'kickOff', 2: 'inPlay', 8: 'goal', 9: 'celebration', 10: 'replay', 11: 'halfTime' };
+
+/**
+ * --events: the frames around each phase change into a goal, celebration, replay, half time and the kick-off after
+ * them (from 2 frames before to 30 frames after the change): longest frame interval, loop work and render stage.
+ * Warm-up hitches show here (BRIEF section 13 "The first slide tackle or replay in a match must not hitch").
+ */
+function transitions(w: Window): Record<string, number | string>[] {
+  const out: Record<string, number | string>[] = [];
+  for (let i = 1; i < w.phase.length; i++) {
+    const p = w.phase[i]!;
+    if (p === w.phase[i - 1] || PHASE_NAMES[p] === undefined || p === 2) continue;
+    let iv = 0, work = 0, render = 0;
+    for (let k = Math.max(1, i - 2); k < Math.min(w.t.length, i + 30); k++) {
+      iv = Math.max(iv, w.t[k]! - w.t[k - 1]!);
+      work = Math.max(work, w.work[k]!);
+      render = Math.max(render, w.render[k]!);
+    }
+    const r2 = (x: number): number => Math.round(x * 10) / 10;
+    out.push({ at: r2((w.t[i]! - w.t[0]!) / 1000), into: PHASE_NAMES[p]!, maxIntervalMs: r2(iv), maxWorkMs: r2(work), maxRenderMs: r2(render) });
+  }
+  return out;
+}
+
+/**
+ * --events: the longest main-thread tasks of the window, each with the trace events inside it summed by name (what a
+ * hitch is made of: script, style recalculation, layout, paint, image decode, stylesheet parse...).
+ */
+function longTasks(events: { name: string; ph: string; dur?: number; tid: number; ts: number; args?: { data?: { functionName?: string; url?: string } } }[], mainTid: number | null): Record<string, unknown>[] {
+  const main = events.filter((e) => e.ph === 'X' && typeof e.dur === 'number' && (mainTid === null || e.tid === mainTid));
+  const tasks = main.filter((e) => e.name === 'RunTask').sort((a, b) => b.dur! - a.dur!).slice(0, 4);
+  return tasks.map((t) => {
+    const by: Record<string, number> = {};
+    for (const e of main) {
+      if (e === t || e.ts < t.ts || e.ts + e.dur! > t.ts + t.dur!) continue;
+      let k = e.name;
+      if (e.name === 'FunctionCall' || e.name === 'EventDispatch') { const d = e.args?.data; if (d?.functionName) k += ':' + d.functionName; }
+      by[k] = (by[k] ?? 0) + e.dur! / 1000;
+    }
+    const top = Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 14).map(([k, v]) => [k, Math.round(v * 10) / 10]);
+    // With --cpu: the sampled functions (self time) inside the task.
+    const fns: Record<string, number> = {};
+    for (const smp of cpuSamples) if (smp.t >= t.ts && smp.t <= t.ts + t.dur!) fns[smp.fn] = (fns[smp.fn] ?? 0) + 1;
+    const js = Object.entries(fns).sort((a, b) => b[1] - a[1]).slice(0, 16);
+    return { ms: Math.round(t.dur! / 100) / 10, at: t.ts, top, ...(js.length > 0 ? { jsSamples: js } : {}) };
+  });
+}
+
+/** In-page: put the ball into a net (a goal for team 0, as tests/e2e/qf-7r-hud.spec.ts does) or end the half. */
+const POKE_GOAL = `(() => {
+  const s = window.__dotkick.ctx.session.getState(), b = s.ball, e = s.teams[0].dir > 0 ? 1 : -1;
+  b.owner = -1; b.heldBy = -1; b.x = e * 52.4; b.z = 2.6; b.y = 0.3; b.vx = e * 20; b.vy = 0; b.vz = 0;
+  b.px = b.x; b.py = b.y; b.pz = b.z; b.grounded = 1; b.shotBy = -1; b.passTarget = -1;
+  b.lastTouch = 9; b.lastTouchTeam = 0; b.lastTouchTick = s.tick; b.lastKickTeam = 0; b.lastKickBy = 9;
+})()`;
+const POKE_HALF = `(() => { const m = window.__dotkick.ctx.session.getState().match; m.addedT = 0; m.periodT = m.periodLen; })()`;
+
 /** GC pauses on the renderer main thread from trace events. */
 function gcStats(events: { name: string; ph: string; dur?: number; tid: number; pid: number; ts: number; args?: unknown }[], mainTid: number | null): Record<string, number> {
   let minor = 0, major = 0, minorMs = 0, majorMs = 0, maxMs = 0;
@@ -138,7 +201,7 @@ async function readWindow(page: Page): Promise<Window> {
   return page.evaluate(`(() => {
     const q = window.__qf7r, n = q.n;
     const a = (k) => Array.from(q[k].slice(0, n));
-    return { t: a('t'), work: a('work'), render: a('render'), ticks: a('ticks'), calls: a('calls'), tris: a('tris'), scale: a('scale'), tier: a('tier') };
+    return { t: a('t'), work: a('work'), render: a('render'), ticks: a('ticks'), calls: a('calls'), tris: a('tris'), scale: a('scale'), tier: a('tier'), phase: a('phase') };
   })()`) as Promise<Window>;
 }
 
@@ -155,6 +218,19 @@ async function startTrace(cdp: CDPSession): Promise<() => Promise<{ events: unkn
     await done;
     return { events };
   };
+}
+
+/**
+ * Main-thread time by trace event name (complete events; nested events are counted in their parents too: RunTask holds
+ * everything, FunctionCall the JS of a task, UpdateLayoutTree / Layout / Paint / PrePaint the DOM rendering steps).
+ */
+function mainThreadTime(events: { name: string; ph: string; dur?: number; tid: number }[], mainTid: number | null, frames: number): [string, number][] {
+  const by = new Map<string, number>();
+  for (const e of events) {
+    if (e.ph !== 'X' || typeof e.dur !== 'number' || (mainTid !== null && e.tid !== mainTid)) continue;
+    by.set(e.name, (by.get(e.name) ?? 0) + e.dur / 1000);
+  }
+  return [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 18).map(([k, v]) => [k, Math.round((v / Math.max(1, frames)) * 100) / 100]);
 }
 
 function mainThread(events: { name: string; ph: string; tid: number; pid: number; args?: { name?: string } }[]): number | null {
@@ -188,6 +264,9 @@ async function allocProfile(cdp: CDPSession): Promise<() => Promise<Record<strin
 }
 
 /** CPU profile of the window: self time per source area and the top functions of the presentation areas. */
+/** --events with --cpu: the profile's samples as (time in trace clock, function) for the long-task breakdown. */
+let cpuSamples: { t: number; fn: string }[] = [];
+
 async function cpuProfile(cdp: CDPSession): Promise<() => Promise<{ areas: Record<string, number>; top: [string, number][]; totalMs: number }>> {
   await cdp.send('Profiler.enable');
   await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
@@ -200,6 +279,17 @@ async function cpuProfile(cdp: CDPSession): Promise<() => Promise<{ areas: Recor
     const { profile } = await cdp.send('Profiler.stop') as unknown as { profile: { nodes: PNode[]; startTime: number; endTime: number; samples: number[]; timeDeltas: number[] } };
     const self = new Map<number, number>();
     for (let i = 0; i < profile.samples.length; i++) self.set(profile.samples[i]!, (self.get(profile.samples[i]!) ?? 0) + (profile.timeDeltas[i] ?? 0));
+    const byId = new Map<number, PNode>();
+    for (const nd of profile.nodes) byId.set(nd.id, nd);
+    cpuSamples = [];
+    let tUs = profile.startTime;
+    for (let i = 0; i < profile.samples.length; i++) {
+      tUs += profile.timeDeltas[i] ?? 0;
+      const nd = byId.get(profile.samples[i]!);
+      if (!nd) continue;
+      const u = nd.callFrame.url;
+      cpuSamples.push({ t: tUs, fn: u.slice(u.lastIndexOf('/') + 1).replace(/\?.*$/, '') + ':' + nd.callFrame.functionName });
+    }
     const areas: Record<string, number> = {};
     const fns: Record<string, number> = {};
     for (const nd of profile.nodes) {
@@ -224,6 +314,13 @@ async function cpuProfile(cdp: CDPSession): Promise<() => Promise<{ areas: Recor
       }
       console.error('lines', JSON.stringify(Object.entries(lines).sort((x, y) => y[1] - x[1]).slice(0, 30)));
     }
+    // V8's reason a sampled function is not optimised (ProfileNode.deoptReason), for the presentation areas.
+    const deopts: Record<string, string> = {};
+    for (const nd of profile.nodes as (PNode & { deoptReason?: string })[]) {
+      const m = /\/src\/(render|ui|audio|input|app|platform)\/(.*)\.ts/.exec(nd.callFrame.url);
+      if (m && nd.deoptReason) deopts[`${m[1]}/${m[2]}:${nd.callFrame.functionName}`] = nd.deoptReason;
+    }
+    if (Object.keys(deopts).length > 0) console.error('deopts', JSON.stringify(deopts));
     const top = Object.entries(fns).filter(([k]) => /^(render|ui|audio|input|app|platform|three|\(native\))/.test(k)).sort((a, b) => b[1] - a[1]).slice(0, 25)
       .map(([k, v]) => [k, Math.round(v)] as [string, number]);
     for (const k of Object.keys(areas)) areas[k] = Math.round(areas[k]!);
@@ -267,7 +364,7 @@ async function main(): Promise<void> {
       const cdp = await context.newCDPSession(page);
       const q = new URLSearchParams({ bench: '1', benchSeconds: '3600', benchWarmup: '0' });
       if (typeof args.seed === 'string') q.set('benchSeed', args.seed);
-      await page.goto(`${url}${url.includes('?') ? '&' : '?'}${q.toString()}`);
+      await page.goto(`${url}${url.includes('?') ? '&' : '?'}${q.toString()}`, { timeout: 180_000 });
       if (rate > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate });
       const tLoad = Date.now();
       await page.waitForFunction(`(() => { const d = window.__dotkick; return !!d && d.ctx.router.current === 'match' && d.ctx.session.getState() !== null; })()`,
@@ -280,7 +377,21 @@ async function main(): Promise<void> {
       const stopAlloc = args.alloc ? await allocProfile(cdp) : null;
       const stopCpu = args.cpu ? await cpuProfile(cdp) : null;
       const scaleTest = !!args['scale-test'];
-      await page.waitForTimeout((first > 0 ? first : seconds) * 1000);
+      if (args.events) {
+        // A goal (celebration, replay, kick-off), then half time (and the second-half kick-off), in the measured window.
+        const inPlay = `(() => { const s = window.__dotkick.ctx.session.getState(); return !!s && s.match.phase === 2; })()`;
+        await page.waitForTimeout(2000);
+        await page.waitForFunction(inPlay, null, { timeout: 120_000, polling: 50 });
+        await page.evaluate(POKE_GOAL);
+        await page.waitForTimeout(3000);
+        console.error('events: phase 3 s after the goal poke', await page.evaluate('window.__dotkick.ctx.session.getState().match.phase'));
+        await page.waitForFunction(inPlay, null, { timeout: 180_000, polling: 100 });
+        await page.waitForTimeout(2000);
+        await page.evaluate(POKE_HALF);
+        await page.waitForTimeout(3000);
+        await page.waitForFunction(inPlay, null, { timeout: 180_000, polling: 100 });
+        await page.waitForTimeout(2000);
+      } else await page.waitForTimeout((first > 0 ? first : seconds) * 1000);
       if (scaleTest) {
         await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
         await page.waitForTimeout(seconds * 1000);
@@ -294,6 +405,10 @@ async function main(): Promise<void> {
       const sum = summarize(w);
       const gc = gcStats(ev, mainThread(ev));
       const res: Record<string, unknown> = { throttle: rate, loadMs, ...sum, ...gc, errors: errors.slice(0, 5) };
+      if (args.events) res.transitions = transitions(w);
+      if (args.events || first > 0) res.longTasks = longTasks(ev as never, mainThread(ev));
+      // ms per frame on the main thread by trace event (what the frame interval is made of besides the loop's work).
+      if (args.timeline) res.mainMsPerFrame = mainThreadTime(ev, mainThread(ev), Number(sum.frames) || 1);
       if (alloc) {
         const frames = Number(sum.frames) || 1;
         const areas: Record<string, number> = {};

@@ -44,9 +44,9 @@ import type { EventBuffer } from '../contracts/events';
 import { createInputFrame, type CameraProjector, type InputFrame } from '../contracts/input';
 import type { MatchConfig, SimState } from '../contracts/state';
 import { createStatsTracker } from '../modes/stats';
-import { cloneState as simCloneState } from '../sim/core/clone';
 import { createEventBuffer as simCreateEventBuffer } from '../sim/core/events';
 import { initMatch as simInitMatch } from '../sim/init';
+import { cloneLiveState } from './liveState';
 import { ANY_DEVICE, createCommandQueue, createLocalInputProvider, type CommandQueue, type LocalInputProvider } from './localInput';
 import type { AppRouter, AppSession, MatchRuntime } from './types';
 
@@ -204,7 +204,9 @@ export function uiHumanOf(ctx: Pick<AppContext, 'session' | 'devices'>): number 
 export function createSession(deps: SessionDeps): AppSession {
   const { router, renderer, hud, audio, devices, diagnostics, clubs } = deps;
   const initMatch = deps.initMatch ?? simInitMatch;
-  const cloneState = deps.cloneState ?? simCloneState;
+  // [QF-7R] prev with the live state's hidden classes (app/liveState.ts): sim/core/clone.ts's cloneState made every
+  // nested object of prev a dictionary-mode object, a heap number per double copied into it every tick.
+  const cloneState = deps.cloneState ?? cloneLiveState;
   const createStats = deps.createStats ?? createStatsTracker;
   const createEvents = deps.createEventBuffer ?? simCreateEventBuffer;
   const createLocal = deps.createLocalProvider ?? createLocalInputProvider;

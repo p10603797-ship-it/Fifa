@@ -89,7 +89,7 @@ const session = new Session();
 session.connect();
 type PNode = { id: number; callFrame: { url: string; functionName: string }; children: PNode[] };
 /** Bytes allocated by src/ui/ code during run(TICKS), by site; and by the power bar. */
-async function window(press: number): Promise<{ bytes: number; power: number; charging: number; by: Record<string, number> }> {
+async function window(press: number): Promise<{ bytes: number; count: number; power: number; charging: number; by: Record<string, number> }> {
   K[0] = press;
   run(WARM + TICKS); // every situation of the window once (JIT feedback)
   curr = initMatch(cfg);
@@ -102,7 +102,10 @@ async function window(press: number): Promise<{ bytes: number; power: number; ch
     samplingInterval: EXACT_INTERVAL, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
   });
   run(TICKS);
-  const { profile } = await session.post('HeapProfiler.stopSampling');
+  // The inspector typings omit `samples` (present with suppress-randomness) and a node's `id`: read the raw shape.
+  const profile = (await session.post('HeapProfiler.stopSampling')).profile as unknown as {
+    head: PNode; samples: { size: number; nodeId: number }[];
+  };
   const where = new Map<number, string>();
   const index = (nd: PNode): void => {
     const u = nd.callFrame.url;
@@ -110,18 +113,19 @@ async function window(press: number): Promise<{ bytes: number; power: number; ch
     if (i >= 0) where.set(nd.id, u.slice(i + 8) + ':' + nd.callFrame.functionName);
     for (const c of nd.children) index(c);
   };
-  index(profile.head as PNode);
-  let bytes = 0, power = 0;
+  index(profile.head);
+  let bytes = 0, power = 0, count = 0;
   const by: Record<string, number> = {};
-  for (const smp of profile.samples as { size: number; nodeId: number }[]) {
+  for (const smp of profile.samples) {
     const w = where.get(smp.nodeId);
     if (w === undefined) continue;
     bytes += smp.size;
+    if (!w.startsWith('hud/powerBar.ts')) count++; // every allocation is one sample (EXACT_INTERVAL)
     if (w.startsWith('hud/powerBar.ts')) power += smp.size;
     const key = `${w} (${smp.size} B)`;
     by[key] = (by[key] ?? 0) + smp.size;
   }
-  return { bytes, power, charging: K[1]!, by };
+  return { bytes, count, power, charging: K[1]!, by };
 }
 const f = 2 * TICKS;
 const top = (by: Record<string, number>): [string, number][] =>
@@ -130,6 +134,10 @@ const steady = await window(0);
 const charge = await window(1);
 console.log(JSON.stringify({
   perFrame: steady.bytes / f,
+  // Allocations (not bytes) per 1000 frames, the power bar aside: a periodic allocation shows by its rate whatever its
+  // size (one 16-byte number per radar redraw = 167 per 1000 frames at 20 Hz on a 120 Hz display; 2.7 B per frame).
+  allocsPerKFrame: (steady.count / f) * 1000,
+  chargingAllocsPerKFrame: (charge.count / f) * 1000,
   chargingPerFrame: (charge.bytes - charge.power) / f,
   powerPerChargingFrame: charge.charging > 0 ? charge.power / charge.charging : -1,
   chargingFrames: charge.charging,

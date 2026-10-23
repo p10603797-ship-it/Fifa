@@ -23,7 +23,7 @@ const NODRAW = `
 })();
 `;
 
-interface Report { frames: number; seconds: number; mutations: number; redundant: string[]; perSecond: [string, number][] }
+interface Report { frames: number; seconds: number; mutations: number; redundant: string[]; perSecond: [string, number][]; goals: number }
 
 /** Observe all DOM mutations for `ms` of play; returns redundant writes and the busiest targets. */
 async function observe(page: Page, ms: number): Promise<Report> {
@@ -55,7 +55,9 @@ async function observe(page: Page, ms: number): Promise<Report> {
       if (poked === 0 && inPlay && el > dur * 0.1) {
         poked = 1;
         const e = st().teams[0]!.dir > 0 ? 1 : -1; // the net team 0 (the human's side) attacks
-        loose(e * 52.2, 0.5, 0.6, e * 12, 0, 0, 9); // just short of the line, inside the posts: over it next tick
+        // Wholly over the line on the next tick, wide of the keeper (from 52.2 m at 12 m/s it took two ticks and the
+        // keeper sometimes got there first: no goal, and the toast / score path went unobserved).
+        loose(e * 52.4, 3.3, 1.9, e * 20, 0, 0, 9);
       }
       if (poked === 1 && inPlay && el > dur * 0.5) { poked = 2; loose(10, 33.6, 0.11, 0, 6, 1, 15); }
       if (el < dur) { requestAnimationFrame(tick); return; }
@@ -107,7 +109,8 @@ async function observe(page: Page, ms: number): Promise<Report> {
       }
       const secs = (performance.now() - t0) / 1000;
       const perSecond = [...counts.entries()].sort((x, y) => y[1] - x[1]).slice(0, 15).map(([k, v]) => [k, Math.round((v / secs) * 10) / 10] as [string, number]);
-      done({ frames, seconds: secs, mutations: recs.length, redundant, perSecond });
+      const t = st().teams as unknown as { goals: number }[];
+      done({ frames, seconds: secs, mutations: recs.length, redundant, perSecond, goals: t[0]!.goals + t[1]!.goals });
     };
     requestAnimationFrame(tick);
   }), ms);
@@ -132,6 +135,7 @@ test('HUD and touch controls write the DOM only on change during live play', asy
   const rep = await observe(page, 30000);
   console.log(`QF-7R HUD DOM writes: ${JSON.stringify({ frames: rep.frames, seconds: Math.round(rep.seconds * 10) / 10, mutations: rep.mutations, perSecond: rep.perSecond })}`);
   expect(rep.frames).toBeGreaterThan(100);
+  expect(rep.goals, 'the forced goal was scored (toast, score and replay observed)').toBeGreaterThan(0);
   expect(rep.redundant, rep.redundant.join('\n')).toEqual([]);
   expect(errors.filter((e) => !/GPU stall|GL Driver/.test(e))).toEqual([]);
 });

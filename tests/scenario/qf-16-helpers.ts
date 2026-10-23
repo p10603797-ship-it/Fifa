@@ -3,7 +3,7 @@
  * human (slot 9) has the ball at his feet 3 m in front of team 1's defender (slot 15), everybody else parked behind the
  * play; the human's stick follows a script for up to 10 s. Used by the qf-16 escort, shield and level tests.
  */
-import { ActionKind, Difficulty, MatchPhase } from '../../src/contracts/enums';
+import { ActionKind, Difficulty, KickKind, MatchPhase } from '../../src/contracts/enums';
 import { EventType, type SimEvent } from '../../src/contracts/events';
 import { Btn, type InputFrame } from '../../src/contracts/input';
 import { MoveMode, type SimState } from '../../src/contracts/state';
@@ -53,6 +53,22 @@ export const SCRIPTS: Record<string, { back?: boolean; f: StickScript }> = {
   nudge: { f: (t, f) => { if (t % 30 < 8) f.mx = 60; } },
   back: { back: true, f: (_t, f) => { f.buttons |= Btn.SHIELD; f.mx = 30; } },
   shieldStrafe: { f: (t, f) => { f.buttons |= Btn.SHIELD; f.mz = Math.floor(t / 60) % 2 ? 50 : -50; } },
+  // [QF-16 third attempt]
+  diagJog: { f: (_t, f) => { f.mx = 80; f.mz = 40; } },
+  diagJogM: { f: (_t, f) => { f.mx = 80; f.mz = -40; } },
+  diagJog45: { f: (_t, f) => { f.mx = 70; f.mz = 70; } },
+  shuffle: { f: (t, f) => { f.mx = 25; f.mz = (Math.floor(t / 20) % 2 ? 1 : -1) * 25; } },
+  walkStop: { f: (t, f) => { if (t % 90 < 60) f.mx = 40; } },
+  // [QF-16 skeptic] full stick (|m| 127), no sprint: a full jog diagonally (5.5 m/s for the scene's carrier)
+  diagJogFull: { f: (_t, f) => { f.mx = 113; f.mz = 57; } },
+  diagJogFullM: { f: (_t, f) => { f.mx = 113; f.mz = -57; } },
+  // [QF-16 skeptic] shielding (L2) while walking forward at the defender, facing him (the ball behind)
+  shieldFwd: { f: (_t, f) => { f.buttons |= Btn.SHIELD; f.mx = 40; } },
+  shieldDiag: { f: (_t, f) => { f.buttons |= Btn.SHIELD; f.mx = 30; f.mz = 20; } },
+  shieldDiagM: { f: (_t, f) => { f.buttons |= Btn.SHIELD; f.mx = 30; f.mz = -20; } },
+  // [QF-16 skeptic] the strafe dribble (MOD_L: facing the attacked goal) walking diagonally / across the defender
+  strafeDiag: { f: (_t, f) => { f.buttons |= Btn.MOD_L; f.mx = 60; f.mz = 40; } },
+  strafeAcross: { f: (_t, f) => { f.buttons |= Btn.MOD_L; f.mx = 30; f.mz = 110; } },
 };
 
 export interface SceneTally {
@@ -64,14 +80,20 @@ export interface SceneTally {
   won: number;
   fouls: number;
   pens: number;
+  /** [QF-16 skeptic] Scenes that ended out of play with no team-1 tackle, steal, block or foul (ran it to a line). */
+  out: number;
 }
 
-/** Run `script` for `seeds` scenes (seed 1..seeds; carrier at (bx - seed, bz - seed)) of up to n ticks at `level`. */
-export function runScript(name: string, level: Difficulty, seeds: number, n = 600, bx = 10, bz = 5): SceneTally {
+/** Run `script` for `seeds` scenes (seed 1..seeds; carrier at (bx - seed, bz - seed)) of up to n ticks at `level`;
+ *  `prep` adjusts each scene before it runs (attributes, ...). */
+export function runScript(
+  name: string, level: Difficulty, seeds: number, n = 600, bx = 10, bz = 5, prep?: (s: SimState) => void,
+): SceneTally {
   const sc = SCRIPTS[name]!;
-  const r: SceneTally = { kept: 0, gained: [], won: 0, fouls: 0, pens: 0 };
+  const r: SceneTally = { kept: 0, gained: [], won: 0, fouls: 0, pens: 0, out: 0 };
   for (let seed = 1; seed <= seeds; seed++) {
     const s = carrierScene(seed, level, bx - seed, bz - seed, 3, sc.back);
+    prep?.(s);
     const x0 = s.players[CARRIER]!.x, t0 = s.tick;
     let maxX = x0;
     const ev: SimEvent[] = runTicks(s, n, (t, _st, out) => sc.f(t - t0, out[0]!), {
@@ -82,10 +104,15 @@ export function runScript(name: string, level: Difficulty, seeds: number, n = 60
     });
     if (s.ball.owner === CARRIER && s.match.phase === MatchPhase.IN_PLAY) r.kept++;
     r.gained.push(maxX - x0);
+    const won0 = r.won + r.fouls;
     for (const e of ev) {
+      // Won: a team-1 tackle, or a steal / block off a team-1 player's feet (SIM-06, no TACKLE event).
       if (e.type === EventType.TACKLE && e.b === CARRIER && e.c === 1 && s.players[e.a]!.team === 1) r.won++;
+      if (e.type === EventType.POSSESSION && e.a === 1) r.won++;
+      if (e.type === EventType.KICK && e.b === KickKind.DEFLECTION && s.players[e.a]!.team === 1) r.won++;
       if (e.type === EventType.FOUL && s.players[e.a]!.team === 1) { r.fouls++; if (e.d === 1) r.pens++; }
     }
+    if (s.match.phase !== MatchPhase.IN_PLAY && r.won + r.fouls === won0) r.out++;
   }
   return r;
 }

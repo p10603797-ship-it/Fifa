@@ -574,11 +574,18 @@ export const T_CPU = {
    *  the carrier's velocity plus defendBlockGain per second toward it; round the carrier's body until
    *  defendBlockRoundAhead ahead of his centre (over defendBlockRoundSpan, two body radii + defendBlockRoundGap to the
    *  side); there he holds his ground (T_LEVEL.blockRetreat) when in the ball's line (defendBlockAlign, ahead of the ball
-   *  over defendBlockHoldSpan) or in front of the carrier's body (defendBlockAlignBody); against a shielding carrier from
-   *  a cosine of defendBlockShieldCos0 to the goal side. He pokes at a ball within defendBlockPokeDist (rounding at most
-   *  defendBlockPokeMaxRound) presented ball-first from where the wind-up and lunge take him, the carrier dribbling
-   *  steadily (defendSteady*). m/s, m, 1/s, m, cos, m, m, m, m, m, m, cos, m, 0..1. */
+   *  over defendBlockHoldSpan) or in front of the carrier's body (defendBlockAlignBody). He pokes at a ball within
+   *  defendBlockPokeDist (rounding at most defendBlockPokeMaxRound) presented ball-first from where the wind-up and lunge
+   *  take him. m/s, m, 1/s, m, cos, m, m, m, m, m, m, m, 0..1. [QF-16 third attempt] steadyDribble (defendSteady*) and
+   *  the hold against a shielding carrier (defendBlockShieldCos0) removed: no test failed without them once the poke
+   *  wanted the ball first by defendBlockPokeMargin and SIM-05 held a shielder off (shieldDriveSpeed). */
   defendBlockWalkSpeed: 3.0,
+  /** [QF-16 third attempt] A human-controlled carrier is blocked up to this speed (a jog: stick (80, 40) kept the ball 8 of 8
+   *  at every level, 33 m in 10 s, the defender pinned alongside); a bot dribbler is not (blocking the bot carriers' 3-6
+   *  m/s dribbles took the top levels' attacking edge: Legend v World Class 67 -> 51% over 100). [QF-16 skeptic]
+   *  5.5 -> 6.0, above every jog (T_PLAYER.topSpeedMax 9.6 x jogFraction 0.6 = 5.76): a quick human (top speed 9.17+)
+   *  jogging at full stick was never blocked (kept or run to the byline 5-8 of 8 from Professional up). m/s. */
+  defendBlockJogSpeed: 6.0,
   defendBlockDist: 0.9,
   defendBlockGain: 2.5,
   defendBlockPathMinOffset: 0.25,
@@ -589,16 +596,25 @@ export const T_CPU = {
   defendBlockAlign: 0.6,
   defendBlockHoldSpan: 0.3,
   defendBlockAlignBody: 0.9,
+  /** [QF-16 skeptic] A human carrier shielding (no block, no challenge): the defender holds his ground at the patience
+   *  guard point (T_LEVEL.blockRetreat of the carrier's speed toward goal given up), full when goal-side at a cosine of
+   *  1, none from defendBlockShieldCos0; SIM-05 shieldDriveSpeed holds the shielder off. Without it the guard point,
+   *  0.9 m goal-side of the carrier, walked the defender back at the shielder's pace: a human shielding forward kept
+   *  the ball 7 of 8 at every level from Professional up, 8 m in 10 s, and from the edge of the area walked a Legend
+   *  defender ~10 m back to his goal line. cos. */
   defendBlockShieldCos0: 0.5,
   defendBlockPokeDist: 0.8,
   defendBlockPokeMaxRound: 0.25,
-  /** [QF-16] steadyDribble (block poke, held challenge): the carrier moving faster than defendSteadyMinSpeed the way he
-   *  faces (defendSteadyFaceCos), the ball ahead along his run (defendSteadyBallCos) and rolling with him (relative speed
-   *  at most defendSteadyRelSpeed); slower, only the last. m/s, cos, cos, m/s. */
-  defendSteadyMinSpeed: 0.5,
-  defendSteadyFaceCos: 0.9,
-  defendSteadyBallCos: 0.6,
-  defendSteadyRelSpeed: 1.5,
+  /** [QF-16 third attempt] The poke wants the ball first by this margin (lungePresented): with none, a carrier changing
+   *  direction during the wind-up was met body-first (a Professional defender fouled a strafer 5 times in 8 scenes of 10 s;
+   *  0.1: none, the walkers still lose the ball). m. */
+  defendBlockPokeMargin: 0.1,
+  /** [QF-16 skeptic] Against a human carrier, no poke (nor careful tackle) while blocking at a ball nearer the defender
+   *  than this: it is at his feet, and SIM-06's under-the-feet steal (underRadius 0.3 m, human pairs) gives it to him
+   *  with no foul risk, while a lunge from body contact that loses its roll is a foul (a MOD_L strafer walking
+   *  diagonally into a Legend defender was fouled 5 times in 8 scenes, the ball 0.27 m from the defender's centre at
+   *  the press). m. */
+  defendBlockFeetDist: 0.4,
 } as const;
 
 /** Per-difficulty AI parameters, indexed by Difficulty (0 Beginner .. 5 Legend). Never physics. */
@@ -634,12 +650,15 @@ export const T_LEVEL = {
    *  back most of their reactions (Amateur v Beginner 71 -> ~61%, Semi-Pro v Amateur 76 -> ~59%). [QF-14 resume]
    *  Legend -8 -> -12 (with shotThresholdXg, above: Legend v World Class 63.0 -> 71.0% over 400; -12 alone 67.3%;
    *  World Class 0 instead gave 70.5% but World Class v Professional 71.75 -> 69.3% and equal keepers). [QF-16] Legend
-   *  -12 -> 0 with keeperReactScale 0.25: -12 floored every keeper with gkReflexes 62+ at 0 ticks. */
-  keeperReactTicks: [45, 30, 10, 0, -3, 0] as readonly number[],
+   *  -12 -> 0 with keeperReactScale 0.25: -12 floored every keeper with gkReflexes 62+ at 0 ticks. [QF-16 third attempt]
+   *  World Class -3 -> 0 with keeperReactScale 0.45 (World Class v Professional 63.5% on the ladder's seed 1; an additive
+   *  -6 gave 78% but floored World Class keepers with gkReflexes 90+ at 0 and made them quicker than Legend's). */
+  keeperReactTicks: [45, 30, 10, 0, 0, 0] as readonly number[],
   /** [QF-16] Scale on the keeper's attribute delay (gkReflexes: T_GK.reactWorst .. reactBest) before keeperReactTicks is
    *  added (sim/keeper/saves keeperReactionTicks). Legend's -12 ticks floored the delay at 0 for gkReflexes 62+, so the
-   *  attribute made no difference there (BRIEF section 15); Legend scales it instead (docs/TUNING.md QF-16). */
-  keeperReactScale: [1, 1, 1, 1, 1, 0.25] as readonly number[],
+   *  attribute made no difference there (BRIEF section 15); Legend scales it instead (docs/TUNING.md QF-16). [QF-16 third
+   *  attempt] World Class 0.45 (4-25 ticks -> 2-11; a 77-rated keeper 6 -> 4): the ladder's World Class v Professional. */
+  keeperReactScale: [1, 1, 1, 1, 0.45, 0.25] as readonly number[],
   /** [QF-16] Multiplier on T_CPU.carrierShotMinPowerShare (TAI-08 rushed-shot gate) by level: the low levels take more,
    *  worse shots (Beginner v Beginner 4.6 shots a match with the full gate, 10.5 before QF-14); Professional and up 1. */
   shotRushedGateMul: [0, 0.3, 0.6, 1, 1, 1] as readonly number[],

@@ -44,3 +44,96 @@ Measured by `tests/e2e/plt-04-build.spec.ts` in Chromium with network throttling
 | measured | 2026-10-14 |
 
 <!-- bundle:end -->
+
+## Render and app side (QF-7R, round 5)
+
+Measured 2026-10-23 in this container: Chromium headless with software WebGL (SwiftShader), iPad viewport
+1180 x 820, CPU v CPU bench match (`?bench=1`, fixed seed), CDP CPU throttling. SwiftShader rasterises a frame in
+tens to hundreds of ms here, so the frame-time runs stub the draw calls (`--nodraw`: three.js still does all its JS
+work and WebGL state/uniform/buffer calls) and judge the main thread; the container's 4 CPUs are shared with other
+agents, so run-to-run noise is +-15 % on frame times. Absolute iPad numbers come from the device benchmark.
+Tool: `tests/perf/qf-7r-browser-bench.ts` (frame intervals, loop work, render stage, GC pauses from a trace, draw
+calls, triangles, resolution scale and tier, main-thread time by trace event, `--alloc` heap profile by source area,
+`--cpu` profile, `--events` goal / replay / half time, `--first` match start, `--scale-test`). "Before" is the round-5
+start (bd11064) for frame times and hitches, and the tree at the start of this attempt for live-page allocation.
+
+### 1. Allocation per frame in a live match
+
+Chromium live page (dev server, 1x, after 40 s of play, 10 s window, V8 sampling heap profiler), bytes per frame:
+
+| Area | Before | After | What changed |
+|---|---:|---:|---|
+| src/render | 16,759 | 1,400-4,400 | prev state with the live state's hidden classes (replay ring record(prev) 8.6 KB -> 0); pose warm loop |
+| three.js (driven by render) | 7,063 | 1,580-1,810 | float uniform uploads without boxing (render/uniformCache.ts): copyArray / setValueV3f / setValueM4 gone |
+| src/ui (HUD) | 489 | 228 | (earlier QF-7R work: radar sprites, closure doubles) |
+| src/app | 317 | 154-202 | (earlier QF-7R work: loop doubles in a Float64Array) |
+| src/input, src/audio | 45 | 39 | |
+| src/sim + src/ai (QF-7S) | 61,669 | 35,410 | not this area; includes copyState's ~11 KB per tick (CR below) |
+
+The render range is V8's mid tier (Maglev) in Chromium: functions still waiting for TurboFan box doubles
+(render/anim/mapper.ts update 0.1-3.1 KB per frame from run to run, depending on when its optimised code lands on a
+busy CPU). JavaScriptCore keeps doubles unboxed, so none of the boxed-number cost exists on the iPad.
+
+Node allocation tests (exact counts, every allocation sampled; `--single-threaded`, constant sampling interval:
+reproducible on a loaded machine), steady play:
+
+| Test | Before (INT-C) | After |
+|---|---:|---:|
+| tests/perf/int-c-render-alloc (whole renderer, 2 frames per tick) | 1.3-2.5 KB/frame | 0.016 B/frame, 0.5 allocations per 1000 frames |
+| tests/unit/qf-7r-hud-alloc (HUD, live match) | 213 B/frame | 1.9 B/frame (event time: toasts, hints), 9.5 allocations per 1000 frames |
+| tests/unit/qf-7r-loop-alloc (rAF loop, audio frame) | 72-97 B/frame | 16 / 24 B/frame (the contracts' boxed dtSec and alpha arguments) |
+| tests/unit/qf-7r-input-alloc (pad, rotated camera, keyboard) | ~64 B/tick | < 0.7 B/frame |
+| tests/unit/qf-7r-uniform-cache (three.js uniform uploads per draw) | 912 B/draw (three.js setters) | 0 |
+| tests/perf/qf-7r-camera-alloc (whole renderer, CLOSE camera, QUALITY tier) | 1.7 B/frame, 104.5 allocations per 1000 frames | 0.08 B/frame, 2.5 allocations per 1000 frames |
+
+Skeptic pass (round 5): the renderer was also probed at other settings, with forced goals and their replays: WIDE
+camera at PERFORMANCE, END_TO_END at BALANCED and BROADCAST at QUALITY are as clean as int-c. The CLOSE camera was
+not: the ball leaves its view often, and nothing warmed the off-screen ball arrow (markers.ts drawArrow / liftCore ran
+in V8's interpreter in steady play). The markers module now warms the arrow path on the loading screen
+(`warmUp()`, LOCAL_TUNING.arrowWarmCalls = 450). Event-time allocation (a replay plan at a goal, a camera cut at a
+replay's start and end, a set-piece shot) is a few hundred bytes per event. render/uniformCache.ts now compares
+three.js's program list entry by entry: three.js removes a released program by moving the last entry into its slot,
+so a program acquired and then an older one released between two frames left the length and the last entry as they
+were, and the old length-and-tail check never converted the new program.
+
+Every allocation test now asserts a byte rate and (int-c, HUD) an allocation count per 1000 frames, and was checked
+against injected per-frame allocations (an object, a closure double, an array every 8th frame in render; a string per
+radar redraw; a closure double in the loop; an array per right-stick step): all caught.
+
+### 2. Frame time (main thread, draw calls stubbed)
+
+| | 4x before | 4x after | 6x before | 6x after |
+|---|---:|---:|---:|---:|
+| fps | 33.1 | 32.6 | 22.3 | 18.4 |
+| frame interval p50 / p95 / p99 (ms) | 33.3 / 50.1 / 83.3 | 33.3 / 50.1 / 66.8 | 49.9 / 83.3 / 83.4 | 50.0 / 83.4 / 116.7 |
+| render stage p50 / p95 / p99 (ms, renderer + three.js + HUD) | 6.2 / 14.1 / 20.0 | 6.4 / 13.0 / 17.9 | 9.2 / 21.5 / 27.2 | 10.7 / 21.7 / 27.2 |
+| loop work p50 / p99 (ms, sim + render) | 8.2 / 34.6 | 9.5 / 37.2 | 12.2 / 57.2 | 18.3 / 75.8 |
+| minor GCs in 20 s (total ms) / longest pause (ms) | 24 (100) / 15.5 | 26 (139) / 23.7 | 22 (74) / 12.4 | 16 (75) / 25.5 |
+| draw calls / triangles (max) | 20 / 46,756 | 21 / 46,924 | 20 / 46,756 | 20 / 56,492 |
+
+The render stage is unchanged within noise (allocation was the defect, not CPU time); the sim stage grew with QF-16's
+defending work in the same tree (ticks per frame 1.76 -> 1.79 at 4x, loop work up). Main thread per frame at 4x:
+30 ms of tasks = 16.8 ms of script (rAF: sim, render, HUD, audio, input), 9.0 ms compositor commit (SwiftShader canvas
+hand-off; not ours to change), 2.2 ms style / layout / paint. Render-stage self time by area (dev build, 4x CPU
+profile): render 2.4 ms, three.js 2.6 ms, HUD 0.5 ms per frame (radar 0.30, scoreboard 0.12, toasts 0.03: one clock
+text write per second change, measured with per-part timers). GC pauses are set by the sim / AI allocation rate
+(35 KB per frame, QF-7S) and are within noise of each other.
+
+Dynamic resolution: `--scale-test --nodraw` (6x for 30 s, then 1x): at 6x the scale sits at its 0.6 floor with the tier
+stepped down to Performance; at 1x it steps up 0.60 -> 0.65 -> 0.70 -> 0.75 -> 0.80 -> 0.85 over 22 s, monotonic, no
+step back down (no oscillation). With raster on (GPU-bound at ~3 fps here) it steps down 0.75 -> 0.70 -> 0.65 -> 0.60
+and stays; same in the before build. The controller's hysteresis is unit-tested (tests/unit/gfx-02-quality.test.ts).
+
+### 3. Warm-up hitches, HUD writes, radar
+
+`--events` at 4x (draw stubbed): longest frame interval within 30 frames of each phase change, before -> after: goal
+117 -> 100 ms, celebration 50 -> 67, replay start 50 -> 50, kick-off after the replay 50 -> 50, half time 100-200 ->
+117-133 (the half-time overlay's DOM build, style and layout: ~30 ms of a 4x-throttled frame is script; a non-play
+moment), second-half kick-off 50 -> 50-67. First 6 s of a match (`--first 6`): longest interval 150 -> 83 ms, longest
+loop work 208 -> 99 ms (the remaining long frames are the sim / AI's first runs). The loading-screen warm-up now also
+runs every pose function past V8's optimisation threshold (render/warmScript.ts warmPoses: a pose first met in play
+no longer runs interpreted); tests/unit/qf-7r-warm.test.ts checks bit for bit that none of it reaches the live match.
+
+HUD DOM writes in live play (tests/e2e/qf-7r-hud.spec.ts, 30 s with a goal and a throw-in): 6-11 writes per second,
+all the clock's seconds, plus event-time writes (toast, score, hint); 0 redundant writes. Radar redraws at 20 Hz
+(tests/unit/qf-7r-radar.test.ts).

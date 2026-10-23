@@ -30,11 +30,16 @@ describe('QF-7R HUD allocation per frame', () => {
     expect(r.status, r.stderr).toBe(0);
     const res = JSON.parse(r.stdout.trim().split('\n').pop()!) as {
       perFrame: number; chargingPerFrame: number; powerPerChargingFrame: number; chargingFrames: number; top: [string, number][];
+      allocsPerKFrame: number; chargingAllocsPerKFrame: number;
     };
     console.log(`QF-7R HUD bytes per frame: ${JSON.stringify(res)}`);
     // Anything allocated every frame adds >= 16 B; every redraw of the radar (20 Hz at 120 Hz frames) >= 2.7 B.
     expect(res.perFrame, JSON.stringify(res.top)).toBeLessThan(4);
     expect(res.chargingPerFrame, 'everything but the power bar while charging').toBeLessThan(4);
+    // [QF-7R] And by count, whatever the size: one allocation per radar redraw is 167 per 1000 frames (20 Hz on a 120 Hz
+    // display), every frame 1000; event-time code (toasts, set-piece hints) 10-20.
+    expect(res.allocsPerKFrame, JSON.stringify(res.top)).toBeLessThan(40);
+    expect(res.chargingAllocsPerKFrame, 'everything but the power bar while charging').toBeLessThan(40);
     expect(res.chargingFrames).toBeGreaterThan(100);
     expect(res.powerPerChargingFrame, 'power bar: the projector\'s six numbers + its transform string').toBeLessThan(6 * 16 + 16);
   }, 450_000);

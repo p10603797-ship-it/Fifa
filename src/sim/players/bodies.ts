@@ -13,6 +13,11 @@
  *     opponent, a speed backstop (SIM-04 caps the SHIELD speed itself), and the challenger is held off (shieldBlocks).
  *     [QF-16] Held off, not walked back: a shielder backing into the challenger (faster than shieldDriveSpeed along the
  *     contact normal) is the one held off for that pair.
+ *     [QF-16 third attempt] Brace: likewise a walking ball carrier (intended speed below braceMaxSpeed) driving into an
+ *     opponent who stands his ground (on his feet, his intent giving way slower than braceGiveSpeed along the normal) is
+ *     the one held off: a human walked a top-level CPU defender back 10 m into his six-yard box. Intents, not
+ *     velocities: the contact's normal damping hands the pushed man the pusher's speed every tick. Only in a pair with a
+ *     human-controlled player (ctrl below CPU_CONTROLLER_BASE): bot-v-bot contact is unchanged.
  *  The slide-around: a player whose intent pushes into a body that blocks his way (ARRIVE target well beyond it; stick
  *  pushers only round teammates or an opponent pushing back) is nudged sideways, both of a head-on pair to their own
  *  right unless their intents/velocities prefer a side, so nobody runs in place and same-target players do not orbit.
@@ -39,7 +44,7 @@
  * Determinism: plain arithmetic + Math.sqrt only, fixed iteration order, no allocation per tick (module scratch).
  */
 import {
-  BOARD_X, BOARD_Z, DT, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, GOAL_DEPTH, GOAL_HALF_WIDTH, HALF_LENGTH, NUM_SLOTS,
+  BOARD_X, BOARD_Z, CPU_CONTROLLER_BASE, DT, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, GOAL_DEPTH, GOAL_HALF_WIDTH, HALF_LENGTH, NUM_SLOTS,
   POST_RADIUS,
 } from '../../contracts/constants';
 import { ActionKind, MatchPhase } from '../../contracts/enums';
@@ -121,6 +126,16 @@ export const LOCAL_TUNING = { // TUNING-CR
    *  priority for that pair: the challenger stands his ground and the shielder is held off. Before, a human shielding
    *  with his back to goal walked a defender back 11 m in 10 s at every level. m/s. */
   shieldDriveSpeed: 0.3,
+  /** [QF-16] Brace: a ball carrier (not shielding) driving into an opponent faster than braceDriveSpeed along the contact
+   *  normal, while the opponent stands his ground (on his feet, giving way slower than braceGiveSpeed along it), is the
+   *  one held off for that pair. m/s. */
+  braceDriveSpeed: 0.3,
+  braceGiveSpeed: 0.5,
+  /** [QF-16] ... a walking carrier only (intended speed below braceMaxSpeed): a running dribbler's barge stays a body
+   *  duel (bracing against every carrier cut 1.6 shots a match from the bot game). Only in a pair with a human-controlled
+   *  player (the human walker, or a human defender a CPU walker runs into): the bot game is built on the old contact
+   *  (bracing bot walkers took Legend v World Class 74 -> 63% over 100, Legend's patient carries losing the ball). m/s. */
+  braceMaxSpeed: 3.0,
   /** Strength points added to the shielder in the shield duel. */
   shieldStrengthBonus: 10,
   /** Strength-difference span (points) mapping the duel onto shieldFactor 0..1 (0.5 at a tie). */
@@ -197,6 +212,13 @@ const sTd = new Float64Array(NS);
 /** 1 = the shielding owner holds this opponent off (shieldBlocks). */
 const sHold = new Uint8Array(NS);
 let sShielder = -1;
+/** [QF-16] Brace: the ball owner (not shielding, in play; -1 none), who is on his feet (1) and each player's intended
+ *  velocity (SIM-04 movement intent: the stick x his jog / top speed, or toward his ARRIVE target), m/s. */
+let sOwner = -1;
+let sWalk = 0;
+const sSet = new Uint8Array(NS);
+const sIvx = new Float64Array(NS);
+const sIvz = new Float64Array(NS);
 /** [0] = largest overlap met by the last pass, m (typed-array scratch: a module-level double would be boxed). */
 const sPass = new Float64Array(1);
 let sEvents = 0;
@@ -480,6 +502,8 @@ export function shoulderPartner(s: SimState, slot: number): number {
 function prepare(s: SimState): void {
   const b = s.ball;
   sShielder = b.owner >= 0 && b.owner < NS && isShielding(s, b.owner) ? b.owner : -1;
+  sWalk = 0;
+  sOwner = s.match.phase === MatchPhase.IN_PLAY && b.owner >= 0 && b.owner < NS && b.heldBy < 0 && sShielder < 0 ? b.owner : -1;
   sEvents = 0;
   const setup = s.match.restart.taken === 0 && isRestartPhase(s.match.phase);
   for (let i = 0; i < NS; i++) {
@@ -490,7 +514,14 @@ function prepare(s: SimState): void {
     sDown[i] = 0;
     sHold[i] = 0;
     sDrive[i] = 0;
+    sSet[i] = 0;
+    sIvx[i] = 0;
+    sIvz[i] = 0;
     if (p.active !== 1) continue;
+    sSet[i] = p.stunT <= 0 && p.act !== ActionKind.STUMBLE && p.act !== ACT_FALLEN && p.act !== ACT_GET_UP &&
+      p.act !== ActionKind.GK_DIVE ? 1 : 0;
+    intentVel(s, i);
+    if (i === sOwner) sWalk = sIvx[i]! * sIvx[i]! + sIvz[i]! * sIvz[i]! < L.braceMaxSpeed * L.braceMaxSpeed ? 1 : 0;
     sRad[i] = bodyRadiusOf(s, i);
     const m = bodyMassOf(s, i);
     sImRaw[i] = 1 / m;
@@ -509,6 +540,34 @@ function prepare(s: SimState): void {
     }
   }
 }
+
+/** [QF-16] sIvx/sIvz[i]: player i's intended velocity from his SIM-04 movement intent (DIRECT: the stick x his jog or,
+ *  sprinting, top speed (attribute, before stamina: a threshold); ARRIVE: toward the target at most at the target speed;
+ *  else 0). Inline arithmetic: a call to locomotion's maxSpeed boxed its result (SIM-05's no-allocation test). */
+function intentVel(s: SimState, i: number): void {
+  const p = s.players[i]!;
+  const ts = s.attrs[i]!.topSpeed;
+  const top = ts > 0 ? ts : T_PLAYER.topSpeedMin;
+  if (p.moveMode === MODE_DIRECT) {
+    const ix = p.ix === p.ix ? p.ix : 0, iz = p.iz === p.iz ? p.iz : 0;
+    let m = Math.sqrt(ix * ix + iz * iz);
+    if (!(m > 1e-6)) return;
+    const v = (p.wantSprint === 1 ? top : top * T_PLAYER.jogFraction) * (m > 1 ? 1 : m);
+    m = v / m;
+    sIvx[i] = ix * m; sIvz[i] = iz * m;
+  } else if (p.moveMode === MODE_ARRIVE) {
+    const dx = p.tgtX - p.x, dz = p.tgtZ - p.z;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    if (!(d > ARRIVE_STOP)) return;
+    let v = p.tgtSpeed === p.tgtSpeed ? p.tgtSpeed : 0;
+    if (v > top) v = top;
+    if (!(v > 0)) return;
+    sIvx[i] = dx / d * v; sIvz[i] = dz / d * v;
+  }
+}
+
+/** [QF-16] A human controller's player (controllers below CPU_CONTROLLER_BASE). */
+function isHuman(ctrl: number): boolean { return ctrl >= 0 && ctrl < CPU_CONTROLLER_BASE; }
 
 function snapshot(s: SimState): void {
   for (let i = 0; i < NS; i++) {
@@ -546,6 +605,16 @@ function resolvePairs(s: SimState, first: boolean, ev: EventSink): void {
       // into the challenger (faster than shieldDriveSpeed along the normal) he is the one held off.
       if (sShielder === i && sHold[j] === 1) { if (a.vx * nx + a.vz * nz > L.shieldDriveSpeed) lvB = 2; else lvA = 2; }
       else if (sShielder === j && sHold[i] === 1) { if (-(b.vx * nx + b.vz * nz) > L.shieldDriveSpeed) lvA = 2; else lvB = 2; }
+      // [QF-16] Brace: a carrier walking (or running) the ball into an opponent who stands his ground does not push him
+      // back; he is the one held off (a human walked a top-level CPU defender back 10 m in 10 s into his six-yard box).
+      else if (lvA === 0 && lvB === 0 && a.team !== b.team) {
+        if (sOwner === i && sSet[j] === 1 && sIvx[i]! * nx + sIvz[i]! * nz > L.braceDriveSpeed && sWalk === 1 &&
+          (isHuman(a.ctrl) || isHuman(b.ctrl)) &&
+          sIvx[j]! * nx + sIvz[j]! * nz < L.braceGiveSpeed) lvB = 1;
+        else if (sOwner === j && sSet[i] === 1 && -(sIvx[j]! * nx + sIvz[j]! * nz) > L.braceDriveSpeed && sWalk === 1 &&
+          (isHuman(a.ctrl) || isHuman(b.ctrl)) &&
+          -(sIvx[i]! * nx + sIvz[i]! * nz) < L.braceGiveSpeed) lvA = 1;
+      }
       let wA: number;
       if (lvA > lvB) wA = 0;
       else if (lvB > lvA) wA = 1;

@@ -109,6 +109,11 @@ const LOCAL_TUNING = { // TUNING-CR (GFX-13 on-pitch aids)
   arrowInset: 30,
   /** Opacity of the ink badge behind the off-screen arrow (reads over crowd, boards, sky or grass). */
   arrowBadgeAlpha: 0.72,
+  /**
+   * [QF-7R skeptic] Loading-screen passes through the off-screen ball arrow (edge maths, lift above the touch zones,
+   * draw): past V8's ~400-call optimisation threshold (render/warmScript.ts WARM_TUNING.poseCalls is the same idea).
+   */
+  arrowWarmCalls: 450,
   /** View depth (m) at which screen-space overlays are placed (in front of the near plane). */
   overlayDepth: 10,
   /** Drop shadow offset (CSS px) and opacity of overlay shapes. */
@@ -835,6 +840,19 @@ export function createMarkers(ctx: RenderContext): MarkersModule {
     billboard(overlayBatch, SHAPE_ARROW, C_WHITE);
   }
 
+  /**
+   * Off-screen ball arrow from the EA registers, when the ball is out of view. [QF-7R skeptic] A function of its own,
+   * called every frame, so the per-frame overlay code always has feedback for this call and the out-of-view branch
+   * can be warmed on the loading screen (warmUp below).
+   */
+  function drawEdgeArrow(mw: ArrayLike<number>, pe: ArrayLike<number>): void {
+    if (edgeArrowCore(pe, arrow)) {
+      if (zonesFor !== ctx.settings) { zonesFor = ctx.settings; touchZones(ctx.settings, zones); }
+      liftCore(arrow, zones);
+      drawArrow(mw, pe);
+    }
+  }
+
   function hide(): void {
     groundBatch.begin(); groundBatch.end();
     overlayBatch.begin(); overlayBatch.end();
@@ -929,11 +947,7 @@ export function createMarkers(ctx: RenderContext): MarkersModule {
       EA[EA_VY] = mi[1]! * bx + mi[5]! * by + mi[9]! * bz + mi[13]!;
       EA[EA_VZ] = mi[2]! * bx + mi[6]! * by + mi[10]! * bz + mi[14]!;
       EA[EA_NEAR] = cam.near; EA[EA_W] = ctx.size.cssW; EA[EA_H] = ctx.size.cssH; EA[EA_INSET] = LOCAL_TUNING.arrowInset;
-      if (edgeArrowCore(pe, arrow)) {
-        if (zonesFor !== ctx.settings) { zonesFor = ctx.settings; touchZones(ctx.settings, zones); }
-        liftCore(arrow, zones);
-        drawArrow(mw, pe);
-      }
+      drawEdgeArrow(mw, pe);
     }
     overlayBatch.end();
     overlay.visible = overlayBatch.quads > 0;
@@ -947,6 +961,50 @@ export function createMarkers(ctx: RenderContext): MarkersModule {
     plan,
     landing,
     arrow,
+    /**
+     * [QF-7R skeptic] The off-screen ball arrow is drawn only while the ball is out of view: rare with the broadcast
+     * camera the JIT warm-up script drives, frequent with the CLOSE camera (long balls, goal kicks). Unwarmed, its code
+     * ran in V8's interpreter in steady play, a heap number per double operation (CLOSE camera: 3.8 B and 163
+     * allocations per 1000 frames; tests/perf/qf-7r-camera-alloc.test.ts). Here every branch of the arrow path runs
+     * arrowWarmCalls times on targets all round the camera (in front off each edge, behind it, both touch-zone sides),
+     * into the overlay batch, which is then emptied; the registers and the arrow are restored (no trace:
+     * tests/unit/qf-7r-warm.test.ts).
+     */
+    warmUp() {
+      const cam = ctx.camera;
+      const mw = cam.matrixWorld.elements;
+      const pe = cam.projectionMatrix.elements;
+      const saveRG = RG.slice();
+      const saveEA = EA.slice();
+      const ax = arrow.x, ay = arrow.y, adx = arrow.dx, ady = arrow.dy, ashow = arrow.show;
+      const saveFor = zonesFor;
+      const zw = zones.clusterW, zh = zones.clusterH, sw = zones.stickW, sh = zones.stickH, zm = zones.mirror;
+      const w = ctx.size.cssW, h = ctx.size.cssH;
+      const wz: TouchZones = { clusterW: w * 0.3, clusterH: h * 0.3, stickW: w * 0.3, stickH: h * 0.2, mirror: false };
+      RG[NEAR] = cam.near;
+      const n = LOCAL_TUNING.arrowWarmCalls;
+      for (let i = 0; i < n; i++) {
+        const a = i * 2.399963; // golden angle: directions all round
+        const r = 30 + (i % 7) * 12;
+        EA[EA_VX] = r * Math.cos(a); EA[EA_VY] = 0.6 * r * Math.sin(a);
+        EA[EA_VZ] = (i & 3) === 0 ? 15 : (i & 3) === 1 ? -2 : -25; // behind, beside the near plane, in front
+        EA[EA_NEAR] = cam.near; EA[EA_W] = w; EA[EA_H] = h; EA[EA_INSET] = LOCAL_TUNING.arrowInset;
+        overlayBatch.begin();
+        arrow.show = false;
+        drawEdgeArrow(mw, pe); // the live path (live touch zones)
+        if (arrow.show) { // and both touch-zone sides
+          wz.mirror = (i & 4) !== 0;
+          liftCore(arrow, wz);
+        }
+      }
+      overlayBatch.begin();
+      overlayBatch.end();
+      RG.set(saveRG);
+      EA.set(saveEA);
+      arrow.x = ax; arrow.y = ay; arrow.dx = adx; arrow.dy = ady; arrow.show = ashow;
+      zonesFor = saveFor;
+      zones.clusterW = zw; zones.clusterH = zh; zones.stickW = sw; zones.stickH = sh; zones.mirror = zm;
+    },
     setMatch() {
       shown = true;
       resetLandingTracker(landing);

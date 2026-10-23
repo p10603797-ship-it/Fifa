@@ -14,7 +14,7 @@
  *    the ball in the box was given a penalty in 2 of 12 scenes at each of the two levels.
  */
 import { describe, expect, it } from 'vitest';
-import { ActionKind, Difficulty, MatchPhase } from '../../src/contracts/enums';
+import { ActionKind, Difficulty, KickKind, MatchPhase } from '../../src/contracts/enums';
 import { EventType, type SimEvent } from '../../src/contracts/events';
 import { type InputFrame } from '../../src/contracts/input';
 import { MoveMode, type SimState } from '../../src/contracts/state';
@@ -60,6 +60,12 @@ function run(s: SimState, n: number, stick: (t: number, f: InputFrame) => void):
 const fouls = (r: Run, s: SimState): SimEvent[] =>
   r.events.filter((e) => e.type === EventType.FOUL && s.players[e.a]!.team === 1);
 
+/** [QF-16] Balls won by team 1: a won tackle, or (QF-16's SIM-06 under-the-feet steal) a steal / deflection off a
+ *  team-1 player's feet, which emit no TACKLE. */
+const wonBy1 = (r: Run, s: SimState): number => r.events.filter((e) =>
+  (e.type === EventType.TACKLE && e.b === C && e.c === 1) || (e.type === EventType.POSSESSION && e.a === 1) ||
+  (e.type === EventType.KICK && e.b === KickKind.DEFLECTION && s.players[e.a]!.team === 1)).length;
+
 describe('QF-14 skeptic TAI-11: a carrier walking the ball into a patient defender is challenged', () => {
   it('reads T_CPU', () => {
     expect(T_CPU.defendHeldSpeed).toBeGreaterThan(T_CPU.defendStillSpeed);
@@ -81,7 +87,7 @@ describe('QF-14 skeptic TAI-11: a carrier walking the ball into a patient defend
           if (r.kept || r.ticks > 360 || r.gained > 9) {
             kept.push(`level ${level} stick ${mag} seed ${seed}: kept ${r.kept} after ${r.ticks} ticks, ${r.gained.toFixed(1)} m`);
           }
-          won += r.events.filter((e) => e.type === EventType.TACKLE && e.b === C && e.c === 1).length;
+          won += wonBy1(r, s);
           foul += fouls(r, s).length;
         }
       }
@@ -99,7 +105,7 @@ describe('QF-14 skeptic TAI-11: a carrier walking the ball into a patient defend
       const s = scene(seed, Difficulty.LEGEND, 10 - seed, 5 - seed, 3);
       const r = run(s, 600, (t, f) => { f.mz = Math.floor(t / 60) % 2 ? 50 : -50; });
       foul += fouls(r, s).length;
-      won += r.events.filter((e) => e.type === EventType.TACKLE && e.b === C && e.c === 1).length;
+      won += wonBy1(r, s);
     }
     // A ball-first test at contact alone (a dribbled ball being pulled back to his feet predicted linearly) gave 17.
     // [QF-16] The block (qf-16-escort-block) steps into the strafer's path and pokes at a ball presented ball-first: the

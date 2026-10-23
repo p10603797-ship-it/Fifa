@@ -10,7 +10,7 @@
  * or pass.
  */
 import { describe, expect, it } from 'vitest';
-import { ActionKind, Difficulty, MatchPhase } from '../../src/contracts/enums';
+import { ActionKind, Difficulty, KickKind, MatchPhase } from '../../src/contracts/enums';
 import { EventType, type SimEvent } from '../../src/contracts/events';
 import { MoveMode, type SimState } from '../../src/contracts/state';
 import { T_LEVEL } from '../../src/contracts/tuning';
@@ -66,7 +66,12 @@ describe('QF-14 TAI-11: patience with a close-control dribbler', () => {
     for (let seed = 1; seed <= 6; seed++) {
       const s = scene(seed, Difficulty.LEGEND, -10, 0, 3.2);
       const r = jog(s, 420);
-      won += r.events.filter((e) => e.type === EventType.TACKLE && e.b === C && e.c === 1 && s.players[e.a]!.team === 1).length;
+      // [QF-16 skeptic] A ball won counts SIM-06's steal / block off a team-1 player's feet too (no TACKLE event): the
+      // under-the-feet steal now covers a jogging human owner (possession.ts underMaxSpeed 6), and the block does not
+      // poke at a ball already at the defender's feet (T_CPU.defendBlockFeetDist).
+      won += r.events.filter((e) => (e.type === EventType.TACKLE && e.b === C && e.c === 1 && s.players[e.a]!.team === 1) ||
+        (e.type === EventType.POSSESSION && e.a === 1) ||
+        (e.type === EventType.KICK && e.b === KickKind.DEFLECTION && s.players[e.a]!.team === 1)).length;
       fouls += r.events.filter((e) => e.type === EventType.FOUL && s.players[e.a]!.team === 1 && e.c !== 0).length;
       reach.push(r.maxX);
     }

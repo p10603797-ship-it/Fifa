@@ -133,9 +133,12 @@ async function measure(name: string, loop: GameLoop, hz: number, files: RegExp):
     samplingInterval: EXACT_INTERVAL, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
   });
   driver(FRAMES);
-  const { profile } = await profiler.post('HeapProfiler.stopSampling');
-  loop.stop();
   type Node = { id: number; callFrame: { url: string; functionName: string }; children: Node[] };
+  // The inspector typings omit `samples` (present with suppress-randomness) and a node's `id`: read the raw shape.
+  const profile = (await profiler.post('HeapProfiler.stopSampling')).profile as unknown as {
+    head: Node; samples: { size: number; nodeId: number }[];
+  };
+  loop.stop();
   const where = new Map<number, string>();
   const index = (nd: Node): void => {
     const u = nd.callFrame.url;
@@ -143,10 +146,10 @@ async function measure(name: string, loop: GameLoop, hz: number, files: RegExp):
     if (m) where.set(nd.id, u.slice(m.index + 5) + ':' + nd.callFrame.functionName);
     for (const c of nd.children) index(c);
   };
-  index(profile.head as Node);
+  index(profile.head);
   let bytes = 0;
   const sites: Record<string, number> = {};
-  for (const s of profile.samples as { size: number; nodeId: number }[]) {
+  for (const s of profile.samples) {
     const w = where.get(s.nodeId);
     if (w === undefined) continue;
     bytes += s.size;

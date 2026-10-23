@@ -29,6 +29,11 @@
  *       (deflects it off his feet: the ball becomes loose, recordTouch + KICK event with KickKind.DEFLECTION) when it
  *       comes at him faster. The dribbler gets noTouchT = T_DRIBBLE.dispossessedNoTouch either way. This is the
  *       poke-away window: a sprint touch runs well beyond the owner's reach for most of its cycle.
+ *     - [QF-16 third attempt] Under an opponent's feet (NONE / SHIELD): while the owner walks or jogs (slower than
+ *       underMaxSpeed) a ball within underRadius of the nearest eligible opponent and nearer to him than to the owner by
+ *       underMargin is his to steal (or block) the same way, even inside the owner's reach: a walker ran his ball under
+ *       a CPU defender standing in front of him and kept it there for seconds. Only when the owner or that opponent is
+ *       human-controlled (bot-v-bot possession unchanged).
  *  3. Loose ball (no owner, not in hands, no contact this tick, not in the net, low (<= controlHeight), horizontal
  *     speed < pickUpMaxSpeed): the nearest pick-up-eligible player within controlRadius takes possession (ties:
  *     closest, then lower slot) and controls it at once (a dribble touch, or the wind-up hold). Eligible
@@ -88,7 +93,7 @@
  * strict-< tie breaks, no allocation (module scratch; numbers cross helper calls through a Float64Array). Per tick:
  * O(22) countdowns plus O(11..22) scans; the push solver (<= ~1100 tiny steps) runs only on touch ticks.
  */
-import { DT, NUM_SLOTS } from '../../contracts/constants';
+import { CPU_CONTROLLER_BASE, DT, NUM_SLOTS } from '../../contracts/constants';
 import { ActionKind, KickKind, MatchPhase } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
 import { MoveMode, type PlayerState, type SimState } from '../../contracts/state';
@@ -104,6 +109,18 @@ export const LOCAL_TUNING = { // TUNING-CR
   pickUpMaxSpeed: 6,
   /** Steal between touches: max ball speed relative to the stealer for a clean take, m/s (faster = a block). */
   stealMaxRelSpeed: 6,
+  /** [QF-16] A ball under an opponent's feet: within underRadius of him (m) and nearer to him than to the owner by
+   *  underMargin (m) it is his to steal (or block) even while the owner can still reach it. A walking dribbler pushed
+   *  his ball under a CPU defender standing in front of him and kept it there for seconds (into the six-yard box). */
+  underRadius: 0.3,
+  underMargin: 0.2,
+  /** [QF-16] ... while the owner walks or jogs (slower than underMaxSpeed): a sprint dribble keeps its touches. Only
+   *  when the owner or the opponent is human-controlled: bot-v-bot possession is unchanged (stealing under every
+   *  dribbler cut 1.6 shots a match from the bot game; with the SIM-05 brace for bot walkers too, Legend v World Class
+   *  74 -> 63% over 100). [QF-16 skeptic] 3 -> 6 (above every jog, T_PLAYER 9.6 x 0.6 = 5.76): a human jogging
+   *  diagonally at full stick pushed the blocking defender along at 4-5 m/s for seconds with the ball under his feet
+   *  and kept it (Legend 3 of 8, Professional 4-8 of 8). m/s. */
+  underMaxSpeed: 6.0,
   /** Block (ball deflected off a stealer's feet): normal restitution and kept tangential fraction, relative to him. */
   blockRestitution: 0.3,
   blockTangentKeep: 0.6,
@@ -589,6 +606,35 @@ function stealTick(s: SimState, owner: number, ev: EventSink): number {
   const first = o.team === 0 ? HALF_NS : 0;
   const j = nearestTaker(s, first, first + HALF_NS, owner);
   if (j < 0) return 0;
+  return stealBy(s, owner, j, ev);
+}
+
+/**
+ * [QF-16] The owner can reach the ball, but it lies under an opponent's feet (the nearest eligible one within
+ * underRadius of it, nearer to it than the owner by underMargin; a shielding owner's shieldBlocks() keeps him off): he
+ * steals or blocks it as between touches. Returns 1 if the ball changed.
+ */
+function underTick(s: SimState, owner: number, ev: EventSink): number {
+  const b = s.ball;
+  if (!(b.y <= CTRL_H)) return 0;
+  const o = s.players[owner]!;
+  if (!(o.vx * o.vx + o.vz * o.vz < L.underMaxSpeed * L.underMaxSpeed)) return 0;
+  const first = o.team === 0 ? HALF_NS : 0;
+  const j = nearestTaker(s, first, first + HALF_NS, owner);
+  if (j < 0) return 0;
+  const q = s.players[j]!;
+  // A human owner or a human opponent only (bot-v-bot possession is calibrated on the old rule).
+  if (!(o.ctrl >= 0 && o.ctrl < CPU_CONTROLLER_BASE) && !(q.ctrl >= 0 && q.ctrl < CPU_CONTROLLER_BASE)) return 0;
+  const qx = b.x - q.x, qz = b.z - q.z, ox = b.x - o.x, oz = b.z - o.z;
+  const dq = Math.sqrt(qx * qx + qz * qz);
+  if (!(dq <= L.underRadius) || !(dq + L.underMargin <= Math.sqrt(ox * ox + oz * oz))) return 0;
+  return stealBy(s, owner, j, ev);
+}
+
+/** Opponent j steals (slow relative to him) or blocks (coming at him faster) the owner's ball. 1 if it changed. */
+function stealBy(s: SimState, owner: number, j: number, ev: EventSink): number {
+  const b = s.ball;
+  const o = s.players[owner]!;
   const q = s.players[j]!;
   const rvx = b.vx - q.vx, rvz = b.vz - q.vz;
   const rel2 = rvx * rvx + rvz * rvz;
@@ -647,6 +693,7 @@ function ownerTick(s: SimState, ev: EventSink): void {
   if (act !== ActionKind.NONE && act !== ActionKind.SHIELD && act !== ActionKind.FIRST_TOUCH) return;
   if (!reach && stealTick(s, o, ev) === 1) return;
   if (act === ActionKind.FIRST_TOUCH) return;
+  if (reach && underTick(s, o, ev) === 1) return;
   if (act === ActionKind.SHIELD && shieldBallSpot(s, o, SPOT)) { holdOn(s, o, SPOT.x, SPOT.z); return; }
   if (reach) dribbleControl(s, o, ev);
 }

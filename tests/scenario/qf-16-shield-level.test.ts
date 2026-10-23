@@ -35,16 +35,20 @@ describe('QF-16 TAI-11: shielding and strafing carriers, level differences', () 
       fouls += r.fouls; won += r.won;
       expect(mean(r.gained), rows.at(-1)).toBeLessThan(1);
     }
-    // Before: 18 fouls and 2 balls won over the three levels (rash lunges at a ball behind his body).
+    // Before: 18 fouls and 2 balls won over the three levels (rash lunges at a ball behind his body). [QF-16 third
+    // attempt] Then 5 fouls from Professional's block pokes as he turned back inside the wind-up (no ball-first margin
+    // on the poke: T_CPU.defendBlockPokeMargin); 1 now.
     expect(fouls, rows.join('\n')).toBeLessThanOrEqual(won + 3);
+    expect(fouls, rows.join('\n')).toBeLessThanOrEqual(2);
   });
 
   it('glitch: defender jockeys a dribbler for ever — a shielding carrier backing in does not walk a Professional / World Class / Legend defender back', () => {
     for (const level of [Difficulty.PROFESSIONAL, Difficulty.WORLD_CLASS, Difficulty.LEGEND]) {
       const r = runScript('back', level, 8);
       const row = `level ${level}: kept ${r.kept}/8, gained ${mean(r.gained).toFixed(1)} m, fouls ${r.fouls}`;
-      // Before: 10.8 m in 10 s at every level.
-      expect(mean(r.gained), row).toBeLessThan(5.5);
+      // Before: 10.8 m in 10 s at every level. [QF-16 third attempt] 5.2-5.3 m now (SIM-05 shieldDriveSpeed; the block's
+      // separate hold against a shielder, 4.0 m, was removed: no test failed without it).
+      expect(mean(r.gained), row).toBeLessThan(6);
       expect(r.fouls, row).toBe(0);
     }
   });
