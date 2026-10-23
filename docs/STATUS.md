@@ -200,7 +200,7 @@ Total assignments: 201.
 | FIX-12 | 4 | done | QF-6: 33 defects fixed (18 + 15); netsim matrix 24/24, DoD seeds 3-9/2026 0 desyncs; real WebRTC e2e; protocol net2 | 4 cosmetic KNOWN_ISSUES |
 | FIX-13 | 4 | queued |  |  |
 | FIX-14 | 4 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
-| SGN-01 | 5 | running | (after SGN-02/03/04/06) | |
+| SGN-01 | 5 | queued | after SGN-02/03/04/06 | |
 | SGN-02 | 5 | running |  | |
 | SGN-03 | 5 | queued | (after SGN-04) | |
 | SGN-04 | 5 | queued | (after audits) | |
