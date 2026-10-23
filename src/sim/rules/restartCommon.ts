@@ -19,10 +19,11 @@
  *    taker into SET_PIECE from the award: until the restart is ready and while he is more than approachArrive from his
  *    spot (takerBehind behind the ball along restartForward) the handler runs him there (ARRIVE at approachSpeedFrac of
  *    his top speed, sprinting when that is above a jog); then he waits LOCKED as above.
- *  - [QF-10] "Choose the taker" at a walked free kick (RUL-05 cycleFreeKickTaker) runs the new taker to the spot after
- *    the restart is ready instead of teleporting him: his SET_PIECE carries SET_PIECE_RUN in p.actA, and the handler
- *    runs him as above until he arrives (or swapRunMaxTicks into the action; RUL-11 settleTaker then places him). While
- *    he runs (takerRunning) RUL-05 ignores kick inputs and RUL-11 neither places him nor lets a kick start from afar.
+ *  - [QF-10 / FIN-K] "Choose the taker" at any free kick (RUL-05 cycleFreeKickTaker) runs the new taker to the spot
+ *    after the restart is ready instead of teleporting him: his SET_PIECE carries SET_PIECE_RUN in p.actA, and the
+ *    handler runs him as above until he arrives (or swapRunMaxTicks into the action; RUL-11 settleTaker then places
+ *    him). While he runs (takerRunning) RUL-05 ignores kick inputs, RUL-11 neither places him nor lets a kick start
+ *    from afar (prepareTakerKick refuses), and its restart timeout waits at its last tick for him.
  */
 import { HALF_LENGTH, PENALTY_SPOT_DIST } from '../../contracts/constants';
 import { ActionKind, MatchPhase, RestartKind, type WatchdogReason } from '../../contracts/enums';

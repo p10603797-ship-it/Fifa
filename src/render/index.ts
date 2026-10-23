@@ -97,9 +97,19 @@ function textureBytes(t: Texture): number {
   return mips ? Math.round((b * 4) / 3) : b;
 }
 
+/** The parts of a light's shadow render target textureMemory reads. */
+interface ShadowTarget {
+  texture?: Texture;
+  depthTexture?: Texture | null;
+  width?: number;
+  height?: number;
+  isWebGLCubeRenderTarget?: boolean;
+}
+
 /**
  * [QF-4] Texture memory of everything drawn in `scene` (BRIEF section 3: 64 MB or less of textures): every texture a
- * visible mesh's material references (own properties and shader uniforms), plus light shadow maps. Not per frame.
+ * visible mesh's material references (own properties and shader uniforms), plus light shadow maps (colour and depth
+ * attachments). Not per frame.
  */
 export function textureMemory(scene: Object3D): TextureMemory {
   const seen = new Set<Texture>();
@@ -111,10 +121,15 @@ export function textureMemory(scene: Object3D): TextureMemory {
     bytes += textureBytes(t);
   };
   scene.traverse((o) => {
-    const light = o as { shadow?: { map?: { texture?: Texture; width?: number; height?: number } | null } };
+    const light = o as { shadow?: { map?: ShadowTarget | null } };
     if (light.shadow && light.shadow.map) {
       const m = light.shadow.map;
-      if (m.texture && !seen.has(m.texture)) { seen.add(m.texture); bytes += (m.width ?? 0) * (m.height ?? 0) * 4; }
+      // [FIN-A] A cube target (point light) holds 6 faces. The colour attachment and the DepthTexture three.js gives
+      // every non-VSM shadow map (32-bit depth, 4 B/texel, 4 MB for a 1024 map) are both on the GPU: count both.
+      const texels = (m.width ?? 0) * (m.height ?? 0) * (m.isWebGLCubeRenderTarget === true ? 6 : 1);
+      if (m.texture && !seen.has(m.texture)) { seen.add(m.texture); bytes += texels * 4; }
+      const dt = m.depthTexture;
+      if (dt && dt.isTexture === true && !seen.has(dt)) { seen.add(dt); bytes += texels * 4; }
     }
     const mat = (o as { material?: Material | Material[] }).material;
     if (!mat) return;

@@ -74,6 +74,7 @@ import { isHumanSlot } from '../core/query';
 import { rngFloat, rngSeed } from '../core/rng';
 import { isRestartPhase, PHASE_KIND } from '../rules/restartCommon';
 import { restartTakerSpot } from '../rules/restart';
+import { lineWallKeeperZ } from '../rules/freekick';
 import { keeperPositioning, keeperPositioningAccuracy, keeperSpotForBall } from './positioning';
 import { keeperMaxReach, keeperSaveDecision, startKeeperDive } from './saves';
 
@@ -110,6 +111,8 @@ const SPOT = { x: 0, z: 0 };
 const TMP = { x: 0, z: 0 };
 const WALL = { x: 0, z: 0 };
 const SHADOW: WallShadow = { lo: 0, hi: 0 };
+/** [FIN-K] The goal-line wall keeper spot (freeKickKeeperSpot). */
+const LINE_SPOT = { x: 0, z: 0 };
 const TGT = { x: 0, y: 0, z: 0 };
 const CHOICE = createDiveChoice();
 /** Kick-keyed RNG (reseeded from the kick before every use; holds nothing between uses). */
@@ -247,6 +250,13 @@ export function freeKickKeeperSpot(s: SimState, team: number, out: { x: number; 
   const ub = d * r.x + HALF_LENGTH, zb = r.z;
   const dc = Math.sqrt(ub * ub + zb * zb);
   if (!(dc <= LT.fkMaxDist)) return 0;
+  // [FIN-K] A goal-line wall (free kick closer than 9.15 m to the line): in the wall's line at its end (RUL-05
+  // lineWallKeeperZ), never on a member's slot (a member pushed a body-width off it left a gap in the line).
+  if (lineWallKeeperZ(s, LINE_SPOT) === 1) {
+    out.x = LINE_SPOT.x;
+    out.z = LINE_SPOT.z;
+    return 1;
+  }
   const k = s.teams[team]!.keeperSlot;
   const acc = validSlot(k) ? keeperPositioningAccuracy(s.attrs[k]!.gkPositioning) : 1;
   const g = GOAL_HALF_WIDTH;

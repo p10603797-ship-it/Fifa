@@ -123,12 +123,13 @@ const ROWS: Row[] = [
   { row: 'Power shot: L1 + R1 + Circle', scene: () => scene({ x: 30 }), script: combo(B.EAST, [B.L1, B.R1]), expect: kickIs(KickKind.SHOT_POWER) },
   {
     row: 'Low driven shot: Circle, then tap Circle again during power-up', scene: () => scene({ x: 30 }),
-    script: all(holdDuring(B.EAST, 3, 9), tapAt(B.EAST, 11)), ticks: 40,
-    expect: (r, s) => {
+    script: all(holdDuring(B.EAST, 3, 9), tapAt(B.EAST, 11)), ticks: 60,
+    expect: (r) => {
       expect(r.act).toBe(ActionKind.SHOT);
-      // The conversion marks the running shot low driven (kind or LOW flag).
-      const p = s.players[P]!;
-      expect(r.m.events.some((e) => e.type === EventType.SHOT) || p.actKick === KickKind.SHOT_LOW_DRIVEN || (p.actA & ReqFlag.LOW) !== 0).toBe(true);
+      // [FIN-A] SGN-02 strict form: the struck kick is SHOT_LOW_DRIVEN (any SHOT used to pass) and he shoots once.
+      const own = r.m.events.filter((e) => e.type === EventType.KICK && e.a === P && e.b !== KickKind.DRIBBLE_TOUCH).map((e) => KickKind[e.b]!);
+      expect(own).toEqual(['SHOT_LOW_DRIVEN']);
+      expect(r.m.events.filter((e) => e.type === EventType.SHOT && e.a === P)).toHaveLength(1);
     },
   },
   // ---- Movement and dribbling (actions)

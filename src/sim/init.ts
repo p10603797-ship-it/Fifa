@@ -17,6 +17,10 @@ import { primeHashCodegen } from './core/hash';
 import { rngInt, rngSeed } from './core/rng';
 import { accelFor, topSpeedFor } from './players/locomotion';
 import { preparePracticeState } from './rules/practice';
+import { settleStateShapes, warmUpOnce } from './warmup';
+
+/** Production build (the shipped app): the loading screen warms the sim up (src/sim/warmup.ts). */
+const PROD = typeof __DEV_BUILD__ !== 'undefined' && !__DEV_BUILD__;
 
 /** Copy a squad member's attributes into a PlayerAttrs (+ derived top speed and acceleration). */
 export function copyAttrs(dst: PlayerAttrs, src: Readonly<PlayerData>): void {
@@ -39,6 +43,9 @@ export function periodLength(config: MatchConfig, period: Period): number {
 }
 
 export function initMatch(config: MatchConfig, clubs: readonly Club[] = CLUBS): SimState {
+  // [FIN-P] Once per process in the app: compile and optimise the sim on the loading screen, not in the first match
+  // (src/sim/warmup.ts; no effect on any state but its own scratch match).
+  if (PROD) warmUpOnce((c) => initMatch(c, clubs), config);
   const homeClub = clubs[config.homeClub] ?? clubs[0]!;
   const awayClub = clubs[config.awayClub] ?? clubs[1]!;
   const squads = [homeClub.squad, awayClub.squad];
@@ -119,6 +126,9 @@ export function initMatch(config: MatchConfig, clubs: readonly Club[] = CLUBS): 
   s.ball.x = 0; s.ball.y = 0.11; s.ball.z = 0;
   s.ball.px = 0; s.ball.py = 0.11; s.ball.pz = 0;
   preparePracticeState(s);
+  // [FIN-P] Every numeric field gets its double representation now, not on its first fraction in play (no value
+  // changes; see settleStateShapes).
+  settleStateShapes(s);
   // [TUN-7S skeptic] Compile the state copier / hasher now (the loading screen), once per process, not in the first
   // ticks of play. No effect on the state.
   primeStateCodegen(s);

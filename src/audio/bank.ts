@@ -6,6 +6,7 @@
  *
  * - define(id, seconds, channels, render): rendered in JavaScript, in chunks of `chunk` samples, a few
  *   milliseconds per animation frame (the engine pumps from update()), so a long crowd loop never stalls a frame.
+ *   A renderer's set-up (SampleRenderer.prime, the loop crossfade prefix) runs in chunk-sized steps too [FIN-A].
  *   The renderer is a pure function of the sample range (`from`..`to`) and the sample rate: it keeps its own state
  *   between chunks only through what it can recompute from `from`, which also makes it worker friendly.
  * - defineGraph(id, seconds, channels, build): built as a Web Audio graph in an OfflineAudioContext, which the
@@ -16,8 +17,11 @@
  */
 
 const LOCAL_TUNING = {
-  /** Samples rendered per chunk (between budget checks). */
-  chunk: 4096,
+  /**
+   * Samples rendered per chunk (between budget checks). [FIN-A] 1024 (was 4096): a pump overshoots its budget by at most
+   * one chunk, and the first chunks of each sound run cold (not yet optimised) code, so 4096 cost up to ~11 ms there.
+   */
+  chunk: 1024,
   /** Longest buffer a module may define, s (memory guard). */
   maxSeconds: 30,
   /** Used when the context reports no sample rate (test fakes), Hz. */
@@ -26,8 +30,17 @@ const LOCAL_TUNING = {
 
 export const BANK_TUNING = LOCAL_TUNING;
 
-/** Fill out[c][from..to) for every channel c. Called repeatedly with consecutive ranges. */
-export type SampleRenderer = (out: readonly Float32Array[], from: number, to: number, sampleRate: number) => void;
+/**
+ * Fill out[c][from..to) for every channel c. Called repeatedly with consecutive ranges.
+ *
+ * [FIN-A] Optional `prime`: set-up work the render starting at sample 0 needs (loopRenderer's crossfade prefix: half
+ * a second of source signal, six chunks of work), done in steps of at most `maxSamples` samples per channel. The bank
+ * calls it once per unit of work (like one chunk) before the first chunk until it returns true, so no single pump
+ * step costs more than a chunk. The samples rendered afterwards must be the same with or without priming.
+ */
+export type SampleRenderer = ((out: readonly Float32Array[], from: number, to: number, sampleRate: number) => void) & {
+  prime?: (channels: number, length: number, sampleRate: number, maxSamples: number) => boolean;
+};
 /** Build a graph into `ctx` (connect to ctx.destination and start sources at 0). */
 export type GraphBuilder = (ctx: OfflineAudioContext) => void;
 
@@ -85,6 +98,8 @@ interface Job {
   render: SampleRenderer | null;
   build: GraphBuilder | null;
   status: JobStatus;
+  /** The renderer's prime() reported its set-up complete (or it has none). */
+  primed: boolean;
   cursor: number;
   buffer: AudioBuffer | null;
   data: Float32Array[] | null;
@@ -168,15 +183,27 @@ export function createBufferBank(ctx: BaseAudioContext, opts: BufferBankOptions 
     const ch = Number.isFinite(channels) && channels >= 1 ? Math.min(2, Math.floor(channels)) : 1;
     const job: Job = {
       id, graph, channels: ch, length: Math.max(1, Math.round(secs * sr)), render, build,
-      status: JobStatus.PENDING, cursor: 0, buffer: null, data: null,
+      status: JobStatus.PENDING, primed: !render || typeof render.prime !== 'function', cursor: 0, buffer: null, data: null,
     };
     jobs.push(job);
     pending++;
     return jobs.length - 1;
   }
 
-  /** Render one chunk of a JavaScript job (allocating its AudioBuffer on the first chunk). */
+  /**
+   * One unit of work of a JavaScript job: a prime step before the first chunk while its renderer has set-up left
+   * [FIN-A], else one chunk (allocating its AudioBuffer on the first chunk).
+   */
   function renderChunk(j: Job): void {
+    if (!j.primed && j.cursor === 0) {
+      j.status = JobStatus.RENDERING;
+      try {
+        j.primed = j.render!.prime!(j.channels, j.length, sr, chunk) === true;
+      } catch (err) {
+        fail(j, err);
+      }
+      return;
+    }
     if (!j.data) {
       try {
         const buf = ctx.createBuffer(j.channels, j.length, sr);

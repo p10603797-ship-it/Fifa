@@ -44,7 +44,9 @@ export const GROUP_BUDGETS_KB: Record<string, number> = {
   css: 150,
   other: 150,
   'src/modes': 120,
-  'src/contracts': 80,
+  // [FIN-A] 80 KB predated moving every gameplay number into contracts/tuning.ts (TUN-1/TUN-7S: ~110 KB now). An
+  // early-warning group budget only; the 4 MB gzip total gate is unchanged.
+  'src/contracts': 160,
   'src/app': 80,
 };
 

@@ -139,8 +139,9 @@ describe('QF-4 skeptic QA-31: camera settings, aspects and frame pacing', () => 
   }, 600000);
 
   it('goal replays and establishing shots stay in front of the stands, above the grass and out of the goals', () => {
-    // Seed 8 scores early (a goal around tick 1630): its replay plays both angles.
-    const g = createLiveRig({ seed: 8, config: { halfMinutes: 3 } });
+    // Seed 25 scores early (its replay starts at tick 1716): the replay plays both angles. [FIN-K] Was seed 8 (a goal
+    // around tick 1630), which no longer scores inside the 3000 ticks after FIN-K's sim changes.
+    const g = createLiveRig({ seed: 25, config: { halfMinutes: 3 } });
     let replay = 0, est = 0, angleCuts = 0;
     let last: { x: number; y: number; z: number } | null = null;
     for (let t = 0; t < 3000; t++) {

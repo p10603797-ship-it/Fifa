@@ -76,6 +76,7 @@ vi.mock('../../src/sim/rules/freekick', () => ({
   freeKickDefault: () => { /* none */ },
   freeKickInput: (s: SimState, ci: number, f: InputFrame, ev: EventSink) => H.input(5, s, ci, f, ev),
   wallJumpHandler: { update() { /* none */ }, end() { /* none */ } },
+  lineWallKeeperZ: () => 0, // [FIN-K] GKP-06 asks for the goal-line wall keeper spot (no wall in this fake)
 }));
 vi.mock('../../src/sim/rules/penalty', () => ({
   penaltySetup: () => { /* RUL-11 picks the taker */ },

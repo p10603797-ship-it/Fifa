@@ -42,20 +42,26 @@ function gesture(r: TouchRig, slot: ClusterSlot, g: G): void {
   r.wait(17); r.up(2, p.x + d[0]! * 40, p.y + d[1]! * 40);
 }
 
-interface Result { act: ActionKind; kind: KickKind; flags: number; skill: SkillMove; lastKick: KickKind }
+interface Result {
+  act: ActionKind; kind: KickKind; flags: number; skill: SkillMove; lastKick: KickKind;
+  /** Every action #9 was in during the window, and the rig (events, state) for the strict cells. */
+  acts: Set<ActionKind>; rig: TouchRig;
+}
 
 /** Tick up to n; the first action #9 starts (kick kind, flags, skill) and the last kick kind at the end. */
 function run(r: TouchRig, n = 45): Result {
   let first: Result | null = null;
+  const acts = new Set<ActionKind>();
   for (let i = 0; i < n; i++) {
     r.tick();
     const p = r.s.players[P]!;
+    acts.add(p.act);
     if (!first && p.act !== ActionKind.NONE && p.act !== ActionKind.SHIELD) {
-      first = { act: p.act, kind: p.actKick, flags: p.actA, skill: p.actSkill, lastKick: KickKind.NONE };
+      first = { act: p.act, kind: p.actKick, flags: p.actA, skill: p.actSkill, lastKick: KickKind.NONE, acts, rig: r };
     }
   }
   const skillEv = r.events.find((e) => e.type === EventType.SKILL && e.a === P);
-  const out = first ?? { act: ActionKind.NONE, kind: KickKind.NONE, flags: 0, skill: SkillMove.NONE, lastKick: KickKind.NONE };
+  const out = first ?? { act: ActionKind.NONE, kind: KickKind.NONE, flags: 0, skill: SkillMove.NONE, lastKick: KickKind.NONE, acts, rig: r };
   if (skillEv && out.skill === SkillMove.NONE) out.skill = skillEv.b as SkillMove;
   // #9's own last kick (an opponent may head a dink before the window ends since QF-9's lofted-receiver fix).
   const own = r.events.filter((e) => e.type === EventType.KICK && e.a === P);
@@ -76,7 +82,15 @@ const CELLS: [string, ClusterSlot, G, (r: Result) => void, number?][] = [
   ['SHOOT tap: shot', ClusterSlot.HIGH, 'tap', (r) => expect(r.kind).toBe(KickKind.SHOT_NORMAL), 30],
   ['SHOOT swipe up: chip shot', ClusterSlot.HIGH, 'up', (r) => expect(r.kind).toBe(KickKind.SHOT_CHIP), 30],
   ['SHOOT swipe down: finesse shot', ClusterSlot.HIGH, 'down', (r) => expect(r.kind).toBe(KickKind.SHOT_FINESSE), 30],
-  ['SHOOT swipe left: fake shot', ClusterSlot.HIGH, 'left', (r) => expect(r.skill === SkillMove.FAKE_SHOT || r.act === ActionKind.FAKE || r.act === ActionKind.SHOT).toBe(true), 30],
+  ['SHOOT swipe left: fake shot', ClusterSlot.HIGH, 'left', (r) => {
+    // [FIN-A] SGN-02 strict form (a real SHOT used to pass): a FAKE with a FAKE_SHOT skill, no shot struck, ball kept.
+    expect(r.acts.has(ActionKind.FAKE)).toBe(true);
+    expect(r.rig.events.some((e) => e.type === EventType.SKILL && e.a === P && e.b === SkillMove.FAKE_SHOT)).toBe(true);
+    expect(r.rig.events.some((e) => e.type === EventType.SHOT)).toBe(false);
+    const own = r.rig.events.filter((e) => e.type === EventType.KICK && e.a === P).map((e) => KickKind[e.b]);
+    expect(own.filter((k) => k !== 'SKILL_TOUCH' && k !== 'DRIBBLE_TOUCH')).toEqual([]);
+    expect(r.rig.s.ball.owner).toBe(P);
+  }, 30],
   ['SHOOT swipe right: power shot', ClusterSlot.HIGH, 'right', (r) => expect(r.kind).toBe(KickKind.SHOT_POWER), 30],
   ['SPRINT & SKILL tap: skill (step-over default)', ClusterSlot.BIG, 'tap', (r) => expect(r.skill).toBe(SkillMove.STEP_OVER)],
   ['SPRINT & SKILL swipe up: skill (roulette default)', ClusterSlot.BIG, 'up', (r) => expect(r.skill).toBe(SkillMove.ROULETTE)],

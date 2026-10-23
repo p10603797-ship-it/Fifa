@@ -484,11 +484,13 @@ describe('SIM-14 in a bot match', () => {
       }, {
         check: 'all',
         until: (st, evs) => {
-          if (st.match.phase === MatchPhase.IN_PLAY) return false;
           for (let i = 0; i < 22; i++) {
             const p = st.players[i]!;
             if (pending[i] === 0 || (p.act >= ActionKind.STAND_TACKLE && p.act <= ActionKind.PUSH_PULL)) continue;
-            if (!evs.some((e) => e.type === EventType.TACKLE && e.a === i)) whistled++;
+            if (evs.some((e) => e.type === EventType.TACKLE && e.a === i)) continue;
+            // [FIN-K] Or knocked over in his wind-up by another forced challenge (both sides force tackles here): his own
+            // tackle never happens either (STUMBLE / FALLEN, no TACKLE event).
+            if (st.match.phase !== MatchPhase.IN_PLAY || p.act === ActionKind.STUMBLE || p.act === ActionKind.FALLEN) whistled++;
           }
           return false;
         },

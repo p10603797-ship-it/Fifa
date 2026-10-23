@@ -94,14 +94,17 @@ import type { EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type PlayerState, type SimState } from '../../contracts/state';
 import { createKickLaunch, ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_PASS, T_PLAYER, T_SHOT, T_SHOT_KICK, T_KICK } from '../../contracts/tuning';
+import { T_BALL, T_PASS, T_PLAYER, T_SHOT, T_SHOT_KICK } from '../../contracts/tuning';
 import { ballAirStep, curlSpinY, launchSpin } from '../ball/flight';
 import { dcos, dpow, dsin } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
 import { pressureOn } from '../core/query';
 import { rngGauss } from '../core/rng';
 import { staminaFactor } from '../players/locomotion';
-import { footCanStrike, isDeadBallTaker, lineUpOnDeadBall, noteCharging, releaseStrike } from './kickCommon';
+import {
+  approachDeadBall, footCanStrike, isDeadBallTaker, lineUpOnDeadBall, noteCharging, ownLaunchBlocked, releaseStrike,
+  turnKickWait, turnToKick,
+} from './kickCommon';
 
 /** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_SHOT_KICK. */
 export const LOCAL_TUNING = T_SHOT_KICK;
@@ -951,16 +954,19 @@ function shotUpdate(s: SimState, slot: number, ev: EventSink): void {
   }
   // [QF-10] A restart taker kicking the dead ball lines up behind it along his kick first (kickCommon.ts).
   const taker = isDeadBallTaker(s, slot);
+  // [FIN-K] His own ball behind him for the kick: turn toward the kick (turn-and-kick), it comes round his body.
+  const blocked = ownLaunchBlocked(s, slot);
+  if (blocked) turnToKick(s, slot);
   if (p.actCharging === 1) {
     noteCharging(s, slot);
-    if (taker) lineUpOnDeadBall(s, slot);
+    if (taker) { approachDeadBall(s, slot); lineUpOnDeadBall(s, slot); }
     if (p.actT < p.actContact || p.actT - p.actContact < CHARGE_WAIT) { shotMove(s, p); return; }
     p.actCharging = 0; // backstop: the power bar never stays stuck
   }
   // [QF-10] A released power bar strikes T_PASS.releaseStrikeTicks later (kickCommon.ts).
   releaseStrike(s, slot);
   if (p.actT < p.actContact) {
-    if (taker) lineUpOnDeadBall(s, slot);
+    if (taker) { approachDeadBall(s, slot); lineUpOnDeadBall(s, slot); }
     shotMove(s, p);
     return;
   }
@@ -970,10 +976,12 @@ function shotUpdate(s: SimState, slot: number, ev: EventSink): void {
     shotMove(s, p);
     return;
   }
-  // [QF-10] The dead ball not at his kicking spot yet: keep lining up (the contact moves on a tick at a time).
-  if (taker && p.actT < T_KICK.takerLineUpMaxTicks && lineUpOnDeadBall(s, slot) === 0) {
-    p.actContact = p.actT + 1;
-    p.actDur += 1;
+  // [FIN-K] The dead ball not at his kicking spot: strike now from his current approach (kickCommon approachDeadBall),
+  // never a re-line-up after the planned contact (that froze him in the kick pose for 6-14 ticks).
+  if (taker) approachDeadBall(s, slot);
+  if (blocked) {
+    // [FIN-K] Never launched through his body: the contact waits while he turns and SIM-06 brings the ball round.
+    if (turnKickWait(s, slot) === 0) finishContact(p); // dropped at the cap (the turn takes ~10-25 ticks)
     shotMove(s, p);
     return;
   }

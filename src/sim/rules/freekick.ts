@@ -13,8 +13,9 @@
  *    ball on a line perpendicular to the ball -> wall-centre direction: its outer edge lines up (from the ball) with a
  *    point wallPostCover outside the near post and it extends inward toward the goal centre (|ball z| < wallCentralZ:
  *    centred on the ball-goal line). A free kick less than 9.15 m from the goal line puts the wall on the goal line
- *    between the posts (RUL-11's goal-line exception); one whose wall would end within wallLineGap of the goal line
- *    gets no wall. Members: the wallCount nearest active outfield defenders to the wall centre (never the keeper;
+ *    between the posts (RUL-11's goal-line exception); [FIN-K] the keeper joins that line at the wall's end away from
+ *    the ball's side (lineWallKeeperZ; GKP-06 walks him there, placeLineKeeper slides him in like a member), so no
+ *    member's slot is where he stands. One whose wall would end within wallLineGap of the goal line gets no wall. Members: the wallCount nearest active outfield defenders to the wall centre (never the keeper;
  *    players who are down only if needed), ordered along p = (-uz, ux) (u = ball -> wall centre; TAI-13's slot order),
  *    neighbours spaced by their body-contact distance (SIM-05 bodyRadiusOf) + wallGap so bodies never overlap.
  *    restart.wall / wallCount / wallX / wallZ hold them. Taker: the best free-kick taker (curve + shotPower + longShots
@@ -32,11 +33,11 @@
  *    ball.lastKickTick = tick) every free wall member starts WALL_JUMP BRACE and every ARMED member starts its CHARGE.
  *  - Input (SETPIECE_INPUT[FREE_KICK]; SIM-15 routes every controller's frame here during FREE_KICK), once ready:
  *    taking side, the controller holding the taker while he waits:
- *      SPRINT press = choose the taker: the next of the takerChoices best takers (cycling, wraps); the new taker and the
- *        old one swap places (the new one onto RUL-11's taker spot, in SET_PIECE; SIM-16 hands him the controller).
- *        [QF-10] At a walked free kick (RUL-11 isWalkedSetup: on the main camera, takers within takerWalkMaxDist) nobody
- *        is teleported: the old taker is released where he stands and the new one runs to the spot (restartCommon
- *        SET_PIECE_RUN); kick inputs wait until he is there (aim and curl still follow the sticks).
+ *      SPRINT press = choose the taker: the next of the takerChoices best takers within takerWalkMaxDist of the ball
+ *        (cycling, wraps; SIM-16 hands the new one the controller). [QF-10 / FIN-K] Nobody is teleported, on the main
+ *        camera or under the set-piece camera: the old taker is released where he stands and the new one runs to the
+ *        spot (restartCommon SET_PIECE_RUN, capped at swapRunMaxTicks); kick inputs wait until he is there (aim and
+ *        curl still follow the sticks), RUL-11's timeout waits for him, and once it is due no new choice is taken.
  *      Left stick (|stick| >= aimStickMin) aims by direction from the ball: a ray that meets the attacked goal line
  *        within GOAL_HALF_WIDTH + aimGoalSlack aims there (restart.aimX/aimZ on the goal line; only from within
  *        aimGoalMaxDist of the goal), otherwise the aim is the pitch point aimPassDist along it. The stick at rest keeps
@@ -124,7 +125,8 @@ import {
   ReqFlag, createActionRequest, createKickLaunch, type ActionRequest, type BallPrediction, type KickLaunch,
 } from '../../contracts/systems';
 import {
-  T_BALL, T_INPUT, T_PASS, T_PLAYER, T_RULES, T_SHOT, T_FREE_KICK, T_KICK, T_LOCOMOTION, T_RESTART_COMMON, T_RESTART,
+  T_BALL, T_INPUT, T_PASS, T_PLAYER, T_RULES, T_SHOT, T_FREE_KICK, T_GK_SETPIECE, T_KICK, T_LOCOMOTION, T_RESTART_COMMON,
+  T_RESTART,
 } from '../../contracts/tuning';
 import { beginAction, endAction } from '../actions/dispatch';
 import { KICK_SOLVERS } from '../actions/registry';
@@ -136,7 +138,7 @@ import { copyState } from '../core/clone';
 import { datan2, dcos, dsin } from '../core/dmath';
 import { NULL_SINK } from '../core/events';
 import { applyKick, ballTouchedThisTick, releasePossession } from '../core/kick';
-import { teamHasHuman } from '../core/query';
+import { isHumanSlot, teamHasHuman } from '../core/query';
 import type { V3 } from '../core/vec';
 import { startLob } from '../kicks/lob';
 import { startPass } from '../kicks/pass';
@@ -144,7 +146,7 @@ import { startShot } from '../kicks/shot';
 import { startThrough } from '../kicks/through';
 import { bodyRadiusOf } from '../players/bodies';
 import { SET_PIECE_RUN, restartLookPoint, takerRunning } from './restartCommon';
-import { isValidTaker, isWalkedSetup, prepareTakerKick, restartTakerSpot } from './restart';
+import { isValidTaker, isWalkedSetup, prepareTakerKick } from './restart';
 
 /** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_FREE_KICK. */
 export const LOCAL_TUNING = T_FREE_KICK;
@@ -177,6 +179,8 @@ const AIM_DIR = { x: 1, z: 0 };
 const SLOT_X = new Float64Array(MAX_WALL);
 const SLOT_Z = new Float64Array(MAX_WALL);
 const OFF = new Float64Array(MAX_WALL);
+/** Goal-line wall centre range (lineWallCentreRange): lo, hi. */
+const LINE_RANGE = new Float64Array(2);
 /** Wall-pick marks (pickWall). */
 const PICKED = new Uint8Array(NUM_SLOTS);
 /** Taker ranking (rankTakers): slots by score, count in RANK_N[0]. */
@@ -367,10 +371,15 @@ export function wallDefaultCentre(s: SimState, out: { x: number; z: number }): n
   const az = bz < 0 ? -bz : bz;
   const sn = bz < 0 ? -1 : 1;
   if (isLineWall(s)) {
-    const half = (n - 1) * 0.5 * (2 * T_PLAYER.bodyRadius * LT.wallBodyMul + LT.wallGap);
-    const maxC = GOAL_HALF_WIDTH - LT.wallPostInside - half;
+    // [FIN-K] The keeper stands on the line at the end of the wall away from the ball's side (lineWallKeeperZ): a
+    // central wall is shifted half a member spacing toward the ball's side (wall + keeper centred in the goal), an
+    // angled one stands at the near post; either way inside lineWallCentreRange (members inside the posts, the keeper
+    // inside his line limits), so no member's slot is where the keeper stands.
+    const sp = 2 * T_PLAYER.bodyRadius * LT.wallBodyMul + LT.wallGap;
     out.x = dir * (HALF_LENGTH - LT.wallGoalLineInset);
-    out.z = az < LT.wallCentralZ || maxC <= 0 ? 0 : sn * maxC;
+    lineWallCentreRange(n, sn, LINE_RANGE);
+    out.z = clamp(az < LT.wallCentralZ ? sn * sp * 0.5 : sn * (GOAL_HALF_WIDTH - LT.wallPostInside - (n - 1) * 0.5 * sp),
+      LINE_RANGE[0]!, LINE_RANGE[1]!);
     return 2;
   }
   const D = WALL_DIST;
@@ -396,6 +405,44 @@ export function wallDefaultCentre(s: SimState, out: { x: number; z: number }): n
   out.x = bx + ux * D;
   out.z = bz + uz * D;
   if (dir * out.x > HALF_LENGTH - LT.wallLineGap) { out.x = bx; out.z = bz; return 0; }
+  return 1;
+}
+
+/**
+ * [FIN-K] Range of a goal-line wall's centre z (n members, nominal spacing) into out[0..1]: every member at least
+ * wallPostInside inside the posts, and on the keeper's side (-sn: away from the ball's side, lineWallKeeperZ) room for
+ * the keeper's slot at the wall's end within his line limits (GOAL_HALF_WIDTH - T_GK_SETPIECE.lineInsidePost).
+ */
+function lineWallCentreRange(n: number, sn: number, out: Float64Array): void {
+  const sp = 2 * T_PLAYER.bodyRadius * LT.wallBodyMul + LT.wallGap;
+  const half = (n > 1 ? n - 1 : 0) * 0.5 * sp;
+  const mem = GOAL_HALF_WIDTH - LT.wallPostInside - half;
+  const kep = GOAL_HALF_WIDTH - T_GK_SETPIECE.lineInsidePost - half - sp;
+  let lo = sn > 0 ? -kep : -mem, hi = sn > 0 ? mem : kep;
+  if (!(lo <= hi)) { lo = 0.5 * (lo + hi); hi = lo; }
+  out[0] = lo;
+  out[1] = hi;
+}
+
+/**
+ * [FIN-K] Goal-line wall: z of the defending keeper's spot on the line, into out.z (out.x = the wall line's x). He
+ * stands at the end of the wall away from the ball's side (the -z end when the ball is at z >= 0), his body-contact
+ * distance (SIM-05 bodyRadiusOf) + wallGap from the end member's slot, so the line of wall + keeper has neither an
+ * overlap nor a gap. Returns 1, or 0 when the current free kick has no goal-line wall (GKP-06 positions him itself).
+ */
+export function lineWallKeeperZ(s: SimState, out: { x: number; z: number }): number {
+  const r = s.match.restart;
+  if (r.kind !== RestartKind.FREE_KICK || !isLineWall(s)) return 0;
+  const n = computeSlots(s);
+  if (n === 0) return 0;
+  const end = r.z < 0 ? n - 1 : 0; // slots run along +z (wallLineDir): index 0 is the -z end
+  const w = r.wall[end]!;
+  const k = s.teams[other(r.team === 1 ? 1 : 0)]!.keeperSlot;
+  const rk = k >= 0 && k < NUM_SLOTS ? bodyRadiusOf(s, k) : T_PLAYER.bodyRadius;
+  const rw = w >= 0 && w < NUM_SLOTS ? bodyRadiusOf(s, w) : T_PLAYER.bodyRadius;
+  const zk = GOAL_HALF_WIDTH - T_GK_SETPIECE.lineInsidePost;
+  out.x = SLOT_X[end]!;
+  out.z = clamp(SLOT_Z[end]! + (r.z < 0 ? 1 : -1) * (rk + rw + LT.wallGap), -zk, zk);
   return 1;
 }
 
@@ -677,6 +724,35 @@ function placeWall(s: SimState, snap: boolean): void {
     const fl = Math.sqrt(fx * fx + fz * fz);
     if (fl > 1e-6) { p.fx = fx / fl; p.fz = fz / fl; }
   }
+  placeLineKeeper(s, snap);
+}
+
+/**
+ * [FIN-K] Goal-line wall: the defending keeper (CPU-controlled, free, on his feet) into his slot at the wall's end
+ * (lineWallKeeperZ) like a member: snapped at ready, afterwards slid (wallSlideStep) once within wallHoldExtra of it
+ * (GKP-06 walks him there; SIM-04's ARRIVE stops up to arriveStop short, and a keeper stopping short on the wall side
+ * pushed the end member off his slot), facing the ball.
+ */
+function placeLineKeeper(s: SimState, snap: boolean): void {
+  if (!isLineWall(s) || lineWallKeeperZ(s, PT) === 0) return;
+  const r = s.match.restart;
+  const k = s.teams[other(r.team === 1 ? 1 : 0)]!.keeperSlot;
+  if (!(k >= 0 && k < NUM_SLOTS)) return;
+  const p = s.players[k]!;
+  if (p.active !== 1 || p.act !== ActionKind.NONE || p.stunT > 0 || isHumanSlot(s, k)) return;
+  if (s.ball.owner === k || s.ball.heldBy === k) return;
+  const dx = PT.x - p.x, dz = PT.z - p.z;
+  const d = Math.sqrt(dx * dx + dz * dz);
+  if (snap || d <= LT.wallSlideStep) {
+    if (snap || !bodyInTheWay(s, k, PT.x, PT.z)) { p.x = PT.x; p.z = PT.z; p.vx = 0; p.vz = 0; }
+  } else {
+    if (d > LT.wallHoldExtra) return; // still walking in (GKP-06)
+    const nx = p.x + (dx / d) * LT.wallSlideStep, nz = p.z + (dz / d) * LT.wallSlideStep;
+    if (!bodyInTheWay(s, k, nx, nz)) { p.x = nx; p.z = nz; }
+  }
+  const fx = r.x - p.x, fz = r.z - p.z;
+  const fl = Math.sqrt(fx * fx + fz * fz);
+  if (fl > 1e-6) { p.fx = fx / fl; p.fz = fz / fl; }
 }
 
 /**
@@ -688,12 +764,10 @@ function moveWall(s: SimState, sgn: number): void {
   if (wallDefaultCentre(s, PT) === 0) return;
   const step = LT.wallMoveSpeed * DT;
   if (isLineWall(s)) {
-    const n = r.wallCount;
-    const half = (n - 1) * 0.5 * (2 * T_PLAYER.bodyRadius * LT.wallBodyMul + LT.wallGap);
-    const lim = GOAL_HALF_WIDTH - LT.wallPostInside - half;
-    const lo = lim > 0 ? -lim : 0, hi = lim > 0 ? lim : 0;
+    // [FIN-K] Inside the posts and never into the keeper's slot at its end (lineWallCentreRange).
+    lineWallCentreRange(r.wallCount, r.z < 0 ? -1 : 1, LINE_RANGE);
     r.wallX = PT.x;
-    r.wallZ = clamp(clamp(r.wallZ + sgn * step, PT.z - LT.wallMoveMax, PT.z + LT.wallMoveMax), lo, hi);
+    r.wallZ = clamp(clamp(r.wallZ + sgn * step, PT.z - LT.wallMoveMax, PT.z + LT.wallMoveMax), LINE_RANGE[0]!, LINE_RANGE[1]!);
     return;
   }
   // Rotate the current centre around the ball by one step (precomputed cos / sin: no trig per tick), at distance D.
@@ -724,8 +798,11 @@ export function freeKickTakerScore(s: SimState, slot: number, shooting: boolean)
   return shooting ? a.curve + a.shotPower + a.longShots : a.shortPassing + a.longPassing + a.crossing;
 }
 
-/** Rank the takers of the current free kick into RANK (best first, ties lower slot), at most `max`. */
-function rankTakers(s: SimState, max: number): void {
+/**
+ * Rank the takers of the current free kick into RANK (best first, ties lower slot), at most `max`. `near`: only those
+ * who can run there (see below) even when the set-up is not walked ("choose the taker", FIN-K).
+ */
+function rankTakers(s: SimState, max: number, near: boolean): void {
   const r = s.match.restart;
   const team = r.team === 1 ? 1 : 0;
   const dir = attackDir(s, team);
@@ -735,7 +812,7 @@ function rankTakers(s: SimState, max: number): void {
   let n = 0;
   // [QF-10] A free kick shown on the main camera (RUL-11 isWalkedSetup) is taken by someone who can walk there during
   // the set-up: first the best within takerWalkMaxDist of the ball, else the nearest (no 40-60 m teleport, D-008).
-  const walked = isWalkedSetup(s);
+  const walked = near || isWalkedSetup(s);
   const wd2 = LT.takerWalkMaxDist * LT.takerWalkMaxDist;
   for (let pass = walked ? -1 : 0; pass < 2 && n === 0; pass++) {
     for (let slot = first; slot < first + PLAYERS_PER_TEAM; slot++) {
@@ -764,19 +841,22 @@ function rankTakers(s: SimState, max: number): void {
 
 /** Best free-kick taker for the current free kick (see header), -1 if the team has nobody active. */
 export function pickFreeKickTaker(s: SimState): number {
-  rankTakers(s, 1);
+  rankTakers(s, 1, false);
   return RANK_N[0]! > 0 ? RANK[0]! : -1;
 }
 
 /**
- * "Choose the taker" (SPRINT): the next of the takerChoices best takers after the current one (wrapping). The new
- * taker goes onto RUL-11's taker spot (SET_PIECE), the old one to where the new one stood; [QF-10] at a walked free
- * kick the old one stays where he is and the new one runs to the spot (SET_PIECE_RUN). Returns the new taker or -1.
+ * "Choose the taker" (SPRINT): the next of the takerChoices best takers within takerWalkMaxDist of the ball after the
+ * current one (wrapping). [QF-10 / FIN-K] Nobody is teleported, also under the set-piece camera (free kicks within 35 m
+ * of goal swapped the two players instantly): the old taker stays where he is and the new one runs to the spot
+ * (SET_PIECE_RUN; kick inputs wait for him, RUL-11's timeout waits for him, the run capped at swapRunMaxTicks). Once the
+ * timeout is due (held for a running taker) the taker can no longer be changed. Returns the new taker or -1.
  */
 export function cycleFreeKickTaker(s: SimState): number {
   if (!fkLive(s)) return -1;
   const r = s.match.restart;
-  rankTakers(s, LT.takerChoices);
+  if (r.timeoutT <= 1) return -1; // [FIN-K] the timeout is due: no new run-in to extend it again
+  rankTakers(s, LT.takerChoices, true);
   const n = RANK_N[0]!;
   if (n < 2) return -1;
   const cur = r.taker;
@@ -786,29 +866,11 @@ export function cycleFreeKickTaker(s: SimState): number {
   if (next === cur || !isValidTaker(s, next)) return -1;
   const np = s.players[next]!;
   if (np.act !== ActionKind.NONE || np.stunT > 0) return -1;
-  if (isWalkedSetup(s)) {
-    // [QF-10] On the main camera: the old taker is released where he stands, the new one runs to the spot.
-    r.taker = next;
-    if (cur >= 0 && cur < NUM_SLOTS && s.players[cur]!.act === ActionKind.SET_PIECE) endAction(s, cur, 1);
-    beginAction(np, ActionKind.SET_PIECE, T_RESTART_COMMON.setPieceWaitTicks, -1);
-    np.actA = SET_PIECE_RUN;
-    return next;
-  }
-  const ox = np.x, oz = np.z;
+  // The old taker is released where he stands, the new one runs to the spot (no swap teleport, D-008).
   r.taker = next;
-  if (cur >= 0 && cur < NUM_SLOTS) {
-    const op = s.players[cur]!;
-    if (op.act === ActionKind.SET_PIECE) endAction(s, cur, 1);
-    op.x = ox; op.z = oz; op.vx = 0; op.vz = 0;
-  }
-  restartTakerSpot(s, PT);
-  restartLookPoint(s, LOOK);
-  np.x = PT.x; np.z = PT.z; np.vx = 0; np.vz = 0;
-  const fx = LOOK.x - np.x, fz = LOOK.z - np.z;
-  const fl = Math.sqrt(fx * fx + fz * fz);
-  if (fl > 1e-6) { np.fx = fx / fl; np.fz = fz / fl; }
+  if (cur >= 0 && cur < NUM_SLOTS && s.players[cur]!.act === ActionKind.SET_PIECE) endAction(s, cur, 1);
   beginAction(np, ActionKind.SET_PIECE, T_RESTART_COMMON.setPieceWaitTicks, -1);
-  np.moveMode = MoveMode.LOCKED;
+  np.actA = SET_PIECE_RUN;
   return next;
 }
 

@@ -818,6 +818,22 @@ export const T_PERF = {
 } as const;
 
 /**
+ * [FIN-P] Sim + AI warm-up on the loading screen (src/sim/warmup.ts; initMatch runs it once per process in production
+ * builds): a scratch CPU v CPU match plays openPlayTicks ticks (cut-scenes skipped), then each restart scene up to
+ * sceneTicks ticks, so the engine has compiled and optimised the sim before the first match's first tick.
+ */
+export const T_WARMUP = {
+  /** Open-play ticks of the scratch match. */
+  openPlayTicks: 4000,
+  /** Ticks per restart scene (corner, free kick, penalty, throw-in, goal kick for both teams), and at most this many
+   *  to get back to open play before the next. */
+  sceneTicks: 300,
+  /** Scratch match seed and half length (minutes; longer than the warm-up, so it never reaches half time). */
+  seed: 0x5eed,
+  halfMinutes: 4,
+} as const;
+
+/**
  * [TUN-2] Sim queries (src/sim/core/query.ts pressureOn): pressure on a player is 1 within pressureFullDist of the
  * nearest opponent, 0 beyond pressureZeroDist, linear between (m). Was inline.
  */
@@ -1067,6 +1083,9 @@ export const T_POSSESSION = {
   holdTau: 0.1,
   /** Max ball speed relative to the player while held on a spot, m/s. */
   holdMaxRel: 6,
+  /** [FIN-K] A held ball never passes closer than this to the holder's centre on its way to the spot (it goes round
+   *  his body, not through it; also the clearance of an owned ball's launch ray, kickCommon ownLaunchBlocked), m. */
+  holdBodyClear: 0.3,
   /** Below this planned and current speed the owner counts as standing, m/s. */
   standSpeed: 0.6,
   /** A standing owner leaves a ball moving slower than this relative to him alone (no touch), m/s. */
@@ -1236,12 +1255,20 @@ export const T_KICK = {
   spotAhead: T_POSSESSION.holdAhead,
   /** The ball can be struck within this distance of the kicking spot (horizontal), m. */
   spotReach: 0.9,
-  /** A restart taker lining up on the dead ball side-steps at most this far per tick, m (4.8 m/s), until the ball is
-   *  within takerLinedUp of his kicking spot, m. */
+  /** A restart taker lining up on the dead ball side-steps at most this far per tick, m (4.8 m/s), during the wind-up
+   *  until the ball is within takerLinedUp of his kicking spot, m. */
   takerStep: 0.08,
   takerLinedUp: 0.4,
-  /** ... and strikes anyway once his kick action is this old, ticks. */
-  takerLineUpMaxTicks: 45,
+  /** [FIN-K] ... first turning toward the ball, at most this far off the kick direction (his approach angle, so he
+   *  side-steps only for the rest), and strikes at the planned contact from where he is, deg. (Was takerLineUpMaxTicks
+   *  45: the contact waited for the side-step, the strike delayed 6-14 ticks in a frozen kick pose.) */
+  takerApproachMaxDeg: 60,
+  /** [FIN-K] ... turning toward the ball at most this far per tick during the wind-up (a pass winds up 8 ticks), deg. */
+  takerTurnStepDeg: 10,
+  /** [FIN-K] Turn-and-kick: an owned ball whose launch would cross the kicker's body (behind him for the kick
+   *  direction) is not struck; he turns toward the kick (SIM-04 look) while SIM-06 brings the ball round his body,
+   *  the contact waiting at most this many ticks past the planned one (then the kick is dropped), ticks. */
+  turnKickMaxTicks: 30,
   /** [TUN-2] A launch with a vertical speed above this leaves the ground (ball.grounded = 0), m/s. Was inline in
    *  core/kick.ts applyKick and in the launches that mirror it (freekick.ts, keeper saves / sweeper, aerial preview). */
   liftVy: 0.5,

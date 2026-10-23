@@ -44,6 +44,9 @@ describe('TUN-7S skeptic: no copier / hasher generation in the first tick of a m
 
   it('the first tick\'s copyState + hashState build no signature / code (was 1.59 MB first match, 0.48 MB later)', () => {
     expect(rows[0]!.tickBytes).toBeLessThan(400_000);
-    expect(rows[1]!.tickBytes).toBeLessThan(120_000);
+    // [FIN-P] 120 -> 200 KB: the states' fields now start with their double representation (src/sim/warmup.ts
+    // settleStateShapes), so the first, unoptimised copy and hash of a match box them once (146 KB); the regenerated
+    // copier / hasher this guards against cost 480 KB.
+    expect(rows[1]!.tickBytes).toBeLessThan(200_000);
   });
 }, 180_000);

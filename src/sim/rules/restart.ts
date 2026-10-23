@@ -36,7 +36,8 @@
  *    throw-ins), ready = 1, timeoutT = 12 s (human side) or 4 s (CPU side). While ready: taker kept on his spot and in
  *    his waiting action; illegal players are pushed toward the nearest legal spot (a slide of at most pushMaxStep per
  *    tick with their velocity away from it removed, so nobody blocks for more than ~1 s and no mid-view teleport is
- *    needed); timeout -> the kind's Default (CPU side: logged WATCHDOG RESTART_BLOCKED); if still not taken
+ *    needed); timeout -> the kind's Default (CPU side: logged WATCHDOG RESTART_BLOCKED; [FIN-K] held at its last tick
+ *    while a newly chosen free-kick taker is still running in, never placing him); if still not taken
  *    defaultGraceTicks later -> forceRestartKick (logged).
  *  - Legal positions: everybody but the taker inside the pitch; kick-off: own half for all, opponents outside the
  *    centre circle; throw-in / corner / free kick: opponents >= 2 / 9.15 / 9.15 m from the ball; goal kick: opponents
@@ -345,7 +346,7 @@ function beginTakerAction(s: SimState, slot: number): void {
 }
 
 /** Ready and waiting: taker on his spot and in his waiting action (never while he is kicking or down). [QF-10] A taker
- *  swapped in at a walked free kick runs there (restartCommon takerRunning) and is placed only if the run overruns. */
+ *  chosen at a free kick runs there (restartCommon takerRunning) and is placed only if the run overruns. */
 function settleTaker(s: SimState): void {
   const r = s.match.restart;
   const t = r.taker;
@@ -365,8 +366,9 @@ export function prepareTakerKick(s: SimState, slot: number): number {
   const r = s.match.restart;
   if (!isRestartPhase(s.match.phase) || r.taken === 1 || slot < 0 || slot !== r.taker) return 0;
   const p = s.players[slot]!;
-  // [QF-10] Kicked (a Default / the CPU) while still running in after a walked taker swap: onto his spot first.
-  if (takerRunning(p)) placeTakerOnSpot(s, slot);
+  // [FIN-K] Still running in after "choose the taker": not free yet (no kick from afar, and no teleport onto his spot:
+  // the Default / CPU fallback retries, RUL-11's timeout waits for him).
+  if (takerRunning(p)) return 0;
   if (p.act === ActionKind.SET_PIECE) endAction(s, slot, 0);
   return p.act === ActionKind.NONE ? 1 : 0;
 }
@@ -993,7 +995,9 @@ export function restartTick(s: SimState, ev: EventSink): void {
   if (r.ready === 0 || r.t < setup) return;
   settleTaker(s);
   pushOutIllegal(s);
-  r.timeoutT--;
+  // [FIN-K] The timeout never fires on a taker still running in after "choose the taker" (it placed him on his spot):
+  // it waits at its last tick until he is there (the run is capped at swapRunMaxTicks; RUL-05 allows no new choice then).
+  if (!(r.timeoutT === 1 && r.taker >= 0 && takerRunning(s.players[r.taker]!))) r.timeoutT--;
   if (r.timeoutT === 0) {
     if (!teamHasHuman(s, r.team)) logWatchdog(s, ev, WatchdogReason.RESTART_BLOCKED, r.kind); // CPU never acted
     if (r.taker >= 0) prepareTakerKick(s, r.taker);

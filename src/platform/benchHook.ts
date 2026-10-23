@@ -39,7 +39,13 @@ export const BENCH_BUDGETS = {
 
 export const BENCH_DEFAULTS = {
   seconds: 90,
-  seed: 0xb3ac4,
+  /**
+   * [FIN-P] The bench match's seed: its 90 s window on a 60 Hz device holds a crowded penalty area, a corner (46 s), a goal
+   * into the net (51 s, net ripple), its replay (56 s) and free kicks (BRIEF section 13 "Proving it"). Any sim change
+   * reshapes the match: tests/perf/fin-p-bench-coverage.test.ts fails when this seed stops covering the cases (search
+   * another: npx tsx tests/perf/sgn-04-bench-coverage.ts --search 100). Was 0xb3ac4 (no corner, goal or replay).
+   */
+  seed: 1,
   warmupSeconds: 5,
   /** ...and at least this many sim ticks before measuring (JIT warm-up on a throttled CPU). */
   warmupTicks: 300,

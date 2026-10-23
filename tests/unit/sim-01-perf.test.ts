@@ -2,6 +2,7 @@
  * SIM-01 budgets: predictBall(120 ticks) < 0.1 ms; zero allocation in ballAirStep, predictBall, ticksToHeight and the
  * solvers. Timings are the best of many short batches so a busy runner does not make the check flaky.
  */
+import { spawnSync } from 'node:child_process';
 import { build } from 'esbuild';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,10 +16,11 @@ import { createBallState, type BallState } from '../../src/contracts/state';
 import { createBallPrediction } from '../../src/contracts/systems';
 import { ballStepTick } from '../../src/sim/ball/contact';
 import {
-  ballAirStep, copyBallState, createLaunchSolution, groundPassSpeed, groundRollTime, predictBall, solveLaunch,
+  ballAirStep, copyBallState, createLaunchSolution, groundPassSpeed, predictBall, solveLaunch,
   solveLaunchSpin, ticksToHeight,
 } from '../../src/sim/ball/flight';
 import { createV3 } from '../../src/sim/core/vec';
+import { ALLOC_FLAGS } from '../perf/qf-7r-alloc-flags';
 
 function bestBatchMs(fn: () => void, iterations: number, batches: number): number {
   for (let i = 0; i < iterations; i++) fn(); // warm-up / JIT
@@ -141,8 +143,6 @@ describe('SIM-01 zero allocation', () => {
   }
 
   const p = createBallPrediction();
-  const v = createV3();
-  const sol = createLaunchSolution();
   const air = mk(0, 10, 0, 20, 5, 3, 9);
   const sink = new Float64Array(1);
 
@@ -176,18 +176,40 @@ describe('SIM-01 zero allocation', () => {
     expect(tth).toBeLessThan(tFloor + 2 + tFloor * 0.02);
   });
 
+  /**
+   * [FIN-A] Measured in a child process (tests/unit/fin-a-sim-01-alloc-probe.ts) with the QF-7R exact-allocation flags,
+   * like the TUN-7S sim / AI allocation tests. In this worker thread the count depended on CPU load and on what ran
+   * before (background compiles arrive later under load, so more calls box doubles in the interpreter / baseline
+   * tiers): groundRollTime read 1472 B/call once under parallel load and groundPassSpeed 814 B/call when this test ran
+   * alone. --single-threaded compiles synchronously and the sampling heap profiler counts every byte of the window, so
+   * the child reports the same bytes on every run. The limits are unchanged.
+   */
   it('solvers create no objects (only bounded double boxing)', () => {
-    const cases: [string, () => void, number][] = [
-      ['solveLaunch', () => { sink[0] = solveLaunch(38, -9, 0.62, v); }, 64],
-      ['solveLaunchSpin curl+backspin', () => { sink[0] = solveLaunchSpin(28, 6, 0.45, BALL_RADIUS, -9, 4, sol); }, 64],
+    const limits: [string, number][] = [
+      ['solveLaunch', 64],
+      ['solveLaunchSpin curl+backspin', 64],
       // Newton iterations on dlog: ~32 B of boxing per iteration.
-      ['groundPassSpeed', () => { sink[0] = groundPassSpeed(21, 3); }, 512],
-      ['groundRollTime', () => { sink[0] = groundRollTime(14, 20); }, 1024],
+      ['groundPassSpeed', 512],
+      ['groundRollTime', 1024],
     ];
-    for (const [name, fn, max] of cases) {
-      const b = bytesPerCall(fn);
-      console.log(`${name}: ${b.toFixed(2)} B/call`);
-      expect(b, name).toBeLessThan(max);
+    const runs = [runSolverProbe(), runSolverProbe()];
+    for (const r of runs) expect(r.singleThreaded, 'probe ran with --single-threaded').toBe(true);
+    // Load independence: two runs give the same bytes to the last sample.
+    expect(runs[1]!.cases, 'same bytes on every run').toEqual(runs[0]!.cases);
+    for (const [name, max] of limits) {
+      const b = runs[0]!.cases[name];
+      console.log(`${name}: ${b?.toFixed(2)} B/call`);
+      expect(b, name).toBeTypeOf('number');
+      expect(b!, name).toBeLessThan(max);
     }
-  });
+  }, 60_000);
 });
+
+/** One run of the SIM-01 solver allocation probe in a single-threaded child process. */
+function runSolverProbe(): { singleThreaded: boolean; cases: Record<string, number> } {
+  const r = spawnSync(process.execPath, [
+    ...ALLOC_FLAGS, '--expose-gc', '--import', 'tsx', 'tests/unit/fin-a-sim-01-alloc-probe.ts', '4000', '1500',
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 60_000 });
+  expect(r.status, r.stderr).toBe(0);
+  return JSON.parse(r.stdout.trim().split('\n').pop()!) as { singleThreaded: boolean; cases: Record<string, number> };
+}

@@ -342,14 +342,52 @@ function solvePush(): void {
 
 // ---------------------------------------------------------------- ball control
 
-/** Hold the (low) ball on the spot (sx, sz) next to slot's feet: his velocity + a capped pull onto the spot. */
-function holdOn(s: SimState, slot: number, sx: number, sz: number): void {
+/** holdOn's spot (x, z), written by its callers. */
+const HOLD = new Float64Array(2);
+
+/**
+ * Hold the (low) ball on the spot (HOLD: sx, sz) next to slot's feet: his velocity + a capped pull onto the spot. [FIN-K]
+ * Round his body, never through it: when the straight way from the ball to the spot passes closer than holdBodyClear
+ * to his centre (a sharp turn left the ball behind him, the kicking spot is in front), the pull heads for a waypoint
+ * beside him (holdBodyClear out, or the ball's own distance when further, at right angles to the chord's closest
+ * point) with the speed for the whole way round, so the ball circles his body onto the spot.
+ */
+function holdOn(s: SimState, slot: number): void {
   const b = s.ball;
   if (!(b.y <= CTRL_H)) return;
   const p = s.players[slot]!;
-  let rx = (sx - b.x) / L.holdTau;
-  let rz = (sz - b.z) / L.holdTau;
-  const r = Math.sqrt(rx * rx + rz * rz);
+  const sx = HOLD[0]!, sz = HOLD[1]!; // the spot crosses the call in scratch: double arguments get boxed
+  let tx = sx, tz = sz;
+  let way = 0;
+  const ax = b.x - p.x, az = b.z - p.z;
+  const dx = sx - b.x, dz = sz - b.z;
+  const d2 = dx * dx + dz * dz;
+  if (d2 > 1e-12) {
+    const t = -(ax * dx + az * dz) / d2;
+    if (t > 0 && t < 1) {
+      let cx = ax + dx * t, cz = az + dz * t;
+      const cl = Math.sqrt(cx * cx + cz * cz);
+      const clr = L.holdBodyClear;
+      if (cl < clr) {
+        if (cl < 1e-6) { cx = -dz; cz = dx; } else { cx /= cl; cz /= cl; }
+        const nl = Math.sqrt(cx * cx + cz * cz);
+        const al = Math.sqrt(ax * ax + az * az);
+        const rad = al > clr ? al : clr;
+        tx = p.x + (cx / nl) * rad;
+        tz = p.z + (cz / nl) * rad;
+        const wx = tx - b.x, wz = tz - b.z, vx2 = sx - tx, vz2 = sz - tz;
+        way = Math.sqrt(wx * wx + wz * wz) + Math.sqrt(vx2 * vx2 + vz2 * vz2);
+      }
+    }
+  }
+  let rx = (tx - b.x) / L.holdTau;
+  let rz = (tz - b.z) / L.holdTau;
+  let r = Math.sqrt(rx * rx + rz * rz);
+  if (way > 0 && r > 1e-9) {
+    // Toward the waypoint at the speed for the whole way round (no slow-down at the waypoint).
+    const want = way / L.holdTau;
+    rx *= want / r; rz *= want / r; r = want;
+  }
   if (r > L.holdMaxRel) { rx *= L.holdMaxRel / r; rz *= L.holdMaxRel / r; }
   b.vx = p.vx + rx;
   b.vz = p.vz + rz;
@@ -363,7 +401,9 @@ function holdKickSpot(s: SimState, slot: number): void {
   let fx = p.fx, fz = p.fz;
   const fl = Math.sqrt(fx * fx + fz * fz);
   if (fl > 1e-9) { fx /= fl; fz /= fl; } else { fx = s.teams[p.team]!.dir; fz = 0; }
-  holdOn(s, slot, p.x + fx * L.holdAhead, p.z + fz * L.holdAhead);
+  HOLD[0] = p.x + fx * L.holdAhead;
+  HOLD[1] = p.z + fz * L.holdAhead;
+  holdOn(s, slot);
 }
 
 /** A dribble touch by slot (intent already in F via intentOf). turn = 1: the extra small touch of a sharp turn. */
@@ -604,7 +644,7 @@ function ownerTick(s: SimState, ev: EventSink): void {
   if (!reach && stealTick(s, o, ev) === 1) return;
   if (act === ActionKind.FIRST_TOUCH) return;
   if (reach && underTick(s, o, ev) === 1) return;
-  if (act === ActionKind.SHIELD && shieldBallSpot(s, o, SPOT)) { holdOn(s, o, SPOT.x, SPOT.z); return; }
+  if (act === ActionKind.SHIELD && shieldBallSpot(s, o, SPOT)) { HOLD[0] = SPOT.x; HOLD[1] = SPOT.z; holdOn(s, o); return; }
   if (reach) dribbleControl(s, o, ev);
 }
 

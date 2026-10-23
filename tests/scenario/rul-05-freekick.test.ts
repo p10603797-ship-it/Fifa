@@ -551,32 +551,52 @@ describe('RUL-05 setup', () => {
 // ---------------------------------------------------------------- choose the taker
 
 describe('RUL-05 choose the taker (SPRINT)', () => {
-  it('SPRINT cycles through the three best takers (wrapping); new and old taker swap places', () => {
-    const s = readyFK(0, GX - 23, -2);
-    const r = s.match.restart;
-    const ranked = Array.from({ length: PLAYERS_PER_TEAM }, (_, i) => i)
+  /** The three best shooting free-kick takers of team 0 (non-keepers), best first. */
+  function bestThree(s: SimState): number[] {
+    return Array.from({ length: PLAYERS_PER_TEAM }, (_, i) => i)
       .filter((i) => s.players[i]!.isKeeper === 0)
       .sort((a, b) => {
         const A = s.attrs[a]!, B = s.attrs[b]!;
         return (B.curve + B.shotPower + B.longShots) - (A.curve + A.shotPower + A.longShots) || a - b;
       })
       .slice(0, LT.takerChoices);
+  }
+
+  /** [FIN-K] Bring the 2nd and 3rd best takers within takerWalkMaxDist of the ball (they come up for the kick). */
+  function bringUp(s: SimState, ranked: number[]): void {
+    const r = s.match.restart;
+    for (let i = 1; i < ranked.length; i++) {
+      const p = s.players[ranked[i]!]!;
+      p.x = r.x - 7 - 2 * i; p.z = r.z + (i === 1 ? 4 : -4); p.vx = 0; p.vz = 0;
+    }
+  }
+
+  it('SPRINT cycles through the three best takers within takerWalkMaxDist (wrapping); [FIN-K] the new one runs in, the old one stays', () => {
+    const s = readyFK(0, GX - 23, -2);
+    const r = s.match.restart;
+    const ranked = bestThree(s);
     expect(r.taker).toBe(ranked[0]);
     expect(s.ctrl[0]!.slot).toBe(ranked[0]);
+    bringUp(s, ranked);
     const seq: number[] = [];
     for (let k = 0; k < 4; k++) {
       const old = r.taker;
       const next = ranked[(k + 1) % ranked.length]!;
+      const ox = s.players[old]!.x, oz = s.players[old]!.z;
       const nx = s.players[next]!.x, nz = s.players[next]!.z;
       tick1(s, 0, { buttons: Btn.SPRINT });
       seq.push(r.taker);
       expect(r.taker).toBe(next);
-      // The old taker went where the new one stood; the new one is behind the ball, waiting.
-      expect(dist(s.players[old]!.x, s.players[old]!.z, nx, nz)).toBeLessThan(0.3);
-      expect(dist(s.players[next]!.x, s.players[next]!.z, r.x, r.z)).toBeLessThan(1.0);
+      // Nobody is teleported (FIN-K: also under the set-piece camera): the old taker stays where he stood, the new
+      // one is not on the ball yet but runs there in SET_PIECE (kick inputs wait for him).
+      expect(dist(s.players[old]!.x, s.players[old]!.z, ox, oz)).toBeLessThan(0.3);
+      expect(dist(s.players[next]!.x, s.players[next]!.z, nx, nz)).toBeLessThan(0.3);
       expect(s.players[next]!.act).toBe(ActionKind.SET_PIECE);
-      run(s, 2); // SIM-16 hands the controller to the new taker
-      expect(s.ctrl[0]!.slot).toBe(next);
+      // Until he is on his spot (SET_PIECE_RUN, bit 0 of actA, cleared) with the controller.
+      run(s, 300, undefined, (st) => (st.players[next]!.actA & 1) === 0 && st.ctrl[0]!.slot === next);
+      expect(dist(s.players[next]!.x, s.players[next]!.z, r.x, r.z)).toBeLessThan(1.0);
+      expect(s.ctrl[0]!.slot).toBe(next); // SIM-16 handed him the controller
+      run(s, 5);
     }
     expect(seq).toEqual([ranked[1], ranked[2], ranked[0], ranked[1]]);
     expect(s.match.phase).toBe(MatchPhase.FREE_KICK);
@@ -589,6 +609,7 @@ describe('RUL-05 choose the taker (SPRINT)', () => {
   it('a held SPRINT cycles once (edges only); the defending side cannot change the taker', () => {
     const s = readyFK(0, GX - 23, -2);
     const r = s.match.restart;
+    bringUp(s, bestThree(s));
     const t0 = r.taker;
     run(s, 1, press(0, { buttons: Btn.SPRINT }));
     const t1 = r.taker;
@@ -598,6 +619,19 @@ describe('RUL-05 choose the taker (SPRINT)', () => {
     run(s, 1);
     run(s, 1, press(1, { buttons: Btn.SPRINT }));
     expect(r.taker).toBe(t1);
+  });
+
+  it('[FIN-K] nobody beyond takerWalkMaxDist is offered: with no other taker near the ball SPRINT keeps the taker', () => {
+    const s = readyFK(0, GX - 23, -2);
+    const r = s.match.restart;
+    const t0 = r.taker;
+    for (let i = 0; i < PLAYERS_PER_TEAM; i++) {
+      if (i === t0) continue;
+      const p = s.players[i]!;
+      if (dist(p.x, p.z, r.x, r.z) <= LT.takerWalkMaxDist + 1) { p.x = r.x - LT.takerWalkMaxDist - 3; p.z = -20 + i * 3; p.vx = 0; p.vz = 0; }
+    }
+    run(s, 1, press(0, { buttons: Btn.SPRINT }));
+    expect(r.taker).toBe(t0);
   });
 });
 

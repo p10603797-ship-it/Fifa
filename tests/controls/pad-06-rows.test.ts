@@ -115,12 +115,18 @@ describe('PAD-06 §10 Free kick', () => {
   it('Free kick: choose the taker (R2) swaps in the next taker and hands him the controller', () => {
     const s = FK();
     const t0 = s.match.restart.taker;
+    // [FIN-K] Only takers within takerWalkMaxDist of the ball are offered (the chosen one runs in, nobody is teleported):
+    // bring a teammate up as the team does for a free kick in range.
+    const r = s.match.restart;
+    const mate = s.players[t0 === 9 ? 10 : 9]!;
+    mate.x = r.x - 8; mate.z = r.z + 4; mate.vx = 0; mate.vz = 0;
     const m = padMatch(s);
     m.run(10, tapAt(PadButton.R2, s.tick + 2));
     expect(m.frames.some((f) => (f.buttons & Btn.SPRINT) !== 0)).toBe(true);
     expect(s.match.restart.taker).not.toBe(t0);
     m.run(4);
     expect(s.ctrl[0]!.slot).toBe(s.match.restart.taker);
+    expect(Math.hypot(mate.x - r.x, mate.z - r.z)).toBeGreaterThan(3); // running in, not swapped onto the ball
     expect(s.match.restart.taken).toBe(0);
   });
 });

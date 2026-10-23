@@ -139,7 +139,8 @@ describe('QF-13 skeptic TAI-11: an intercepted pass arms the full reaction delay
   it('Beginner bot matches: the CPU defender gets (almost) his whole delay after the opponent intercepts a pass', { timeout: 120000 }, () => {
     const delay = T_LEVEL.reactionTicks[Difficulty.BEGINNER]!;
     const left: number[] = [];
-    for (let m = 0; m < 2; m++) {
+    // [FIN-K] 3 matches (was 2): the interception count follows the bot matches' flow (5 in 2 after FIN-K's sim changes).
+    for (let m = 0; m < 3; m++) {
       const config = soakConfig(m, 101, { halfMinutes: 3, difficulty: Difficulty.BEGINNER });
       config.cupRules = 0;
       let passTeam = -1, prevKey = -1;
