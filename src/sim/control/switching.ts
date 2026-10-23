@@ -24,7 +24,7 @@
  *     non-penalty restart): RS_FLICK edge -> the outfield teammate most aligned with the flick direction from the
  *     current player (always available); MOD_L press edge (touch SWITCH tap) -> best effective defender excluding
  *     the current one, debounced for switchLockTicks after a previous manual switch. A manual switch also holds off
- *     auto-switching for switchLockTicks + LOCAL_TUNING.manualHoldTicks so auto never undoes the user's choice.
+ *     auto-switching for switchLockTicks + T_SWITCH.manualHoldTicks so auto never undoes the user's choice.
  *  4. Auto (IN_PLAY, lock-out expired, outfield candidates only, keeper never): AIR_AND_LOOSE when the ball is
  *     airborne or loose (within autoWindowTicks of the latest touch) and a teammate will clearly reach it first;
  *     AUTO additionally for an opponent's ground pass and when the current defender is beaten by the carrier.
@@ -60,9 +60,8 @@ import { ActionKind, AutoSwitch, ControllerKind, MatchPhase, RestartKind } from 
 import { EventType, type EventSink } from '../../contracts/events';
 import { AXIS_SCALE, Btn, type InputFrame } from '../../contracts/input';
 import { MoveMode, type ControllerState, type PlayerState, type SimState } from '../../contracts/state';
-import { T_BALL, T_DRIBBLE, T_INPUT, T_PLAYER, T_TOUCH } from '../../contracts/tuning';
+import { T_BALL, T_DRIBBLE, T_INPUT, T_PLAYER, T_TOUCH, T_SWITCH, T_FIRST_TOUCH } from '../../contracts/tuning';
 import { DRAG_K, MAGNUS_K } from '../ball/flight';
-import { CHEST_REACH_MUL } from '../players/firstTouchHooks';
 import { ticksToReach } from '../players/locomotion';
 import { Ctx, FACE_MASK, clearBuffer, controlContext } from './resolveShared';
 
@@ -80,95 +79,11 @@ const AIR_MAGNUS = MAGNUS_K;
 const GRAVITY = T_BALL.gravity;
 const SPIN_DECAY_AIR = T_BALL.spinDecayAir;
 
-const LOCAL_TUNING = {
-  /** Extra auto-switch hold after a MANUAL switch, on top of T_INPUT.switchLockTicks, ticks (>= switchLockTicks). */
-  manualHoldTicks: 42,
-  /** Spacing of carrier-path / loose-ball samples, ticks. */
-  sampleStepTicks: 4,
-  /** Spacing of loose-ball samples more than looseHorizonTicks ahead (after a long ball comes down), ticks. */
-  sampleStepFarTicks: 8,
-  /** Opponent carrier path look-ahead, ticks. */
-  carrierHorizonTicks: 90,
-  /** Loose-ball look-ahead, counted in ticks the ball is playable (at or below reachHeight), ticks. */
-  looseHorizonTicks: 120,
-  /**
-   * Most ticks the loose-ball look-ahead follows the ball out of reach (above reachHeight) on top of
-   * looseHorizonTicks, ticks. Covers the longest real flights (a 35 m/s clearance at 1 rad comes down after ~300).
-   */
-  airHorizonTicks: 360,
-  /** Highest ball-centre height an outfield player can play (head plus a small jump), m. */
-  reachHeight: 2.3,
-  /** Carrier speed cap for path extrapolation, m/s. */
-  carrierMaxSpeed: 10,
-  /** Goal-side bonus subtracted from a defender's effective arrival, ticks. */
-  goalSideBonusTicks: 20,
-  /** A defender is goal-side when at least this much nearer his own goal line than the carrier, m. */
-  goalSideMargin: 0.5,
-  /** Auto-switch hysteresis: candidate must beat the current player by max(this, autoMarginFrac * current), ticks. */
-  autoMarginTicks: 12,
-  /** Relative part of the auto-switch hysteresis (fraction of the current player's arrival). */
-  autoMarginFrac: 0.25,
-  /**
-   * Next-switch marker / MOD_L among teammates tied on arrival: the previous marker is kept while he gets to his
-   * meeting point at most this much later than the best, ticks.
-   */
-  markerTieTicks: 6,
-  /** Never auto-switch away from a player who reaches the loose ball within this many ticks. */
-  aboutToReceiveTicks: 20,
-  /**
-   * [QF-9] ... nor from one the loose ball itself comes to within aboutToReceiveTicks: its path (relative to his run)
-   * passes within SIM-07's receive reach of him (T_TOUCH.receiveRadius at the feet, x chestReachMul above that, up to
-   * reachHeight for a header; a ball slower than receiveMinSpeed is a SIM-06 pick-up within T_DRIBBLE.controlRadius). EFF
-   * counts the run to a sampled point (T_PLAYER.arriveStop), so a ball rolling past him 0.9 m away read as a chase: the
-   * CPU switched away on that very tick and back once SIM-07 gave him the touch. m/s (mirrors SIM-07 minTrapSpeed).
-   */
-  receiveMinSpeed: 3,
-  /**
-   * [QF-9] Loose-ball auto-switching waits while an opponent reaches the ball more than this many ticks before our
-   * best candidate (he will have it; the carrier rule decides then), ticks.
-   */
-  contestTicks: 2,
-  /**
-   * [QF-9 skeptic] ... and only while our current man can get to where the opponent meets the ball within this many
-   * ticks from now (about 20 m from a standstill: he is in the play, so the carrier rule can come back to him once
-   * the receiver has it). A man farther off is never the one control flips back to, so waiting only stranded control
-   * on him. Counted from now, not from the opponent's arrival, so the decision does not change as the ball arrives
-   * while he stands (AUTO; AIR_AND_LOOSE never waits: it has no carrier rule), ticks.
-   */
-  contestInPlayTicks: 180,
-  /** [QF-9] The last kicker cannot touch his own kick for this many ticks (mirrors SIM-06 / SIM-07 selfKickTicks). */
-  selfKickTicks: 12,
-  /**
-   * Loose / air-ball auto-switching acts only this long after the latest ball touch (a fresh situation), ticks.
-   * Must be <= switchLockTicks + manualHoldTicks: then, once a manual hold expires, a loose-ball auto-switch needs a
-   * ball touch that happened after the manual switch, so auto never undoes the user's choice in the same scramble.
-   */
-  autoWindowTicks: 60,
-  /** The current defender is beaten when the carrier is this much nearer our goal line than him, m ... */
-  beatenMargin: 1.0,
-  /** ... and at least this far from him, m. */
-  beatenDist: 1.5,
-  /** Directional switch: cosine of the cone half-angle (60 deg), then the wide fallback cone (90 deg). */
-  dirConeCos: 0.5,
-  dirConeCosWide: 0,
-  /** Directional score = (1 - cos) * dirAngleWeight + distance * dirDistWeight (m-equivalent, lower wins). */
-  dirAngleWeight: 40,
-  dirDistWeight: 0.5,
-  /**
-   * Reachability prune (pure optimisation; changes no result while ticksToReach stays physically plausible): a
-   * sample farther than a player could possibly run in the time is skipped without calling ticksToReach. Bound over
-   * time T (s), current speed v, his own attrs.topSpeed / attrs.accel (as SIM-04 reads them; stamina only lowers
-   * them): min(v*T + accel*f*T^2/2, max(v, topSpeed)*f*T) + T_PLAYER.arriveStop + pruneSlack, f = pruneFactor
-   * (generous on purpose: SIM-04 estimates include turning and a slower high-speed acceleration, so they are slower).
-   */
-  pruneFactor: 1.25,
-  pruneSlack: 0.5,
-} as const; // TUNING-CR
 
 /** Effective manual hold and auto window, clamped so the switchLockT encoding holds for any tuning (see header). */
-const MANUAL_HOLD = LOCAL_TUNING.manualHoldTicks > T_INPUT.switchLockTicks ? LOCAL_TUNING.manualHoldTicks : T_INPUT.switchLockTicks;
+const MANUAL_HOLD = T_SWITCH.manualHoldTicks > T_INPUT.switchLockTicks ? T_SWITCH.manualHoldTicks : T_INPUT.switchLockTicks;
 const MANUAL_LOCK = T_INPUT.switchLockTicks + MANUAL_HOLD;
-const AUTO_WINDOW = LOCAL_TUNING.autoWindowTicks < MANUAL_LOCK ? LOCAL_TUNING.autoWindowTicks : MANUAL_LOCK;
+const AUTO_WINDOW = T_SWITCH.autoWindowTicks < MANUAL_LOCK ? T_SWITCH.autoWindowTicks : MANUAL_LOCK;
 
 /** "Effectively never" arrival, ticks (finite on purpose). */
 const BIG = 1e9;
@@ -305,10 +220,10 @@ function buildCarrierSamples(s: SimState, carrier: number): void {
   let vx = p.vx;
   let vz = p.vz;
   const sp = Math.sqrt(vx * vx + vz * vz);
-  const cap = LOCAL_TUNING.carrierMaxSpeed;
+  const cap = T_SWITCH.carrierMaxSpeed;
   if (sp > cap) { vx = (vx / sp) * cap; vz = (vz / sp) * cap; }
-  const step = LOCAL_TUNING.sampleStepTicks;
-  const horizon = LOCAL_TUNING.carrierHorizonTicks;
+  const step = T_SWITCH.sampleStepTicks;
+  const horizon = T_SWITCH.carrierHorizonTicks;
   let n = 0;
   const px = p.x;
   const pz = p.z;
@@ -380,11 +295,11 @@ function simulateLoose(): void {
   const rollDamp = T_BALL.rollDamping;
   const bx = BOARD_XS;
   const bz = BOARD_ZS;
-  const reachH = LOCAL_TUNING.reachHeight;
-  const step = LOCAL_TUNING.sampleStepTicks;
-  const stepFar = LOCAL_TUNING.sampleStepFarTicks;
-  const horizon = LOCAL_TUNING.looseHorizonTicks;
-  const airCap = LOCAL_TUNING.airHorizonTicks;
+  const reachH = T_SWITCH.reachHeight;
+  const step = T_SWITCH.sampleStepTicks;
+  const stepFar = T_SWITCH.sampleStepFarTicks;
+  const horizon = T_SWITCH.looseHorizonTicks;
+  const airCap = T_SWITCH.airHorizonTicks;
   let n = 0;
   let air = 0;
   let wasOut = y > reachH;
@@ -501,11 +416,11 @@ function computeEff(s: SimState, side: number): number {
   EFF_END[0] = nSamples > 0 ? ST[nSamples - 1]! : 0;
   const dir = s.teams[side]!.dir;
   const carrierDepth = carrier >= 0 ? dir * s.players[carrier]!.x : 0;
-  const reachH = mode === MODE_LOOSE ? LOCAL_TUNING.reachHeight : BIG;
-  const pf = LOCAL_TUNING.pruneFactor;
+  const reachH = mode === MODE_LOOSE ? T_SWITCH.reachHeight : BIG;
+  const pf = T_SWITCH.pruneFactor;
   const topMin = T_PLAYER.topSpeedMin;
   const accMin = T_PLAYER.accelMin;
-  const slack = T_PLAYER.arriveStop + LOCAL_TUNING.pruneSlack;
+  const slack = T_PLAYER.arriveStop + T_SWITCH.pruneSlack;
   for (let i = 0; i < NUM_SLOTS; i++) { EFF[i] = BIG; TIE[i] = BIG; AIR[i] = 0; }
   const first = teamFirstSlot(side);
   const end = first + PLAYERS_PER_TEAM;
@@ -549,7 +464,7 @@ function computeEff(s: SimState, side: number): number {
       tie = eff;
       air = SU[L]!;
     }
-    if (mode === MODE_CARRIER && dir * p.x < carrierDepth - LOCAL_TUNING.goalSideMargin) eff -= LOCAL_TUNING.goalSideBonusTicks;
+    if (mode === MODE_CARRIER && dir * p.x < carrierDepth - T_SWITCH.goalSideMargin) eff -= T_SWITCH.goalSideBonusTicks;
     EFF[i] = eff;
     TIE[i] = tie;
     AIR[i] = air;
@@ -617,7 +532,7 @@ function pickBest(s: SimState, c: number, exclude: number, allowKeeper: boolean,
     if (e < bestEff || (e === bestEff && k < bestTie)) { bestEff = e; bestTie = k; best = i; }
   }
   if (best >= 0 && prefer !== best && prefer >= first && prefer < end && prefer !== exclude &&
-    EFF[prefer] === bestEff && TIE[prefer]! <= bestTie + LOCAL_TUNING.markerTieTicks && eligible(s, c, prefer, allowKeeper)) {
+    EFF[prefer] === bestEff && TIE[prefer]! <= bestTie + T_SWITCH.markerTieTicks && eligible(s, c, prefer, allowKeeper)) {
     return prefer;
   }
   return best;
@@ -636,7 +551,7 @@ function directionalTarget(s: SimState, c: number, dirX: number, dirZ: number): 
   const first = teamFirstSlot(ctl.side);
   const end = first + PLAYERS_PER_TEAM;
   for (let pass = 0; pass < 2; pass++) {
-    const coneCos = pass === 0 ? LOCAL_TUNING.dirConeCos : LOCAL_TUNING.dirConeCosWide;
+    const coneCos = pass === 0 ? T_SWITCH.dirConeCos : T_SWITCH.dirConeCosWide;
     let best = -1;
     let bestScore = BIG;
     for (let i = first; i < end; i++) {
@@ -647,7 +562,7 @@ function directionalTarget(s: SimState, c: number, dirX: number, dirZ: number): 
       const d = Math.sqrt(dx * dx + dz * dz);
       const cos = d > 1e-3 ? (dx * ux + dz * uz) / d : 1;
       if (cos < coneCos) continue;
-      const score = (1 - cos) * LOCAL_TUNING.dirAngleWeight + d * LOCAL_TUNING.dirDistWeight;
+      const score = (1 - cos) * T_SWITCH.dirAngleWeight + d * T_SWITCH.dirDistWeight;
       if (score < bestScore) { bestScore = score; best = i; }
     }
     if (best >= 0) return best;
@@ -712,7 +627,7 @@ function leaveKeeperTarget(s: SimState, c: number): number {
   // A loose ball about to reach him (a parry, a ball dropped at his feet) keeps him; a shot in flight is the keeper
   // AI's to save (D-009).
   if (b.owner < 0 && b.heldBy < 0 &&
-    (EFF[cur]! <= LOCAL_TUNING.aboutToReceiveTicks || (b.shotBy < 0 && receiveSoon(s, cur)))) return -1;
+    (EFF[cur]! <= T_SWITCH.aboutToReceiveTicks || (b.shotBy < 0 && receiveSoon(s, cur)))) return -1;
   return pickBest(s, c, cur, false, -1);
 }
 
@@ -938,12 +853,12 @@ const DIR = new Float64Array(2);
 function receiveSoon(s: SimState, slot: number): boolean {
   const p = s.players[slot]!;
   if (p.stunT > 0 || (p.act !== ActionKind.NONE && p.act !== ActionKind.SHIELD && p.act !== ActionKind.FIRST_TOUCH)) return false;
-  const horizon = LOCAL_TUNING.aboutToReceiveTicks;
+  const horizon = T_SWITCH.aboutToReceiveTicks;
   if (p.noTouchT >= horizon) return false;
   const b = s.ball;
-  if (b.lastKickBy === slot && s.tick - b.lastKickTick < LOCAL_TUNING.selfKickTicks) return false; // his own kick
+  if (b.lastKickBy === slot && s.tick - b.lastKickTick < T_SWITCH.selfKickTicks) return false; // his own kick
   const bv2 = b.vx * b.vx + b.vz * b.vz;
-  const slow = b.grounded === 1 && bv2 < LOCAL_TUNING.receiveMinSpeed * LOCAL_TUNING.receiveMinSpeed;
+  const slow = b.grounded === 1 && bv2 < T_SWITCH.receiveMinSpeed * T_SWITCH.receiveMinSpeed;
   const ox = b.x - p.x, oz = b.z - p.z;
   const wx = b.vx - p.vx, wz = b.vz - p.vz;
   const w2 = wx * wx + wz * wz;
@@ -963,7 +878,7 @@ function receiveSoon(s: SimState, slot: number): boolean {
   let r: number;
   if (slow) r = y <= T_DRIBBLE.controlHeight ? T_DRIBBLE.controlRadius : 0;
   // Above the chest (up to reachHeight): a header, within about the chest reach of him.
-  else r = y <= T_DRIBBLE.controlHeight ? T_TOUCH.receiveRadius : y <= LOCAL_TUNING.reachHeight ? T_TOUCH.receiveRadius * CHEST_REACH_MUL : 0;
+  else r = y <= T_DRIBBLE.controlHeight ? T_TOUCH.receiveRadius : y <= T_SWITCH.reachHeight ? T_TOUCH.receiveRadius * T_FIRST_TOUCH.chestReachMul : 0;
   return r > 0 && cx * cx + cz * cz <= r * r;
 }
 
@@ -999,7 +914,7 @@ function autoSwitchTick(s: SimState, c: number, ev: EventSink): void {
     if (!airborne && oppPass && mode !== AutoSwitch.AUTO) return; // an opponent's ground pass is not "loose"
     effFor(s, side);
     const effCur = EFF[cur]!;
-    if (effCur <= LOCAL_TUNING.aboutToReceiveTicks) return; // never away from the player about to receive
+    if (effCur <= T_SWITCH.aboutToReceiveTicks) return; // never away from the player about to receive
     if (receiveSoon(s, cur)) return; // [QF-9] ... nor from the man the ball is rolling into
     const best = pickBest(s, c, cur, false, -1);
     if (best < 0) return;
@@ -1014,7 +929,7 @@ function autoSwitchTick(s: SimState, c: number, ev: EventSink): void {
     // while the current man is in the play (contestInPlayTicks).
     if (mode === AutoSwitch.AUTO) {
       const opp = opponentArrival(s, side);
-      if (opp + LOCAL_TUNING.contestTicks < eb && contestReach(s, cur, opp) <= LOCAL_TUNING.contestInPlayTicks) return;
+      if (opp + T_SWITCH.contestTicks < eb && contestReach(s, cur, opp) <= T_SWITCH.contestInPlayTicks) return;
     }
     autoSwitchTo(s, c, best, ev);
     return;
@@ -1027,8 +942,8 @@ function autoSwitchTick(s: SimState, c: number, ev: EventSink): void {
   const q = s.players[carrier]!;
   const dx = q.x - p.x;
   const dz = q.z - p.z;
-  const beaten = dir * q.x < dir * p.x - LOCAL_TUNING.beatenMargin &&
-    dx * dx + dz * dz > LOCAL_TUNING.beatenDist * LOCAL_TUNING.beatenDist;
+  const beaten = dir * q.x < dir * p.x - T_SWITCH.beatenMargin &&
+    dx * dx + dz * dz > T_SWITCH.beatenDist * T_SWITCH.beatenDist;
   if (!beaten) return;
   effFor(s, side);
   const best = pickBest(s, c, cur, false, -1);
@@ -1042,8 +957,8 @@ function autoSwitchTick(s: SimState, c: number, ev: EventSink): void {
  * (his EFF minus the ticks the ball spends out of everyone's reach before then).
  */
 function autoMargin(playable: number): number {
-  const rel = LOCAL_TUNING.autoMarginFrac * playable;
-  return rel > LOCAL_TUNING.autoMarginTicks ? rel : LOCAL_TUNING.autoMarginTicks;
+  const rel = T_SWITCH.autoMarginFrac * playable;
+  return rel > T_SWITCH.autoMarginTicks ? rel : T_SWITCH.autoMarginTicks;
 }
 
 /**
@@ -1128,5 +1043,5 @@ export function debugSwitchContest(s: SimState, side: number, slot: number, out:
   out[1] = contestReach(s, slot, opp);
 }
 export const SWITCH_MODE = { BALL: MODE_BALL, CARRIER: MODE_CARRIER, LOOSE: MODE_LOOSE } as const;
-/** The LOCAL_TUNING block (read-only; tests and the lead's TUNING-CR review). */
-export const SWITCH_TUNING = LOCAL_TUNING;
+/** [TUN-1] Old name of contracts/tuning.ts T_SWITCH (read-only; tests import it). */
+export const SWITCH_TUNING = T_SWITCH;

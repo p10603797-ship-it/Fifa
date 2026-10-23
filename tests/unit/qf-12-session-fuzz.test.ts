@@ -10,6 +10,11 @@
  *  - ticking is exactly loaded && !paused && !finished && !hidden && !blocked;
  *  - a human pause refuses the other human, and nobody is ever locked out: with the page shown and unblocked the
  *    pauser (or anyone, for a system pause or a pauser handed to the CPU) can always resume.
+ * [QF-17] FIX-11: deterministic. restart() drew its new match seed from Math.random (the session's default newSeed),
+ * so every run walked different matches and the coverage asserts passed or failed by chance; the rig now hands the
+ * session a seeded newSeed, so a seed list always replays the same walk. The phases the walk went through are recorded
+ * on every tick (the session's onTick hook) instead of being sampled once per operation, where a whole half-time break
+ * could fall between two samples, and the screen / ticking checks also run after every frame of play.
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { AppContext, DeviceRegistry, MatchSetup, Screen, ScreenId } from '../../src/contracts/app';
@@ -38,7 +43,16 @@ function mulberry(seed: number): () => number {
   };
 }
 
-function rig() {
+interface RigHooks {
+  /** Seed of the walk: restart() seeds derive from it (default 1). */
+  seed?: number;
+  /** Every tick (session onTick, before phase watching). */
+  onTick?(phase: number): void;
+  /** After every frame of play. */
+  afterFrame?(): void;
+}
+
+function rig(hooks: RigHooks = {}) {
   const focus = { attach: vi.fn(), detach: vi.fn(), handle: vi.fn(), focus: vi.fn(), onAction: vi.fn(() => () => undefined) };
   const router = createRouter({ appendChild: () => undefined } as unknown as HTMLElement, () => ({ focus } as unknown as AppContext), {
     listen: false,
@@ -66,10 +80,14 @@ function rig() {
   const diagnostics = { log: vi.fn(), recent: () => [], debug: false, setDebug: vi.fn(), report: () => '' };
   const errors: string[] = [];
   let now = 1000;
+  let restarts = 0;
   const session = createSession({
     router, renderer, hud, audio, devices, diagnostics, clubs: CLUBS, getProjector: () => null,
     onError: (err, where) => errors.push(`${where}: ${String(err)}`),
     yieldFrame: () => Promise.resolve(), now: () => now,
+    onTick: hooks.onTick ? (rt) => hooks.onTick!(rt.curr.match.phase) : undefined,
+    // Never Math.random (the default): the same seed must replay the same walk.
+    newSeed: () => (Math.imul((hooks.seed ?? 1) >>> 0, 0x9e3779b1) ^ Math.imul(++restarts, 0x85ebca6b)) >>> 0,
   }) as AppSession;
   let frameT = 0;
   const loop = createLoop({
@@ -82,6 +100,7 @@ function rig() {
       frameT += 50; // 3 ticks per frame
       now += 50;
       loop.frame(frameT);
+      hooks.afterFrame?.();
     }
   };
   return { router, session, errors, loop, frames, advance: (ms: number) => { now += ms; } };
@@ -110,15 +129,23 @@ function expectedScreen(s: AppSession): ScreenId[] {
   return ['match'];
 }
 
-async function fuzz(seed: number, ops: number): Promise<{ log: string[]; phases: Set<number>; finishes: number }> {
-  const r = rig();
-  const rnd = mulberry(seed);
-  const log: string[] = [];
+async function fuzz(seed: number, ops: number): Promise<{ log: string[]; phases: Set<number>; finishes: number; completed: number; frameChecks: number }> {
   const phases = new Set<number>();
   let hidden = false;
   let blocked = false;
   let finishes = 0;
-  const onFinish = (): void => { finishes++; };
+  let completed = 0;
+  let frameChecks = 0;
+  const log: string[] = [];
+  // Late-bound: the per-frame check needs the rig it is passed to.
+  let frameCheck: () => void = () => undefined;
+  const r = rig({ seed, onTick: (phase) => phases.add(phase), afterFrame: () => frameCheck() });
+  const rnd = mulberry(seed);
+  // onFinish runs for a match played to its end (quit false) and for a quit (quit true).
+  const onFinish = (_summary: unknown, quit: boolean): void => {
+    finishes++;
+    if (!quit) completed++;
+  };
   const check = (what: string): void => {
     const s = r.session;
     const ctx = `seed ${seed} after ${what}\n${log.slice(-12).join('\n')}`;
@@ -129,12 +156,16 @@ async function fuzz(seed: number, ops: number): Promise<{ log: string[]; phases:
     const st = s.getState();
     if (st) phases.add(st.match.phase);
   };
+  frameCheck = () => {
+    frameChecks++;
+    check(`frame ${frameChecks}`);
+  };
   for (let i = 0; i < ops; i++) {
     const s = r.session;
     const x = rnd();
     const h = Math.floor(rnd() * 3) - 1; // -1, 0, 1
     let what: string;
-    if (!s.active || x < 0.015) {
+    if (!s.active || x < 0.005) {
       what = 'start';
       s.start(twoHumanSetup((seed * 1000 + i) >>> 0, onFinish));
       await flush();
@@ -158,14 +189,14 @@ async function fuzz(seed: number, ops: number): Promise<{ log: string[]; phases:
       blocked = !blocked;
       what = `setBlocked(${blocked})`;
       s.setBlocked(blocked);
-    } else if (x < 0.375) {
+    } else if (x < 0.365) {
       what = 'restart';
       s.restart();
       await flush();
-    } else if (x < 0.39) {
+    } else if (x < 0.37) {
       what = 'quit';
       s.quit();
-    } else if (x < 0.41) {
+    } else if (x < 0.39) {
       what = `setHumanDevice(${h < 0 ? 1 : h}, cpu)`;
       s.setHumanDevice(h < 0 ? 1 : h, 'cpu');
     } else if (x < 0.47) {
@@ -177,6 +208,10 @@ async function fuzz(seed: number, ops: number): Promise<{ log: string[]; phases:
       if (st && (st.match.period === Period.FIRST_HALF || st.match.period === Period.SECOND_HALF) && st.match.clockRunning === 1) {
         st.match.periodT = Math.max(st.match.periodT, st.match.periodLen - 30);
         st.match.addedT = 0;
+      } else if (st && (st.match.phase === MatchPhase.HALF_TIME || st.match.phase === MatchPhase.FULL_TIME)) {
+        // [QF-17] A break jumps too (Continue), so walks get past half time to full time in their own match.
+        what = 'clock jump (SKIP)';
+        s.queueCommand(h < 0 ? 0 : h, Command.SKIP, 0);
       }
     } else {
       // Play on (unpausing first now and then, so the walk gets past the breaks to full time).
@@ -197,22 +232,54 @@ async function fuzz(seed: number, ops: number): Promise<{ log: string[]; phases:
     }
   }
   r.session.dispose();
-  return { log, phases, finishes };
+  return { log, phases, finishes, completed, frameChecks };
 }
 
 describe('QF-12 session lifecycle fuzz (real session, router, loop and sim)', () => {
   it('24 seeds x 250 random lifecycle operations: right screen, right ticking, no lock-out, no errors', { timeout: 300_000 }, async () => {
     const seen = new Set<number>();
     let finishes = 0;
+    let completed = 0;
+    let frameChecks = 0;
     for (let seed = 1; seed <= 24; seed++) {
       const r = await fuzz(seed, 250);
       for (const p of r.phases) seen.add(p);
       finishes += r.finishes;
+      completed += r.completed;
+      frameChecks += r.frameChecks;
     }
-    // The walk reaches the break screens and full time (not only the opening kick-off).
+    // The walk reaches the break screens, full time and the final screen (not only the opening kick-off). Every
+    // tick's phase is recorded, so a break that starts and ends inside one frames() operation still counts; the walk
+    // is the same on every run (seeded restarts). `finishes` alone also counted quits (onFinish(summary, true)), so
+    // a match played to its end is counted on its own.
     expect(seen.has(MatchPhase.HALF_TIME)).toBe(true);
-    expect(seen.has(MatchPhase.FULL_TIME) || seen.has(MatchPhase.POST_MATCH)).toBe(true);
+    expect(seen.has(MatchPhase.FULL_TIME)).toBe(true);
+    expect(seen.has(MatchPhase.POST_MATCH)).toBe(true);
     expect(finishes).toBeGreaterThan(0);
+    expect(completed).toBeGreaterThan(0);
+    expect(frameChecks).toBeGreaterThan(1000);
+  });
+});
+
+describe('QF-17 FIX-11 session fuzz determinism', () => {
+  it('the same seed replays the same walk: operations, screens, pauses and phases (no Math.random, no timers)', { timeout: 120_000 }, async () => {
+    const a = await fuzz(17, 150);
+    const b = await fuzz(17, 150);
+    expect(b.log).toEqual(a.log);
+    expect([...b.phases].sort()).toEqual([...a.phases].sort());
+    // restart() takes the rig's seeded newSeed (the session default is Math.random): same seed, same rematch.
+    const seeds: number[] = [];
+    for (let k = 0; k < 2; k++) {
+      const r = rig({ seed: 5 });
+      r.session.start(twoHumanSetup(9));
+      await flush();
+      r.session.restart();
+      await flush();
+      seeds.push(r.session.getSetup()!.config.seed);
+      r.session.dispose();
+    }
+    expect(seeds[0]).toBe(seeds[1]);
+    expect(seeds[0]).not.toBe(9);
   });
 });
 

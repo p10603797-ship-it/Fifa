@@ -19,7 +19,7 @@
  *  - The clock (match.periodT) only ever advances by 1 per clock-phase tick; the display is derived from it, so it
  *    cannot drift. Added time accrues during the restart phases of regulation time that run the clock (throw-ins,
  *    goal kicks, corners, free kicks, penalties; never a kick-off, D-013) and is frozen once regulation ends.
- *  - A shot in flight always defers the period end (bounded by LOCAL_TUNING.shotFlightMaxTicks after the strike);
+ *  - A shot in flight always defers the period end (bounded by T_MATCH_FLOW.shotFlightMaxTicks after the strike);
  *    a cross in flight or an attack in the final 25 m defers it until the 20 s extension cap.
  *  - Kick-off: both teams are teleported into formation in their own halves (opponents outside the centre
  *    circle), taker beside the ball on the spot facing his attacking direction, a teammate beside him. The kick is
@@ -30,7 +30,7 @@
  *    rules -> dispatch -> registry -> machine).
  *  - Extra exports: setPhaseSafe (non-throwing transition), kickOffTick / kickOffDefault (RUL-11 calls the
  *    default on timeout), advanceCutscene (end a cut-scene / break as a skip would; for the watchdog), isTimeUp,
- *    LOCAL_TUNING.
+ *    T_MATCH_FLOW.
  */
 import {
   CENTRE_CIRCLE_RADIUS, CORNER_ARC_RADIUS, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, HALF_LENGTH, HALF_WIDTH,
@@ -45,7 +45,7 @@ import { Btn, type InputFrame } from '../../contracts/input';
 import { MoveMode, type PlayerState, type SimState } from '../../contracts/state';
 import { clearActionRequest, createActionRequest, createKickLaunch, ReqFlag } from '../../contracts/systems';
 import { CLOCK_PHASES, CUTSCENE_PHASES, LEGAL_TRANSITIONS, RESTART_PHASES } from '../../contracts/transitions';
-import { T_RULES } from '../../contracts/tuning';
+import { T_RULES, T_MATCH_FLOW } from '../../contracts/tuning';
 import { getFormation } from '../../data/formations';
 import { beginAction, endAction, isFree } from '../actions/dispatch';
 import { applyKick, releasePossession } from '../core/kick';
@@ -64,64 +64,9 @@ import { checkForfeit, subsTick } from './subs';
 import { throwInTick } from './throwin';
 import { practiceTeam } from './practice';
 
-/** RUL-01 constants not yet in contracts/tuning.ts. */
-export const LOCAL_TUNING = {
-  /** PRE_MATCH length before the first kick-off / shoot-out, ticks (2 s). */
-  preMatchTicks: 120,
-  /** Half-time break between the two extra-time periods, ticks (2 s; "short break"). */
-  etHalfTimeTicks: 120,
-  /** An assist must precede the scorer's touch by at most this many ticks (10 s). */
-  assistWindowTicks: 600,
-  /** A shot in flight defers the period end for at most this many ticks after the strike (3 s). */
-  shotFlightMaxTicks: 180,
-  /** A cross counts as in flight for at most this many ticks after the kick (4 s) ... */
-  crossFlightMaxTicks: 240,
-  /** ... while airborne or rolling faster than this, m/s. */
-  crossLiveSpeed: 4,
-  /** Kick-off: taker stands this far behind the ball on his own side, m. */
-  kickOffTakerBehind: 0.45,
-  /** Kick-off: the partner stands this far behind the halfway line, m, and this far to the side, m. */
-  kickOffPartnerBehind: 0.6,
-  kickOffPartnerSide: 1.8,
-  /** Kick-off: everyone else at least this far inside his own half, m. */
-  kickOffHalfMargin: 1,
-  /** Kick-off: defending players at least this far outside the centre circle, m. */
-  kickOffCircleMargin: 0.85,
-  /** Kick-off: formation scale, fraction of the half length / half width. */
-  kickOffDepthScale: 0.95,
-  kickOffWidthScale: 0.9,
-  /** Kick-off: minimum spacing between placed players, m; keep-inside margin from the lines, m. */
-  kickOffMinSpacing: 1.5,
-  kickOffPitchMargin: 1,
-  /** Kick-off pass power 0..1 (short pass) and the forced fallback kick speed, m/s. */
-  kickOffPower: 0.25,
-  kickOffForceSpeed: 8,
-  /** Kick-off: CPU / AI taker default after ready + T_RULES.cpuRestartDelay + this many ticks (1 s). */
-  kickOffCpuGraceTicks: 60,
-  /** Kick-off: forced direct kick this many ticks after the default became due (1 s). */
-  kickOffForceTicks: 60,
-  /** Kick-off: taker re-pinned to his spot when further than this, m; ball re-spotted when further than this, m. */
-  kickOffPinTolerance: 0.6,
-  kickOffBallTolerance: 0.25,
-  /** Celebration: teammates within this radius of the scorer join, m, at most this many. */
-  celebrateJoinRadius: 25,
-  celebrateMaxJoin: 4,
-  /** Celebration: scorer run speed m/s, per-variant speed multipliers, joiners' speed m/s, joiners' offset m. */
-  celebrateRunSpeed: 6.5,
-  celebrateVariantSpeed: [1, 0.85, 0.7] as readonly number[],
-  celebrateJoinSpeed: 6,
-  celebrateJoinDist: 1.6,
-  /** Celebration spot inset from the goal line and from the touchline, m; keep-inside margin, m. */
-  celebrateSpotInsetX: 8,
-  celebrateSpotInsetZ: 6,
-  celebrateInsideMargin: 1.5,
-  /** Dejected players walk back toward their formation spot at this speed, m/s. */
-  dejectedWalkSpeed: 1.4,
-  /** Corner spot inset from the corner on each axis, fraction of CORNER_ARC_RADIUS (inside the arc). */
-  cornerSpotInset: 0.5,
-  /** Goal kick spot: fraction of the goal-area half width toward the side the ball went out. */
-  goalKickSideFrac: 0.5,
-} as const; // TUNING-CR
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_MATCH_FLOW. */
+export const LOCAL_TUNING = T_MATCH_FLOW;
+
 
 /** Displayed length of a normal period and of an extra-time period, match seconds (presentation, not gameplay). */
 const HALF_DISPLAY_SEC = 45 * 60;
@@ -304,7 +249,7 @@ function findAssist(s: SimState, scorer: number): number {
   const sp = s.players[scorer]!;
   const team = sp.team;
   const tTouch = s.ball.lastTouchTick;
-  let minTick = tTouch - LOCAL_TUNING.assistWindowTicks;
+  let minTick = tTouch - T_MATCH_FLOW.assistWindowTicks;
   if (m.goalTick >= 0 && m.goalTick + 1 > minTick) minTick = m.goalTick + 1;
   if (minTick < 0) minTick = 0;
   let best = -1;
@@ -352,11 +297,11 @@ function outOverGoalLine(s: SimState, end: number, ev: EventSink): void {
   const attacking = other(defending);
   const side = b.crossZ < 0 ? -1 : 1;
   if (b.lastTouchTeam === defending) {
-    const inset = CORNER_ARC_RADIUS * LOCAL_TUNING.cornerSpotInset;
+    const inset = CORNER_ARC_RADIUS * T_MATCH_FLOW.cornerSpotInset;
     awardRestart(s, RestartKind.CORNER, attacking, end * (HALF_LENGTH - inset), side * (HALF_WIDTH - inset), ev);
   } else {
     awardRestart(s, RestartKind.GOAL_KICK, defending, end * (HALF_LENGTH - GOAL_AREA_DEPTH),
-      side * GOAL_AREA_HALF_WIDTH * LOCAL_TUNING.goalKickSideFrac, ev);
+      side * GOAL_AREA_HALF_WIDTH * T_MATCH_FLOW.goalKickSideFrac, ev);
   }
 }
 
@@ -441,15 +386,15 @@ function isCrossKick(k: KickKind): boolean {
 /** A shot struck and not yet resolved (bounded in time). */
 function shotInFlight(s: SimState): boolean {
   const b = s.ball;
-  return b.shotBy >= 0 && s.tick - b.shotTick <= LOCAL_TUNING.shotFlightMaxTicks;
+  return b.shotBy >= 0 && s.tick - b.shotTick <= T_MATCH_FLOW.shotFlightMaxTicks;
 }
 
 /** A cross in flight: no touch since the cross, airborne or still moving, bounded in time. */
 function crossInFlight(s: SimState): boolean {
   const b = s.ball;
   if (!isCrossKick(b.lastKickKind) || b.lastKickTick < 0) return false;
-  if (b.lastTouchTick !== b.lastKickTick || s.tick - b.lastKickTick > LOCAL_TUNING.crossFlightMaxTicks) return false;
-  const v = LOCAL_TUNING.crossLiveSpeed;
+  if (b.lastTouchTick !== b.lastKickTick || s.tick - b.lastKickTick > T_MATCH_FLOW.crossFlightMaxTicks) return false;
+  const v = T_MATCH_FLOW.crossLiveSpeed;
   return b.grounded === 0 || b.vx * b.vx + b.vz * b.vz > v * v;
 }
 
@@ -628,11 +573,11 @@ function exitCutscene(s: SimState, ev: EventSink): void {
 function cutsceneLength(s: SimState): number {
   const m = s.match;
   switch (m.phase) {
-    case MatchPhase.PRE_MATCH: return LOCAL_TUNING.preMatchTicks;
+    case MatchPhase.PRE_MATCH: return T_MATCH_FLOW.preMatchTicks;
     case MatchPhase.GOAL: return T_RULES.goalPhaseTicks;
     case MatchPhase.CELEBRATION: return T_RULES.celebrationTicks;
     case MatchPhase.REPLAY: return replayTicks(s);
-    case MatchPhase.HALF_TIME: return m.period >= Period.ET_FIRST ? LOCAL_TUNING.etHalfTimeTicks : T_RULES.halfTimeTicks;
+    case MatchPhase.HALF_TIME: return m.period >= Period.ET_FIRST ? T_MATCH_FLOW.etHalfTimeTicks : T_RULES.halfTimeTicks;
     case MatchPhase.FULL_TIME: return T_RULES.fullTimeTicks;
     case MatchPhase.EXTRA_TIME: return T_RULES.extraTimeBreakTicks;
     default: return 0;
@@ -726,11 +671,11 @@ function formationSpot(s: SimState, slot: number, out: { x: number; z: number })
   const dir = t.dir;
   const form = getFormation(t.formation);
   const fs = form.slots[p.formIdx] ?? form.slots[0]!;
-  let x = dir * fs.nx * HALF_LENGTH * LOCAL_TUNING.kickOffDepthScale;
-  const z = dir * fs.nz * HALF_WIDTH * LOCAL_TUNING.kickOffWidthScale;
-  if (dir * x > -LOCAL_TUNING.kickOffHalfMargin) x = -dir * LOCAL_TUNING.kickOffHalfMargin;
-  const mx = HALF_LENGTH - LOCAL_TUNING.kickOffPitchMargin;
-  const mz = HALF_WIDTH - LOCAL_TUNING.kickOffPitchMargin;
+  let x = dir * fs.nx * HALF_LENGTH * T_MATCH_FLOW.kickOffDepthScale;
+  const z = dir * fs.nz * HALF_WIDTH * T_MATCH_FLOW.kickOffWidthScale;
+  if (dir * x > -T_MATCH_FLOW.kickOffHalfMargin) x = -dir * T_MATCH_FLOW.kickOffHalfMargin;
+  const mx = HALF_LENGTH - T_MATCH_FLOW.kickOffPitchMargin;
+  const mz = HALF_WIDTH - T_MATCH_FLOW.kickOffPitchMargin;
   out.x = clampNum(x, -mx, mx);
   out.z = clampNum(z, -mz, mz);
 }
@@ -765,16 +710,16 @@ function constrainKickOff(s: SimState, slot: number, kickTeam: number): void {
   const dir = s.teams[p.team]!.dir;
   let x = PLACE_X[slot]!;
   let z = PLACE_Z[slot]!;
-  if (dir * x > -LOCAL_TUNING.kickOffHalfMargin) x = -dir * LOCAL_TUNING.kickOffHalfMargin;
+  if (dir * x > -T_MATCH_FLOW.kickOffHalfMargin) x = -dir * T_MATCH_FLOW.kickOffHalfMargin;
   if (p.team !== kickTeam) {
-    const r = CENTRE_CIRCLE_RADIUS + LOCAL_TUNING.kickOffCircleMargin;
+    const r = CENTRE_CIRCLE_RADIUS + T_MATCH_FLOW.kickOffCircleMargin;
     const d = Math.sqrt(x * x + z * z);
     if (d < r) {
       if (d < 1e-6) { x = -dir * r; z = 0; } else { x = (x / d) * r; z = (z / d) * r; }
     }
   }
-  const mx = HALF_LENGTH - LOCAL_TUNING.kickOffPitchMargin;
-  const mz = HALF_WIDTH - LOCAL_TUNING.kickOffPitchMargin;
+  const mx = HALF_LENGTH - T_MATCH_FLOW.kickOffPitchMargin;
+  const mz = HALF_WIDTH - T_MATCH_FLOW.kickOffPitchMargin;
   PLACE_X[slot] = clampNum(x, -mx, mx);
   PLACE_Z[slot] = clampNum(z, -mz, mz);
 }
@@ -824,22 +769,22 @@ export function setupKickOff(s: SimState, team: number, ev: EventSink): void {
   const dir = s.teams[kt]!.dir;
   const partner = taker >= 0 ? pickAdvanced(s, kt, taker) : -1;
   if (taker >= 0) {
-    PLACE_X[taker] = -dir * LOCAL_TUNING.kickOffTakerBehind;
+    PLACE_X[taker] = -dir * T_MATCH_FLOW.kickOffTakerBehind;
     PLACE_Z[taker] = 0;
     PLACE_FIXED[taker] = 1;
   }
   if (partner >= 0) {
     const pz = PLACE_Z[partner]!;
     const side = pz < 0 ? -1 : 1;
-    PLACE_X[partner] = -dir * LOCAL_TUNING.kickOffPartnerBehind;
-    PLACE_Z[partner] = side * LOCAL_TUNING.kickOffPartnerSide;
+    PLACE_X[partner] = -dir * T_MATCH_FLOW.kickOffPartnerBehind;
+    PLACE_Z[partner] = side * T_MATCH_FLOW.kickOffPartnerSide;
     PLACE_FIXED[partner] = 1;
   }
   for (let slot = 0; slot < NUM_SLOTS; slot++) {
     if (s.players[slot]!.active === 1 && PLACE_FIXED[slot] === 0) constrainKickOff(s, slot, kt);
   }
   // De-overlap (rare: formation data is spread out); fixed players never move.
-  const min2 = LOCAL_TUNING.kickOffMinSpacing * LOCAL_TUNING.kickOffMinSpacing;
+  const min2 = T_MATCH_FLOW.kickOffMinSpacing * T_MATCH_FLOW.kickOffMinSpacing;
   for (let pass = 0; pass < 6; pass++) {
     let moved = 0;
     for (let i = 0; i < NUM_SLOTS; i++) {
@@ -851,7 +796,7 @@ export function setupKickOff(s: SimState, team: number, ev: EventSink): void {
         const dz = PLACE_Z[i]! - PLACE_Z[j]!;
         if (dx * dx + dz * dz >= min2) continue;
         const away = dz < 0 ? -1 : dz > 0 ? 1 : PLACE_Z[i]! <= 0 ? 1 : -1;
-        PLACE_Z[i] = PLACE_Z[j]! + away * LOCAL_TUNING.kickOffMinSpacing;
+        PLACE_Z[i] = PLACE_Z[j]! + away * T_MATCH_FLOW.kickOffMinSpacing;
         constrainKickOff(s, i, kt);
         moved++;
       }
@@ -935,7 +880,7 @@ function takeKickOff(s: SimState, ctrlIdx: number, ev: EventSink): number {
     if (d > 1e-6) { REQ.dirX = dx / d; REQ.dirZ = dz / d; }
     REQ.targetSlot = recv;
   }
-  REQ.power = LOCAL_TUNING.kickOffPower;
+  REQ.power = T_MATCH_FLOW.kickOffPower;
   REQ.charging = 0;
   REQ.flags = ReqFlag.SET_PIECE;
   REQ.assist = AssistLevel.ASSISTED;
@@ -966,7 +911,7 @@ function forceKickOff(s: SimState, ev: EventSink): void {
     tx = q.x; tz = q.z;
   }
   const L = LAUNCH;
-  L.vx = ux * LOCAL_TUNING.kickOffForceSpeed; L.vy = 0; L.vz = uz * LOCAL_TUNING.kickOffForceSpeed;
+  L.vx = ux * T_MATCH_FLOW.kickOffForceSpeed; L.vy = 0; L.vz = uz * T_MATCH_FLOW.kickOffForceSpeed;
   L.sx = 0; L.sy = 0; L.sz = 0;
   L.kind = KickKind.KICK_OFF;
   L.target = recv;
@@ -974,7 +919,7 @@ function forceKickOff(s: SimState, ev: EventSink): void {
   L.onTarget = 0;
   m.watchdogCount++;
   ev.emit(EventType.WATCHDOG, WatchdogReason.RESTART_BLOCKED, MatchPhase.KICK_OFF);
-  applyKick(s, taker, L, LOCAL_TUNING.kickOffPower, ev);
+  applyKick(s, taker, L, T_MATCH_FLOW.kickOffPower, ev);
 }
 
 /** Default kick-off (timeout / CPU fallback): short pass to the nearest teammate. */
@@ -1002,9 +947,9 @@ export function kickOffTick(s: SimState, ev: EventSink): void {
   if (taker >= 0) {
     const p = s.players[taker]!;
     if (p.act !== ActionKind.KICK && p.act !== ActionKind.SHOT) {
-      const sx = -dir * LOCAL_TUNING.kickOffTakerBehind;
+      const sx = -dir * T_MATCH_FLOW.kickOffTakerBehind;
       const dx = p.x - sx, dz = p.z;
-      const tol = LOCAL_TUNING.kickOffPinTolerance;
+      const tol = T_MATCH_FLOW.kickOffPinTolerance;
       if (dx * dx + dz * dz > tol * tol) {
         p.x = sx; p.z = 0; p.vx = 0; p.vz = 0; p.fx = dir; p.fz = 0;
       }
@@ -1013,7 +958,7 @@ export function kickOffTick(s: SimState, ev: EventSink): void {
   // Ball still on the spot until it is played.
   const b = s.ball;
   if (b.owner >= 0 && b.owner !== taker) releasePossession(s, ev);
-  const bt = LOCAL_TUNING.kickOffBallTolerance;
+  const bt = T_MATCH_FLOW.kickOffBallTolerance;
   const far = b.x * b.x + b.z * b.z > bt * bt;
   // Loose: back on the spot if moved or moving. Owned by the taker (kick wind-up): only if he took it away.
   if (b.owner < 0 ? far || b.vx !== 0 || b.vz !== 0 || b.vy !== 0 || b.y !== BALL_RADIUS : far) {
@@ -1029,14 +974,14 @@ export function kickOffTick(s: SimState, ev: EventSink): void {
   }
   const waited = m.phaseT - T_RULES.restartSetupTicks;
   const human = teamHasHumanCtrl(s, r.team);
-  const due = human ? T_RULES.restartTimeoutTicks : T_RULES.cpuRestartDelay + LOCAL_TUNING.kickOffCpuGraceTicks;
+  const due = human ? T_RULES.restartTimeoutTicks : T_RULES.cpuRestartDelay + T_MATCH_FLOW.kickOffCpuGraceTicks;
   if (waited >= due) kickOffDefault(s, ev);
   // [QF-1] Never force over a kick-off kick that is under way: a side handed to the CPU mid kick-off (Command.HAND_TO_CPU,
   // a pad disconnect) drops `due` from 12 s to 2 s at once, so the Default and the forced kick used to fall in the same
   // tick: the Default's pass had just started its wind-up and the safety net kicked over it (WATCHDOG RESTART_BLOCKED).
   const tk = r.taker >= 0 && r.taker < NUM_SLOTS ? s.players[r.taker]! : null;
   const kicking = tk !== null && (tk.act === ActionKind.KICK || tk.act === ActionKind.SHOT);
-  if (r.taken !== 1 && !kicking && waited >= due + LOCAL_TUNING.kickOffForceTicks) forceKickOff(s, ev);
+  if (r.taken !== 1 && !kicking && waited >= due + T_MATCH_FLOW.kickOffForceTicks) forceKickOff(s, ev);
 }
 
 function teamHasHumanCtrl(s: SimState, team: number): boolean {
@@ -1144,13 +1089,13 @@ function startCelebrations(s: SimState, ev: EventSink): void {
   if (leader >= 0) {
     const lp = s.players[leader]!;
     const side = lp.z < 0 ? -1 : 1;
-    const spotX = end * (HALF_LENGTH - LOCAL_TUNING.celebrateSpotInsetX);
-    const spotZ = side * (HALF_WIDTH - LOCAL_TUNING.celebrateSpotInsetZ);
+    const spotX = end * (HALF_LENGTH - T_MATCH_FLOW.celebrateSpotInsetX);
+    const spotZ = side * (HALF_WIDTH - T_MATCH_FLOW.celebrateSpotInsetZ);
     startCelebrate(s, leader, -1, spotX, spotZ, 0, 0);
     let chosen = 0;
-    const r2 = LOCAL_TUNING.celebrateJoinRadius * LOCAL_TUNING.celebrateJoinRadius;
+    const r2 = T_MATCH_FLOW.celebrateJoinRadius * T_MATCH_FLOW.celebrateJoinRadius;
     const first = teamFirstSlot(scoring);
-    for (let k = 0; k < LOCAL_TUNING.celebrateMaxJoin && k < JOIN_OX.length; k++) {
+    for (let k = 0; k < T_MATCH_FLOW.celebrateMaxJoin && k < JOIN_OX.length; k++) {
       let best = -1;
       let bestD = r2;
       for (let i = first; i < first + PLAYERS_PER_TEAM; i++) {
@@ -1163,7 +1108,7 @@ function startCelebrations(s: SimState, ev: EventSink): void {
       }
       if (best < 0) break;
       chosen |= 1 << best;
-      const jd = LOCAL_TUNING.celebrateJoinDist;
+      const jd = T_MATCH_FLOW.celebrateJoinDist;
       startCelebrate(s, best, leader, spotX, spotZ, -end * JOIN_OX[k]! * jd, JOIN_OZ[k]! * jd);
     }
   }
@@ -1176,8 +1121,8 @@ function startCelebrations(s: SimState, ev: EventSink): void {
 }
 
 function setArrive(p: PlayerState, x: number, z: number, speed: number): void {
-  const mx = HALF_LENGTH - LOCAL_TUNING.celebrateInsideMargin;
-  const mz = HALF_WIDTH - LOCAL_TUNING.celebrateInsideMargin;
+  const mx = HALF_LENGTH - T_MATCH_FLOW.celebrateInsideMargin;
+  const mz = HALF_WIDTH - T_MATCH_FLOW.celebrateInsideMargin;
   p.moveMode = MoveMode.ARRIVE;
   p.tgtX = clampNum(x, -mx, mx);
   p.tgtZ = clampNum(z, -mz, mz);
@@ -1194,8 +1139,8 @@ function endCutsceneAction(s: SimState, slot: number): void {
   p.tgtSpeed = 0;
   p.wantSprint = 0;
   p.lookAt = 0;
-  const mx = HALF_LENGTH - LOCAL_TUNING.celebrateInsideMargin;
-  const mz = HALF_WIDTH - LOCAL_TUNING.celebrateInsideMargin;
+  const mx = HALF_LENGTH - T_MATCH_FLOW.celebrateInsideMargin;
+  const mz = HALF_WIDTH - T_MATCH_FLOW.celebrateInsideMargin;
   if (p.x > mx || p.x < -mx || p.z > mz || p.z < -mz) {
     p.x = clampNum(p.x, -mx, mx);
     p.z = clampNum(p.z, -mz, mz);
@@ -1209,12 +1154,12 @@ function celebrateUpdate(s: SimState, slot: number, ev: EventSink): void {
   const l = p.actSlot;
   if (l >= 0 && l < NUM_SLOTS) {
     const lp = s.players[l]!;
-    if (lp.active === 1 && lp.act === ActionKind.CELEBRATE) setArrive(p, lp.x + p.actDirX, lp.z + p.actDirZ, LOCAL_TUNING.celebrateJoinSpeed);
-    else setArrive(p, p.x, p.z, LOCAL_TUNING.celebrateJoinSpeed);
+    if (lp.active === 1 && lp.act === ActionKind.CELEBRATE) setArrive(p, lp.x + p.actDirX, lp.z + p.actDirZ, T_MATCH_FLOW.celebrateJoinSpeed);
+    else setArrive(p, p.x, p.z, T_MATCH_FLOW.celebrateJoinSpeed);
     return;
   }
-  const v = p.actA >= 0 && p.actA < LOCAL_TUNING.celebrateVariantSpeed.length ? LOCAL_TUNING.celebrateVariantSpeed[p.actA]! : 1;
-  setArrive(p, p.actX, p.actZ, LOCAL_TUNING.celebrateRunSpeed * v);
+  const v = p.actA >= 0 && p.actA < T_MATCH_FLOW.celebrateVariantSpeed.length ? T_MATCH_FLOW.celebrateVariantSpeed[p.actA]! : 1;
+  setArrive(p, p.actX, p.actZ, T_MATCH_FLOW.celebrateRunSpeed * v);
 }
 
 function celebrateEnd(s: SimState, slot: number, interrupted: number): void {
@@ -1225,7 +1170,7 @@ function celebrateEnd(s: SimState, slot: number, interrupted: number): void {
 function dejectedUpdate(s: SimState, slot: number, ev: EventSink): void {
   void ev;
   const p = s.players[slot]!;
-  setArrive(p, p.actX, p.actZ, LOCAL_TUNING.dejectedWalkSpeed);
+  setArrive(p, p.actX, p.actZ, T_MATCH_FLOW.dejectedWalkSpeed);
 }
 
 function dejectedEnd(s: SimState, slot: number, interrupted: number): void {

@@ -1,9 +1,91 @@
 # DotKick tuning log
 
 Owner: INT-A (Wave 2 gameplay integration). Every gameplay constant change made against soak evidence, with the
-reason. Values live in `src/contracts/tuning.ts` (shared tables) or in a module's `LOCAL_TUNING` block (marked
-`TUNING-CR` / `[INT-A]` in the source). Measurement tool: `npx tsx tools/soak.ts --matches 24 --difficulty 3
+reason. Values live in `src/contracts/tuning.ts` (since TUN-1 every sim / AI value; module blocks are named in the
+TUN-1 table below; older entries name the module's former `LOCAL_TUNING` block). Measurement tool: `npx tsx tools/soak.ts --matches 24 --difficulty 3
 --enforce all --halfMinutes 4` (equal teams at Professional, as BRIEF §7 defines the bands).
+
+## TUN-1: module tuning moved into `src/contracts/tuning.ts` (BRIEF §4 rule 6)
+
+TUN-7S moved every `LOCAL_TUNING` / `*_TUNING` block of `src/sim/**` and `src/ai/**` (the TUNING-CR blocks) into
+`src/contracts/tuning.ts`, one block per module at the end of the file (sim ball, players, kicks, defend, control,
+keeper, rules, then AI), each entry with its unit and comment unchanged. The modules import the blocks from tuning.ts;
+the TUNING-CR markers are gone. Values did not change: the end-of-match `hashState` and a rolling digest of 28 headless
+runs (every difficulty, cup rules, every practice kind, shoot-out, human-scripted and hostile-input matches, rule toggles,
+the first soak and fuzz jobs; `npx tsx tools/hash-table.ts --compare <before.json>`) are identical before and after.
+
+52 blocks, 2422 constants. A module whose old block name is imported outside the sim / AI (tests, `src/input/touch`,
+`src/modes/practice.ts`) keeps it as an alias of the tuning.ts block (`export const LOCAL_TUNING = T_X;`); sim / AI
+importers use the tuning.ts names directly. Also moved: `keeper/positioning.ts` `RECEIVE_STEP_S` / `RECEIVE_HORIZON_S`
+/ `RECEIVE_REACH` -> `T_GK_POSITION.receiveStepS` / `receiveHorizonS` / `receiveReach`; `keeper/saveKinematics.ts`
+`STAND_AXIS_LOW` -> `T_GK_SAVE.standAxisLow` (old export kept as an alias); `players/firstTouchHooks.ts`
+`CHEST_REACH_MUL` -> `T_FIRST_TOUCH.chestReachMul` (old export kept as an alias).
+
+| Old location | New name | Constants |
+|---|---|---|
+| `src/sim/ball/flight.ts` `LOCAL_TUNING` (SIM-01) | `T_FLIGHT` | 6 |
+| `src/sim/ball/contact.ts` `LOCAL_TUNING` (SIM-02) | `T_BALL_CONTACT` | 12 |
+| `src/sim/players/locomotion.ts` `LOCAL_TUNING` (SIM-04) | `T_LOCOMOTION` | 27 |
+| `src/sim/players/bodies.ts` `LOCAL_TUNING` (SIM-05) | `T_BODY` | 37 |
+| `src/sim/players/possession.ts` `LOCAL_TUNING` (SIM-06) | `T_POSSESSION` | 48 |
+| `src/sim/players/firstTouch.ts` `LOCAL_TUNING` (SIM-07) | `T_FIRST_TOUCH` | 42 |
+| `src/sim/kicks/kickCommon.ts` `KICK_TUNING` (QF-10) | `T_KICK` | 6 |
+| `src/sim/kicks/pass.ts` `LOCAL_TUNING` (SIM-08) | `T_PASS_KICK` | 71 |
+| `src/sim/kicks/lob.ts` `LOCAL_TUNING` (SIM-09) | `T_LOB` | 54 |
+| `src/sim/kicks/through.ts` `LOCAL_TUNING` (SIM-10) | `T_THROUGH` | 53 |
+| `src/sim/kicks/shot.ts` `LOCAL_TUNING` (SIM-11) | `T_SHOT_KICK` | 96 |
+| `src/sim/kicks/aerial.ts` `LOCAL_TUNING` (SIM-12) | `T_AERIAL_PLAY` | 156 |
+| `src/sim/kicks/skills.ts` `LOCAL_TUNING` (SIM-13) | `T_SKILL_MOVES` | 50 |
+| `src/sim/defend/tackle.ts` `LOCAL_TUNING` (SIM-14) | `T_TACKLE_PLAY` | 135 |
+| `src/sim/control/resolveShared.ts` `LOCAL_TUNING` (SIM-15) | `T_RESOLVE` | 43 |
+| `src/sim/control/resolveMove.ts` `IDLE_CHASE` (QF-1) | `T_IDLE_CHASE` | 3 |
+| `src/sim/control/switching.ts` `LOCAL_TUNING` (SIM-16) | `T_SWITCH` | 27 |
+| `src/sim/keeper/positioning.ts` `LOCAL_TUNING` (GKP-01) | `T_GK_POSITION` | 24 |
+| `src/sim/keeper/saveKinematics.ts` `LOCAL_TUNING` (GKP-02) | `T_GK_SAVE` | 80 |
+| `src/sim/keeper/sweeper.ts` `LOCAL_TUNING` (GKP-03) | `T_GK_SWEEP` | 98 |
+| `src/sim/keeper/distribution.ts` `LOCAL_TUNING` (GKP-04) | `T_GK_DISTRIBUTION` | 69 |
+| `src/sim/keeper/handling.ts` `LOCAL_TUNING` (GKP-05) | `T_GK_HANDLING` | 81 |
+| `src/sim/keeper/setpieces.ts` `LOCAL_TUNING` (GKP-06) | `T_GK_SETPIECE` | 35 |
+| `src/sim/rules/machine.ts` `LOCAL_TUNING` (RUL-01) | `T_MATCH_FLOW` | 33 |
+| `src/sim/rules/restartCommon.ts` `COMMON_TUNING` (RUL-11) | `T_RESTART_COMMON` | 9 |
+| `src/sim/rules/restart.ts` `LOCAL_TUNING` (RUL-11) | `T_RESTART` | 32 |
+| `src/sim/rules/throwin.ts` `LOCAL_TUNING` (RUL-02) | `T_THROW_IN` | 54 |
+| `src/sim/rules/goalkick.ts` `LOCAL_TUNING` (RUL-03) | `T_GOAL_KICK` | 30 |
+| `src/sim/rules/corner.ts` `LOCAL_TUNING` (RUL-04) | `T_CORNER` | 30 |
+| `src/sim/rules/freekick.ts` `LOCAL_TUNING` (RUL-05) | `T_FREE_KICK` | 88 |
+| `src/sim/rules/penalty.ts` `LOCAL_TUNING` (RUL-06) | `T_PENALTY` | 18 |
+| `src/sim/rules/shootout.ts` `LOCAL_TUNING` (RUL-07) | `T_SHOOTOUT` | 37 |
+| `src/sim/rules/offside.ts` `LOCAL_TUNING` (RUL-08) | `T_OFFSIDE` | 3 |
+| `src/sim/rules/fouls.ts` `LOCAL_TUNING` (RUL-09) | `T_FOUL_CALL` | 21 |
+| `src/sim/rules/subs.ts` `LOCAL_TUNING` (RUL-10) | `T_SUBS` | 4 |
+| `src/sim/rules/watchdog.ts` `LOCAL_TUNING` (RUL-11) | `T_WATCHDOG` | 8 |
+| `src/sim/rules/practice.ts` `LOCAL_TUNING` (MOD-04) | `T_PRACTICE` | 3 |
+| `src/ai/steer.ts` `LOCAL_TUNING` (TAI-07) | `T_STEER` | 25 |
+| `src/ai/jobs.ts` `LOCAL_TUNING` (TAI-01) | `T_JOBS` | 4 |
+| `src/ai/shape.ts` `LOCAL_TUNING` (TAI-01) | `T_SHAPE` | 44 |
+| `src/ai/defshape.ts` `LOCAL_TUNING` (TAI-03) | `T_DEF_SHAPE` | 55 |
+| `src/ai/support.ts` `LOCAL_TUNING` (TAI-02) | `T_SUPPORT` | 42 |
+| `src/ai/runs.ts` `LOCAL_TUNING` (TAI-04) | `T_RUNS` | 47 |
+| `src/ai/press.ts` `LOCAL_TUNING` (TAI-05) | `T_PRESS` | 48 |
+| `src/ai/transition.ts` `LOCAL_TUNING` (TAI-06) | `T_TRANSITION` | 38 |
+| `src/ai/tactics.ts` `LOCAL_TUNING` (TAI-14) | `T_TACTICS` | 6 |
+| `src/ai/setpieces.ts` `LOCAL_TUNING` (TAI-13) | `T_SETPIECE_AI` | 112 |
+| `src/ai/cpu/levels.ts` `LOCAL_TUNING` (TAI-12) | `T_STYLE` | 1 |
+| `src/ai/cpu/carrier.ts` `LOCAL_TUNING` (TAI-08) | `T_CARRIER` | 117 |
+| `src/ai/cpu/passing.ts` `LOCAL_TUNING` (TAI-09) | `T_PASSING` | 84 |
+| `src/ai/cpu/shooting.ts` `LOCAL_TUNING` (TAI-10) | `T_SHOOTING` | 89 |
+| `src/ai/cpu/defending.ts` `LOCAL_TUNING` (TAI-11) | `T_DEFENDING` | 87 |
+
+Stays local on purpose (not gameplay tuning; changing them does not change behaviour, or they are structure):
+enum-like indices and flags (`STEP_*`, `MODE_*`, `F_*`, `R_*`, `PLAN_*`, `S_*`, `SH_*`, `OUT_*`, `G_*`, `RES_*`...),
+scratch / ring / list sizes (`MAX_OPTIONS`, `MAX_LIST`, `RING_N`, `MAX_SAMPLES`, `PCAP`, `MAX_WALL`, `MAX_IV`, `RK_N`,
+`SHEET_COLS`), solver iteration counts and tolerances (`ROLL_NEWTON_ITERS`, `ROLL_TIME_ITERS`, `SOLVE_*`, `EPS`,
+`GROUND_EPS`, `CORNER_EPS`, `LEAD_TOL`), sentinels (`BIG`, `NEVER`, `REJECT`, `NONE_U`, `NA`, `OUR_PASS`), maths
+constants (`dmath.ts`, `TAN_PI_8`, `SQRT3`, `INV_*`), input quantisation (`STICK_MAX`, `CT`, `POS_MAX`), cost-only
+pre-check margins (`bodies.ts` `NEAR_MARGIN`, `contact.ts` `BOARD_NEAR` / `NEAR_Z` / `NEAR_Y`), degenerate-geometry guards
+(`AIM_MIN_DIST` 0.25 m in pass / lob / through: below it a target gives no aim direction; `contact.ts`
+`MIN_HORIZONTAL_NORMAL`), display constants (`machine.ts` `HALF_DISPLAY_SEC` / `ET_DISPLAY_SEC`), replay format
+constants, and constants derived from tuning values (`CR2`, `REACH2`, `CHARGE_WAIT`, `JUMP_TICKS`, `HOLD_INV`...).
 
 ## Shared tables (`src/contracts/tuning.ts`)
 

@@ -62,7 +62,7 @@
  * A standing owner leaves a ball at rest at his feet alone (settleSpeed); a rolling one gets a stopping touch.
  *  - Direction u and planned speed: from the movement intent (DIRECT stick: jog * |stick| or a sprint; ARRIVE: toward
  *    the target), else his velocity, else his facing. Strafe / jockey caps and the SHIELD speed cap follow SIM-04 (its
- *    LOCAL_TUNING and staminaFactor are imported, so the two models cannot drift apart).
+ *    T_LOCOMOTION and staminaFactor are imported, so the two models cannot drift apart).
  *  - Lead (how far ahead of the feet the ball runs at the peak of the touch): touchAheadClose when standing, strafing /
  *    jockey-dribbling, shielding, turning or stopping; touchAheadClose..touchAheadJog up to jog speed; touchAheadJog..
  *    touchAheadSprint from jog to top speed (sprint touches are heavier). Opponents near the owner (pressureNear..
@@ -97,112 +97,22 @@ import { CPU_CONTROLLER_BASE, DT, NUM_SLOTS } from '../../contracts/constants';
 import { ActionKind, KickKind, MatchPhase } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
 import { MoveMode, type PlayerState, type SimState } from '../../contracts/state';
-import { T_BALL, T_DRIBBLE, T_PLAYER } from '../../contracts/tuning';
+import { T_BALL, T_DRIBBLE, T_PLAYER, T_POSSESSION, T_LOCOMOTION } from '../../contracts/tuning';
 import { ballTouchedThisTick, recordTouch, releasePossession, takePossession } from '../core/kick';
 import { rngRange } from '../core/rng';
 import { isShielding, shieldBallSpot, shieldBlocks } from './bodies';
-import { LOCAL_TUNING as LOCO, staminaFactor } from './locomotion';
+import { staminaFactor } from './locomotion';
 
-/** TUNING-CR (SIM-06): proposed additions to T_DRIBBLE (units in the comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  /** Loose-ball pick-up: max horizontal ball speed, m/s. */
-  pickUpMaxSpeed: 6,
-  /** Steal between touches: max ball speed relative to the stealer for a clean take, m/s (faster = a block). */
-  stealMaxRelSpeed: 6,
-  /** [QF-16] A ball under an opponent's feet: within underRadius of him (m) and nearer to him than to the owner by
-   *  underMargin (m) it is his to steal (or block) even while the owner can still reach it. A walking dribbler pushed
-   *  his ball under a CPU defender standing in front of him and kept it there for seconds (into the six-yard box). */
-  underRadius: 0.3,
-  underMargin: 0.2,
-  /** [QF-16] ... while the owner walks or jogs (slower than underMaxSpeed): a sprint dribble keeps its touches. Only
-   *  when the owner or the opponent is human-controlled: bot-v-bot possession is unchanged (stealing under every
-   *  dribbler cut 1.6 shots a match from the bot game; with the SIM-05 brace for bot walkers too, Legend v World Class
-   *  74 -> 63% over 100). [QF-16 skeptic] 3 -> 6 (above every jog, T_PLAYER 9.6 x 0.6 = 5.76): a human jogging
-   *  diagonally at full stick pushed the blocking defender along at 4-5 m/s for seconds with the ball under his feet
-   *  and kept it (Legend 3 of 8, Professional 4-8 of 8). m/s. */
-  underMaxSpeed: 6.0,
-  /** Block (ball deflected off a stealer's feet): normal restitution and kept tangential fraction, relative to him. */
-  blockRestitution: 0.3,
-  blockTangentKeep: 0.6,
-  /** Wind-up hold: kicking spot ahead of the body centre along the facing, m. */
-  holdAhead: 0.5,
-  /** Time constant pulling a held ball onto its spot (kicking spot / shield spot), s. */
-  holdTau: 0.1,
-  /** Max ball speed relative to the player while held on a spot, m/s. */
-  holdMaxRel: 6,
-  /** Below this planned and current speed the owner counts as standing, m/s. */
-  standSpeed: 0.6,
-  /** A standing owner leaves a ball moving slower than this relative to him alone (no touch), m/s. */
-  settleSpeed: 0.4,
-  /** DIRECT stick magnitude below which the intent counts as released, 0..1. */
-  stickDead: 0.05,
-  /** Sharp turn: cos of the angle between the wanted direction and the ball's travel at and below which the owner
-   *  takes an extra small touch. */
-  turnCos: 0.6,
-  /** Ticks after a touch before a turn touch is allowed. */
-  turnMinGap: 3,
-  /** Ticks to the next regular touch after a turn touch. */
-  turnInterval: 10,
-  /** Braking: planned speed below this fraction of his speed also allows the extra small (stopping) touch. */
-  brakeFrac: 0.5,
-  /** The owner's touch reach is controlRadius + his speed x this (a running player meets a ball up to a stride
-   *  ahead), s. Loose-ball pick-up, steals and canTouchBall use controlRadius alone. */
-  reachLookahead: 0.08,
-  /** Early touch for a ball drifting out of reach: within this of the edge of his reach, m, and only below this
-   *  sprint fraction (a sprint knock-on is meant to run away from him). */
-  escapeMargin: 0.2,
-  escapeSprintMax: 0.5,
-  /** Ball speed above which its travel direction counts for the turn test, m/s. */
-  travelSpeed: 0.5,
-  /** Standing owner: the ball must lie at least this far from his centre for its offset to count as a direction, m. */
-  turnOffsetMin: 0.2,
-  /** A player cannot pick up a loose ball he kicked himself (ball.lastKickBy) for this many ticks. */
-  selfKickTicks: 12,
-  /** Nearest opponent within pressureNear m: full pull toward touchAheadClose; none beyond pressureFar m. */
-  pressureNear: 1.5,
-  pressureFar: 4.5,
-  /** Touch quality weights (dribbling, ballControl, agility); q = weighted mean x staminaFactor. */
-  qDribbling: 0.45,
-  qBallControl: 0.35,
-  qAgility: 0.2,
-  /** Lead x (1 + leadQualityScale * (0.5 - q)). */
-  leadQualityScale: 0.2,
-  /** Touch interval x (1 + intervalQualityScale * (0.5 - q)). */
-  intervalQualityScale: 0.3,
-  /** Random touch error at q = 0: direction, rad; lead, fraction. Sprint touches x (1 + errSprintMul). */
-  errAngleMax: 0.12,
-  errLeadMax: 0.25,
-  errSprintMul: 0.5,
-  /** Leads are capped at loseRadius - loseMargin, m (and floored at minLead, m). */
-  loseMargin: 0.4,
-  minLead: 0.3,
-  /** Sideways correction: max sideways ball speed, m/s; min time to bring the ball onto the running line, s. */
-  latMaxSpeed: 3,
-  latMinTime: 0.2,
-  /** ... and at most this fraction of the forward ball speed. */
-  latTravelFrac: 1,
-  /** Push solver: horizon s, step s, bisection iterations, upper bound above the player's speed m/s. */
-  solveHorizon: 2.5,
-  solveStep: 1 / 30,
-  solveIters: 14,
-  solveHiExtra: 14,
-  /** Stuck ball: slower than stuckSpeed m/s, untouched for stuckTicks ticks, a body within stuckRadius m. */
-  stuckSpeed: 0.4,
-  stuckTicks: 45,
-  stuckRadius: 0.75,
-  /** Squirt-out speed, m/s, and the radius of bodies that push it away, m. */
-  squirtSpeed: 2.5,
-  squirtScan: 1.5,
-  /** KICK event power of a dribble touch / block = ball speed relative to the player / this, m/s. */
-  touchPowerRef: 22,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_POSSESSION. */
+export const LOCAL_TUNING = T_POSSESSION;
 
-const L = LOCAL_TUNING;
+
+const L = T_POSSESSION;
 /** SIM-04 movement tuning the dribble model follows (sprint stick, high-speed acceleration, ARRIVE braking, jockey cap). */
-const SPRINT_STICK_FULL = LOCO.sprintStickFull;
-const HIGH_SPEED_ACCEL_MUL = LOCO.highSpeedAccelMul;
-const ARRIVE_BRAKE_FRAC = LOCO.arriveDecelFrac;
-const JOCKEY_FORWARD_FRAC = LOCO.jockeyForwardFraction;
+const SPRINT_STICK_FULL = T_LOCOMOTION.sprintStickFull;
+const HIGH_SPEED_ACCEL_MUL = T_LOCOMOTION.highSpeedAccelMul;
+const ARRIVE_BRAKE_FRAC = T_LOCOMOTION.arriveDecelFrac;
+const JOCKEY_FORWARD_FRAC = T_LOCOMOTION.jockeyForwardFraction;
 const CR2 = T_DRIBBLE.controlRadius * T_DRIBBLE.controlRadius;
 const LOSE2 = T_DRIBBLE.loseRadius * T_DRIBBLE.loseRadius;
 const CTRL_H = T_DRIBBLE.controlHeight;

@@ -4,8 +4,9 @@
  * reaching ball or man, two down players (lying-body scan), a pass in flight beside two defenders (full candidate scan,
  * no entry) and the actions stage running every handler. Heap growth is the best of several windows after a warm-up.
  */
-import v8 from 'node:v8';
-import vm from 'node:vm';
+import { spawnSync } from 'node:child_process';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ActionKind, KickKind } from '../../src/contracts/enums';
 import type { SimState } from '../../src/contracts/state';
@@ -13,6 +14,8 @@ import { actionsTick } from '../../src/sim/actions/dispatch';
 import { NULL_SINK } from '../../src/sim/core/events';
 import { interceptContacts, knockDown, startTackle, tackleContacts } from '../../src/sim/defend/tackle';
 import { P1, P2, owned, place, scene } from '../scenario/sim-14-helpers';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 const TACKLERS: [number, ActionKind][] = [
   [P2, ActionKind.STAND_TACKLE], [19, ActionKind.HARD_TACKLE], [18, ActionKind.SLIDE_TACKLE], [17, ActionKind.PUSH_PULL],
@@ -61,18 +64,13 @@ function drive(s: SimState, n: number): void {
 
 describe('SIM-14 per-tick cost', () => {
   it('the contact stages and handlers allocate nothing per tick', () => {
-    v8.setFlagsFromString('--expose-gc');
-    const gc = vm.runInNewContext('gc') as () => void;
-    const s = setup();
-    drive(s, 20000);
-    let bytes = 1e9;
-    for (let w = 0; w < 4; w++) {
-      gc();
-      const h0 = process.memoryUsage().heapUsed;
-      drive(s, 20000);
-      const b = (process.memoryUsage().heapUsed - h0) / 20000;
-      if (b < bytes) bytes = b;
-    }
+    // [TUN-7S] Measured in a child process with --single-threaded (synchronous compilation: the same bytes whatever the
+    // CPU load; tests/perf/qf-7r-alloc-flags.ts). In the Vitest worker this read 96 B/tick under load.
+    const r = spawnSync(process.execPath, ['--single-threaded', '--expose-gc', '--import', 'tsx', 'tests/perf/tun-7s-sim-14-probe.ts'], {
+      cwd: ROOT, encoding: 'utf8', timeout: 120_000,
+    });
+    expect(r.status, r.stderr).toBe(0);
+    const { bytes } = JSON.parse(r.stdout.trim().split('\n').pop()!) as { bytes: number };
     console.log(`SIM-14 busy contact scene: ${bytes.toFixed(2)} bytes per tick (best window)`);
     expect(bytes).toBeLessThan(4);
   }, 120_000);

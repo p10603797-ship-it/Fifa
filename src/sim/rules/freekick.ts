@@ -5,7 +5,7 @@
  *
  * Implementation notes (RUL-05):
  *  - Setup (RUL-11 awardRestart calls it after filling s.match.restart): the ball rests on the foul spot, clamped
- *    LOCAL_TUNING.spotInset inside the touch and goal lines (never on a line) and, for the attackers, out of the
+ *    T_FREE_KICK.spotInset inside the touch and goal lines (never on a line) and, for the attackers, out of the
  *    opponents' goal area (onto its 5.5 m line, as RUL-11 does). Wall: freeKickWallCount = 0 (no wall) unless the ball
  *    is within wallMaxDist of the attacked goal centre and the goal mouth subtends at least wallMinAngle; then by
  *    the equivalent central distance f = goal width / mouth angle: 5 up to ~20 m, 4 to ~26 m, 3 to ~31 m, else 2
@@ -103,8 +103,8 @@
  * strikes a FREE_KICK_SHOT: contract CR).
  * Per tick: O(5) wall upkeep, O(1) input, O(5) blocking (one ball step) during the ~0.75 s after the kick; taker /
  * wall choice O(11 x 11) only at setup / re-pick / SPRINT. Allocation-free (module scratch; doubles cross hot calls in
- * scratch, not as arguments, so V8 does not box them; no trig per tick). The preview's scratch state is cloned once,
- * then refreshed with FND-03 copyState (whose generic copy boxes doubles: the preview's only allocation).
+ * scratch, not as arguments, so V8 does not box them; no trig per tick). The preview's scratch state is made once per
+ * match with createSimState (the live state's hidden classes), then refreshed with FND-03 copyState (allocation-free).
  *
  * Helper module: freekickHooks.ts (import-cycle-safe WALL_JUMP handler shell, re-exported first below).
  */
@@ -119,18 +119,20 @@ import {
 import { ActionKind, AssistLevel, ControllerKind, GestureKind, KickKind, MatchPhase, RestartKind } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
 import { AXIS_SCALE, Btn, GESTURE_POS_SCALE, GestureFlag, UNIT_SCALE, type InputFrame } from '../../contracts/input';
-import { MoveMode, createBallState, type PlayerState, type SimState } from '../../contracts/state';
+import { MoveMode, createBallState, createSimState, type PlayerState, type SimState } from '../../contracts/state';
 import {
   ReqFlag, createActionRequest, createKickLaunch, type ActionRequest, type BallPrediction, type KickLaunch,
 } from '../../contracts/systems';
-import { T_BALL, T_INPUT, T_PASS, T_PLAYER, T_RULES, T_SHOT } from '../../contracts/tuning';
+import {
+  T_BALL, T_INPUT, T_PASS, T_PLAYER, T_RULES, T_SHOT, T_FREE_KICK, T_LOCOMOTION, T_RESTART_COMMON, T_RESTART,
+} from '../../contracts/tuning';
 import { beginAction, endAction } from '../actions/dispatch';
 import { KICK_SOLVERS } from '../actions/registry';
 import { ballStepTick } from '../ball/contact';
 import {
   copyBallState, createLaunchSolution, curlSpinY, groundPassSpeed, launchSpin, predictBall, solveLaunchSpin,
 } from '../ball/flight';
-import { cloneState, copyState } from '../core/clone';
+import { copyState } from '../core/clone';
 import { datan2, dcos, dsin } from '../core/dmath';
 import { NULL_SINK } from '../core/events';
 import { applyKick, ballTouchedThisTick, releasePossession } from '../core/kick';
@@ -141,170 +143,14 @@ import { startPass } from '../kicks/pass';
 import { startShot } from '../kicks/shot';
 import { startThrough } from '../kicks/through';
 import { bodyRadiusOf } from '../players/bodies';
-import { LOCAL_TUNING as LOCO_TUNING } from '../players/locomotion';
-import { COMMON_TUNING, SET_PIECE_RUN, restartLookPoint, takerRunning } from './restartCommon';
-import { LOCAL_TUNING as RESTART_TUNING, isValidTaker, isWalkedSetup, prepareTakerKick, restartTakerSpot } from './restart';
+import { SET_PIECE_RUN, restartLookPoint, takerRunning } from './restartCommon';
+import { isValidTaker, isWalkedSetup, prepareTakerKick, restartTakerSpot } from './restart';
 
-/** TUNING-CR (RUL-05): proposed T_FREEKICK block (units in comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  // ---------------------------------------------------------------- spot
-  /** The ball rests at least this far inside the touch and goal lines, m (centre; > BALL_RADIUS: never on a line). */
-  spotInset: 0.25,
-  // ---------------------------------------------------------------- wall size and placement
-  /** No wall beyond this distance from the attacked goal centre, m. */
-  wallMaxDist: 35,
-  /** No wall when the goal mouth subtends less than this from the ball, rad (tight angles: a cross). */
-  wallMinAngle: 0.12,
-  /** Wall count by the equivalent central distance f = GOAL_WIDTH / mouth angle (m; ~ the distance for a central
-   *  kick, longer at an angle): 5 below wallEquiv5, 4 below wallEquiv4, 3 below wallEquiv3, else 2. */
-  wallEquiv5: 20.5,
-  wallEquiv4: 26.5,
-  wallEquiv3: 31.5,
-  /** The wall line stands this much beyond RESTART_DISTANCE from the ball, m. */
-  wallDistExtra: 0.1,
-  /** Members never closer to the ball than RESTART_DISTANCE + this, m. */
-  wallDistSlack: 0.02,
-  /** Gap between neighbouring members' bodies (SIM-05 contact distance + this), m. */
-  wallGap: 0.02,
-  /** The outer edge of the wall lines up with a point this far outside the near post, m. */
-  wallPostCover: 0.4,
-  /** |ball z| below this: the wall is centred on the ball-goal line, m. */
-  wallCentralZ: 1.0,
-  /** Goal-line wall (free kick closer than 9.15 m): members this far in front of the goal line, m (RUL-11's inset). */
-  wallGoalLineInset: 0.45,
-  /** Goal-line wall members stay this far inside the posts, m. */
-  wallPostInside: 0.05,
-  /** A normal wall whose centre would be closer than this to the goal line is not formed, m. */
-  wallLineGap: 0.9,
-  /** Members stay this far inside the touch and goal lines, m. */
-  wallPitchMargin: 0.5,
-  /** Members within (half the wall width + this) of the centre are slid into their slots; further ones walk (TAI-13), m. */
-  wallHoldExtra: 2.0,
-  /** Slide toward the slot per tick, m/tick (4.8 m/s). */
-  wallSlideStep: 0.08,
-  /** Sideways wall move (SHIELD / SPRINT): speed m/s and max shift of the centre from its default, m (arc). */
-  wallMoveSpeed: 2.5,
-  wallMoveMax: 3.0,
-  // ---------------------------------------------------------------- wall actions
-  /** Jump: crouch, airborne and landing ticks (0.7 s in all; airborne 0.53 s -> peak lift g T^2 / 8 = 0.35 m). */
-  jumpCrouchTicks: 4,
-  jumpAirTicks: 32,
-  jumpLandTicks: 6,
-  /** Braced wall after the kick: at most this long, ticks. */
-  braceMaxTicks: 45,
-  /** ARMED (charge ready) budget, extended while the kick is pending, ticks. */
-  armedWaitTicks: 60,
-  /** Charge: speed m/s for this many ticks, stopping this far from the ball spot, m. */
-  chargeSpeed: 4.0,
-  chargeTicks: 24,
-  chargeStopDist: 3.0,
-  /** A human pushing his braced wall member's stick beyond this (0..1) breaks him out of the wall. */
-  breakStick: 0.5,
-  // ---------------------------------------------------------------- blocking
-  /** Body cylinder radius for the ball, m (>= half the member spacing minus BALL_RADIUS: no gaps). */
-  wallBlockRadius: 0.33,
-  /** Member height clamp (attrs.height / 100), m. */
-  heightMin: 1.6,
-  heightMax: 2.1,
-  /** A contact this close below the top of the head tilts the normal upward, m. */
-  topCapBand: 0.15,
-  /** Normal restitution off a body, tangential speed lost, spin kept (fractions). */
-  blockRestitution: 0.35,
-  blockFriction: 0.4,
-  blockSpinKeep: 0.3,
-  /** Slower balls are left to SIM-06 / SIM-07, m/s. */
-  blockMinSpeed: 3.0,
-  /** BRACE ends once the ball is this far past him along the kick line, m. */
-  wallPassMargin: 1.0,
-  // ---------------------------------------------------------------- taker
-  /** "Choose the taker" cycles through this many best takers. */
-  takerChoices: 3,
-  /** [QF-10] A free kick shown on the main camera goes to the best taker within this distance of the ball (he runs
-   *  there during the set-up), else to the nearest player, m. */
-  takerWalkMaxDist: 18,
-  /** [QF-10] The ball is placed at least this far from a player lying on the foul spot (the fouled player), m. */
-  downClear: 1.3,
-  /** The waiting taker slides toward his spot behind the ball along the aim at most this far per tick, m/tick. */
-  lineUpStep: 0.05,
-  // ---------------------------------------------------------------- aim
-  /** Left stick magnitude (0..1) from which the stick aims. */
-  aimStickMin: 0.5,
-  /** The stick may aim this far outside a post on the goal line (curlers), m. */
-  aimGoalSlack: 2.0,
-  /** The stick / default aim goes on the goal line only from within this distance of the goal centre, m (further
-   *  out: a pitch point). */
-  aimGoalMaxDist: 40,
-  /** Pitch aim point this far along the stick, m; kept this far inside the lines, m. */
-  aimPassDist: 20,
-  aimPitchMargin: 1.0,
-  /** Right stick: curl and dip change per second at full deflection (1/s). */
-  curlRate: 1.6,
-  dipRate: 1.6,
-  // ---------------------------------------------------------------- kicks
-  /** LOB toward a goal aim lands this far off the goal line, m. */
-  lobLandDepth: 9,
-  /** A teammate this far beyond the 16.5 m line (inside the box width) still gets a cross, m. */
-  crossAreaExtra: 5,
-  /** Taps closer than this to the ball are ignored, m; a tap within tapGroundMax is a ground pass, beyond a lob, m. */
-  tapMinDist: 2,
-  tapGroundMax: 28,
-  /** Swipes toward the goal mouth are shots within this distance of the goal centre, m. */
-  swipeShotMaxDist: 40,
-  /** Swipe height bands (gPower / 127): ground cross below groundCrossMax, low cross below lowCrossMax, LOFTED from
-   *  highCrossMin; a swipe along a line that misses the box is a ground pass below swipeGroundMax, else a lob. */
-  groundCrossMax: 0.2,
-  lowCrossMax: 0.45,
-  highCrossMin: 0.8,
-  swipeGroundMax: 0.35,
-  /** Ground passes are sized for this arrival speed (SIM-01 groundPassSpeed), m/s; lowest power 0..1. */
-  shortArrive: 5,
-  shortPowerMin: 0.15,
-  /** Lob power = clamp(d / lobPowerRange, lobPowerMin, 1); cross power = clamp(d / crossPowerRange, min, max). */
-  lobPowerRange: 70,
-  lobPowerMin: 0.45,
-  crossPowerRange: 45,
-  crossPowerMin: 0.45,
-  crossPowerMax: 0.9,
-  // ---------------------------------------------------------------- default
-  /** Default shot: inset from the covered post, m; curl = clamp(defaultCurlBase + defaultCurlAttr x (curve - 60) / 40,
-   *  0.3, 0.85); power = clamp(defaultPowerBase + (distance - 18) x defaultPowerPerM, defaultPowerMin, defaultPowerMax). */
-  defaultPostInset: 0.6,
-  defaultCurlBase: 0.55,
-  defaultCurlAttr: 0.25,
-  defaultPowerBase: 0.58,
-  defaultPowerPerM: 0.012,
-  defaultPowerMin: 0.5,
-  defaultPowerMax: 0.78,
-  /** Default pass targets between these distances, m; score = openness (capped, m) x openWeight + forward progress x
-   *  progressWeight - (distance beyond passLongFrom) x passLongPenalty. */
-  passMinDist: 6,
-  passMaxDist: 45,
-  openCap: 10,
-  openWeight: 1.0,
-  progressWeight: 0.12,
-  passLongFrom: 25,
-  passLongPenalty: 0.3,
-  /** Default cross: aerial score = heading + heightWeight x (height - 180 cm) + crossOpenWeight x openness (capped). */
-  heightWeight: 0.5,
-  crossOpenCap: 3,
-  crossOpenWeight: 4,
-  /** Default forward pass power with nobody to aim at, 0..1. */
-  forwardPower: 0.6,
-  /** CPU fallback: Default this many ticks after T_RULES.cpuRestartDelay past ready (1.25 s) ... */
-  cpuGraceTicks: 140, // [QF-10] was 75: TAI-13 waits for its box runners (QF-2 CR); due 200 < RUL-11's 240-tick CPU watchdog
-  /** ... retried every this many ticks while the kick has not started, ticks. */
-  cpuRetryTicks: 30,
-  // ---------------------------------------------------------------- preview
-  /** Preview horizon, ticks (the first second of flight). */
-  previewTicks: 60,
-  /** Preview power when none is known yet (pad user before pressing), 0..1. */
-  previewPower: 0.65,
-  /** Fallback launch (kick module refused): shot elevation and chip extra, rad. */
-  previewShotAngle: 0.2,
-  previewChipAngle: 0.45,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_FREE_KICK. */
+export const LOCAL_TUNING = T_FREE_KICK;
 
-const LT = LOCAL_TUNING;
+
+const LT = T_FREE_KICK;
 
 /** Normal wall distance from the ball (its centre), m, and the sideways move per tick / its limit as rotations
  *  around the ball at that distance (cos / sin computed once at load: no trig per tick). */
@@ -944,7 +790,7 @@ export function cycleFreeKickTaker(s: SimState): number {
     // [QF-10] On the main camera: the old taker is released where he stands, the new one runs to the spot.
     r.taker = next;
     if (cur >= 0 && cur < NUM_SLOTS && s.players[cur]!.act === ActionKind.SET_PIECE) endAction(s, cur, 1);
-    beginAction(np, ActionKind.SET_PIECE, COMMON_TUNING.setPieceWaitTicks, -1);
+    beginAction(np, ActionKind.SET_PIECE, T_RESTART_COMMON.setPieceWaitTicks, -1);
     np.actA = SET_PIECE_RUN;
     return next;
   }
@@ -961,7 +807,7 @@ export function cycleFreeKickTaker(s: SimState): number {
   const fx = LOOK.x - np.x, fz = LOOK.z - np.z;
   const fl = Math.sqrt(fx * fx + fz * fz);
   if (fl > 1e-6) { np.fx = fx / fl; np.fz = fz / fl; }
-  beginAction(np, ActionKind.SET_PIECE, COMMON_TUNING.setPieceWaitTicks, -1);
+  beginAction(np, ActionKind.SET_PIECE, T_RESTART_COMMON.setPieceWaitTicks, -1);
   np.moveMode = MoveMode.LOCKED;
   return next;
 }
@@ -1020,7 +866,7 @@ function defaultAim(s: SimState): void {
 function ensureAim(s: SimState): void {
   const r = s.match.restart;
   const dx = r.aimX - r.x, dz = r.aimZ - r.z;
-  const md = COMMON_TUNING.aimMinDist;
+  const md = T_RESTART_COMMON.aimMinDist;
   const inPitch = r.aimX >= -HALF_LENGTH && r.aimX <= HALF_LENGTH && r.aimZ >= -HALF_WIDTH && r.aimZ <= HALF_WIDTH;
   if (!(dx * dx + dz * dz > md * md) || !inPitch) defaultAim(s);
   if (!(r.aimCurve >= -1 && r.aimCurve <= 1)) r.aimCurve = 0;
@@ -1954,7 +1800,7 @@ function lineUp(s: SimState, p: PlayerState): void {
   const ul = Math.sqrt(ux * ux + uz * uz);
   if (!(ul > 1e-6)) return;
   ux /= ul; uz /= ul;
-  const behind = RESTART_TUNING.takerBehind;
+  const behind = T_RESTART.takerBehind;
   const dx = r.x - ux * behind - p.x, dz = r.z - uz * behind - p.z;
   const d = Math.sqrt(dx * dx + dz * dz);
   const step = LT.lineUpStep;
@@ -1986,7 +1832,7 @@ function clearOfDown(s: SimState, x: number, z: number): boolean {
       if (v2 > 1e-12) {
         // Nearest point of the slide [0, len] along his velocity.
         const sp = Math.sqrt(v2);
-        const len = v2 / (2 * LOCO_TUNING.lockedFriction);
+        const len = v2 / (2 * T_LOCOMOTION.lockedFriction);
         const ux = q.vx / sp, uz = q.vz / sp;
         let a = dx * ux + dz * uz;
         if (a > len) a = len;
@@ -2100,8 +1946,9 @@ export function freeKickDefault(s: SimState, ev: EventSink): void {
 
 /** The private scratch copy of `s` for previews (cloned once, then copied in place). */
 function scratchOf(s: SimState): SimState {
-  if (SCR === null || SCR.config !== s.config || SCR.squads !== s.squads) SCR = cloneState(s);
-  else copyState(SCR, s);
+  // [QF-7S] createSimState + copyState (as app/liveState.ts): cloneState built a dictionary-mode scratch state.
+  if (SCR === null || SCR.config !== s.config || SCR.squads !== s.squads) SCR = createSimState(s.config, s.squads);
+  copyState(SCR, s);
   const g = SCR.rng;
   g.a = PREVIEW_SEED.a; g.b = PREVIEW_SEED.b; g.c = PREVIEW_SEED.c; g.d = PREVIEW_SEED.d;
   return SCR;
@@ -2157,7 +2004,7 @@ function estimateLaunch(s: SimState, kind: KickKind, req: Readonly<ActionRequest
 }
 
 /**
- * Predicted flight (first LOCAL_TUNING.previewTicks ticks, sample i = ball after i + 1 ticks from the strike) of the kick
+ * Predicted flight (first T_FREE_KICK.previewTicks ticks, sample i = ball after i + 1 ticks from the strike) of the kick
  * the free-kick taker would play now: the swipe from the ball in `f` when given (touch, while dragging), else his
  * current aim / curl / dip and power (restart.aimPower, previewPower before a power is known); his kick in progress when
  * he is winding up or charging. Uses the kick module's starter and KickSolver on a private scratch copy (the state is

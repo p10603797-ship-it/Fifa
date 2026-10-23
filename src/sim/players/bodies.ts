@@ -21,7 +21,7 @@
  *  The slide-around: a player whose intent pushes into a body that blocks his way (ARRIVE target well beyond it; stick
  *  pushers only round teammates or an opponent pushing back) is nudged sideways, both of a head-on pair to their own
  *  right unless their intents/velocities prefer a side, so nobody runs in place and same-target players do not orbit.
- *  3. Up to LOCAL_TUNING.iterations Gauss-Seidel passes over all active pairs in fixed slot order (i < j); another
+ *  3. Up to T_BODY.iterations Gauss-Seidel passes over all active pairs in fixed slot order (i < j); another
  *     pass runs only while the last one met an overlap above passOverlap. Positional separation split by priority
  *     (a man down in a restart set-up [QF-13 skeptic] > anchor / shield hold > constraint pin > free) and inverse
  *     mass: a soft fraction of the overlap, hard to at
@@ -52,99 +52,14 @@ import { EventType, type EventSink } from '../../contracts/events';
 import type { ActionHandler } from '../../contracts/systems';
 import { MoveMode, type SimState } from '../../contracts/state';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_PLAYER } from '../../contracts/tuning';
+import { T_PLAYER, T_BODY } from '../../contracts/tuning';
 import { confinePlayer } from './locomotion';
 
-/** TUNING-CR: proposed `T_BODY` block for contracts/tuning.ts. */
-export const LOCAL_TUNING = { // TUNING-CR
-  /** Height (cm) of a body with exactly T_PLAYER.bodyRadius, and the height span (cm) to the +-radiusHeightScale end. */
-  heightRef: 182.5,
-  heightSpan: 17.5,
-  /** Max fractional radius change from height (T_PLAYER.bodyRadius: "Scaled +-10% by height"). */
-  radiusHeightScale: 0.1,
-  /** Body mass (dimensionless) = 1 + strengthMassK * (strength - 50) / 50 (strength 1 -> 0.61, 99 -> 1.39). */
-  strengthMassK: 0.4,
-  /** Fraction of the overlap removed per pass by the soft separation (0..1). */
-  softFraction: 0.4,
-  /** Fraction of the closing normal speed removed per contact per tick (1 = perfectly inelastic). */
-  normalDamping: 1.0,
-  /** Max separation passes per tick; a further pass runs only if the last one met an overlap above passOverlap (m). */
-  iterations: 4,
-  passOverlap: 0.02,
-  /** Hard separation floor above the invariant distance (2 * bodyRadius - overlapTolerance), m. */
-  hardMargin: 0.03,
-  // ---- slide around a blocking body (anti "run in place")
-  /** Intent within acos(slidePushCos) of the contact normal counts as pushing into the other body. */
-  slidePushCos: 0.5,
-  /** Min stick magnitude (0..1, DIRECT) or distance to the ARRIVE target beyond arriveStop (m) for a push. */
-  slideMinIntent: 0.25,
-  /** ARRIVE: the target must lie at least this far beyond the far edge of the blocking body, m. */
-  slideMinBeyond: 1.0,
-  /** Tangential slide speed while pushing into a blocking body, m/s (position nudge and min tangential velocity). */
-  slideSpeed: 1.6,
-  /** Weight of the current tangential velocity (normalised) in the side choice (keeps a slide going one way). */
-  slideVelBias: 0.5,
-  /** |side preference| below this falls back to the deterministic default side (the pusher's right). */
-  slideSideEps: 0.05,
-  /** [QF-9] A pusher gives way behind a body moving across his push faster than this (along the contact tangent), m/s:
-   *  his speed along its run is capped slideSpeed below its own (see resolvePairs). At least slideSpeed, so the cap is
-   *  never negative: giving way only ever slows him, it never reverses him (a lower 1.0 alternated with the world-frame
-   *  slide against a marker drifting across at 1.0-1.3 m/s: 6+ velocity reversals in 2 s). */
-  slideBehindSpeed: 1.6,
-  // ---- BODY_CONTACT events
-  /** Closing speed for a bump event, and above which it is a shove (b = 1), m/s. */
-  bumpSpeed: 1.5,
-  shoveSpeed: 3.0,
-  /** Max BODY_CONTACT events per tick. */
-  maxEventsPerTick: 4,
-  // ---- shoulder to shoulder
-  /** Both players faster than this, m/s. */
-  shoulderMinSpeed: 2.5,
-  /** Running directions within acos(shoulderParallelCos). */
-  shoulderParallelCos: 0.8,
-  /** |contact normal . running direction| below this = side by side. */
-  shoulderSideMax: 0.55,
-  /** Extra distance beyond touching that still counts as shoulder to shoulder (queries), m. */
-  shoulderSlack: 0.12,
-  /** Closing speed for a shoulder BODY_CONTACT event, m/s. */
-  shoulderApproach: 0.4,
-  // ---- keeper priority
-  /** Slack around the goal area for keeper priority, m. */
-  keeperAreaSlack: 0.5,
-  // ---- shielding
-  /** Opponents within this distance of the shielder are shielded against, m. */
-  shieldRange: 4.0,
-  /** The shielder's body is kept this far from the ball toward the opponent, m (ball spot: same distance behind). */
-  shieldBallDist: 0.55,
-  /** Max speed of the automatic shield positioning (on top of locomotion), m/s. */
-  shieldTrackSpeed: 2.5,
-  /** Backstop speed cap for a shielder = this x shieldSpeedFraction x jog speed at full stamina (SIM-04 caps first). */
-  shieldSpeedBackstop: 1.05,
-  /** Mass multiplier for an active shielder. */
-  shieldMassMul: 1.6,
-  /** [QF-16] A shielder backing into a held-off challenger faster than this (along the contact normal) loses the hold
-   *  priority for that pair: the challenger stands his ground and the shielder is held off. Before, a human shielding
-   *  with his back to goal walked a defender back 11 m in 10 s at every level. m/s. */
-  shieldDriveSpeed: 0.3,
-  /** [QF-16] Brace: a ball carrier (not shielding) driving into an opponent faster than braceDriveSpeed along the contact
-   *  normal, while the opponent stands his ground (on his feet, giving way slower than braceGiveSpeed along it), is the
-   *  one held off for that pair. m/s. */
-  braceDriveSpeed: 0.3,
-  braceGiveSpeed: 0.5,
-  /** [QF-16] ... a walking carrier only (intended speed below braceMaxSpeed): a running dribbler's barge stays a body
-   *  duel (bracing against every carrier cut 1.6 shots a match from the bot game). Only in a pair with a human-controlled
-   *  player (the human walker, or a human defender a CPU walker runs into): the bot game is built on the old contact
-   *  (bracing bot walkers took Legend v World Class 74 -> 63% over 100, Legend's patient carries losing the ball). m/s. */
-  braceMaxSpeed: 3.0,
-  /** Strength points added to the shielder in the shield duel. */
-  shieldStrengthBonus: 10,
-  /** Strength-difference span (points) mapping the duel onto shieldFactor 0..1 (0.5 at a tie). */
-  shieldFactorSpan: 20,
-  /** Max distance (beyond the shielder's radius) from the challenger-ball line for the body to cover the ball, m. */
-  shieldCoverMargin: 0.05,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_BODY. */
+export const LOCAL_TUNING = T_BODY;
 
-const L = LOCAL_TUNING;
+
+const L = T_BODY;
 const EPS = 1e-9;
 /** Absolute floor for the hard separation (keeps every pair clear of the section 14 overlap invariant). */
 const HARD_FLOOR = 2 * T_PLAYER.bodyRadius - T_PLAYER.overlapTolerance + L.hardMargin;
@@ -231,6 +146,18 @@ export function bodyRadiusOf(s: SimState, slot: number): number {
   let t = (h - L.heightRef) / L.heightSpan;
   if (!(t > -1)) t = -1; else if (t > 1) t = 1; // also maps NaN to -1
   return BODY_R * (1 + L.radiusHeightScale * t);
+}
+
+/**
+ * [QF-7S] bodyRadiusOf with the result in BODY_RADIUS_OUT[0] (same arithmetic), for per-tick callers that V8 does not
+ * inline it into: a returned double is boxed (16 B per call; SIM-14's tackle contact checks made six a tick).
+ */
+export const BODY_RADIUS_OUT = new Float64Array(1);
+export function bodyRadiusInto(s: SimState, slot: number): void {
+  const h = s.attrs[slot]!.height;
+  let t = (h - L.heightRef) / L.heightSpan;
+  if (!(t > -1)) t = -1; else if (t > 1) t = 1; // also maps NaN to -1
+  BODY_RADIUS_OUT[0] = BODY_R * (1 + L.radiusHeightScale * t);
 }
 
 /** Body mass (dimensionless, ~0.6..1.4) from strength; before shield and anchor modifiers. */

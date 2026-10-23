@@ -7,18 +7,9 @@
 import { AiJob } from '../contracts/enums';
 import type { SimState } from '../contracts/state';
 import { NUM_SLOTS } from '../contracts/constants';
-import { T_AI } from '../contracts/tuning';
+import { T_JOBS } from '../contracts/tuning';
 import { teamEnd, teamStart } from '../sim/core/query';
 
-/** HOLD_SHAPE speed by distance from home [INT-A; values in contracts/tuning.ts T_AI.hold* since QF-2]. */
-const LOCAL_TUNING = {
-  /** Speed cap as a fraction of top speed near home (a jog, T_PLAYER.jogFraction) and far from it. */
-  holdJogFraction: T_AI.holdJogFraction,
-  holdFarFraction: T_AI.holdFarFraction,
-  /** Distance from home below which he jogs / beyond which he runs at holdFarFraction, m. */
-  holdNearDist: T_AI.holdNearDist,
-  holdFarDist: T_AI.holdFarDist,
-} as const;
 
 /** Previous tick's job per slot (derived scratch, rebuilt every tick; not state). */
 const prevJob = new Int32Array(NUM_SLOTS);
@@ -42,24 +33,24 @@ export function resetJobs(s: SimState, team: number): void {
     // holdShapeSpeed, inline (a helper call returning a double boxes it per player per tick in V8).
     const dx = p.homeX - p.x, dz = p.homeZ - p.z;
     const d = Math.sqrt(dx * dx + dz * dz);
-    const k = d <= LOCAL_TUNING.holdNearDist ? 0 : d >= LOCAL_TUNING.holdFarDist ? 1 : (d - LOCAL_TUNING.holdNearDist) * HOLD_INV;
-    p.tgtSpeed = s.attrs[i]!.topSpeed * (LOCAL_TUNING.holdJogFraction + HOLD_SPAN * k);
+    const k = d <= T_JOBS.holdNearDist ? 0 : d >= T_JOBS.holdFarDist ? 1 : (d - T_JOBS.holdNearDist) * HOLD_INV;
+    p.tgtSpeed = s.attrs[i]!.topSpeed * (T_JOBS.holdJogFraction + HOLD_SPAN * k);
   }
 }
 
-const HOLD_INV = 1 / (LOCAL_TUNING.holdFarDist - LOCAL_TUNING.holdNearDist);
-const HOLD_SPAN = LOCAL_TUNING.holdFarFraction - LOCAL_TUNING.holdJogFraction;
+const HOLD_INV = 1 / (T_JOBS.holdFarDist - T_JOBS.holdNearDist);
+const HOLD_SPAN = T_JOBS.holdFarFraction - T_JOBS.holdJogFraction;
 
 /**
- * HOLD_SHAPE speed cap (m/s): a jog near the home spot, rising to LOCAL_TUNING.holdFarFraction of top speed when far
+ * HOLD_SHAPE speed cap (m/s): a jog near the home spot, rising to T_JOBS.holdFarFraction of top speed when far
  * from it, so a team that wins the ball pushes up (and one that loses it drops back) in time instead of jogging
  * 20 m behind its shape [INT-A].
  */
 export function holdShapeSpeed(top: number, dx: number, dz: number): number {
   const d = Math.sqrt(dx * dx + dz * dz);
-  const k = d <= LOCAL_TUNING.holdNearDist ? 0
-    : d >= LOCAL_TUNING.holdFarDist ? 1 : (d - LOCAL_TUNING.holdNearDist) / (LOCAL_TUNING.holdFarDist - LOCAL_TUNING.holdNearDist);
-  return top * (LOCAL_TUNING.holdJogFraction + (LOCAL_TUNING.holdFarFraction - LOCAL_TUNING.holdJogFraction) * k);
+  const k = d <= T_JOBS.holdNearDist ? 0
+    : d >= T_JOBS.holdFarDist ? 1 : (d - T_JOBS.holdNearDist) / (T_JOBS.holdFarDist - T_JOBS.holdNearDist);
+  return top * (T_JOBS.holdJogFraction + (T_JOBS.holdFarFraction - T_JOBS.holdJogFraction) * k);
 }
 
 /**

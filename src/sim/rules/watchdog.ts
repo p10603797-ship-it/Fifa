@@ -30,7 +30,7 @@ import { BALL_RADIUS, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PENALTY_AREA_DEPTH, PE
 import { ActionKind, MatchPhase, ModeId, Period, RestartKind, WatchdogReason } from '../../contracts/enums';
 import type { EventSink } from '../../contracts/events';
 import type { SimState } from '../../contracts/state';
-import { T_RULES } from '../../contracts/tuning';
+import { T_RULES, T_WATCHDOG } from '../../contracts/tuning';
 import { endAction } from '../actions/dispatch';
 import { rngInt } from '../core/rng';
 import { periodLength } from '../init';
@@ -39,25 +39,9 @@ import { awardRestart, forceRestartKick } from './restart';
 import { isRestartPhase, logWatchdog } from './restartCommon';
 import { shootoutStart } from './shootout';
 
-/** TUNING-CR (RUL-11): proposed additions to T_RULES (units in comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  /** An action overruns when actT > actDur + this, ticks. */
-  actionOverrunTicks: 30,
-  /** A charging action (power bar held) overruns when actT > actDur + this, ticks. */
-  chargeOverrunTicks: 150,
-  /** The ball centre this far beyond (line + BALL_RADIUS) counts as out of play, m. */
-  outSlack: 0.05,
-  /** A resting ball whose centre is above this height cannot be played, m (head + jump reach is ~2.3 m). */
-  unreachableHeight: 2.2,
-  /** A ball counts as resting when it moved less than this during the tick, m ... */
-  restEps: 1e-4,
-  /** ... is slower than this, m/s ... */
-  restSpeed: 0.05,
-  /** ... and has been untouched at least this long, ticks. */
-  restingTicks: 60,
-  /** A watchdog free kick in the opponents' penalty area is moved this far outside the area, m. */
-  boxMargin: 1,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_WATCHDOG. */
+export const LOCAL_TUNING = T_WATCHDOG;
+
 
 function other(team: number): number {
   return team === 0 ? 1 : 0;
@@ -75,7 +59,7 @@ function actionOverruns(s: SimState, ev: EventSink): void {
     if (p.act === ActionKind.NONE) continue;
     let over = p.active !== 1;
     if (!over) {
-      const lim = p.actCharging === 1 ? LOCAL_TUNING.chargeOverrunTicks : LOCAL_TUNING.actionOverrunTicks;
+      const lim = p.actCharging === 1 ? T_WATCHDOG.chargeOverrunTicks : T_WATCHDOG.actionOverrunTicks;
       over = p.actT > p.actDur + lim;
     }
     if (!over) continue;
@@ -193,11 +177,11 @@ function forcePhaseStep(s: SimState, ev: EventSink): void {
 /** Ball resting (not just at the top of its flight) above reach height: on the crossbar or the net roof. */
 function restingUnreachable(s: SimState): boolean {
   const b = s.ball;
-  if (b.owner >= 0 || b.y < LOCAL_TUNING.unreachableHeight || b.idleT < LOCAL_TUNING.restingTicks) return false;
-  const rs = LOCAL_TUNING.restSpeed;
+  if (b.owner >= 0 || b.y < T_WATCHDOG.unreachableHeight || b.idleT < T_WATCHDOG.restingTicks) return false;
+  const rs = T_WATCHDOG.restSpeed;
   if (b.vx * b.vx + b.vy * b.vy + b.vz * b.vz > rs * rs) return false;
   const moved = Math.abs(b.x - b.px) + Math.abs(b.y - b.py) + Math.abs(b.z - b.pz);
-  return moved < LOCAL_TUNING.restEps;
+  return moved < T_WATCHDOG.restEps;
 }
 
 /** Award the nearest sensible restart for a ball the game cannot continue with. */
@@ -211,7 +195,7 @@ function awardForBall(s: SimState, ev: EventSink, reason: WatchdogReason, beyond
   let kind: RestartKind;
   let x: number;
   let z: number;
-  const out = beyondX > LOCAL_TUNING.outSlack || beyondZ > LOCAL_TUNING.outSlack;
+  const out = beyondX > T_WATCHDOG.outSlack || beyondZ > T_WATCHDOG.outSlack;
   if (out && beyondZ >= beyondX) {
     kind = RestartKind.THROW_IN;
     x = clamp(b.x, -HALF_LENGTH, HALF_LENGTH);
@@ -234,7 +218,7 @@ function awardForBall(s: SimState, ev: EventSink, reason: WatchdogReason, beyond
     z = clamp(b.z, -HALF_WIDTH, HALF_WIDTH);
     const att = s.teams[team]!.dir;
     if (att * x >= HALF_LENGTH - PENALTY_AREA_DEPTH && z >= -PENALTY_AREA_HALF_WIDTH && z <= PENALTY_AREA_HALF_WIDTH) {
-      x = att * (HALF_LENGTH - PENALTY_AREA_DEPTH - LOCAL_TUNING.boxMargin);
+      x = att * (HALF_LENGTH - PENALTY_AREA_DEPTH - T_WATCHDOG.boxMargin);
     }
   }
   logWatchdog(s, ev, reason, kind);
@@ -245,7 +229,7 @@ function ballChecks(s: SimState, ev: EventSink): void {
   const b = s.ball;
   const beyondX = Math.abs(b.x) - HALF_LENGTH - BALL_RADIUS;
   const beyondZ = Math.abs(b.z) - HALF_WIDTH - BALL_RADIUS;
-  const out = beyondX > LOCAL_TUNING.outSlack || beyondZ > LOCAL_TUNING.outSlack;
+  const out = beyondX > T_WATCHDOG.outSlack || beyondZ > T_WATCHDOG.outSlack;
   if (out || b.inNet !== 0 || restingUnreachable(s)) {
     awardForBall(s, ev, WatchdogReason.BALL_UNREACHABLE, beyondX, beyondZ);
     return;

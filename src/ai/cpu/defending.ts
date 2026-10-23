@@ -88,199 +88,30 @@
  * allocation. Per call O(11) plus, on a switch evaluation tick, 10 SIM-04 ticksToReach estimates.
  */
 import {
-  CPU_CONTROLLER_BASE, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PITCH_LENGTH, PLAYERS_PER_TEAM, TICK_HZ, teamFirstSlot,
+  CPU_CONTROLLER_BASE, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PLAYERS_PER_TEAM, TICK_HZ, teamFirstSlot,
 } from '../../contracts/constants';
 import { ActionKind, ControllerKind, GestureKind, MatchPhase, SkillMove } from '../../contracts/enums';
 import type { EventSink } from '../../contracts/events';
 import { AXIS_SCALE, Btn, GESTURE_POS_SCALE, type InputFrame } from '../../contracts/input';
 import type { ControllerState, CpuBrainState, PlayerState, SimState } from '../../contracts/state';
 import type { LevelParams } from '../../contracts/systems';
-import { T_AI, T_CPU, T_DRIBBLE, T_LEVEL, T_PLAYER, T_SKILL, T_TACKLE, T_TOUCH } from '../../contracts/tuning';
+import {
+  T_AI, T_DRIBBLE, T_LEVEL, T_PLAYER, T_SKILL, T_TACKLE, T_TOUCH, T_DEFENDING, T_TACKLE_PLAY, T_FIRST_TOUCH, T_LOCOMOTION,
+} from '../../contracts/tuning';
 import { isFree } from '../../sim/actions/dispatch';
 import { tackleKind } from '../../sim/control/resolveActions';
-import { LOCAL_TUNING as TACKLE_LT } from '../../sim/defend/tackle';
 import { ballEta, controlContext, Ctx } from '../../sim/control/resolveShared';
 import { aerialChance } from '../../sim/kicks/aerial';
 import { inSkillVulnerableWindow } from '../../sim/kicks/skills';
 import { inPenaltyArea } from '../../sim/pitch/geometry';
 import { comeOutWanted } from '../../sim/keeper/sweeperHooks';
-import { LOCAL_TUNING as FIRST_TOUCH_LT, trapLead } from '../../sim/players/firstTouch';
-import { LOCAL_TUNING as LOCO_LT, ticksToReach } from '../../sim/players/locomotion';
+import { trapLead } from '../../sim/players/firstTouch';
+import { ticksToReach } from '../../sim/players/locomotion';
 import { createInterceptEstimate, estimateIntercept } from '../steer';
 import { composureNoiseMul, levelParams, levelValue } from './levels';
 
-export const LOCAL_TUNING = {
-  // ---- approach and jockey
-  /** Guard point distance goal-side of the carrier at pressIntensity 0 / 1, m. */
-  standoffLow: 2.4,
-  standoffHigh: 1.6,
-  /** Goal-side: cos(carrier->defender, carrier->own goal centre) at or above this (mirrors SIM-15 goalSideCos). */
-  goalSideCos: 0.3,
-  /** From behind: that cosine at or below this (mirrors SIM-15 chaseCos). */
-  behindCos: -0.2,
-  /** Guard-point lead: carrier velocity x min(distance / leadRefSpeed, lookAheadTicks x leadLookAheadFrac / 60), s. */
-  leadRefSpeed: 8.0,
-  leadLookAheadFrac: 0.5,
-  /** Not goal-side: recovery point this much deeper than the guard point and this far to his side of the carrier, m. */
-  recoverDepth: 2.5,
-  recoverSide: 1.5,
-  /** Stick magnitude ramps from 0 at the target to full at this distance (arrival), m. */
-  arriveDist: 2.0,
-  /** Sprint toward a target farther than this, m. */
-  sprintDist: 6.0,
-  /** SPRINT is only held with at least this stick magnitude (an idle stick + SPRINT means "press" in SIM-15), 0..1. */
-  sprintMinStick: 0.3,
-  /** Jockey (SHIELD held) when goal-side within this distance of the carrier, m; keep it up to jockeyKeepDist. */
-  jockeyDist: 3.0,
-  jockeyKeepDist: 3.6,
-  /** Sprint jockey when the carrier is faster than this fraction of the defender's jog speed. */
-  sprintJockeyFrac: 0.9,
-  // ---- contain
-  /** Contain (PASS held) when the carrier dribbles faster than this (keep down to containKeepSpeed), m/s ... */
-  containSpeed: 6.0,
-  containKeepSpeed: 5.0,
-  /** ... and the defender is within this distance and not behind him (cos >= behindCos), m. */
-  containDist: 8.0,
-  // ---- second defender
-  /** Call the second defender (MOD_R held) while the carrier is within this distance of our goal line (final third),
-   *  keep calling up to secondDefKeepDist, m. */
-  secondDefDist: PITCH_LENGTH / 3,
-  secondDefKeepDist: PITCH_LENGTH / 3 + 4,
-  // ---- keeper rush
-  /** One-on-one: carrier within this distance of our goal centre to start the rush (keep holding up to rushKeepDist), m. */
-  rushStartDist: 14,
-  rushKeepDist: 20,
-  /** ... with |z| at most this (not at a tight angle), m ... */
-  rushMaxAbsZ: 12,
-  /** ... not running away from goal faster than this, m/s ... */
-  rushAwaySpeed: 0.5,
-  /** ... and no outfield teammate in the channel to goal: lateral offset below coverChannel + along x coverWiden, m. */
-  coverChannel: 2.0,
-  coverWiden: 0.15,
-  // ---- player choice (switching)
-  /** Evaluate the best-placed defender every this many ticks (staggered by team). */
-  switchEvalTicks: 6,
-  /** Switch when the best beats the current defender by this many ticks (x (1 + decisionNoise x switchNoiseMul)). */
-  switchMarginTicks: 15,
-  switchNoiseMul: 2,
-  /** Use MOD_L (SIM-16's choice) when its marked next switch is within this of the best score, ticks. */
-  switchFineTicks: 8,
-  /** Penalty for a candidate who is not goal-side of the carrier, ticks. */
-  notGoalSidePenalty: 30,
-  /** Goal-side for the choice: at least this much nearer our goal line than the carrier, m. */
-  goalSideMargin: 0.5,
-  /** The current defender is engaged (never switched away) goal-side within this distance of the carrier, m. */
-  engagedDist: 4.5,
-  // ---- tackles
-  /** The ball is exposed between touches when farther than this from the carrier's centre, m. */
-  exposeDist: 0.7,
-  /** A careful tackle wants the predicted ball at least this fraction of exposeDist from the carrier at contact. */
-  exposeAtContactFrac: 0.8,
-  /** Turning: the carrier moves faster than this, m/s ... */
-  turnMinSpeed: 1.5,
-  /** ... with cos(velocity, facing) below this. */
-  turnCos: 0.6,
-  /** Standing tackle: ball within standReach + this of the defender now, m. */
-  tackleApproach: 0.4,
-  /** Rash lunge at a carrier with the ball at his feet: chance per rashBucketTicks = decisionNoise x this. */
-  rashLungeChance: T_CPU.defendRashLungeChance,
-  rashBucketTicks: 30,
-  /** Slide: ball between standReach and slideReach x slideReachFrac of the defender, m (fraction). */
-  slideReachFrac: 0.85,
-  /** Slide only when the ball is in our half: carrier within this distance of our goal line, m. */
-  slideZoneDist: HALF_LENGTH,
-  /** Goal-side slide (urgent: carrier quicker than our jog, or in our final third): chance per exposure window. */
-  slideChance: 0.15,
-  /** From behind: carrier through on goal within this distance of our goal centre; chance x decisionNoise per window. */
-  slideBehindDist: 25,
-  slideBehindChance: 0.2,
-  // ---- loose balls
-  /** Clear (SHOOT in our own third) a ball reaching him within this many ticks (<= SIM-16 aboutToReceive), ticks ... */
-  clearEtaTicks: 15,
-  /** ... with an opponent within this distance of him or of the ball, m. */
-  clearPressureDist: 6.0,
-  /** Own third: progress (-1 own goal line .. +1) below this (mirrors SIM-15 ownThirdProgress). */
-  ownThirdProgress: -1 / 3,
-  /** Intercept an opponent pass when we reach the lane this many ticks before the receiver, ticks. */
-  interceptMarginTicks: 4,
-  /** Our pass in flight: hold SPRINT when an opponent is within this distance of the reception point, m. */
-  contestDist: 8.0,
-  /** Our pass rolling away from its receiver (ahead of him, faster than this): he runs onto it with the stick, m/s ... */
-  trailMinSpeed: 1.5,
-  /** ... aiming this far ahead along the ball's velocity, s. */
-  trailLeadSec: 0.15,
-  /** Loose-ball chase: sprint when the interception point is farther than this, m ... */
-  chaseSprintDist: 3.0,
-  /** ... aim at the ball itself within this distance of it, m ... */
-  chaseBallDist: 1.5,
-  /** ... full stick (no arrival ramp) unless he reaches the interception point this many ticks before the ball (then
-   *  he arrives and waits: no orbiting a landing spot), or the close ball is slower than chaseSlowBall or coming to
-   *  him; a slowed approach keeps at least chaseMinStick (above the stick dead zone) until within chaseHoldDist.
-   *  ticks / m/s / 0..1 / m. */
-  chaseEarlyTicks: 8,
-  chaseSlowBall: 1.0,
-  chaseMinStick: 0.4,
-  chaseHoldDist: 0.4,
-  /** Loose ball another teammate chases (team.chaser): the controlled player covers this far goal-side of it, m. */
-  looseCoverDist: 7.0,
-  /** [QF-2] Our keeper's ball (TAI-07 chaser: his rush or save): ahead of it within this of its path, step off it, m. */
-  keeperLaneClear: T_CPU.defendKeeperLaneClear,
-  /** Reaction delay: keep running along the current velocity when faster than this, m/s. */
-  momentumMinSpeed: 0.3,
-  /** [QF-11] ... but within this of a touchline / goal line only along it (a low level's long delay ran him off), m. */
-  momentumEdgeMargin: T_CPU.defendMomentumEdgeMargin,
-  /** [QF-11 skeptic] ... or his braking distance toward it + this, whichever is more, m. */
-  momentumBrakeSlack: T_CPU.defendMomentumBrakeSlack,
-  /** [QF-13 skeptic] Box care: a careful tackle in our area keeps this clear of the carrier's body (boxClear), m. */
-  boxClearMargin: T_CPU.defendBoxClearMargin,
-  /** ... and the carrier at least two body radii + this from the tackler at contact, m. */
-  boxBodyGap: T_CPU.defendBoxBodyGap,
-  /** [QF-14 resume] Patience with a carrier standing on the ball (T_CPU.defendStill*): ticks since his last touch (+ the
-   *  level's tackleTimingTicks) and the speed under which he and the ball count as standing, m/s. */
-  stillTouchTicks: T_CPU.defendStillTouchTicks,
-  stillSpeed: T_CPU.defendStillSpeed,
-  /** [QF-14 skeptic] ... and walking the ball into him (T_CPU.defendHeldSpeed): under this speed, the ball presented, m/s. */
-  heldSpeed: T_CPU.defendHeldSpeed,
-  /** ... once he has had the ball this long (ball.ownerT), ticks. */
-  heldTicks: T_CPU.defendHeldTicks,
-  // ---- [QF-16] the block (blockPlan): a walking (or long-dribbling) carrier is met in the ball's path
-  /** A carrier slower than blockWalkSpeed is blocked once he has had the ball T_LEVEL.blockTicks, m/s. */
-  blockWalkSpeed: T_CPU.defendBlockWalkSpeed,
-  blockJogSpeed: T_CPU.defendBlockJogSpeed,
-  /** Guard point this far beyond the ball on the hold direction, m; tracked with a correction of blockGain per second. */
-  blockDist: T_CPU.defendBlockDist,
-  blockGain: T_CPU.defendBlockGain,
-  /** Hold direction: the carrier -> ball line (when the ball is more than blockPathMinOffset from his centre, m), at
-   *  most acos(blockPathCos) off the ball -> goal direction. */
-  blockPathMinOffset: T_CPU.defendBlockPathMinOffset,
-  blockPathCos: T_CPU.defendBlockPathCos,
-  /** Rounding: until he is blockRoundAhead ahead of the carrier's centre along the hold direction (over blockRoundSpan),
-   *  the guard point moves two body radii + blockRoundGap to his side. m. */
-  blockRoundAhead: T_CPU.defendBlockRoundAhead,
-  blockRoundSpan: T_CPU.defendBlockRoundSpan,
-  blockRoundGap: T_CPU.defendBlockRoundGap,
-  /** Holding the ground: in the ball's line (within blockAlign of it, ahead of the ball over blockHoldSpan) or in front
-   *  of the carrier's body (within blockAlignBody of his line). m. */
-  blockAlign: T_CPU.defendBlockAlign,
-  blockHoldSpan: T_CPU.defendBlockHoldSpan,
-  blockAlignBody: T_CPU.defendBlockAlignBody,
-  /** [QF-16 skeptic] A human shielding carrier: the ground held from this cosine to the goal side (full at 1), 0..1. */
-  blockShieldCos0: T_CPU.defendBlockShieldCos0,
 
-  /** The poke: the ball within blockPokeDist of him (m), his rounding at most blockPokeMaxRound (0..1). */
-  blockPokeDist: T_CPU.defendBlockPokeDist,
-  blockPokeMaxRound: T_CPU.defendBlockPokeMaxRound,
-  /** ... and the ball presented ball-first by blockPokeMargin (m). */
-  blockPokeMargin: T_CPU.defendBlockPokeMargin,
-  /** [QF-16 skeptic] A human carrier's ball nearer than this to the blocking defender is left to SIM-06 (no poke), m. */
-  blockFeetDist: T_CPU.defendBlockFeetDist,
-  /** [QF-13 skeptic] Reception near a line (receiveTurn): when the clean settle would end less than this inside a line,
-   *  the stick's component toward it becomes receiveInward into the pitch. m, 0..1. */
-  receiveSettleMargin: T_CPU.defendReceiveSettleMargin,
-  receiveInward: T_CPU.defendReceiveInward,
-} as const; // TUNING-CR
-
-const L = LOCAL_TUNING;
+const L = T_DEFENDING;
 /** [QF-13 skeptic] brain.seenOwner while our own pass is in flight to a teammate (tickBrain): the same situation as a
  *  loose ball (-1), but an opponent taking it is a turnover. */
 const OUR_PASS = -2;
@@ -607,9 +438,9 @@ function lungePresented(s: SimState, p: Readonly<PlayerState>, q: Readonly<Playe
   if (!(along > 0)) along = 0;
   // Wind-up: along x keep^i per tick (i = 1..windup); contact: the lunge.
   let dw = 0, sp = along;
-  for (let i = 0; i < T_TACKLE.standWindup; i++) { sp *= TACKLE_LT.windupSpeedKeep; dw += sp; }
+  for (let i = 0; i < T_TACKLE.standWindup; i++) { sp *= T_TACKLE_PLAY.windupSpeedKeep; dw += sp; }
   dw /= TICK_HZ;
-  const lunge = sp > TACKLE_LT.standLungeSpeed ? sp : TACKLE_LT.standLungeSpeed;
+  const lunge = sp > T_TACKLE_PLAY.standLungeSpeed ? sp : T_TACKLE_PLAY.standLungeSpeed;
   const t1 = T_TACKLE.standWindup / TICK_HZ;
   if (!ballFirstFrom(s, p.x + ux * dw, p.z + uz * dw, q, t1, margin)) return false;
   const t2 = (T_TACKLE.standWindup + (T_TACKLE.standContactTicks >> 1)) / TICK_HZ;
@@ -631,8 +462,8 @@ function ballFirstFrom(s: SimState, px: number, pz: number, q: Readonly<PlayerSt
   const along = vx * ux + vz * uz;
   const lat = vx * uz - vz * ux;
   const rv = T_PLAYER.bodyRadius;
-  return !(along > 0) || along - rv > lb - TACKLE_LT.ballFirstMargin + margin ||
-    (lat < 0 ? -lat : lat) > rv + TACKLE_LT.blockLateral + margin;
+  return !(along > 0) || along - rv > lb - T_TACKLE_PLAY.ballFirstMargin + margin ||
+    (lat < 0 ? -lat : lat) > rv + T_TACKLE_PLAY.blockLateral + margin;
 }
 
 /** [QF-16 skeptic] The carrier's body hides the ball from p now (ballFirstAt's body test, at any range). Pure. */
@@ -646,7 +477,7 @@ function ballHidden(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerSta
   const along = vx * ux + vz * uz;
   const lat = vx * uz - vz * ux;
   const rv = T_PLAYER.bodyRadius;
-  return along > 0 && along - rv <= lb - TACKLE_LT.ballFirstMargin && (lat < 0 ? -lat : lat) <= rv + TACKLE_LT.blockLateral;
+  return along > 0 && along - rv <= lb - T_TACKLE_PLAY.ballFirstMargin && (lat < 0 ? -lat : lat) <= rv + T_TACKLE_PLAY.blockLateral;
 }
 
 /** ballPresented at t seconds ahead (linear). Pure. */
@@ -661,8 +492,8 @@ function ballFirstAt(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerSt
   const along = vx * ux + vz * uz;
   const lat = vx * uz - vz * ux;
   const rv = T_PLAYER.bodyRadius;
-  return !(along > 0) || along - rv > lb - TACKLE_LT.ballFirstMargin + margin ||
-    (lat < 0 ? -lat : lat) > rv + TACKLE_LT.blockLateral + margin;
+  return !(along > 0) || along - rv > lb - T_TACKLE_PLAY.ballFirstMargin + margin ||
+    (lat < 0 ? -lat : lat) > rv + T_TACKLE_PLAY.blockLateral + margin;
 }
 
 // ---------------------------------------------------------------- player choice
@@ -935,7 +766,7 @@ function defendCarrier(
     const capNo = jogP * T_PLAYER.jockeySpeedFraction;
     if (holdV > capNo) {
       wantSprint = 1;
-      stM = topP > EPS ? holdV / topP * LOCO_LT.sprintStickFull : 1;
+      stM = topP > EPS ? holdV / topP * T_LOCOMOTION.sprintStickFull : 1;
       if (stM > 1) stM = 1;
       if (stM < L.sprintMinStick) stM = L.sprintMinStick;
       // [QF-16 skeptic] Faster than even a sprint jockey goes sideways (jockeySpeedFraction of top): run, not jockey.
@@ -1177,10 +1008,10 @@ function receiveTurn(s: SimState, p: Readonly<PlayerState>): void {
   // chase, the ball gets away and he turns back after it: a stick flip-flop every tick).
   // Feet, or thigh / chest up to trap height (SIM-07's reach is shorter there), at the ball's height after this tick.
   const y = b.y + b.vy / TICK_HZ;
-  const reach = y <= T_DRIBBLE.controlHeight ? T_TOUCH.receiveRadius : T_TOUCH.receiveRadius * FIRST_TOUCH_LT.chestReachMul;
+  const reach = y <= T_DRIBBLE.controlHeight ? T_TOUCH.receiveRadius : T_TOUCH.receiveRadius * T_FIRST_TOUCH.chestReachMul;
   if (y > T_TOUCH.trapHeight || !isFree(p) || p.noTouchT > 0) return;
-  if (b.vx * b.vx + b.vz * b.vz <= FIRST_TOUCH_LT.minTrapSpeed * FIRST_TOUCH_LT.minTrapSpeed) return;
-  if (b.lastKickBy === p.slot && s.tick - b.lastKickTick < FIRST_TOUCH_LT.selfKickTicks) return;
+  if (b.vx * b.vx + b.vz * b.vz <= T_FIRST_TOUCH.minTrapSpeed * T_FIRST_TOUCH.minTrapSpeed) return;
+  if (b.lastKickBy === p.slot && s.tick - b.lastKickTick < T_FIRST_TOUCH.selfKickTicks) return;
   const bv = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
   let sx: number, sz: number;
   const free = stM > 0 ? 0 : 1;
@@ -1351,7 +1182,7 @@ export function cpuDefend(s: SimState, team: number, out: InputFrame, ev: EventS
 
 /** Debug / tests: the switch score of each slot from the latest evaluation (BIG = not a candidate). */
 export function debugSwitchScore(slot: number): number { return validSlot(slot) ? SCORE[slot]! : BIG; }
-/** The LOCAL_TUNING block (read-only; tests and the lead's TUNING-CR review). */
-export const DEFEND_TUNING = LOCAL_TUNING;
+/** [TUN-1] Old name of contracts/tuning.ts T_DEFENDING (read-only; tests import it). */
+export const DEFEND_TUNING = T_DEFENDING;
 /** Goal-side unit of the latest carrier evaluation (tests). */
 export function debugGoalSideUnit(o: { x: number; z: number }): void { o.x = gX; o.z = gZ; }

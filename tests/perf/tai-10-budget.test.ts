@@ -72,7 +72,8 @@ const PROBE = `
 `;
 
 describe('TAI-10 budget', () => {
-  const r = spawnSync(process.execPath, ['--expose-gc', '--max-semi-space-size=128', '--import', 'tsx', '--input-type=module', '-e', PROBE], {
+  // [TUN-7S] --single-threaded: synchronous compilation, load-independent bytes (tests/perf/qf-7r-alloc-flags.ts).
+  const r = spawnSync(process.execPath, ['--single-threaded', '--expose-gc', '--max-semi-space-size=128', '--import', 'tsx', '--input-type=module', '-e', PROBE], {
     cwd: ROOT, encoding: 'utf8', timeout: 300_000,
   });
   const ok = r.status === 0;

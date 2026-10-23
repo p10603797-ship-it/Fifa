@@ -66,7 +66,8 @@ console.log('RESULT ' + JSON.stringify(out));
 
 describe('SIM-16 budget', () => {
   it('switchTick for two controllers costs a small share of the 2.5 ms sim+AI tick budget', () => {
-    const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', PROBE], {
+    // [TUN-7S] --single-threaded: synchronous compilation, load-independent bytes (tests/perf/qf-7r-alloc-flags.ts).
+    const r = spawnSync(process.execPath, ['--single-threaded', '--import', 'tsx', '--input-type=module', '-e', PROBE], {
       cwd: ROOT, encoding: 'utf8', timeout: 120_000,
     });
     const line = (r.stdout ?? '').split('\n').find((l) => l.startsWith('RESULT '));

@@ -88,8 +88,9 @@ describe('SIM-03 zero allocation', () => {
       res.acc = acc;
       console.log(JSON.stringify(res));
     `;
+    // [TUN-7S] --single-threaded: synchronous compilation, load-independent bytes (tests/perf/qf-7r-alloc-flags.ts).
     const r = spawnSync(process.execPath, [
-      '--expose-gc', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', code,
+      '--single-threaded', '--expose-gc', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', code,
     ], { cwd: root, encoding: 'utf8', timeout: 120_000 });
     expect(r.status, r.stderr).toBe(0);
     const res = JSON.parse(r.stdout.trim().split('\n').pop()!) as Record<string, number> & { kinds: number[] };

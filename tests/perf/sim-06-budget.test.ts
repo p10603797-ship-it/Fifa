@@ -89,7 +89,9 @@ const PROBE = `
 const CASES = ['jog', 'sprint', 'ownerNoTouch', 'ownerOutOfReach', 'touchEveryTick', 'windupHold', 'looseScan', 'pickUp', 'squirt'] as const;
 
 describe('SIM-06 budget', () => {
-  const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', '--input-type=module', '-e', PROBE], {
+  // [TUN-7S] --single-threaded (tests/perf/qf-7r-alloc-flags.ts): compiles synchronously, so the measured bytes do not
+  // depend on CPU load (under load the optimised code arrived later and the window ran boxing baseline code).
+  const r = spawnSync(process.execPath, ['--single-threaded', '--expose-gc', '--import', 'tsx', '--input-type=module', '-e', PROBE], {
     cwd: ROOT, encoding: 'utf8', timeout: 240_000,
   });
   const ok = r.status === 0;

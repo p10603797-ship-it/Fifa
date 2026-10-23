@@ -11,6 +11,8 @@ import { AutoSwitch, AssistLevel, ControllerKind, MatchPhase, Period } from '../
 import { createSimState, RosterStatus, type MatchConfig, type PlayerAttrs, type SimState } from '../contracts/state';
 import { CLUBS } from '../data/clubs';
 import { getFormation } from '../data/formations';
+import { primeStateCodegen } from './core/clone';
+import { primeHashCodegen } from './core/hash';
 import { rngInt, rngSeed } from './core/rng';
 import { accelFor, topSpeedFor } from './players/locomotion';
 import { preparePracticeState } from './rules/practice';
@@ -116,5 +118,9 @@ export function initMatch(config: MatchConfig, clubs: readonly Club[] = CLUBS): 
   s.ball.x = 0; s.ball.y = 0.11; s.ball.z = 0;
   s.ball.px = 0; s.ball.py = 0.11; s.ball.pz = 0;
   preparePracticeState(s);
+  // [TUN-7S skeptic] Compile the state copier / hasher now (the loading screen), once per process, not in the first
+  // ticks of play. No effect on the state.
+  primeStateCodegen(s);
+  primeHashCodegen(s);
   return s;
 }

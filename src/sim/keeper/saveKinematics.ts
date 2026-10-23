@@ -18,143 +18,14 @@
 import { BALL_RADIUS, BOARD_X, BOARD_Z, DT, HALF_LENGTH } from '../../contracts/constants';
 import { MoveMode, type PlayerAttrs, type SimState } from '../../contracts/state';
 import type { ActionHandler } from '../../contracts/systems';
-import { T_GK } from '../../contracts/tuning';
+import { T_GK, T_GK_SAVE } from '../../contracts/tuning';
 import { attr, clamp01, lerp } from '../core/dmath';
 
-export const LOCAL_TUNING = {
-  // ---- body geometry (for a 185 cm keeper; scaled by height)
-  /** Hip-to-hand-point distance of a stretched diver, m. */
-  armReach: 0.95,
-  /** Hand / forearm radius of the dive capsule, m (contact when the ball centre is within this + BALL_RADIUS). */
-  handRadius: 0.2,
-  /** Feet behind the hip along the dive line, m (body part of the dive capsule: blocks only). */
-  legLength: 0.9,
-  /** Fraction of the dive capsule (feet 0 .. hands 1) from which a contact counts as hands. */
-  handsFrom: 0.55,
-  /** Hip height of a dive: standing hip, m; blend toward the target height; clamp, m. */
-  hipStand: 0.95,
-  hipBlend: 0.6,
-  hipMin: 0.35,
-  hipMax: 1.5,
-  /** Standing catch radius around the body axis, m (arms). */
-  standArm: 0.6,
-  /** Body-only radius for an unready keeper (reflex block), m. */
-  bodyRadius: 0.32,
-  /** Reach heights as multiples of keeper height (max ball-centre height): standing (small jump), dive near, dive
-   *  at full stretch. */
-  standTopMul: 1.22,
-  diveTopNearMul: 1.32,
-  diveTopFarMul: 1.16,
-  // ---- dive timing
-  /** Load / push-off ticks before the hip moves (arms extend 50% -> 100% meanwhile). */
-  diveWindupTicks: 6,
-  /** Ticks for the hip to accelerate from rest to the dive speed (uniform acceleration). */
-  diveAccelTicks: 12,
-  /** Ticks the arms stay stretched (contact active) after full extension. */
-  diveStretchTicks: 8,
-  /** Ticks on the ground after a low / mid / high dive. */
-  diveGroundLow: 10,
-  diveGroundMid: 14,
-  diveGroundHigh: 20,
-  /** Get-up ticks at gkDiving 99 / 1. */
-  getUpBest: 14,
-  getUpWorst: 26,
-  /** Hands aim this far past the ball's lateral position, m. */
-  diveOvershoot: 0.25,
-  /** Shortest hip-to-hand offset of a dive (a leap for a ball right above him), m. */
-  minHandOffset: 0.3,
-  /** Height classes (actA) by target ball-centre height, m. */
-  lowMax: 0.6,
-  midMax: 1.5,
-  // ---- standing / set position
-  /** Step allowance of a standing save: fraction of the keeper's acceleration assumed (arrival steering is not a
-   *  straight sprint), cap m, setup ticks. */
-  stepAccelFrac: 0.6,
-  stepMax: 0.8,
-  stepSetupTicks: 3,
-  /** GK_CATCH movement speed toward the save spot, m/s. */
-  setMoveSpeed: 5,
-  /** GK_CATCH lasts this many ticks past the planned arrival. */
-  catchPostTicks: 10,
-  /** Ready stance (GK_CATCH, feet planted) taken while a goal-bound ball has not been reacted to yet, ticks
-   *  (renewed every tick until he reacts). */
-  setHoldTicks: 4,
-  /** Commit a dive when (ticks until the ball arrives) - (ticks the hands need) <= this. */
-  commitSlackTicks: 2,
-  /** [QF-14] Drop back (GKP-02 planIntercept, 1 = on): with nothing reachable where he stands, track the first sample
-   *  behind his plane he can reach standing after backpedalling (SIM-04 jockey cap at sprint), starting this late. */
-  dropBack: 1,
-  dropSlackTicks: 8,
-  /** [QF-14] GK_CATCH tracking / dropping back moves at the sprint jockey cap (1) instead of the jog one (0). */
-  trackSprint: 1,
-  // ---- perception
-  /** Screening: radius around the sight line m, extra reaction ticks per screening player, max players counted. */
-  screenRadius: 0.7,
-  screenTicks: 4,
-  screenMax: 2,
-  /** Threat filter: min speed toward the goal m/s, max distance from the goal line m, lateral pre-filter margin m. */
-  threatMinSpeed: 5,
-  threatMaxDist: 45,
-  threatLateralMargin: 8,
-  /** Margin around the goal mouth that still counts as "going in" for the prediction, m. */
-  mouthMargin: 0.1,
-  /** Predicted samples this far behind the keeper's plane still count, m; a ball further behind has passed him. */
-  planeBackReach: 0.5,
-  /** Prediction horizon: extra ticks over the straight-line time, and the time multiplier for deceleration. */
-  predictExtraTicks: 12,
-  predictTimeMul: 1.4,
-  /** Despairing dive: only when the closest approach is within maxReach * this and within this many ticks. */
-  hopelessReachMul: 1.6,
-  hopelessMaxTicks: 40,
-  /** Extra height allowed for a despairing dive over diveTopNear, m. */
-  hopelessHeightSlack: 0.3,
-  /** The keeper's body stays at least this far in front of his goal line, m. */
-  minDepth: 0.15,
-  // ---- contact
-  /** Unready (reflex) blocks: min speed toward the goal m/s, look-ahead s, mouth margin m. */
-  reflexMinSpeed: 6,
-  reflexHorizon: 2,
-  reflexMouthMargin: 1,
-  /** No new keeper contact within this many ticks of his own last touch. */
-  recontactTicks: 12,
-  /** Catch speed multiplier of T_GK.catchSpeed at gkHandling 1 / 99. */
-  catchMulWorst: 0.9,
-  catchMulBest: 1.5,
-  /** Catch limit cut at full stretch (fraction) and above head height (fraction, height m). */
-  stretchCatchPenalty: 0.35,
-  highCatchPenalty: 0.15,
-  headHeight: 1.9,
-  /** Tip over: contact at or above GOAL_HEIGHT - tipBand (m), within tipMaxDepth m of the line, ball faster than
-   *  tipMinSpeed (m/s). */
-  tipBand: 0.4,
-  tipMaxDepth: 5,
-  tipMinSpeed: 8,
-  /** Tip over: speed toward the goal after the tip (min m/s, fraction of incoming), ball-centre height to clear at
-   *  the line (m), max lift (m/s). */
-  tipGoalwardMin: 3,
-  tipGoalwardFrac: 0.35,
-  tipClearHeight: 2.8,
-  tipMaxLift: 12,
-  /** Parry: speed fraction poor/good, angle off the outward axis poor/good (rad), noise (rad), lift poor/good (m/s). */
-  parryRestPoor: 0.3,
-  parryRestGood: 0.42,
-  parryAnglePoor: 0.15,
-  parryAngleGood: 1.2,
-  parryNoise: 0.15,
-  parryLiftPoor: 0.8,
-  parryLiftGood: 4,
-  parryHighLift: 1,
-  parryStretchPenalty: 0.35,
-  parryMinSpeed: 3,
-  /** Contact z within this of the goal centre: parry side from the dive / ball direction, m. */
-  parryCentreBand: 0.3,
-  /** Body block: normal restitution, tangential speed kept, goal-ward speed kept when bouncing toward goal. */
-  blockRestitution: 0.3,
-  blockTangential: 0.5,
-  blockGoalwardKeep: 0.3,
-} as const; // TUNING-CR
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_GK_SAVE. */
+export const LOCAL_TUNING = T_GK_SAVE;
 
-const L = LOCAL_TUNING;
+
+const L = T_GK_SAVE;
 /** Ball-centre distance from the hand point that still touches: hand radius + ball radius, m. */
 export const CAP_TOL = L.handRadius + BALL_RADIUS;
 const EPS = 1e-9;
@@ -294,8 +165,9 @@ export function standTop(a: Readonly<PlayerAttrs>): number {
   return heightM(a) * L.standTopMul;
 }
 
-/** Lowest / highest point of the standing catch capsule axis, m (radius standArm; top of reach = standTop). */
-export const STAND_AXIS_LOW = 0.25;
+/** Lowest / highest point of the standing catch capsule axis, m (radius standArm; top of reach = standTop). [TUN-1] The
+ *  value is contracts/tuning.ts T_GK_SAVE.standAxisLow. */
+export const STAND_AXIS_LOW = T_GK_SAVE.standAxisLow;
 export function standAxisTop(a: Readonly<PlayerAttrs>): number {
   const top = standTop(a) - L.standArm - BALL_RADIUS;
   return top > STAND_AXIS_LOW ? top : STAND_AXIS_LOW;

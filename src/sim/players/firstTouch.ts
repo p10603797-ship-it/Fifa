@@ -87,14 +87,14 @@
  */
 // Re-export the handler shell FIRST (import-cycle safety with actions/registry; see firstTouchHooks.ts).
 export { firstTouchHandler } from './firstTouchHooks';
-import { bindFirstTouchImpl, CHEST_REACH_MUL } from './firstTouchHooks';
+import { bindFirstTouchImpl } from './firstTouchHooks';
 import { BALL_RADIUS, DT, NUM_SLOTS, PLAYERS_PER_TEAM, teamFirstSlot } from '../../contracts/constants';
 import { ActionKind, CrossKind, KickKind, MatchPhase, isFootPassKind, isShotKind } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
 import { MoveMode, type BallState, type SimState } from '../../contracts/state';
 import { createKickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_DRIBBLE, T_PLAYER, T_TOUCH } from '../../contracts/tuning';
+import { T_BALL, T_DRIBBLE, T_PLAYER, T_TOUCH, T_FIRST_TOUCH } from '../../contracts/tuning';
 import { beginAction, isFree } from '../actions/dispatch';
 import { applyKick, ballTouchedThisTick, takePossession } from '../core/kick';
 import { clamp01, unlerp } from '../core/dmath';
@@ -102,93 +102,11 @@ import { pressureOn } from '../core/query';
 import { rngFloat } from '../core/rng';
 import { maxSpeed } from './locomotion';
 
-/** TUNING-CR (SIM-07): proposed additions to T_TOUCH (units in the comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  /** A ground ball at or below this horizontal speed is no first touch (SIM-06 picks it up), m/s. */
-  minTrapSpeed: 3,
-  /** Airborne (a first touch at any speed): not grounded and the ball centre this far above its resting height, m. */
-  airborneLift: 0.04,
-  /** Thigh / chest reach radius as a fraction of T_TOUCH.receiveRadius (the body has to get under the ball). */
-  chestReachMul: CHEST_REACH_MUL,
-  /** The last kicker cannot receive his own kick for this many ticks (mirrors SIM-06 selfKickTicks). */
-  selfKickTicks: 12,
-  /** Outfield opponents leave an untouched pass at or below this ball height to SIM-14 interceptions, m. */
-  interceptHeight: 1.0,
-  /** First-time PASS_COMPLETE: the pass comes within this horizontal distance of him, m (>= the kick modules'
-   *  first-time contact reach, ~1.2 m). */
-  firstTimeReach: 1.3,
-  /** ... at or below this ball height for a header (feet / volleys: T_TOUCH.trapHeight), m. */
-  headerTop: 2.8,
-  /** Slow untouched pass pick-up: max horizontal ball speed, m/s (mirrors SIM-06 pickUpMaxSpeed). */
-  pickUpMaxSpeed: 6,
-  // ---------------------------------------------------------------- quality
-  /** Relative ball speed below which speed adds no difficulty, m/s. */
-  softSpeed: 6,
-  /** Speed difficulty at T_TOUCH.hardBallSpeed (linear from softSpeed, continuing above), unitless. */
-  hardDifficulty: 0.35,
-  /** Difficulty of any first touch, unitless. */
-  baseDifficulty: 0.05,
-  /** Ball centre height at or below which height adds no difficulty, m. */
-  heightEasy: 0.3,
-  /** Height difficulty at T_TOUCH.trapHeight (linear from heightEasy), unitless. */
-  heightDifficulty: 0.12,
-  /** Difficulty at full pressure (query.pressureOn = 1), unitless. */
-  pressureDifficulty: 0.15,
-  /** Difficulty with sprint held, unitless. */
-  sprintDifficulty: 0.15,
-  /** Difficulty of a ball coming from straight behind him (0 when he faces it), unitless. */
-  facingDifficulty: 0.2,
-  /** Relative ball speed at which the facing term counts in full, m/s. */
-  facingRefSpeed: 6,
-  /** Difficulty multiplier at ballControl 1 and at 99, unitless. */
-  skillMulWorst: 1.44,
-  skillMulBest: 0.34,
-  // ---------------------------------------------------------------- outcome
-  /** Quality at or below which a touch is never clean, and at or above which it always is (0..1). */
-  qHeavyLo: 0.1,
-  qCleanHi: 0.7,
-  /** A touch that is not clean misses with probability 1 at q = 0 falling to 0 at qMissHi (0..1), scaled by how far
-   *  from his body (T_PLAYER.bodyRadius .. his reach) the ball's path passes. */
-  qMissHi: 0.45,
-  /** Heavy touch: angular error at q = 0, rad. */
-  heavyAngleMax: 0.6,
-  /** Heavy touch: weight of the incoming ball direction at hardBallSpeed (scales with speed, capped), unitless. */
-  heavyCarry: 0.5,
-  heavyCarryMax: 0.8,
-  /** Heavy chest / thigh touch: upward ball speed, m/s. */
-  heavyPopVy: 1.5,
-  /** Ticks a heavy toucher cannot regain the ball / a player who missed cannot try again. */
-  heavyNoTouchTicks: 18,
-  missNoTouchTicks: 12,
-  /** 1 = a heavy touch of a teammate's pass completes the pass (it reached him), 0 = only clean control does. */
-  heavyCountsAsComplete: 1,
-  // ---------------------------------------------------------------- clean settle and the FIRST_TOUCH window
-  /** Below this speed the receiver counts as standing (close settle), m/s. */
-  standSpeed: 0.6,
-  /** DIRECT stick magnitude below which the stick counts as released, 0..1. */
-  stickDead: 0.05,
-  /** Max ball speed of a settling touch, m/s. */
-  settleMaxSpeed: 14,
-  /** [QF-9] Clean settle: max sideways ball speed (relative to him) that brings the ball onto his line, m/s; and the
-   *  shortest time it is given to get there, s. */
-  settleLatMax: 3,
-  settleLatMinTime: 0.2,
-  /** [QF-9] Clean settle speed solver: horizon s, step s, bisection iterations, upper bound above his speed m/s. */
-  settleSolveHorizon: 2.5,
-  settleSolveStep: 1 / 30,
-  settleSolveIters: 14,
-  settleSolveHiExtra: 8,
-  /** Vertical speed of a ball cushioned down from the air, m/s. */
-  cushionVy: -0.5,
-  /** Extra FIRST_TOUCH ticks for a thigh / chest trap (the ball has to come down). */
-  aerialExtraTicks: 8,
-  /** Movement cap during FIRST_TOUCH as a fraction of jog speed (DIRECT stick magnitude / ARRIVE speed). */
-  slowFraction: 0.6,
-  /** KICK event power = incoming relative ball speed / this, m/s. */
-  touchPowerRef: 22,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_FIRST_TOUCH. */
+export const LOCAL_TUNING = T_FIRST_TOUCH;
 
-const L = LOCAL_TUNING;
+
+const L = T_FIRST_TOUCH;
 
 /** FIRST_TOUCH outcome codes (p.actA during the action). */
 export const TouchOutcome = { NONE: 0, CLEAN: 1, HEAVY: 2, MISS: 3 } as const;

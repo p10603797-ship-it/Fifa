@@ -30,7 +30,7 @@
  *      point when the swipe carries no direction), gPower = power ("faster is harder to save and less accurate": SIM-11's
  *      error grows with power above T_SHOT.errorPowerKnee); CURVED_SWIPE = finesse with gCurve; BACK_FORTH_SWIPE = power
  *      shot; TAP / DOUBLE_TAP on the goal (GestureFlag.ON_GOAL) = chip at that point. A swipe away from the goal is
- *      ignored. The same controls as RUL-07's shoot-out kicks (same LOCAL_TUNING values).
+ *      ignored. The same controls as RUL-07's shoot-out kicks (same T_PENALTY values).
  *  - Keeper input (the defending side's HUMAN controller holding the defending keeper; SIM-16 hands him over at
  *    penalties), once ready and until the kick is struck (also while the taker winds up):
  *      left stick moves him along his line (|z| <= keeperMaxZ at keeperStickFrac of the stick, easing into the limit
@@ -54,7 +54,7 @@
  *  - Default (RUL-11 calls it at the human timeout; also the CPU fallback): keep the aim the taker set, else a corner
  *    chosen by s.rng (defaultInsetMin..Max inside a post); SIM-11 startShot(PENALTY) at defaultPower (no charging).
  *    Never while the taker is already kicking or down.
- *  - Exports beyond the stub: LOCAL_TUNING, DiveHeight, PenaltyDiveChoice / createPenaltyDiveChoice,
+ *  - Exports beyond the stub: LOCAL_TUNING (= T_PENALTY), DiveHeight, PenaltyDiveChoice / createPenaltyDiveChoice,
  *    penaltyDiveChoice, penaltySpot, pickPenaltyTaker, penaltyKeeper, penaltyAimFromDir, penaltyDiveFromDir.
  *    No per-player choice tick is stored (no free state field; GKP-06 only needs the latest choice at contact).
  * Determinism: s.rng only in the Default aim. Per-tick work is O(1) (setup: O(11)); allocation-free (module scratch
@@ -68,49 +68,17 @@ import type { EventSink } from '../../contracts/events';
 import { AXIS_SCALE, Btn, GESTURE_POS_SCALE, GestureFlag, UNIT_SCALE, type InputFrame } from '../../contracts/input';
 import { MoveMode, type ControllerState, type PlayerState, type SimState } from '../../contracts/state';
 import { createActionRequest, ReqFlag } from '../../contracts/systems';
-import { T_INPUT, T_PLAYER, T_RULES } from '../../contracts/tuning';
+import { T_INPUT, T_PLAYER, T_RULES, T_PENALTY } from '../../contracts/tuning';
 import { releasePossession } from '../core/kick';
 import { teamHasHuman } from '../core/query';
 import { rngInt, rngRange } from '../core/rng';
 import { startShot } from '../kicks/shot';
 import { isValidTaker, prepareTakerKick, restartTakerSpot } from './restart';
 
-/** TUNING-CR (RUL-06): proposed T_PENALTY block (units in comments; shared with RUL-07's shoot-out kicks). */
-export const LOCAL_TUNING = { // TUNING-CR
-  /** Aim: |z| where the aim meets the goal line is clamped to this (inside the posts), m. */
-  aimMaxZ: GOAL_HALF_WIDTH - 0.25,
-  /** A stick / swipe needs at least this share of its length toward the goal to aim along its ray (0..1); less aims at
-   *  the corner on its side. */
-  aimMinForward: 0.05,
-  /** Power 0..1 for a swipe that carries no speed, and for a chip from a tap on the goal. */
-  gesturePower: 0.7,
-  chipTapPower: 0.45,
-  /** Default kick: power 0..1 and aim inset from a post, m (range drawn from s.rng). */
-  defaultPower: 0.72,
-  defaultInsetMin: 0.5,
-  defaultInsetMax: 1.2,
-  /** CPU fallback: Default this long after T_RULES.cpuRestartDelay past ready, ticks (1 s; TAI-13 presses SHOOT ~0.2 s
-   *  after cpuRestartDelay), retried every cpuRetryTicks while the taker still waits, ticks. */
-  cpuGraceTicks: 60,
-  cpuRetryTicks: 30,
-  /** Human keeper before the kick: moves along his line up to |z| = keeperMaxZ, m, at this fraction of the stick
-   *  (0..1), slowing down over the last keeperBrakeDist m before the limit. */
-  keeperMaxZ: 3.0,
-  keeperStickFrac: 0.5,
-  keeperBrakeDist: 0.6,
-  /** Dive from a flick / swipe: lateral share for a side, share along the attack direction for high (against: low). */
-  diveSideShare: 0.38,
-  diveHeightShare: 0.38,
-  /** Dive from a tap: lateral offset from the keeper beyond which he dives to that side, m. */
-  diveTapBand: 0.8,
-  /** Before ready the taker walks to his spot behind the ball: done within walkStop, m; sprints beyond walkSprintDist, m. */
-  walkStop: 0.3,
-  walkSprintDist: 6,
-  /** Once ready the waiting taker turns toward his aim point by this fraction of the remaining facing difference per
-   *  tick (0..1; the SET_PIECE handler locks his motion, and SIM-04 does not turn a LOCKED player). */
-  faceGain: 0.2,
-} as const;
-const LT = LOCAL_TUNING;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_PENALTY. */
+export const LOCAL_TUNING = T_PENALTY;
+
+const LT = T_PENALTY;
 
 /** Dive height classes stored in restart.aimPower (GKP-06 humanDiveChoice). */
 export const DiveHeight = {

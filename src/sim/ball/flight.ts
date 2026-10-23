@@ -24,41 +24,20 @@
  * with ballAirStep (fixed step, fixed max iterations, deterministic). Everything is allocation-free.
  */
 import { BALL_RADIUS, DT } from '../../contracts/constants';
-import { T_BALL } from '../../contracts/tuning';
+import { T_BALL, T_FLIGHT } from '../../contracts/tuning';
 import { createBallState, type BallState } from '../../contracts/state';
 import { MAX_PREDICT_TICKS, type BallPrediction } from '../../contracts/systems';
 import { dcos, dlog, dsin } from '../core/dmath';
 import type { V3 } from '../core/vec';
 import { ballStepTick } from './contact';
 
-const LOCAL_TUNING = {
-  /**
-   * Quadratic drag coefficient actually used, 1/m (a = -dragK * |v| * v). Replaces T_BALL.dragK (0.0133, Cd 0.25)
-   * with Cd ~0.14 (post drag-crisis regime of a modern ball at 15-35 m/s): a 30 m/s goal kick at T_PASS.lobAngle
-   * then carries ~60 m (reference feel: 45-60 m reachable at <= 30 m/s; 0.0133 tops out at ~50 m).
-   */
-  dragK: 0.0075,
-  /**
-   * Magnus coefficient actually used, (m/s^2) per (rad/s * m/s). Replaces T_BALL.magnusK (0.0042), which bends a
-   * 9 rad/s, 25 m free kick only ~0.5 m; 0.025 bends it ~2.5-3 m (reference feel 2-4 m) and makes a 12 rad/s
-   * backspin chip float.
-   */
-  magnusK: 0.025,
-  /** predictBall landIndex threshold: ball-centre height (m) that counts as "landed" when descending. */
-  landHeight: 0.5,
-  /** ticksToHeight horizon (ticks). */
-  ticksToHeightCap: 300,
-  /** solveLaunch elevation clamp (rad): a lofted ball needs some loft; >= ~83 degrees is nonsense. */
-  launchAngleMin: 0.02,
-  launchAngleMax: 1.45,
-} as const; // TUNING-CR
 
-/** Magnus coefficient used by ballAirStep (see LOCAL_TUNING.magnusK). */
-export const MAGNUS_K = LOCAL_TUNING.magnusK;
-/** Drag coefficient used by ballAirStep (see LOCAL_TUNING.dragK). */
-export const DRAG_K = LOCAL_TUNING.dragK;
+/** Magnus coefficient used by ballAirStep (see T_FLIGHT.magnusK). */
+export const MAGNUS_K = T_FLIGHT.magnusK;
+/** Drag coefficient used by ballAirStep (see T_FLIGHT.dragK). */
+export const DRAG_K = T_FLIGHT.dragK;
 /** Landing threshold used by predictBall (ball-centre height, m). */
-export const LAND_HEIGHT = LOCAL_TUNING.landHeight;
+export const LAND_HEIGHT = T_FLIGHT.landHeight;
 /** Hot-loop copies of imported tuning (module-level: no import-binding lookups per substep). */
 const GRAVITY = T_BALL.gravity;
 const SPIN_DECAY_AIR = T_BALL.spinDecayAir;
@@ -215,7 +194,7 @@ export function ticksToHeight(b: Readonly<BallState>, h: number): number {
   if (b.heldBy >= 0 || !(h >= BALL_RADIUS)) return -1;
   copyBallState(TTH, b);
   let prevY = TTH.y;
-  const cap = LOCAL_TUNING.ticksToHeightCap;
+  const cap = T_FLIGHT.ticksToHeightCap;
   for (let k = 1; k <= cap; k++) {
     ballStepTick(TTH, null);
     const y = TTH.y;
@@ -406,9 +385,9 @@ export function solveLaunchSpin(
   if (!(dist < Infinity)) return 0; // NaN or infinite target
   const curlV = curl === curl && curl < Infinity && curl > -Infinity ? curl + 0 : 0;
   const backV = backspin === backspin && backspin < Infinity && backspin > -Infinity ? backspin + 0 : 0;
-  let th = angle === angle ? angle : LOCAL_TUNING.launchAngleMin;
-  if (th < LOCAL_TUNING.launchAngleMin) th = LOCAL_TUNING.launchAngleMin;
-  if (th > LOCAL_TUNING.launchAngleMax) th = LOCAL_TUNING.launchAngleMax;
+  let th = angle === angle ? angle : T_FLIGHT.launchAngleMin;
+  if (th < T_FLIGHT.launchAngleMin) th = T_FLIGHT.launchAngleMin;
+  if (th > T_FLIGHT.launchAngleMax) th = T_FLIGHT.launchAngleMax;
   const ct = dcos(th);
   const st = dsin(th);
   // Unit aim direction (any direction for a zero offset).

@@ -68,8 +68,17 @@ async function invariants(page: Page): Promise<string[]> {
     const cur = d.ctx.router.current;
     if (cur === null) bad.push('no current screen');
     if (cur === 'recovery') bad.push(`recovery screen: ${document.querySelector('#ui')?.textContent?.slice(0, 200)}`);
-    const screens = document.querySelectorAll('#ui > .screen').length;
-    if (screens !== 1) bad.push(`${screens} screens mounted`);
+    // [QF-17] One screen, or the match screen kept under the half-time overlay; a half-time screen built ahead
+    // ([data-prepared], hidden) is not counted.
+    const screens = document.querySelectorAll('#ui > .screen:not([data-prepared])').length;
+    const mounted = (d.ctx.router as unknown as { mounted?: readonly string[] }).mounted ?? [String(cur)];
+    if (screens !== mounted.length) bad.push(`${screens} screens mounted (router: ${mounted.join(' + ')})`);
+    if (mounted.length > 1 && mounted.join(' + ') !== 'match + half-time') bad.push(`layers ${mounted.join(' + ')}`);
+    // [QF-17 skeptic] At most one screen built ahead, and in the DOM only over the match screen (or on the loading
+    // screen it is built on): under any other screen it is out of the DOM (no hidden duplicate test ids).
+    const prepared = document.querySelectorAll('#ui > .screen[data-prepared]').length;
+    if (prepared > 1) bad.push(`${prepared} screens built ahead`);
+    if (prepared === 1 && cur !== 'match' && cur !== 'loading') bad.push(`a screen built ahead left under ${String(cur)}`);
     const s = d.ctx.session as typeof d.ctx.session & { loaded?: boolean };
     if (s.active && s.loaded === true && !s.getState()) bad.push('loaded session without state');
     return bad;

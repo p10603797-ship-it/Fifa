@@ -112,7 +112,7 @@ import {
   MAX_CHALLENGES, MoveMode, createChallengeRecord, type ChallengeRecord, type PlayerState, type SimState,
 } from '../../contracts/state';
 import { createKickLaunch, type ActionRequest, type KickLaunch } from '../../contracts/systems';
-import { T_BALL, T_DRIBBLE, T_PLAYER, T_TACKLE } from '../../contracts/tuning';
+import { T_BALL, T_DRIBBLE, T_PLAYER, T_TACKLE, T_TACKLE_PLAY } from '../../contracts/tuning';
 import { RESTART_PHASES } from '../../contracts/transitions';
 import { beginAction, endAction, isFree } from '../actions/dispatch';
 import { clamp01, dcos, dsin, lerp } from '../core/dmath';
@@ -122,226 +122,13 @@ import { rngFloat, rngGauss } from '../core/rng';
 import { createV2, rotateToward2 } from '../core/vec';
 import { aerialChance, startAerialClearance } from '../kicks/aerial';
 import { inSkillVulnerableWindow } from '../kicks/skills';
-import { bodyRadiusOf, shieldBlocks } from '../players/bodies';
+import { BODY_RADIUS_OUT, bodyRadiusInto, shieldBlocks } from '../players/bodies';
 
-/** TUNING-CR (SIM-14): proposed additions to T_TACKLE (units in the comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  // ---- standing / hard tackle movement
-  /** Lunge speed along the tackle direction in the contact window (his own speed if faster), m/s. */
-  standLungeSpeed: 3.2,
-  /** Hard tackle lunge speed multiplier. */
-  hardLungeMul: 1.25,
-  /** Max turn of the lunge direction toward the ball per tick until the contact, rad. */
-  lungeTurnPerTick: 0.12,
-  /** Wind-up: fraction of his speed along the lunge kept per tick (plants the standing foot). */
-  windupSpeedKeep: 0.9,
-  /** Aim at the ball (start, homing) when it is within this distance, m; else straight ahead / at the target. */
-  aimRange: 8,
-  /** Faster than this he aims a tackle with nothing to aim at along his run (else his facing), m/s. */
-  movingSpeed: 0.5,
-  // ---- foot zones
-  /** Standing / hard tackle: ball within this half-angle of the lunge direction (beyond closeRadius), rad. */
-  standConeHalf: 1.3,
-  /** ... or within this distance of his centre in any direction, m. */
-  closeRadius: 0.6,
-  /** Max ball height for a standing / hard tackle, m. */
-  ballHeight: 0.7,
-  /** Max ball height for a slide, m. */
-  slideBallHeight: 0.5,
-  /** Standing / hard tackle: the victim's body counts as hit within this fraction of the reach (body edge), m/m ... */
-  bodyReachFrac: 0.75,
-  /** ... inside this frontal cos (dot of lunge direction and direction to him). */
-  bodyConeCos: 0.2,
-  /** Bodies closer than radii + this always count as a contact, m. */
-  bodyMargin: 0.15,
-  /** Body first: the carrier's body edge lies at least this much before the ball along the tackler's line, m ... */
-  ballFirstMargin: 0.15,
-  /** ... and his centre within his radius + this of that line, m. */
-  blockLateral: 0.25,
-  // ---- success model
-  /** [QF-14] was 0.5: a front standing tackle at a close ball won about 30% (22% of all tackles), every lost one with the
-   *  carrier's body in the zone a foul; 0.7: 28% of all tackles, fouls 13.5 -> 12.8 a match (docs/TUNING.md QF-14). */
-  baseChance: 0.7,
-  /** Weight of (tackle skill - resistance), both 0..1. [QF-14] 0.55 -> 0.8: with the club-rating gap showing less in a
-   *  lower-scoring match, the tackler's and the carrier's attributes decide more of a challenge (docs/TUNING.md QF-14). */
-  attrWeight: 0.8,
-  /** Resistance = weights x (dribbling, ballControl, strength) (attr 1..99 -> 0..1). */
-  resistDribbling: 0.6,
-  resistControl: 0.25,
-  resistStrength: 0.15,
-  /** Weight of (exposure - 0.5). */
-  exposureWeight: 0.3,
-  /** Ball-to-carrier distance for exposure 0 and 1 between touches, m. */
-  exposureNear: 0.35,
-  exposureFar: 1.2,
-  /** Exposure in the carrier's first-touch window and in a kick wind-up, 0..1. */
-  firstTouchExposure: 0.8,
-  kickWindupExposure: 0.6,
-  /** Chance multiplier while the carrier is in a skill move outside its vulnerable window. */
-  skillProtectMul: 0.15,
-  /** Chance x (1 - this x (d / reach)^2). */
-  edgeReachPenalty: 0.35,
-  /** Angle multipliers: from the front (facing dot -1), the side (0), behind (+1); linear between. */
-  frontMul: 1.0,
-  sideMul: 0.9,
-  behindMul: 0.45,
-  /** Chance multiplier when the carrier shields the ball from him (SIM-05 shieldBlocks). */
-  shieldMul: 0.25,
-  hardBonus: 0.08,
-  slideBonus: 0.05,
-  minChance: 0.03,
-  maxChance: 0.95,
-  /** Standing / hard tackle on a loose ball in reach. */
-  looseChance: 0.92,
-  // ---- outcome of a won tackle
-  /** Chance a standing tackle keeps the ball (standingTackle 1 .. 99). */
-  keepChanceLo: 0.3,
-  keepChanceHi: 0.75,
-  hardKeepMul: 0.5,
-  /** The ball cannot be kept faster than this relative to him, m/s. */
-  keepMaxBallSpeed: 7,
-  /** Kept / intercepted ball: settles this far ahead of him ... m */
-  settleAhead: 0.5,
-  /** ... over this time, s; along his run when faster than settleRunSpeed (m/s), else toward the ball. */
-  settleTime: 0.25,
-  settleRunSpeed: 1,
-  /** Ball speed giving a KICK event power of 1 for pokes / deflections, m/s. */
-  kickPowerRef: 20,
-  /** Poke spread (half-angle around the lunge direction), rad. */
-  standPokeSpread: 1.4,
-  hardPokeSpread: 0.7,
-  slidePokeSpread: 1.0,
-  /** Poke speed ranges, m/s. */
-  standPokeLo: 3.5,
-  standPokeHi: 6.5,
-  hardPokeLo: 6.0,
-  hardPokeHi: 10.0,
-  slidePokeLo: 6.0,
-  slidePokeHi: 10.0,
-  /** Share of the tackler's velocity added to a poke. */
-  pokeCarry: 0.3,
-  /** Beaten standing / hard tackler stumbles this long, ticks. */
-  beatenStumbleTicks: 20,
-  /** Victim of a shoulder / push / ball-first hard or slide body contact stumbles this long, ticks. */
-  shortStumbleTicks: 16,
-  // ---- slide
-  slideMinSpeed: 5.0,
-  slideMaxSpeed: 8.6,
-  /** The slide speed decays linearly to 0 over this many ticks from the contact start. */
-  slideGlideTicks: 26,
-  /** Foot segment length from his centre and its half-width, m. */
-  slideFootReach: 1.2,
-  slideFootRadius: 0.5,
-  /** Victim body hit when his centre is within his radius + this of the foot segment, m. */
-  slideBodyMargin: 0.2,
-  // ---- shoulder
-  shoulderWindup: 3,
-  shoulderContactTicks: 10,
-  shoulderRecovery: 8,
-  /** Duel: 0.5 + (strength diff) / span (+ sprintBonus when he sprints, - shieldPenalty vs a shielding carrier). */
-  shoulderStrengthSpan: 80,
-  shoulderSprintBonus: 0.05,
-  shoulderShieldPenalty: 0.1,
-  shoulderMinChance: 0.1,
-  shoulderMaxChance: 0.9,
-  /** Sideways bump given to the duel loser, m/s. */
-  shoulderPush: 1.6,
-  // ---- push / pull
-  pushWindup: 2,
-  pushContactTicks: 14,
-  pushRecovery: 10,
-  /** Carrier / puller velocity kept per tick while in contact. */
-  pullKeep: 0.95,
-  pullSelfKeep: 0.98,
-  /** Balance duel: base + (strength diff) / span, clamped. */
-  pushBalanceBase: 0.2,
-  pushStrengthSpan: 150,
-  pushMinChance: 0.05,
-  pushMaxChance: 0.5,
-  // ---- down states
-  /** STUMBLE: max |DIRECT stick| / ARRIVE speed as a fraction of jog. */
-  stumbleMoveScale: 0.35,
-  /** Share of his speed kept when he starts to stumble. */
-  stumbleSpeedKeep: 0.6,
-  /** Quick get-up from FALLEN allowed after this many ticks on the ground. */
-  fallQuickMinTicks: 20,
-  // ---- ball stuck under a down player
-  downBallSpeed: 1.5,
-  downBallHeight: 0.3,
-  downBodyHalf: 0.8,
-  downBodyRadius: 0.45,
-  squirtSpeed: 2.5,
-  // ---- keeper priority
-  keeperPriorityDist: 2.5,
-  // ---- clearance
-  clearWindup: 8,
-  clearMinWindup: 3,
-  clearRecovery: 14,
-  /** Accept a ball arriving within this many ticks, on a path within clearLane of him (inside SIM-08's reach). */
-  clearMaxLeadTicks: 40,
-  clearLane: 1.1,
-  /** In reach now: within this horizontal distance and height (SIM-08 reachRadius / reachHeight), m. */
-  clearReachRadius: 1.2,
-  clearReachHeight: 0.8,
-  clearMinPower: 0.6,
-  clearSpeedMin: 19,
-  clearSpeedMax: 27,
-  /** Launch elevation, rad (~34 deg). */
-  clearAngle: 0.6,
-  /** Opponent within this distance = under pressure (toward the touchline), m. */
-  clearPressureDist: 4,
-  /** Pressured target: |z| and distance upfield, m. */
-  clearTouchlineZ: 31,
-  clearUpfield: 28,
-  /** Minimum forward component (cos to the attack direction); an aim error may not leave this x clearErrForwardFrac. */
-  clearMinForward: 0.4,
-  clearErrForwardFrac: 0.5,
-  /** Pressured from the centre (|z| below this, m): the side he faces. */
-  clearCentreBand: 0.5,
-  /** Kicking quality weights (the rest: shotPower) and the speed share that does not depend on quality. */
-  clearQualityLong: 0.5,
-  clearQualityStrength: 0.3,
-  clearPowerFloor: 0.6,
-  /** Planned landing point: no-drag range x this. */
-  clearRangeDragFrac: 0.75,
-  /** Aim error sigma at best / worst quality, rad; speed error sigma, fraction. */
-  clearErrBase: 0.05,
-  clearErrMax: 0.2,
-  clearSpeedErr: 0.06,
-  clearSpeedErrCap: 0.2,
-  // ---- interceptions
-  interceptMaxHeight: 1.0,
-  interceptMinSpeed: 6,
-  interceptChanceMin: 0.25,
-  interceptChanceMax: 0.9,
-  /** Weight of interceptions in the blend (rest agility, standing in for reactions). */
-  interceptAttrW: 0.65,
-  interceptEasySpeed: 8,
-  interceptHardSpeed: 26,
-  interceptHardMul: 0.35,
-  interceptEdgeMul: 0.45,
-  interceptHighMul: 0.6,
-  /** Full distance factor inside this fraction of the reach; full height factor up to this height, m. */
-  interceptCoreFrac: 0.5,
-  interceptLowHeight: 0.5,
-  interceptBehindMul: 0.6,
-  interceptMaxChance: 0.97,
-  /** Max ball speed relative to him for a controlled interception (ballControl 1 .. 99), m/s. */
-  interceptControlSpeedLo: 10,
-  interceptControlSpeedHi: 16,
-  /** Block: normal restitution and kept tangential share (relative to him). */
-  blockRestitution: 0.3,
-  blockTangentKeep: 0.5,
-  /** A path within this fraction of his body radius cannot slip past him ... */
-  interceptBodyBlock: 0.8,
-  /** ... and he traps it (instead of a block) below this share of his controlled-interception speed. */
-  bodyControlFrac: 0.6,
-  /** [QF-9] A fresh shot is blocked by an outfield opponent's body up to this ball height (torso), m; his reach-entry
-   *  roll (a stretched leg) only up to interceptMaxHeight. */
-  shotBlockHeight: 1.8,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_TACKLE_PLAY. */
+export const LOCAL_TUNING = T_TACKLE_PLAY;
 
-const L = LOCAL_TUNING;
+
+const L = T_TACKLE_PLAY;
 const T = T_TACKLE;
 const NS = NUM_SLOTS;
 const DTS = 1 / TICK_HZ;
@@ -820,10 +607,12 @@ function ballInZone(s: SimState, p: PlayerState, k: ActionKind): boolean {
 /** Is victim v's body in the contact zone of tackler p (kind k)? */
 function bodyInZone(s: SimState, p: PlayerState, k: ActionKind, v: number): boolean {
   const q = s.players[v]!;
-  const rv = bodyRadiusOf(s, v);
+  bodyRadiusInto(s, v); // bodyRadiusOf through a scratch (no boxed double per call) [QF-7S]
+  const rv = BODY_RADIUS_OUT[0]!;
   const dx = q.x - p.x, dz = q.z - p.z;
   const d = Math.sqrt(dx * dx + dz * dz);
-  if (d <= bodyRadiusOf(s, p.slot) + rv + L.bodyMargin) return true;
+  bodyRadiusInto(s, p.slot);
+  if (d <= BODY_RADIUS_OUT[0]! + rv + L.bodyMargin) return true;
   if (k === ActionKind.SLIDE_TACKLE) {
     S[0] = p.x; S[1] = p.z; S[2] = p.x + p.actDirX * L.slideFootReach; S[3] = p.z + p.actDirZ * L.slideFootReach;
     S[4] = q.x; S[5] = q.z;
@@ -843,7 +632,8 @@ function bodyBlocksBall(s: SimState, p: PlayerState, v: number): boolean {
   ux /= lb; uz /= lb;
   const vx = q.x - p.x, vz = q.z - p.z;
   const along = vx * ux + vz * uz;
-  const rv = bodyRadiusOf(s, v);
+  bodyRadiusInto(s, v);
+  const rv = BODY_RADIUS_OUT[0]!;
   if (!(along > 0) || along - rv > lb - L.ballFirstMargin) return false;
   const lat = vx * uz - vz * ux;
   return (lat < 0 ? -lat : lat) <= rv + L.blockLateral;
@@ -1235,7 +1025,8 @@ export function interceptContacts(s: SimState, ev: EventSink): void {
     const qx0 = q.x - q.vx * DTS, qz0 = q.z - q.vz * DTS;
     const ex = b.px - qx0, ez = b.pz - qz0;
     const entry = ex * ex + ez * ez > reach * reach ? 1 : 0;
-    const body = d <= bodyRadiusOf(s, j) * L.interceptBodyBlock ? 1 : 0;
+    bodyRadiusInto(s, j);
+    const body = d <= BODY_RADIUS_OUT[0]! * L.interceptBodyBlock ? 1 : 0;
     if ((entry === 0 || free === 0) && body === 0) continue;
     const yAt = b.py + (b.y - b.py) * t;
     // [QF-13 skeptic] His body stops a pass up to torso height too (shotBlockHeight): a lofted pass went through an

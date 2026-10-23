@@ -37,7 +37,7 @@
  *      shoot-out  - every outfield player in the centre circle, the two teams side by side.
  *  - Legal by construction: every non-wall spot is projected into the legal region of RUL-11 (inside the pitch, own
  *    half at kick-offs, 9.15 m / 2 m discs for opponents, penalty-area exclusions, arc at penalties) with a margin
- *    (LOCAL_TUNING.legalMargin), then spots closer than minSpacing to another spot or to a player without a spot
+ *    (T_SETPIECE_AI.legalMargin), then spots closer than minSpacing to another spot or to a player without a spot
  *    (taker, keepers, humans) are pushed apart and re-legalised, so nobody runs in place against another body.
  *    Walking there is routed too: a player inside a zone first steps out the way RUL-11 pushes him, and a straight walk
  *    that would cross the disc or the penalty area goes round it (routeTo), so RUL-11 never slides him along an edge.
@@ -93,7 +93,7 @@ import {
 import type { EventSink } from '../contracts/events';
 import { AXIS_SCALE, Btn, GESTURE_POS_SCALE, type InputFrame } from '../contracts/input';
 import { CpuPlan, type ControllerState, type CpuBrainState, type PlayerState, type SimState } from '../contracts/state';
-import { T_AI, T_LEVEL, T_PASS, T_PLAYER, T_RULES } from '../contracts/tuning';
+import { T_LEVEL, T_PASS, T_PLAYER, T_RULES, T_SETPIECE_AI } from '../contracts/tuning';
 import { slotWorld } from '../data/formations';
 import { datan2, dcos, dsin } from '../sim/core/dmath';
 import { rngFloat, rngGauss, rngRange } from '../sim/core/rng';
@@ -101,195 +101,11 @@ import { groundPassSpeed } from '../sim/ball/flight';
 import { PHASE_KIND } from '../sim/rules/restartCommon';
 import { assignJob, isJobDriven } from './jobs';
 
-/** TUNING-CR (TAI-13): proposed T_SETPIECE block (units in comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  // ---------------------------------------------------------------- positions
-  /** Spots stay this far inside the 9.15 m / 2 m discs, the penalty-area exclusions and the arc, m. */
-  legalMargin: 0.7,
-  /** Spots stay this far inside the touch and goal lines, m. */
-  pitchMargin: 0.45,
-  /** Kick-off: spots stay this far inside their own half, m (RUL-01 puts the taker's partner 0.6 m behind the line). */
-  halfMargin: 0.3,
-  /** Minimum distance between two spots, and between a spot and a player without one (> two body radii), m. */
-  minSpacing: 1.0,
-  /** Routing: a straight walk that passes within routeClear m of an exclusion zone (disc, penalty area) detours via a
-   *  point routeOut m beyond the zone's legal margin, so RUL-11 never has to push him along its edge, m. */
-  routeClear: 0.4,
-  routeOut: 0.5,
-  /** Walk-in speed cap as a fraction of top speed; beyond farDist m from the spot farFrac (steer then sprints). */
-  jogFrac: 0.6,
-  farFrac: 0.85,
-  farDist: 15,
-  /** Matching cost = spot weight * metres (formation slot -> spot) - suitWeight * suitability (attribute points). */
-  suitWeight: 0.6,
-  /** Man-marking: distance goal-side of the attacker at corners / free kicks and at throw-ins, m. */
-  markDist: 1.0,
-  markDistThrow: 1.6,
-  /** Most man-markers at corners / free kicks, and at throw-ins. */
-  maxMarkers: 4,
-  maxThrowMarkers: 3,
-  /** Corner danger zone: attackers within this distance of the goal line and |z| <= markZoneHalfWidth are marked, m. */
-  markZoneDepth: 19,
-  markZoneHalfWidth: 21,
-  /** Free kick: attackers within (defensive line + fkMarkExtra) of the goal line and |z| <= markZoneHalfWidth, m. */
-  fkMarkExtra: 8,
-  /** Wall: member spacing along the wall, m; a member within (half wall width + wallHoldExtra) of the wall centre holds
-   *  where RUL-05 puts him (target = his position) instead of walking to TAI-13's slot, m. */
-  wallSpacing: 0.7,
-  wallHoldExtra: 1.5,
-  /** Free-kick zones: SHOOT within fkShootMaxDist m of the goal centre and a goal-mouth angle >= fkShootMinAngle rad;
-   *  WIDE within fkCrossDepth m of the goal line; DEEP otherwise. */
-  fkShootMaxDist: 32,
-  fkShootMinAngle: 0.16,
-  fkCrossDepth: 40,
-  /** Free-kick defensive line depth = clamp(fkLineFrac * ball distance from the goal line, fkLineMin, fkLineMax), m;
-   *  attacking runners stand fkRunnerOnside m further out (onside). */
-  fkLineFrac: 0.6,
-  fkLineMin: 7,
-  fkLineMax: 16.5,
-  fkRunnerOnside: 0.4,
-  /** Free-kick rebounders stand this far beyond each end of the wall, m. */
-  fkReboundOut: 2.0,
-  /** Deep free kick: the second short option goes 10 m back only when the ball is at least this far from the own goal
-   *  line, else 10 m forward, m. */
-  deepBackMinOwn: 30,
-  /** Throw-in options: max |x| of a spot (inside the goal lines), m. */
-  throwMaxX: 50.5,
-  // ---------------------------------------------------------------- CPU taker
-  /** Stick held on the aim before pressing (lets the aim settle), ticks; shots use shotAimTicks. */
-  aimTicks: 8,
-  shotAimTicks: 12,
-  /** Retry the decision this long after the input if the taker is waiting again and the restart is not taken, ticks. */
-  retryTicks: 45,
-  /** Keep the stick on a shot's aim this long after releasing the button (wind-up), ticks. */
-  postAimTicks: 14,
-  /** Aim stick magnitude, axis units (<= AXIS_SCALE). */
-  aimStick: 126,
-  /** Corner crosses by button (RUL-04 moves its aim reticle with the stick at a speed): steer restart.aimX/aimZ onto
-   *  the target, full stick from reticleSlow m, on target within reticleTol m; press then, or after reticleMaxAimTicks. */
-  reticleSlow: 3,
-  reticleTol: 0.6,
-  reticleMaxAimTicks: 60,
-  /** Decision noise scale: score noise = rngGauss * T_LEVEL.decisionNoise * noiseScale (score units ~ metres). */
-  noiseScale: 6,
-  /** Pass targets: openness cap m and weight, lane clearance cap m and weight, progress weight per m, distance penalty
-   *  per m beyond passLongFrom m. */
-  openCap: 10,
-  openWeight: 1.0,
-  laneCap: 6,
-  laneWeight: 0.8,
-  progressWeight: 0.12,
-  passLongFrom: 18,
-  passLongPenalty: 0.3,
-  /** Throw-in targets range, m (TAP); beyond it up to throwLongMax m a DOUBLE_TAP long throw; with nobody to throw to,
-   *  a long throw this far ahead and infield, m, at this power 0..1. */
-  throwMinDist: 3.5,
-  throwMaxDist: 22,
-  throwLongMax: 30,
-  throwLongAhead: 15,
-  throwLongInfield: 9,
-  throwLongPower: 0.7,
-  /** Deep free kick: pass target range, m; a tap beyond tapGroundMax m is a DOUBLE_TAP (lofted). */
-  fkPassMin: 6,
-  fkPassMax: 45,
-  tapGroundMax: 28,
-  /** Long ball with nobody to aim at: this far ahead, m. */
-  longAheadDist: 35,
-  /** Goal kick short option: a defender gkShortMin-gkShortMax m away, nearest opponent >= gkOpenDist m and no opponent
-   *  within gkLaneClear m of the lane (RUL-03's default rule). */
-  gkShortMin: 5,
-  gkShortMax: 35,
-  gkOpenDist: 8,
-  gkLaneClear: 4,
-  /** Long kicks (goal kicks, deep free kicks): target man gkLongMin-gkLongMax m away; power = clamp(d /
-   *  longPowerRange, longPowerMin, 1). */
-  gkLongMin: 25,
-  gkLongMax: T_AI.setPieceGkLongMax, // [INT-A] was 75: a 70 m goal kick bounced on untouched (contracts/tuning.ts since QF-2)
-  longPowerRange: 70,
-  longPowerMin: 0.45,
-  /** Ground pass power: the speed that arrives at shortArrive m/s (SIM-01 groundPassSpeed) on the T_PASS ground range,
-   *  at least shortPowerMin (0..1). */
-  shortArrive: 5,
-  shortPowerMin: 0.15,
-  /** A kick line back toward the own goal must pass this far outside a post, m. */
-  ownGoalMargin: 2,
-  /** DIRECT / COUNTER sides go long at goal kicks and deep free kicks with this probability. */
-  directLongChance: 0.6,
-  /** Short corner probability by TeamStyle (possession, counter, direct, high press, wing play). */
-  shortCornerChance: [0.22, 0.1, 0.06, 0.12, 0.1] as readonly number[],
-  /** Short option counts as open when the nearest opponent is at least this far, m. */
-  shortOpenMin: 4,
-  /** A player counts as arrived within this distance of his spot, m. */
-  arriveTol: 3,
-  /** Crosses (corners, free kicks in range): wait for at least minBoxArrivals box runners on their spots, at most
-   *  maxArrivalWait ticks beyond cpuRestartDelay (RUL-04 / RUL-05's CPU fallbacks start at cpuRestartDelay +
-   *  cpuGraceTicks = 140; the wait plus the longest aim, shotAimTicks, ends a few ticks before it). */
-  minBoxArrivals: 3,
-  maxArrivalWait: 120, // [QF-11] was 58 (QF-2; 45 before): RUL-04 / RUL-05 cpuGraceTicks 60 / 75 -> 140 (QF-10)
-  /** [QF-2] Distance weight of the corner box-runner spots (penalty spot, posts, tactic spots) in the matching cost:
-   *  0.1 sent centre-backs from 45 m away, so the CPU crossed after 2.7 s into a box with 1-2 attackers (QF-4 CR). */
-  cornerRunWd: 1.0,
-  /** Wide free kick: probability of a short pass instead of a cross. */
-  fkShortChance: 0.12,
-  /** Cross targets: box depth from the goal line, m; openness cap m and weight; corner-tactic zone bonus. */
-  boxDepth: 18.5,
-  crossOpenCap: 3,
-  crossOpenWeight: 4,
-  tacticBonus: 30,
-  /** Score noise scale for cross targets (attribute points per decisionNoise unit). */
-  crossNoise: 20,
-  /** Cross / zone tap: aim error sigma per executionError unit, m; zone point distance from the goal line, m. */
-  zoneAimErr: 0.8,
-  zoneDepth: 9,
-  /** Button-fallback cross power = clamp(distance / crossPowerRange, crossPowerMin, crossPowerMax). */
-  crossPowerRange: 45,
-  crossPowerMin: 0.45,
-  crossPowerMax: 0.9,
-  /** Free-kick shot probability by distance to the goal centre (<= 20, <= 26, else), scaled by the goal-mouth angle
-   *  (full from fkAngleFull rad, floor fkAngleFloor) and the taker's free-kick quality (+(q - 65) / 100). */
-  fkShootChance: [0.85, 0.72, 0.5] as readonly number[],
-  fkAngleFull: 0.25,
-  fkAngleFloor: 0.4,
-  /** Free-kick shot: chance to curl over the wall to the near post (else the keeper's side); inset from the post, m;
-   *  aim error sigma per executionError unit, m. */
-  fkWallSideChance: 0.55,
-  fkPostInset: 0.6,
-  fkAimErr: 0.3,
-  /** Curl magnitude = clamp(fkCurlBase + fkCurlAttr * (curve - 60) / 40, fkCurlMin, fkCurlMax), 0..1. */
-  fkCurlBase: 0.55,
-  fkCurlAttr: 0.25,
-  fkCurlMin: 0.3,
-  fkCurlMax: 0.85,
-  /** Free-kick shot power = clamp(fkPowerBase + (distance - 18) * fkPowerPerM, fkPowerMin, fkPowerMax), 0..1. */
-  fkPowerBase: 0.58,
-  fkPowerPerM: 0.012,
-  fkPowerMin: 0.5,
-  fkPowerMax: 0.78,
-  /** Penalties: natural-side probability; inset from the post, m (uniform); aim error sigma per executionError, m;
-   *  power range 0..1 (uniform). */
-  penNaturalChance: 0.58,
-  penInsetMin: 0.45,
-  penInsetMax: 1.7, // [QF-2] was 1.1: every CPU penalty went 2.6-3.2 m out, beyond a full dive in time (4% saved)
-  penAimErr: 0.25,
-  penPowerMin: 0.64,
-  penPowerMax: 0.86,
-  /** Shoot-out: the ball counts as set on a penalty spot within this distance, m, and below this speed, m/s; the kicker
-   *  within kickerNear m of it. */
-  spotTolerance: 1.0,
-  spotRestSpeed: 0.2,
-  kickerNear: 2.5,
-  // ---------------------------------------------------------------- CPU defending
-  /** Controlled defender: stick off within stickArrive m of his spot; full stick from stickSlowDist m; min magnitude. */
-  stickArrive: 0.35,
-  stickSlowDist: 3,
-  stickMinMag: 0.3,
-  /** Wall jump: THROUGH when the taker's shot is this many ticks from contact; timing jitter sigma = decisionNoise *
-   *  wallJumpJitter ticks (drawn once per free kick). */
-  wallJumpLeadTicks: 2,
-  wallJumpJitter: 10,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_SETPIECE_AI. */
+export const LOCAL_TUNING = T_SETPIECE_AI;
 
-const LT = LOCAL_TUNING;
+
+const LT = T_SETPIECE_AI;
 
 /** Role of a set-piece spot (setPieceTarget result). */
 export const SpotRole = {
@@ -321,15 +137,15 @@ const tpl = (role: number, suit: number, a: number, z: number, wd: number): Tpl 
 const R = SpotRole;
 
 // Corners (attacked goal line; z mirrored to the corner's side).
-const C_PEN = tpl(R.PEN_SPOT, S_AERIAL, 10.5, 0.5, LOCAL_TUNING.cornerRunWd);
-const C_FAR = tpl(R.FAR_POST, S_AERIAL, 5.0, -4.5, LOCAL_TUNING.cornerRunWd);
-const C_NEAR = tpl(R.NEAR_POST, S_AERIAL, 4.5, 2.8, LOCAL_TUNING.cornerRunWd);
+const C_PEN = tpl(R.PEN_SPOT, S_AERIAL, 10.5, 0.5, T_SETPIECE_AI.cornerRunWd);
+const C_FAR = tpl(R.FAR_POST, S_AERIAL, 5.0, -4.5, T_SETPIECE_AI.cornerRunWd);
+const C_NEAR = tpl(R.NEAR_POST, S_AERIAL, 4.5, 2.8, T_SETPIECE_AI.cornerRunWd);
 const C_STAY1 = tpl(R.STAY_BACK, S_STAY, 54, -8, 0.2);
 const C_EDGE = tpl(R.EDGE, S_SHOOTER, 18.5, -2.5, 0.2);
 const C_SHORT = tpl(R.SHORT, S_SHORT, 4.5, 27, 0.2);
 const C_STAY2 = tpl(R.STAY_BACK, S_STAY, 56, 9, 0.2);
 /** Tactic spots X1, X2 per tactic index (0 default, 1 far post, 2 edge of box, 3 crowd the keeper, 4 near post). */
-const CRW = LOCAL_TUNING.cornerRunWd;
+const CRW = T_SETPIECE_AI.cornerRunWd;
 const C_X1: readonly Tpl[] = [
   tpl(R.BOX, S_AERIAL, 5.5, 0.8, CRW), tpl(R.FAR_POST, S_AERIAL, 6.5, -6.5, CRW), tpl(R.EDGE, S_SHOOTER, 17.5, 5.5, 0.2),
   tpl(R.SCREEN_KEEPER, S_AERIAL, 1.6, -0.6, CRW), tpl(R.NEAR_POST, S_AERIAL, 6.0, 4.5, CRW),

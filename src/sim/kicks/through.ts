@@ -52,7 +52,7 @@ import { AssistLevel, KickKind } from '../../contracts/enums';
 import type { EventSink } from '../../contracts/events';
 import type { SimState } from '../../contracts/state';
 import { ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
-import { T_BALL, T_PASS, T_PLAYER } from '../../contracts/tuning';
+import { T_BALL, T_PASS, T_PLAYER, T_THROUGH } from '../../contracts/tuning';
 import { groundPassSpeed, solveLaunchSpin, type LaunchSolution } from '../ball/flight';
 import { datan, dcos, dlog, dsin } from '../core/dmath';
 import { secondLastDefenderX } from '../core/query';
@@ -60,99 +60,11 @@ import { maxSpeed, ticksToReach } from '../players/locomotion';
 import { attackerNear, beginFootKick } from './lob';
 import { kickErrorAim, passAccuracy, selectReceiver } from './pass';
 
-/** TUNING-CR (SIM-10): proposed additions to T_PASS (units in the comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  // ---- lead search
-  /** Lead distance range ahead of the runner along his run, m, and the number of samples over it. */
-  leadMin: 0,
-  leadMax: 30,
-  leadSamples: 16,
-  /** No sample in time: the least-late one is still played (ball at full speed / flattest angle) when it is at most
-   *  this late for the runner, s. */
-  maxLateSec: 0.6,
-  /** Runners slower than this (or running backward) are led toward the attacked goal, m/s. */
-  runMinSpeed: 1,
-  /** Runner times below this cannot be met by a kicked ball, s. */
-  minRunnerTime: 0.1,
-  /** Lead points closer to the ball than this are skipped, m. */
-  minBallDist: 3,
-  /** In stride: a ground through ball arrives with at least arriveMin m/s and at most arriveRelMax m/s relative to the
-   *  runner's velocity there (his sprint speed toward the point, accelerating from his current speed), m/s
-   *  (both x T_PASS.drivenMul when driven). */
-  arriveMin: 2.5,
-  arriveRelMax: 6,
-  /** Ground through-ball launch speed range, m/s (driven: max x T_PASS.drivenMul). */
-  groundSpeedMin: 5,
-  groundSpeedMax: 22,
-  /** Lofted launch angle windows, rad: lobbed (over the line) and dinked. */
-  lobbedAngleMin: 0.5,
-  lobbedAngleMax: 1.0,
-  dinkedAngleMin: 0.3,
-  dinkedAngleMax: 0.6,
-  /** Lofted angles when no runner timing applies, rad. */
-  lobbedAngle: 0.7,
-  dinkedAngle: 0.45,
-  /** A lofted through ball lands this long before the runner reaches the lead point, s. */
-  loftLandEarly: 0.05,
-  /** Lofted flight-time refinement with drag: Newton steps on the launch angle, and the tolerance, s. */
-  loftTimeIters: 3,
-  loftTimeTol: 0.02,
-  /** Shortest lofted flight considered, s. */
-  minFlight: 0.25,
-  /** Max launch speed of a lofted through ball, m/s. */
-  loftSpeedMax: 30,
-  /** Backspin of a lobbed through ball (a dinked one has none), rad/s. */
-  lobbedBackspin: 2,
-  // ---- space and danger
-  /** Opponents: reaction time (s), run speed (m/s), reach (m) and the margin the runner must beat them by (s). */
-  oppReact: 0.2,
-  oppSpeed: 7.5,
-  oppReach: 1.0,
-  defMargin: 0.15,
-  /** The keeper: run speed (m/s); inside his penalty area (claim zone) reach (m) and margin (s). */
-  keeperSpeed: 6.5,
-  /** A ground ball passing within this distance of an opponent runs into him (body + ball), m. */
-  blockReach: 0.6,
-  keeperReach: 2.0,
-  keeperMargin: 0.4,
-  /** Lead points stay this far inside the touchlines and this far out from the goal lines, m. */
-  pitchMargin: 1.5,
-  goalLineMargin: 4,
-  // ---- into space / fallbacks
-  /** Into space (no runner / Manual): distance at power 0 and 1, m; arrival speed, m/s. */
-  spaceDistMin: 12,
-  spaceDistMax: 40,
-  spaceArrive: 4,
-  /** Fallback lead when no sample is feasible: this many seconds of the runner's run, plus this many metres, s / m. */
-  fallbackLeadSec: 1,
-  fallbackLeadExtra: 3,
-  /** Power floor (an instant tap), 0..1. */
-  minPower: 0.05,
-  /** Semi assistance: share of the power-only speed blended into the timed speed, 0..1. */
-  semiPowerBlend: 0.4,
-  /** Lengthwise error: speed x (1 + lengthErrorMul x a second angular error draw in rad), clamped to +-lengthErrorCap. */
-  lengthErrorMul: 0.4,
-  lengthErrorCap: 0.1,
-  /** Accuracy = visionShare x vision + (1 - visionShare) x passing accuracy, 0..1. */
-  visionShare: 0.5,
-  // ---- runner selection
-  /** Cone half-angle multipliers on T_PASS.coneHalfAngle: Assisted and Semi. */
-  coneMul: 1.3,
-  semiConeMul: 0.8,
-  /** Candidate distance range from the passer, m. */
-  minRunnerDist: 5,
-  maxRunnerDist: 55,
-  /** Score weights: alignment with the stick, forward run, at / beyond the line, SIM-08 selectReceiver pick. */
-  wAlign: 0.4,
-  wRun: 0.35,
-  wBeyond: 0.25,
-  wSim08: 0.2,
-  /** Forward run speed that scores 1, m/s; the "beyond the line" score ramps up over this band behind the line, m. */
-  runNorm: 7,
-  beyondBand: 6,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_THROUGH. */
+export const LOCAL_TUNING = T_THROUGH;
 
-const LT = LOCAL_TUNING;
+
+const LT = T_THROUGH;
 
 const NS = NUM_SLOTS;
 const PPT = PLAYERS_PER_TEAM;

@@ -824,8 +824,11 @@ export function openModal(ctx: AppContext | null, opts: ModalOptions): ModalHand
 
   let host: HTMLElement | null = opts.host ?? null;
   if (!host && typeof document !== 'undefined') {
+    // [QF-17] Not a screen the router built ahead and keeps hidden ([data-prepared]): the modal would be invisible.
     const screens = document.querySelectorAll<HTMLElement>('#ui > .screen');
-    host = screens.length > 0 ? screens[screens.length - 1]! : (document.getElementById('ui') ?? document.body);
+    let last: HTMLElement | null = null;
+    for (let i = screens.length - 1; i >= 0 && !last; i--) if (!screens[i]!.hasAttribute('data-prepared')) last = screens[i]!;
+    host = last ?? document.getElementById('ui') ?? document.body;
   }
   host?.append(scrim);
   modalStack.push({ handle, dismissible });

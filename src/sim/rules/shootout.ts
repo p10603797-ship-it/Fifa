@@ -28,7 +28,7 @@
  *      AIM    (restart.ready = 1, WHISTLE START): the kicker's controller aims and shoots (shootoutInput), the defending
  *             keeper's human controller moves along the line and commits a dive. Kicker, keeper and ball are held in
  *             place until the kick. Timeouts: a side with a human -> Default after T_RULES.restartTimeoutTicks (12 s,
- *             not logged); a CPU side (TAI-13 normally kicks ~2 s in) -> Default after LOCAL_TUNING.cpuTimeoutTicks
+ *             not logged); a CPU side (TAI-13 normally kicks ~2 s in) -> Default after T_SHOOTOUT.cpuTimeoutTicks
  *             (logged WATCHDOG RESTART_BLOCKED); either way, a kick still not struck defaultGraceTicks later is forced
  *             through core/kick applyKick (logged). restart.timeoutT shows the remaining ticks.
  *      FLIGHT (core/kick applyKick marks restart.taken when shootout.kicker strikes): the ball is live until it enters
@@ -64,14 +64,13 @@
  *  - Default (human timeout / CPU fallback): the aim the kicker set, else a corner chosen by s.rng (inset
  *    defaultInsetMin..Max from a post); SIM-11 startShot(PENALTY) at defaultPower (no charging). Never while the
  *    kicker is already kicking or down; retried every tick until it starts or the forced kick is due.
- *  - Exports beyond the stub: ShootoutSub, KICK_SCORED / KICK_MISSED, LOCAL_TUNING, shootoutEnd, shootoutDecided,
+ *  - Exports beyond the stub: ShootoutSub, KICK_SCORED / KICK_MISSED, LOCAL_TUNING (= T_SHOOTOUT), shootoutEnd, shootoutDecided,
  *    shootoutKeeperSpot (where each keeper stands; for GKP-06), shootoutCircleSpot.
  * Determinism: s.rng only at the start coin tosses, the default aim, forced-kick error and the lot. Per-tick work is
  * O(1) (O(22) once per kick at SETUP); allocation-free (module scratch only).
  */
 import {
-  BALL_RADIUS, GOAL_HALF_WIDTH, HALF_LENGTH, NUM_SLOTS, PENALTY_AREA_HALF_WIDTH, PENALTY_SPOT_DIST, PLAYERS_PER_TEAM,
-  teamFirstSlot,
+  BALL_RADIUS, GOAL_HALF_WIDTH, HALF_LENGTH, NUM_SLOTS, PENALTY_SPOT_DIST, PLAYERS_PER_TEAM, teamFirstSlot,
 } from '../../contracts/constants';
 import {
   ActionKind, AssistLevel, ControllerKind, CrossKind, GestureKind, KickKind, MatchPhase, RestartKind, WatchdogReason,
@@ -82,7 +81,7 @@ import {
   MAX_SHOOTOUT_KICKS, MoveMode, type ControllerState, type PlayerState, type ShootoutState, type SimState,
 } from '../../contracts/state';
 import { createActionRequest, createKickLaunch, ReqFlag } from '../../contracts/systems';
-import { T_BALL, T_INPUT, T_RULES } from '../../contracts/tuning';
+import { T_BALL, T_INPUT, T_RULES, T_SHOOTOUT } from '../../contracts/tuning';
 import { endAction, isFree } from '../actions/dispatch';
 import { applyKick, releasePossession } from '../core/kick';
 import { teamHasHuman } from '../core/query';
@@ -91,68 +90,10 @@ import { startShot } from '../kicks/shot';
 import { setPhase } from './machine';
 import { logWatchdog } from './restartCommon';
 
-/** TUNING-CR (RUL-07): proposed T_SHOOTOUT block (units in comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  /** Kicks per team before sudden death. */
-  regulationKicks: 5,
-  /** RESULT shown before the next kick / the end, ticks (2.5 s). */
-  resultTicks: 150,
-  /** FLIGHT safety cap: the kick is over (missed) this long after the strike, ticks (6 s). */
-  flightMaxTicks: 360,
-  /** The ball counts as stopped below this speed, m/s, with its centre at most restHeight above resting height, m. */
-  restSpeed: 0.3,
-  restHeight: 0.05,
-  /** A ball moving away from the goal further out than this from the goal line can no longer go in, m. */
-  deadDist: 16.5,
-  /** The kicker stands this far behind the ball (kicks reach ~1.2 m), m; put back when further than pinTol from it, m. */
-  kickerBehind: 0.6,
-  kickerPinTol: 0.35,
-  /** Before the kick the ball is re-placed when it strays this far from the spot, m, moves faster, m/s, or rises, m. */
-  ballStrayDist: 0.3,
-  ballStraySpeed: 0.5,
-  ballStrayHeight: 0.3,
-  /** Defending keeper: this far inside his goal line, m; put back on it when further than keeperLineSlack, m. */
-  keeperLineInset: 0.25,
-  keeperLineSlack: 1.0,
-  /** Defending keeper moves along the line up to this |z|, m, at this fraction of the stick (jog), 0..1, slowing
-   *  down over the last keeperBrakeDist m before the limit. */
-  keeperMaxZ: 3.0,
-  keeperStickFrac: 0.5,
-  keeperBrakeDist: 0.6,
-  /** Waiting keeper (kicking team): this far inside the goal line, m, at |z| = waitZ (outside the area, -z side), m. */
-  waitInsetX: 0.6,
-  waitZ: PENALTY_AREA_HALF_WIDTH + 1.2,
-  /** Centre-circle spots (as TAI-13): rows at x = +-circleRowX, |z| = circleZ0 + circleGapZ * j by slot, m. */
-  circleRowX: 1.1,
-  circleZ0: 1.0,
-  circleGapZ: 1.3,
-  /** Aim: |z| where the aim meets the goal line is clamped to this (inside the posts), m. */
-  aimMaxZ: GOAL_HALF_WIDTH - 0.25,
-  /** A stick / swipe needs at least this share of its length toward the goal to aim straight along it (0..1). */
-  aimMinForward: 0.05,
-  /** Default kick: power 0..1 and aim inset from a post, m (range drawn from s.rng). */
-  defaultPower: 0.72,
-  defaultInsetMin: 0.5,
-  defaultInsetMax: 1.2,
-  /** Power 0..1 for a swipe that carries none, and for a chip from a tap on the goal. */
-  gesturePower: 0.7,
-  chipTapPower: 0.45,
-  /** CPU side: Default this long after the kick may be taken (TAI-13 kicks after ~2 s), ticks (4 s). */
-  cpuTimeoutTicks: 240,
-  /** The kick is forced through applyKick this long after the Default was due, ticks (2 s). */
-  defaultGraceTicks: 120,
-  /** Forced kick: speed m/s, height at the goal line m, aim error sd m (it can miss), power for the KICK event. */
-  forcedSpeed: 20,
-  forcedHeight: 0.6,
-  forcedAimErr: 0.7,
-  forcedPower: 0.7,
-  /** Keeper dive from a flick / swipe: lateral share for a side, share along END for high (against it: low), 0..1. */
-  diveSideShare: 0.38,
-  diveHeightShare: 0.38,
-  /** Keeper dive from a tap: lateral offset from the keeper beyond which he dives to that side, m. */
-  diveTapBand: 0.8,
-} as const;
-const LT = LOCAL_TUNING;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_SHOOTOUT. */
+export const LOCAL_TUNING = T_SHOOTOUT;
+
+const LT = T_SHOOTOUT;
 
 /** Sub-states of one kick (match.shootout.sub). */
 export const ShootoutSub = {

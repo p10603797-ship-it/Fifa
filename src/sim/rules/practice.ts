@@ -28,16 +28,11 @@ import { NULL_SINK } from '../core/events';
 import { setPhase } from './machine';
 import { awardRestart } from './restart';
 import { sendOff } from './subs';
+import { T_PRACTICE } from '../../contracts/tuning';
 
-/** TUNING-CR (MOD-04, moved by QF-1): practice attempt timing (ticks at 60 Hz). */
-export const LOCAL_TUNING = { // TUNING-CR
-  /** Live play allowed after a free kick or corner is taken before the attempt is over, ticks (6 s). */
-  attemptTicks: 360,
-  /** Live play allowed after a penalty kick before the attempt is over, ticks (3 s). */
-  penaltyAttemptTicks: 180,
-  /** A pending free kick / penalty of the practised kind within this of the practice spot is the practice one, m. */
-  spotTolerance: 1,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_PRACTICE. */
+export const LOCAL_TUNING = T_PRACTICE;
+
 
 /**
  * Spot geometry per practice kind, as MOD-04's PRACTICE_SPOTS: [dist out from the attacked goal line (m), metres to the
@@ -134,7 +129,7 @@ export function practiceAttemptDone(s: SimState, team: number, kind: RestartKind
   const o = s.ball.owner;
   const ot = o >= 0 && o < NUM_SLOTS ? s.players[o]!.team : -1;
   if (ot >= 0 && ot !== team) return true;
-  const limit = kind === RestartKind.PENALTY ? LOCAL_TUNING.penaltyAttemptTicks : LOCAL_TUNING.attemptTicks;
+  const limit = kind === RestartKind.PENALTY ? T_PRACTICE.penaltyAttemptTicks : T_PRACTICE.attemptTicks;
   return m.phaseT >= limit;
 }
 
@@ -146,7 +141,7 @@ export function practiceAttemptDone(s: SimState, team: number, kind: RestartKind
 function atPracticeSpot(kind: RestartKind, x: number, z: number): boolean {
   if (kind === RestartKind.CORNER) return (x < 0) === (SPOT_OUT.x < 0) && (z < 0) === (SPOT_OUT.z < 0);
   const dx = x - SPOT_OUT.x, dz = z - SPOT_OUT.z;
-  return dx * dx + dz * dz <= LOCAL_TUNING.spotTolerance * LOCAL_TUNING.spotTolerance;
+  return dx * dx + dz * dz <= T_PRACTICE.spotTolerance * T_PRACTICE.spotTolerance;
 }
 
 /**

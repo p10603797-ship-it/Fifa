@@ -62,12 +62,12 @@
  * apart from team.lineX and the jobs it writes.
  */
 import {
-  DT, GOAL_AREA_DEPTH, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PENALTY_AREA_DEPTH, PENALTY_AREA_HALF_WIDTH, PLAYERS_PER_TEAM,
+  DT, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PENALTY_AREA_DEPTH, PENALTY_AREA_HALF_WIDTH, PLAYERS_PER_TEAM,
 } from '../contracts/constants';
 import { AiJob, KickKind, MatchPhase, TeamPhase } from '../contracts/enums';
 import type { EventSink } from '../contracts/events';
 import type { SimState } from '../contracts/state';
-import { T_AI, T_LEVEL, T_PLAYER } from '../contracts/tuning';
+import { T_AI, T_LEVEL, T_PLAYER, T_DEF_SHAPE } from '../contracts/tuning';
 import { FORMATIONS, ShapeLine, slotLine } from '../data/formations';
 import {
   createTacticParams, QUICK_TACTICS, resolveTactics, rolePreset, slotLineFor, slotRole, TacticFlag, tacticFlags,
@@ -76,123 +76,8 @@ import { otherTeam, teamEnd, teamStart } from '../sim/core/query';
 import { assignJob, isJobDriven } from './jobs';
 import { effectiveFocus, teamLevel } from './cpu/levels';
 
-export const LOCAL_TUNING = {
-  // ---- line height (team frame u, m from the centre spot toward the opposition goal)
-  /** The line follows the ball: neutral back line + lineOffset + lineSlope * ball u, m/m. */
-  lineSlope: 0.55,
-  /** ... + this, m [INT-A: the block defended ~24 m goal-side of the ball, a low block that left no space to play
-   *  into and smothered every shot; a mid-block line leaves room in behind for through balls]. */
-  lineOffset: 7,
-  /** ... fading in with the ball's u from lineOffsetFadeFrom (none: the ball near our box, the line drops onto it)
-   *  to lineOffsetFadeTo (full), m (team frame). */
-  lineOffsetFadeFrom: -30,
-  lineOffsetFadeTo: -12,
-  /** Highest line, m (team frame; + the tactic offset when it is positive). */
-  lineCeil: 2,
-  /** Lowest line with the ball far (= 6-yard box edge) / near our goal, m from the own goal line. */
-  floorFar: GOAL_AREA_DEPTH,
-  floorNear: 1.5,
-  /** Ball distance from our goal line at which the floor is floorNear / floorFar (linear in between), m. */
-  ballNearDist: 20,
-  ballFarDist: 30,
-  /** The line stays this far goal-side of a ball level with / behind it, m. */
-  behindBallGap: 2,
-  /** A loose ball the opponents played toward our goal faster than this is anticipated (long ball), m/s. */
-  longBallSpeed: 8,
-  // ---- drop: carrier facing our goal, unpressured
-  /** Drop with the carrier facing our goal under no pressure, m. */
-  dropUnpressured: 5,
-  /** Carrier freedom from the distance of our nearest player: none (pressed) within freeDistMin, full beyond
-   *  freeDistFull, linear in between, m. */
-  freeDistMin: 3,
-  freeDistFull: 6,
-  /** Carrier facing toward our goal (cosine): no drop at faceFwdMin, full drop at faceFwdFull. */
-  faceFwdMin: 0.2,
-  faceFwdFull: 0.7,
-  /** Drop multiplier while the offside trap is on (a trap side holds a high line). */
-  trapDropScale: 0.3,
-  /** Extra drop just after losing the ball (team.phase TRANSITION_DEFEND, TAI-06): counter-attack danger, m. */
-  transitionDrop: 4,
-  // ---- drop: runners
-  /** A runner within this distance in front of the line ... m ... */
-  runnerLead: 3,
-  /** ... running toward our goal faster than this is breaking it, m/s. */
-  runnerSpeed: 3.5,
-  /** A breaking runner is anticipated this far ahead, s. */
-  runnerLookahead: 0.6,
-  /** The line drops this far goal-side of a runner, m. */
-  runnerMargin: 1,
-  // ---- step up on a backward / square ball
-  /** Step-up without the offside trap, m (with it: QUICK_TACTICS.offsideTrap.stepUpM). */
-  stepUpM: 3,
-  /** A square pass: at least this far across, m, and at most squareFwdTol toward our goal, m. */
-  squareLatM: 8,
-  squareFwdTol: 2,
-  /** The step-up fades out over this many ticks after QUICK_TACTICS.offsideTrap.stepTicks. */
-  stepFadeTicks: 60,
-  /** A loose ball moving away from our goal is predicted this far ahead for the base line, s. */
-  stepLookahead: 0.5,
-  /** Carrier dribbling away from our goal: step starts / is full at this speed, m/s. */
-  dribbleBackMin: 1.5,
-  dribbleBackFull: 4,
-  /** A stepped line stays this far goal-side of the ball, m. */
-  stepBallGap: 4,
-  // ---- rate
-  /** Max speed of the line target moving up / down, m/s. */
-  lineUpRate: 4.5,
-  lineDownRate: 6.5,
-  /** The stored line is first pulled to within this of the back line's median position, m. */
-  anchorSlack: 5,
-  /** Offside-trap step: the line moves up at this rate (sprint pace), m/s, leading the players by up to trapLead,
-   *  m (far enough ahead that arrival braking does not cap their sprint). */
-  trapUpRate: 9,
-  trapLead: 8,
-  // ---- back line
-  /** Ball-side defenders stand up to this much higher (stagger toward the ball side), m ... */
-  stagger: 1,
-  /** ... fading to 0 at this lateral distance from the ball, m. */
-  staggerRange: 20,
-  /** Max height of any back-line target above the line (stagger + marking step-out), m. */
-  maxStepOut: 2,
-  /** Max step out of the line to mark an attacker in front of it, m. */
-  markStepOut: 1.5,
-  /** A non-defender whose home is within this of the deepest defender's home fills a vacated back-line slot, m. */
-  fillTol: 3,
-  // ---- marking
-  /** Goal-side marking distance for back-liners / midfielders, m. */
-  markGap: 1.5,
-  markGapMid: 2.5,
-  /** Roles with duties.mark (x focus dutyScale) below this do not mark. */
-  markDutyMin: 0.5,
-  /** Zone radius = role zoneRadius x zoneScale, m. */
-  zoneScale: 1,
-  /** A marking midfielder stays at least this far in front of the line, m. */
-  midMarkMinGap: 4,
-  // ---- midfield compactness
-  /** Midfield line at least this far in front of the back line, m (at most T_AI.lineSpacingMax). */
-  midGapMin: 8,
-  /** Attacking midfielders may stand this much further up than the midfield band, m. */
-  amExtra: 4,
-  // ---- passing lanes into the box
-  /** Max lane covers per team. */
-  laneMax: 2,
-  /** Receivers within the penalty area grown by this margin count, m. */
-  laneBoxMargin: 3,
-  /** Lanes are covered while the carrier is within this distance of our goal line, m. */
-  laneCarrierRange: 40,
-  /** Cover point: projection onto the lane clamped to this fraction range (carrier 0 .. receiver 1). */
-  laneTMin: 0.3,
-  laneTMax: 0.7,
-  /** A team-mate within this distance of the lane (fractions 0.15..0.9) already blocks it, m. */
-  laneBlock: 1.5,
-  /** Max distance from a midfielder's spot to his cover point, m. */
-  laneReach: 14,
-  // ---- speeds
-  /** Beyond this distance from the target players move at top speed (else jog), m. */
-  hurryDist: 5,
-} as const; // TUNING-CR
 
-const LT = LOCAL_TUNING;
+const LT = T_DEF_SHAPE;
 const N = PLAYERS_PER_TEAM;
 /** [QF-11] Level multipliers of the team being evaluated (T_LEVEL.markGapMul / lineRateMul; 1 for a human side at
  *  Professional) applied to the marking gaps and the line's step rates, set at the top of assignDefensiveShape (typed
@@ -922,4 +807,4 @@ export function backLineSlots(s: SimState, team: number, out: number[]): number 
 }
 
 /** Exposed for tests and tuning tools (read-only). */
-export const DEFSHAPE_TUNING = LOCAL_TUNING;
+export const DEFSHAPE_TUNING = T_DEF_SHAPE;

@@ -57,7 +57,7 @@
  *    does not run the open-play pipeline) the defending keeper gets GKP-02 keeperSaveDecision during FLIGHT, exactly as
  *    after a penalty in play (IN_PLAY from the contact tick on).
  *
- * Exports beyond the stub: LOCAL_TUNING, SpotKind, keeperSetPieceSpot, freeKickKeeperSpot, cornerKeeperSpot,
+ * Exports beyond the stub: LOCAL_TUNING (= T_GK_SETPIECE), SpotKind, keeperSetPieceSpot, freeKickKeeperSpot, cornerKeeperSpot,
  * penaltyKeeperSpot, wallShadow / WallShadow, kickContactThisTick, penaltyContactTick, DiveChoice / createDiveChoice,
  * aiDiveChoiceFrom (pure), aiDiveChoice, humanDiveChoice, penaltyDiveTarget, commitPenaltyDive.
  * Determinism: no Math trig / random, no Map/Set, slot-indexed; allocation-free (module scratch only, the kick-keyed
@@ -67,7 +67,7 @@ import { GOAL_HALF_WIDTH, HALF_LENGTH, NUM_SLOTS, RESTART_DISTANCE } from '../..
 import { ActionKind, Foot, MatchPhase, RestartKind } from '../../contracts/enums';
 import type { EventSink } from '../../contracts/events';
 import { MoveMode, type RngState, type SimState } from '../../contracts/state';
-import { T_PLAYER } from '../../contracts/tuning';
+import { T_PLAYER, T_GK_SETPIECE } from '../../contracts/tuning';
 import { arrive } from '../../ai/steer';
 import { clamp, clamp01, lerp, unlerp } from '../core/dmath';
 import { isHumanSlot } from '../core/query';
@@ -77,75 +77,10 @@ import { restartTakerSpot } from '../rules/restart';
 import { keeperPositioning, keeperPositioningAccuracy, keeperSpotForBall } from './positioning';
 import { keeperMaxReach, keeperSaveDecision, startKeeperDive } from './saves';
 
-/** TUNING-CR (GKP-06): proposed T_GK_SETPIECE block (units in comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  // ---------------------------------------------------------------- movement
-  /** Sprint to the spot when further than hurryEnter, m; calm again below hurryExit, m (hysteresis). */
-  hurryEnter: 3,
-  hurryExit: 1.5,
-  /** Shuffle speed near the spot as a fraction of jog speed (topSpeed * T_PLAYER.jogFraction). */
-  shuffleFrac: 0.8,
-  /** Faces the ball (sideways shuffle) within this distance of his spot, m; further away he turns and runs. */
-  faceDist: 8,
-  // ---------------------------------------------------------------- penalties / shoot-out
-  /** Penalty keeper's spot: this far in front of his goal line, m (RUL-11 legal band 1 m). */
-  penLineDepth: 0.3,
-  /** AI dive choice: chance to stay in the middle (0..1). */
-  aiMiddleChance: 0.1,
-  /** AI dive choice: chance of the kicker's natural side (when diving) at kicker composure 1 / 99 (0..1). */
-  aiNaturalWorst: 0.66,
-  aiNaturalBest: 0.54,
-  /** AI dive choice: shift of that chance toward the side of the kicker's previous penalty (0..1). */
-  aiHistoryWeight: 0.12,
-  /** AI dive height chances: low, mid; high takes the rest (0..1). */
-  aiLowChance: 0.25, // [QF-2] was 0.42 / 0.38: penalties are struck mid-height far more often than along the ground
-  aiMidChance: 0.5,
-  /** Dive target hand height per class low / mid / high, m (GKP-02 classes: < 0.6 low, < 1.5 mid). [QF-2] mid was
-   *  1.05: GKP-02's dive capsule slopes from the feet (hip - 0.5 m) up to the hands, so a mid dive covered only up to
-   *  ~1.1 m near his body and a penalty struck at 1.1-1.5 m (every CPU penalty, most human ones) went in over a keeper
-   *  who had guessed right (1 save in 19 right guesses; 4% of shoot-out kicks saved). */
-  diveLowY: 0.3,
-  diveMidY: 1.2,
-  diveHighY: 1.9,
-  /** Dive target this far in front of his position (toward the kicker), m. */
-  diveForward: 0.3,
-  /** Dive target at most this far beyond the inside of the post, m. */
-  diveBeyondPost: 0.25,
-  /** Shortest lateral dive (keeper already at or beyond the post), m. */
-  minDiveLateral: 0.3,
-  // ---------------------------------------------------------------- corners
-  /** Defending a corner: depth off the goal line, m, and offset from the goal centre toward the far post, m. */
-  cornerDepth: 0.7,
-  cornerFarZ: 1.2,
-  // ---------------------------------------------------------------- free kicks
-  /** Wall-aware positioning for free kicks within this distance of the goal centre, m. */
-  fkMaxDist: 40,
-  /** Depth off the line: fkDepthNear at fkNearDist from the goal centre .. fkDepthFar at fkFarDist, m. */
-  fkDepthNear: 0.6,
-  fkDepthFar: 2.6,
-  fkNearDist: 12,
-  fkFarDist: 32,
-  /** Wall half width: per member, m, plus the outer half bodies, m. */
-  wallHalfPerMember: 0.35,
-  wallEdge: 0.15,
-  /** The planned wall centre (restart.wallX/Z) is used only this far from the ball, m (else the members' mean). */
-  wallMinDist: 4,
-  wallMaxDist: 14,
-  /** Weight of a goal-mouth point in the wall's shadow vs an open one (1) for his goal-line point (0..1). */
-  fkShadowWeight: 0.35,
-  /** gkPositioning 1: fraction of the lateral shift not taken (0..1). */
-  fkShiftErrWorst: 0.3,
-  /** Free-kick spot lateral limit: this far beyond the inside of the post, m. */
-  fkPostExtra: 0.4,
-  /** Kept this far outside the 9.15 m circle around the ball, m (RUL-11 tolerates 0.05 inside). */
-  legalMargin: 0.45,
-  /** Spots stay at least this far in front of the goal line, m (GKP-01 minLineDist). */
-  minLineDist: 0.3,
-  /** On the goal line at a close free kick: depth, m, and at least this far inside the posts, m. */
-  lineDepth: 0.3,
-  lineInsidePost: 0.35,
-} as const;
-const LT = LOCAL_TUNING;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_GK_SETPIECE. */
+export const LOCAL_TUNING = T_GK_SETPIECE;
+
+const LT = T_GK_SETPIECE;
 
 /** keeperSetPieceSpot results. */
 export const SpotKind = {

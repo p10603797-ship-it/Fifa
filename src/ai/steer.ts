@@ -9,7 +9,7 @@
  * spot (no orbiting or jitter), including when the target moves slowly.
  *
  * Chaser selection (assignChaser, IN_PLAY only; team.chaser = -1 whenever the ball is owned or held):
- *  1. One ball prediction per tick (predictBall, LOCAL_TUNING.chasePredictTicks samples), cached in module scratch
+ *  1. One ball prediction per tick (predictBall, T_STEER.chasePredictTicks samples), cached in module scratch
  *     and shared by both teams (keyed on tick + every ball field, so it can never be stale).
  *  2. Interception per candidate: the FIRST playable sample (ball centre <= chaseReachHeight) the player can reach
  *     in time: busy + ticksToReach(sample) <= sample tick, and not before p.noTouchT. "busy" = remaining ticks of a
@@ -67,67 +67,13 @@ import { ActionKind, AiJob, MatchPhase } from '../contracts/enums';
 import type { EventSink } from '../contracts/events';
 import { createBallState, MoveMode, type BallState, type PlayerState, type SimState } from '../contracts/state';
 import { createBallPrediction, MAX_PREDICT_TICKS } from '../contracts/systems';
-import { T_AI, T_PLAYER, T_TOUCH } from '../contracts/tuning';
+import { T_AI, T_PLAYER, T_TOUCH, T_STEER } from '../contracts/tuning';
 import { predictBall } from '../sim/ball/flight';
 import { ticksToReach } from '../sim/players/locomotion';
 import { assignJob, finalizeJobT, isJobDriven } from './jobs';
 
-export const LOCAL_TUNING = {
-  /** Ball prediction horizon for loose-ball interception, ticks (<= MAX_PREDICT_TICKS = 180). */
-  chasePredictTicks: 120,
-  /** Highest ball-centre height a chaser can play (feet, chest, head), m; higher samples are flown over. */
-  chaseReachHeight: 2.0,
-  /** Lower-bound slack: ticksToReach may count a point as reached from up to this far away, m. */
-  chaseReachSlack: 1.2,
-  /** Safety factor (>= 1) on the Lipschitz sample skip after a failed ticksToReach (larger = fewer skips). */
-  chaseSkipSafety: 2.0,
-  /** Max ticksToReach evaluations per player per tick (budget guard; the end-of-horizon fallback follows). */
-  chaseMaxEvals: 24,
-  /**
-   * Arrival-time bias of a controlled (human / CPU brain) player going for the ball (moving toward the interception
-   * point at >= controlledApproachSpeed, or within controlledNearDist of it): he claims the chase within this, ticks.
-   */
-  controlledBiasTicks: 18,
-  /** Speed toward the interception point that counts as going for it, m/s. */
-  controlledApproachSpeed: 1.0,
-  /** A controlled player this close to a playable ball is the chaser outright, m ... */
-  controlledNearDist: 3.0,
-  /** ... provided he can intercept it within this many ticks (not a ball he has just struck away). */
-  controlledNearTicks: 60,
-  /** Dead zone: a player at rest this close to a positional target holds instead of creeping, m. */
-  deadZone: 0.5,
-  /** At or below this speed a player counts as at rest, m/s. */
-  restSpeed: 0.15,
-  /** Velocity toward the target above which a slow player counts as moving in (keeps arriving), m/s. */
-  approachSpeed: 0.05,
-  /** Urgent jobs sprint beyond this distance from the target (keep sprinting down to half of it), m. */
-  sprintDistUrgent: 3.0,
-  /** Other jobs that request more than jog speed sprint beyond this distance (down to half of it), m. */
-  sprintDistCalm: 6.0,
-  /** Positional jobs face the ball within this distance of their target, m. */
-  faceBallDist: 3.0,
-  /** Ball jobs (chase, receive) face the ball within this distance of their target, m. */
-  ballJobFaceDist: 0.5,
-  /** A target counts as occupied when another player's centre is within this distance of it, m. */
-  occupiedRadius: 0.7,
-  /** Hold short of an occupied target from this distance, m (+ occupiedHoldExtra when already at rest). */
-  occupiedStopDist: 1.5,
-  occupiedHoldExtra: 0.5,
-  /** [QF-2] A body whose centre is within blockedDist of a positional player and within acos(blockedCos) of his way
-   *  to the target blocks it: he does not turn to face the ball (SIM-05 then slides him round it), m / cos. */
-  blockedDist: 1.0,
-  blockedCos: 0.5,
-  /** [INT-A trailing] A ball job chasing a loose ball that rolls away from him (faster than overshootMinSpeed m/s)
-   *  aims overshootSec x ball speed (at least overshootMin: more than his braking distance at top speed; at most
-   *  overshootMax m) beyond his target along the ball's path, so SIM-04's arrival braking does not leave him trailing
-   *  1-2 m behind it. m/s, s, m, m. */
-  overshootMinSpeed: T_AI.chaseOvershootMinSpeed, // (contracts/tuning.ts T_AI.chaseOvershoot* since QF-2)
-  overshootSec: T_AI.chaseOvershootSec,
-  overshootMin: T_AI.chaseOvershootMin,
-  overshootMax: T_AI.chaseOvershootMax,
-} as const; // TUNING-CR
 
-const LT = LOCAL_TUNING;
+const LT = T_STEER;
 
 /** Board limits for movement targets (player centres keep a body radius off the boards; SIM-04 confines too). */
 const TGT_MAX_X = BOARD_X - T_PLAYER.bodyRadius;
@@ -699,4 +645,4 @@ export function arrive(s: SimState, slot: number, x: number, z: number, speed: n
 }
 
 /** Exposed for tests and tuning tools (read-only). */
-export const STEER_TUNING = LOCAL_TUNING;
+export const STEER_TUNING = T_STEER;

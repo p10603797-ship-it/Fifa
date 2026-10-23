@@ -42,66 +42,16 @@ import {
 } from '../../contracts/constants';
 import { ActionKind } from '../../contracts/enums';
 import type { EventSink } from '../../contracts/events';
-import { T_PLAYER } from '../../contracts/tuning';
+import { T_PLAYER, T_LOCOMOTION } from '../../contracts/tuning';
 import { MoveMode, type PlayerAttrs, type PlayerState, type SimState } from '../../contracts/state';
 import { PI } from '../core/dmath';
 import { createV2, rotateToward2, type V2 } from '../core/vec';
 
-export const LOCAL_TUNING = { // TUNING-CR (SIM-04): move into T_PLAYER
-  /** Weight of the acceleration attribute in top speed (rest is sprintSpeed), 0..1. */
-  topSpeedAccelWeight: 0.15,
-  /** Acceleration multiplier above jog speed (sprint build-up), unitless. */
-  highSpeedAccelMul: 0.6,
-  /** Stick magnitude at which a sprint reaches top speed, 0..1. */
-  sprintStickFull: 0.6,
-  /** Stick magnitude below which the stick counts as released, 0..1. */
-  stickDead: 0.02,
-  /** Below this speed a player counts as standing (heading snaps to the wanted direction), m/s. */
-  moveEps: 0.05,
-  /** Desired speed at and above which the turn/facing speed gate applies in full (slower moves shuffle), m/s. */
-  pivotSpeed: 2.0,
-  /** Facing turn rate as a multiple of the movement turn rate. */
-  facingTurnMul: 1.5,
-  /** Deceleration while LOCKED (an action owns the motion), m/s^2. */
-  lockedFriction: 6.0,
-  /** Arrival braking deceleration as a fraction of T_PLAYER.decel (<= 0.5 keeps the profile trackable). */
-  arriveDecelFrac: 0.45,
-  /** The arrival speed profile reaches zero at this fraction of arriveStop from the target. */
-  arriveSettle: 0.5,
-  /** Minimum gain of the linear arrival ramp (speed per metre of distance), 1/s. */
-  arriveMinGain: 3.0,
-  /** Inside arriveStop a desired arrival speed below this is treated as stopped, m/s. */
-  arriveSnapSpeed: 0.05,
-  /** Jockey/strafe forward speed (toward the look target) as a fraction of jog (top with sprint). */
-  jockeyForwardFraction: 0.8,
-  /** AI ARRIVE with lookAt: run normally (stop jockeying) above this x the jockey speed cap ... */
-  lookBreakRatio: 1.5,
-  /** ... and only resume jockeying below this x the cap (hysteresis on last tick's jockeying flag). */
-  lookResumeRatio: 1.1,
-  /** Extra clearance round goal-box corners for the ARRIVE detour, m. */
-  goalDetourMargin: 0.35,
-  /** Stamina attribute scales drain by 1 -+ this (99: less drain, faster recovery; 1: the opposite). */
-  staminaAttrScale: 0.4,
-  /** Moving faster than this fraction of jog speed counts as jogging (staminaDrainJog). */
-  jogDrainMinFrac: 0.75,
-  /** ticksToReach: distance at which a point counts as reached (= the ARRIVE stop distance), m. */
-  reachRadius: T_PLAYER.arriveStop,
-  /** ticksToReach: cos of the angle below which a moving player's turn is modelled. */
-  ttrTurnCos: 0.985,
-  /** ticksToReach turn model (fitted to the simulation): turning speed = speed * (A + B * cos). */
-  ttrTurnSpeedA: 0.9,
-  ttrTurnSpeedB: 0.05,
-  /** ... speed after the turn = speed * (A + B * cos) + accel * turn time * ttrTurnAccel. */
-  ttrTurnEndA: 0.95,
-  ttrTurnEndB: 0.16,
-  ttrTurnAccel: 1.0,
-  /** ... progress lost to heading away early in the turn, per unit (1 - cos). */
-  ttrTurnBack: 0.15,
-  /** ... share of the arc's sideways drift left to cover after the turn. */
-  ttrTurnSide: 0.5,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_LOCOMOTION. */
+export const LOCAL_TUNING = T_LOCOMOTION;
 
-const LT = LOCAL_TUNING;
+
+const LT = T_LOCOMOTION;
 
 // ---------------------------------------------------------------- module scratch (no per-tick allocation)
 const HEAD = createV2();
@@ -137,15 +87,6 @@ function turnToward(o: V2): void {
 function clamp01(v: number): number { return v < 0 ? 0 : v > 1 ? 1 : v; }
 /** Attribute 1..99 -> 0..1. */
 function attr01(v: number): number { return clamp01((v - 1) / 98); }
-/**
- * acos for estimates: Abramowitz-Stegun 4.4.45 (|error| < 7e-5 rad), deterministic (+, *, sqrt only) and ~15x
- * cheaper than dmath.dacos. Input clamped to [-1, 1].
- */
-function acosFast(x: number): number {
-  const ax = x < 0 ? (x < -1 ? 1 : -x) : (x > 1 ? 1 : x);
-  const r = Math.sqrt(1 - ax) * (1.5707288 + ax * (-0.2121144 + ax * (0.0742610 - 0.0187293 * ax)));
-  return x < 0 ? PI - r : r;
-}
 
 // ---------------------------------------------------------------- attribute formulas
 
@@ -337,34 +278,6 @@ function goalDetour(isKeeper: number): number {
 
 // ---------------------------------------------------------------- arrival-time estimate
 
-/**
- * Seconds to cover `dist` m from speed v0 (along the path): accel a1 up to vj, a1 * highSpeedAccelMul to vmax,
- * or braking at T_PLAYER.decel down to vmax when faster; then cruise.
- */
-function runTime(dist: number, v0: number, vj: number, vmax: number, a1: number): number {
-  let v = v0 > 0 ? v0 : 0;
-  let d = dist;
-  let t = 0;
-  if (v > vmax) {
-    const dec = T_PLAYER.decel;
-    const need = (v * v - vmax * vmax) / (2 * dec);
-    if (d <= need) return (v - Math.sqrt(v * v - 2 * dec * d)) / dec;
-    t = (v - vmax) / dec;
-    d -= need;
-    v = vmax;
-  }
-  for (let phase = 0; phase < 2; phase++) {
-    const v1 = phase === 0 ? (vj < vmax ? vj : vmax) : vmax;
-    const a = phase === 0 ? a1 : a1 * LT.highSpeedAccelMul;
-    if (v >= v1 || a <= 0) continue;
-    const need = (v1 * v1 - v * v) / (2 * a);
-    if (d <= need) return t + (Math.sqrt(v * v + 2 * a * d) - v) / a;
-    t += (v1 - v) / a;
-    d -= need;
-    v = v1;
-  }
-  return t + d / vmax;
-}
 
 /**
  * Estimated ticks for `slot` to reach (x, z) moving at up to `speedCap` m/s (sprinting when the cap is above jog),
@@ -373,6 +286,24 @@ function runTime(dist: number, v0: number, vj: number, vmax: number, a1: number)
  * adds the action's remaining ticks. Monotonic in distance along any direction; pure and allocation-free.
  */
 export function ticksToReachAtSpeed(s: SimState, slot: number, x: number, z: number, speedCap: number): number {
+  TTR_IN[0] = x;
+  TTR_IN[1] = z;
+  TTR_IN[2] = speedCap;
+  return ticksToReachCore(s, slot);
+}
+
+/**
+ * [QF-7S] The estimate's target and speed cap, passed through this scratch: the small public wrappers are inlined into
+ * their callers, so the doubles reach the (not inlined) estimator unboxed. Every call to ticksToReach /
+ * ticksToReachAtSpeed passed two or three boxed doubles before (V8: ~32-48 B per call, ~3 KB per tick in live play).
+ * The estimator calls nothing that re-enters it.
+ */
+const TTR_IN = new Float64Array(3);
+
+function ticksToReachCore(s: SimState, slot: number): number {
+  const x = TTR_IN[0]!;
+  const z = TTR_IN[1]!;
+  const speedCap = TTR_IN[2]!;
   const p = s.players[slot]!;
   const a = s.attrs[slot]!;
   const dx = x - p.x;
@@ -383,6 +314,8 @@ export function ticksToReachAtSpeed(s: SimState, slot: number, x: number, z: num
   if (!(d > LT.reachRadius)) return lockT;
   const sf = staminaFactor(p);
   const top = baseTop(a) * sf;
+  // [QF-7S] speedCap is a double (TTR_IN), so this merge stays unboxed (a phi of an untyped parameter and the double
+  // `top` was a tagged value in V8: it boxed `top` and every double merged with vmax below, ~47 B per estimate).
   const vmax = speedCap < top ? speedCap : top;
   if (!(vmax > 0)) return 1e9;
   const vj = top * T_PLAYER.jogFraction;
@@ -403,9 +336,18 @@ export function ticksToReachAtSpeed(s: SimState, slot: number, x: number, z: num
     } else {
       // Turn at the rate of a (partly braked) turning speed; the speed after the turn and the progress made
       // along the target direction meanwhile (negative for a U-turn: the run starts heading away).
-      const ang = acosFast(c);
+      // [QF-7S] acos (Abramowitz-Stegun 4.4.45, |error| < 7e-5 rad, deterministic +, *, sqrt; input clamped to [-1, 1])
+      // and turnRateFor(a, vTurn, sprint) inlined, same arithmetic as the former helpers: V8 boxed every double crossing
+      // these calls (and the run-time helper's below) when they were not inlined, ~60 B per estimate.
+      const cx = c < 0 ? (c < -1 ? 1 : -c) : (c > 1 ? 1 : c);
+      const cr = Math.sqrt(1 - cx) * (1.5707288 + cx * (-0.2121144 + cx * (0.0742610 - 0.0187293 * cx)));
+      const ang = c < 0 ? PI - cr : cr;
       const vTurn = sp * (LT.ttrTurnSpeedA + LT.ttrTurnSpeedB * c);
-      const tt = ang / turnRateFor(a, vTurn, sprint);
+      const tq = vTurn / baseTop(a);
+      let tw = T_PLAYER.turnRateSlow + (T_PLAYER.turnRateFast - T_PLAYER.turnRateSlow) * (tq < 0 ? 0 : tq > 1 ? 1 : tq);
+      const ag = (a.agility - 1) / 98;
+      tw *= 1 + T_PLAYER.agilityTurnScale * (2 * (ag < 0 ? 0 : ag > 1 ? 1 : ag) - 1);
+      const tt = ang / (sprint ? tw * T_PLAYER.sprintTurnMul : tw);
       t += tt;
       const sinA = Math.sqrt((1 - c) * (1 + c));
       const path = vTurn * tt / ang;
@@ -420,7 +362,43 @@ export function ticksToReachAtSpeed(s: SimState, slot: number, x: number, z: num
       v0 = vEnd;
     }
   }
-  if (dist > 0) t += runTime(dist, v0, vj, vmax, acc);
+  if (dist > 0) {
+    // Seconds to cover `dist` m from speed v0 (along the path): accel acc up to vj, acc * highSpeedAccelMul to vmax,
+    // or braking at T_PLAYER.decel down to vmax when faster; then cruise. [QF-7S] Inlined (was runTime), same
+    // arithmetic: no boxed doubles across the call.
+    let v = v0 > 0 ? v0 : 0;
+    let d = dist;
+    let rt = 0;
+    let done = 0;
+    if (v > vmax) {
+      const dec = T_PLAYER.decel;
+      const need = (v * v - vmax * vmax) / (2 * dec);
+      if (d <= need) {
+        rt = (v - Math.sqrt(v * v - 2 * dec * d)) / dec;
+        done = 1;
+      } else {
+        rt = (v - vmax) / dec;
+        d -= need;
+        v = vmax;
+      }
+    }
+    for (let phase = 0; done === 0 && phase < 2; phase++) {
+      const v1 = phase === 0 ? (vj < vmax ? vj : vmax) : vmax;
+      const ah = phase === 0 ? acc : acc * LT.highSpeedAccelMul;
+      if (v >= v1 || ah <= 0) continue;
+      const need = (v1 * v1 - v * v) / (2 * ah);
+      if (d <= need) {
+        rt = rt + (Math.sqrt(v * v + 2 * ah * d) - v) / ah;
+        done = 1;
+      } else {
+        rt += (v1 - v) / ah;
+        d -= need;
+        v = v1;
+      }
+    }
+    if (done === 0) rt = rt + d / vmax;
+    t += rt;
+  }
   return lockT + Math.ceil(t * TICK_HZ);
 }
 
@@ -429,7 +407,10 @@ export function ticksToReachAtSpeed(s: SimState, slot: number, x: number, z: num
  * including turning and acceleration. Used by loose-ball chasing, receivers, keepers and AI. Pure.
  */
 export function ticksToReach(s: SimState, slot: number, x: number, z: number): number {
-  return ticksToReachAtSpeed(s, slot, x, z, Infinity);
+  TTR_IN[0] = x;
+  TTR_IN[1] = z;
+  TTR_IN[2] = Infinity;
+  return ticksToReachCore(s, slot);
 }
 
 // ---------------------------------------------------------------- the tick

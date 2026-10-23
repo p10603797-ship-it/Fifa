@@ -62,7 +62,7 @@ import {
 import { EventType, type EventSink } from '../../contracts/events';
 import { Btn } from '../../contracts/input';
 import type { AdvantageState, ChallengeRecord, SimState } from '../../contracts/state';
-import { T_FOUL, T_RULES } from '../../contracts/tuning';
+import { T_FOUL, T_RULES, T_FOUL_CALL } from '../../contracts/tuning';
 import { rngInt } from '../core/rng';
 import { knockDown } from '../defend/tackle';
 import { inPenaltyArea } from '../pitch/geometry';
@@ -70,54 +70,9 @@ import { awardRestart } from './restart';
 import { isRestartPhase } from './restartCommon';
 import { sendOff } from './subs';
 
-/** TUNING-CR (RUL-09): proposed additions to T_FOUL (units in comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  /**
-   * Foul weight per ChallengeKind (index: STAND, HARD, SLIDE, SHOULDER, PUSH_PULL, KEEPER), 0..1. [QF-1 refit against
-   * real matches: ~18 challenge records a match, 94% standing tackles, 14% playing the ball first, mostly from the
-   * front at 0-5 m/s; the Wave-1 weights gave 5.1 fouls a match against the 6-16 band, now ~9.]
-   */
-  kindFoulWeight: [0.95, 0.97, 1.0, 0.12, 0.85, 0.96] as readonly number[],
-  /** fromBehind (dot, -1 front .. 1 behind) at or above this counts as "from behind". */
-  behindDot: 0.5,
-  /** Foul-chance multiplier for a challenge straight from behind (fromBehind = 1); side (0) = 1, linear between. */
-  behindFoulMul: 1.4,
-  /** Foul-chance multiplier for a challenge from the front (fromBehind = -1), linear from the side. */
-  frontFoulMul: 0.8,
-  /** Foul-chance multiplier at closing speed 0 and at >= recklessSpeed, linear between. [QF-1: low 0.7 -> 0.9] */
-  speedFoulMulLow: 0.9,
-  speedFoulMulHigh: 1.3,
-  /** Foul-chance multiplier when the tackler played the ball first but the challenge was reckless. */
-  ballFirstFoulMul: 0.5,
-  /** Cap on the foul chance of one challenge, 0..1. */
-  maxFoulChance: 0.97,
-  /** A challenge faster than recklessSpeed * this is reckless from any direction. [QF-1: 1.4 -> 0.85; CPU challenges
-   *  close at 0-6.5 m/s, so 7.7 m/s never happened and no card was ever shown] */
-  allOutSpeedMul: 0.85,
-  /** A challenge from behind faster than recklessSpeed * this is reckless. [QF-1, new: was recklessSpeed itself] */
-  behindRecklessMul: 0.6,
-  /** Serious foul play: slide / hard tackle from behind without the ball at >= recklessSpeed * this. */
-  seriousSpeedMul: 1.3,
-  /** Red chance of serious foul play by a hard tackle, as a fraction of slideFromBehindRed. */
-  hardRedMul: 0.5,
-  /** DOGSO: the victim within this distance of the attacked goal mouth, m. */
-  dogsoMaxGoalDist: 30,
-  /** DOGSO: the ball within this distance of the victim, m ... */
-  dogsoBallReach: 2.5,
-  /** ... and owned by him, or loose and touched by him within this many ticks (0.75 s). */
-  dogsoRecentTouchTicks: 45,
-  /** DOGSO: an outfield defender nearer the goal than the victim and within this distance of the victim-goal line covers, m. */
-  dogsoCoverDist: 9,
-  /** Advantage: the ball at or beyond this attack-frame x (m; 0 = halfway line) is a good position. */
-  advAttackMinU: 0,
-  /** Advantage "promising": the ball at or beyond this attack-frame x (m; -17.5 = end of the own third) ... */
-  advPromisingMinU: -17.5,
-  /** ... with at most this many opponents (offender excluded) within advPromisingRadius m of the ball. */
-  advPromisingRadius: 8,
-  advPromisingMaxOpp: 1,
-  /** A record of the advantage's offender on its victim this soon after the foul is the same incident, ticks (0.5 s). */
-  sameIncidentTicks: 30,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_FOUL_CALL. */
+export const LOCAL_TUNING = T_FOUL_CALL;
+
 
 const CANCEL_BUTTONS = Btn.SHIELD | Btn.SPRINT;
 
@@ -168,7 +123,7 @@ function readRecord(rec: Readonly<ChallengeRecord>): void {
   F[2] = fb === fb && fb !== Infinity && fb !== -Infinity ? (fb < -1 ? -1 : fb > 1 ? 1 : fb) : 0;
   const v = rec.closingSpeed;
   F[3] = v > 0 && v !== Infinity ? v : 0;
-  const w = LOCAL_TUNING.kindFoulWeight;
+  const w = T_FOUL_CALL.kindFoulWeight;
   const k = rec.kind;
   F[4] = k >= 0 && k < w.length && k === (k | 0) ? w[k]! : w[ChallengeKind.STAND]!;
 }
@@ -179,15 +134,15 @@ function readRecord(rec: Readonly<ChallengeRecord>): void {
  */
 export function isReckless(rec: Readonly<ChallengeRecord>): boolean {
   readRecord(rec);
-  const behind = F[2]! >= LOCAL_TUNING.behindDot;
-  if (behind && F[3]! > T_FOUL.recklessSpeed * LOCAL_TUNING.behindRecklessMul) return true;
+  const behind = F[2]! >= T_FOUL_CALL.behindDot;
+  if (behind && F[3]! > T_FOUL.recklessSpeed * T_FOUL_CALL.behindRecklessMul) return true;
   if (behind && rec.kind === ChallengeKind.SLIDE) return true;
-  return F[3]! > T_FOUL.recklessSpeed * LOCAL_TUNING.allOutSpeedMul;
+  return F[3]! > T_FOUL.recklessSpeed * T_FOUL_CALL.allOutSpeedMul;
 }
 
 /** F[0] = foul chance of rec (see foulChance). */
 function computeFoulChance(rec: Readonly<ChallengeRecord>): void {
-  const L = LOCAL_TUNING;
+  const L = T_FOUL_CALL;
   readRecord(rec);
   const fb = F[2]!;
   const dirMul = fb >= 0 ? 1 + (L.behindFoulMul - 1) * fb : 1 + (1 - L.frontFoulMul) * fb;
@@ -203,9 +158,9 @@ function computeFoulChance(rec: Readonly<ChallengeRecord>): void {
 function computeRedChance(rec: Readonly<ChallengeRecord>): void {
   readRecord(rec);
   let p = 0;
-  if (rec.ballFirst !== 1 && F[2]! >= LOCAL_TUNING.behindDot && F[3]! >= T_FOUL.recklessSpeed * LOCAL_TUNING.seriousSpeedMul) {
+  if (rec.ballFirst !== 1 && F[2]! >= T_FOUL_CALL.behindDot && F[3]! >= T_FOUL.recklessSpeed * T_FOUL_CALL.seriousSpeedMul) {
     if (rec.kind === ChallengeKind.SLIDE) p = T_FOUL.slideFromBehindRed;
-    else if (rec.kind === ChallengeKind.HARD) p = T_FOUL.slideFromBehindRed * LOCAL_TUNING.hardRedMul;
+    else if (rec.kind === ChallengeKind.HARD) p = T_FOUL.slideFromBehindRed * T_FOUL_CALL.hardRedMul;
   }
   F[1] = p;
 }
@@ -229,7 +184,7 @@ export function seriousFoulRedChance(rec: Readonly<ChallengeRecord>): number {
  */
 export function isDogso(s: SimState, rec: Readonly<ChallengeRecord>): boolean {
   if (!isValidChallenge(s, rec)) return false;
-  const L = LOCAL_TUNING;
+  const L = T_FOUL_CALL;
   const v = s.players[rec.victim]!;
   const b = s.ball;
   const recent = v.lastTouchTick >= 0 && s.tick - v.lastTouchTick <= L.dogsoRecentTouchTicks;
@@ -433,7 +388,7 @@ function updateAdvantage(s: SimState, ev: EventSink): void {
 
 /** Ball in the fouled team's attacking half, or beyond their own third with space around it. */
 function goodPosition(s: SimState, team: number, offender: number): boolean {
-  const L = LOCAL_TUNING;
+  const L = T_FOUL_CALL;
   const b = s.ball;
   const u = s.teams[team]!.dir * b.x;
   if (u >= L.advAttackMinU) return true;
@@ -567,5 +522,5 @@ function sameIncident(s: SimState, recs: readonly ChallengeRecord[], i: number):
     if (q.tackler === r.tackler && q.victim === r.victim && q.tick === r.tick) return true;
   }
   const a = s.match.advantage;
-  return a.active === 1 && a.offender === r.tackler && a.victim === r.victim && s.tick - a.startTick <= LOCAL_TUNING.sameIncidentTicks;
+  return a.active === 1 && a.offender === r.tackler && a.victim === r.victim && s.tick - a.startTick <= T_FOUL_CALL.sameIncidentTicks;
 }

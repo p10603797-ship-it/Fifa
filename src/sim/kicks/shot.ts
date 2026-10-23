@@ -94,181 +94,20 @@ import type { EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type PlayerState, type SimState } from '../../contracts/state';
 import { createKickLaunch, ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_PASS, T_PLAYER, T_SHOT } from '../../contracts/tuning';
+import { T_BALL, T_PASS, T_PLAYER, T_SHOT, T_SHOT_KICK, T_KICK } from '../../contracts/tuning';
 import { ballAirStep, curlSpinY, launchSpin } from '../ball/flight';
 import { dcos, dpow, dsin } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
 import { pressureOn } from '../core/query';
 import { rngGauss } from '../core/rng';
 import { staminaFactor } from '../players/locomotion';
-import { footCanStrike, isDeadBallTaker, KICK_TUNING, lineUpOnDeadBall, noteCharging, releaseStrike } from './kickCommon';
+import { footCanStrike, isDeadBallTaker, lineUpOnDeadBall, noteCharging, releaseStrike } from './kickCommon';
 
-/** TUNING-CR (SIM-11): proposed additions to T_SHOT (units in the comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  // ---- SHOT action: timing and movement
-  /** Max |DIRECT stick| (0..1) while winding up / charging a shot; an ARRIVE intent is capped at this x jog speed. */
-  windupMoveScale: 0.45,
-  /** Ticks the shooter stays MoveMode.LOCKED from the contact tick (follow-through), ticks. */
-  contactLockTicks: 5,
-  /** A held charge waits at most T_PASS.powerFillTicks + this many ticks past the planned contact, ticks. */
-  chargeWaitExtraTicks: 20,
-  /** A loose ball still arriving may delay the contact by up to, ticks (startArriveTicks + 6: a first-time shot
-   *  startShot accepted never whiffs only because the ball is late; [QF-10] +6 for it to come from his lane to the
-   *  kicking spot, kickCommon.ts footCanStrike). */
-  contactGraceTicks: 20,
-  /** [QF-10] His own ball out of reach at the contact tick (a touch ahead, still dropping, behind him): the contact waits
-   *  up to this many ticks while SIM-06 pulls it onto the kicking spot, ticks. */
-  ownReachWaitTicks: 14,
-  /** The ball can be struck within this horizontal distance of the body centre, m ... */
-  reachRadius: 1.2,
-  /** ... with its centre at or below this height, m. */
-  reachHeight: 0.8,
-  /** startShot accepts a loose ball arriving within the wind-up + this many ticks, ticks ... */
-  startArriveTicks: 14,
-  /** ... on a path (relative to him) passing within this distance of him, m ... */
-  startArriveLane: 1.6,
-  /** ... with its centre no higher than this now, m. */
-  startArriveHeight: 1.0,
-  // ---- aim
-  /** An explicit target within this distance of a goal line (either side) aims at that goal's mouth, m. */
-  goalTargetDepth: 4,
-  /** Assisted: a stick ray meeting the goal line within this distance outside a post aims at the post, m. */
-  captureMargin: 3,
-  /** Manual ray aims are capped at this |z| on the goal line; a ray that never reaches the line aims this wide, m. */
-  rayMaxZ: 30,
-  /** A ray whose unit component toward the goal line is at most this never reaches it. */
-  rayMinAlong: 0.05,
-  /** The aim origin is the ball when it is his or within this distance of him, else his body, m. */
-  aimBallNear: 2.5,
-  /** Assist strength of Semi (Assisted = 1, Manual = 0), and the power shot's multiplier on it (least assistance). */
-  semiAssist: 0.5,
-  powerShotAssistMul: 0.4,
-  /** Keeper cover half-width at his own distance from the ball, m (scaled by the projection onto the goal line) ... */
-  keeperCover: 1.0,
-  /** ... the keeper must be at least this far ahead of the ball along the attack direction, m ... */
-  keeperMinAhead: 0.5,
-  /** ... and the assisted aim moves out of that cover by at most this much, m. */
-  keeperShiftMax: 1.2,
-  /** Aim heights at the goal line (ball centre) at power 0 and 1, m. */
-  normalYLo: 0.35,
-  normalYHi: 1.7,
-  finesseYLo: 0.6,
-  finesseYHi: 1.5,
-  powerYLo: 0.4,
-  powerYHi: 1.35,
-  chipYLo: 1.5,
-  chipYHi: 1.95,
-  fkYLo: 1.3,
-  fkYHi: 2.05,
-  penaltyYLo: 0.3,
-  penaltyYHi: 1.75,
-  /** Low driven: aim height, m, and the highest point of its flight (the rise is capped), m. */
-  lowDrivenY: 0.25,
-  lowDrivenMaxPeak: 0.8,
-  /** Highest aim height after error, m. */
-  maxAimY: 8,
-  // ---- speed
-  /** Shot speed multiplier at shotPower 1 (99 -> 1), dimensionless. */
-  shotPowerMulMin: 0.8, // [QF-2, DAT-05] was 0.92: shot speed moved only ~4% from shotPower 40 to 90
-  /** Power shot speed at power 0 (power 1 = T_SHOT.powerShotMax), m/s. */
-  powerShotMinSpeed: 22,
-  /** Low driven speed at power 0 (power 1 = T_SHOT.speedMax), m/s. */
-  lowDrivenMinSpeed: 21,
-  /** Free-kick shot speed at power 0 / 1, m/s, and the driven (L1 + R1) multiplier. */
-  fkSpeedMin: 17,
-  fkSpeedMax: 29,
-  fkDrivenMul: 1.12,
-  /** Chip launch elevation at power 0 / 1, rad. */
-  chipAngleMin: 0.5,
-  chipAngleMax: 0.8,
-  /** Chip speed search floor, m/s. */
-  chipSolveMinSpeed: 5,
-  /** Power floor of a shot (an instant tap), 0..1. */
-  minPower: 0.05,
-  // ---- spin
-  /** Curl multiplier from the curve attribute at 1 and 99. */
-  curveMulMin: 0.75,
-  curveMulMax: 1.2,
-  /** |request curl| below this counts as none. */
-  curveDead: 0.1,
-  /** A finesse aim within this |z| of the goal centre curls the natural way of the kicking foot, m. */
-  finesseCentreBand: 0.5,
-  /** Finesse with a request curl: spin share at the smallest curl (grows to 1 at |curl| = 1). */
-  finesseSwipeMin: 0.5,
-  /** Curl spin at |actCurve| = 1 for normal / power / low driven shots and penalties, rad/s. */
-  normalCurlSpin: 5,
-  /** Free-kick curl spin at |actCurve| = 1, rad/s; driven free kicks keep this share of it. */
-  fkCurlSpin: 10,
-  fkDrivenCurlMul: 0.5,
-  /** Free-kick topspin (dip) at restart.side 0, and its change per unit of side, rad/s (side -1 floats). */
-  fkDipBase: 5,
-  fkDipSpan: 8,
-  /** Assisted free kick over a wall: ball centre height to clear at the wall, m; topspin added per try, rad/s; tries;
-   *  wall half-width = members x wallMemberWidth / 2 + fkWallHalfExtra, m. */
-  fkWallClearY: 2.35,
-  fkWallDipStep: 4,
-  fkWallDipSteps: 3,
-  wallMemberWidth: 0.6,
-  fkWallHalfExtra: 0.5,
-  // ---- error
-  /** Accuracy attribute: finishing up to finishRange from the goal centre, longShots from longRange (blended), m. */
-  finishRange: 16,
-  longRange: 20,
-  /** Base sigma = errorMin + (errorMax - errorMin) x errBaseShare x (1 - accuracy)^errExp. */
-  errBaseShare: 0.6,
-  errExp: 1.2,
-  /** Accuracy blends: finesse (curve share), free kick (curve share vs longShots), penalty (composure share). */
-  finesseCurveWeight: 0.35,
-  fkCurveWeight: 0.5,
-  penaltyComposureWeight: 0.4,
-  /** Sigma multipliers by kind. */
-  errMulNormal: 1.0,
-  errMulFinesse: 0.75,
-  errMulChip: 0.85,
-  errMulPower: 1.1,
-  errMulLowDriven: 1.0,
-  errMulPenalty: 0.8,
-  errMulFreeKick: 0.9,
-  /** Power above T_SHOT.errorPowerKnee grows the sigma by up to this x at full power ... */
-  powerErrMul: 1.2,
-  /** ... and lifts the aim by up to this at full power (quadratic in the excess), m. */
-  overhitRise: 0.5,
-  /** Vertical error as a share of the angular sigma. */
-  vertErrMul: 0.6,
-  /** Balance: x (1 + balanceErrMul x speed fraction x (1 - cos(run, shot)) / 2). */
-  balanceErrMul: 1.5,
-  /** Body facing away: x (1 + facingErrMul x (1 - cos(facing, shot)) / 2). */
-  facingErrMul: 0.8,
-  /** Pressure (core/query pressureOn 0..1): x (1 + pressureErrMul x pressure x (1 - composureRelief x composure)). */
-  pressureErrMul: 1.0,
-  composureRelief: 0.8, // [QF-2, DAT-05] was 0.5: a 1 m press cut a calm striker's placement error by just 14%
-  /** Ball height at contact: x (1 + heightErrMul x clamp01((y - heightErrFrom) / heightErrSpan)), m. */
-  heightErrFrom: 0.25,
-  heightErrSpan: 0.55,
-  heightErrMul: 0.8,
-  /** First time (ball not his at contact): x (1 + firstTimeErrMul x clamp01((relative speed - from) / span)), m/s. */
-  firstTimeErrFrom: 3,
-  firstTimeErrSpan: 15,
-  firstTimeErrMul: 0.6,
-  /** Low stamina: x (1 + staminaErrMul x fraction of the drop to T_PLAYER.staminaFloorMul). */
-  staminaErrMul: 1.0,
-  /** Weaker foot multiplier at weakFoot 1 (5 -> 1). */
-  weakFootErrMul: 1.8,
-  /** Foot used: the ball this far to one side of the body centre picks that foot, m ... */
-  footSideBand: 0.12,
-  /** ... else a shot turning toward the preferred foot's side by more than this sine is struck with the weaker foot. */
-  weakTurnSin: 0.6,
-  // ---- trajectory solver
-  /** Max solver flights per launch, tolerance at the aim point (m), and the flight horizon (ticks). */
-  solveIters: 8,
-  solveTol: 0.02,
-  maxFlightTicks: 300,
-  /** Elevation bounds of the solved launch, rad. */
-  minElevation: -0.35,
-  maxElevation: T_SHOT.maxAimedElevation, // [QF-13] was 1.3
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_SHOT_KICK. */
+export const LOCAL_TUNING = T_SHOT_KICK;
 
-const LT = LOCAL_TUNING;
+
+const LT = T_SHOT_KICK;
 
 // Hot-path copies of imported constants (module-level locals: no import-binding lookups per tick).
 const NS = NUM_SLOTS;
@@ -1132,7 +971,7 @@ function shotUpdate(s: SimState, slot: number, ev: EventSink): void {
     return;
   }
   // [QF-10] The dead ball not at his kicking spot yet: keep lining up (the contact moves on a tick at a time).
-  if (taker && p.actT < KICK_TUNING.takerLineUpMaxTicks && lineUpOnDeadBall(s, slot) === 0) {
+  if (taker && p.actT < T_KICK.takerLineUpMaxTicks && lineUpOnDeadBall(s, slot) === 0) {
     p.actContact = p.actT + 1;
     p.actDur += 1;
     shotMove(s, p);

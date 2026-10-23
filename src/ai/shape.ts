@@ -22,7 +22,7 @@
  *     by a per-phase offset + slope * ballU (higher in build-up/attack, deeper when defending), shifted by the
  *     block push of data/tactics resolveTactics (focus FOCUS_MODIFIERS.pushNx in possession; + team press
  *     QUICK_TACTICS.teamPress.pushNx out of possession), and is taken from TAI-04's team.lineX in defending open
- *     play (within LOCAL_TUNING.lineXTrust of our own estimate). Other slots keep their formation depth relative
+ *     play (within T_SHAPE.lineXTrust of our own estimate). Other slots keep their formation depth relative
  *     to the back line, scaled per phase and focus (focusDepth), plus role pushes (full-backs and forwards up in
  *     attack, wide players back in defence); the back line is flattened when defending and nobody stands deeper
  *     than it. Widths scale per phase and by the resolveTactics focus width (widthAttack in possession,
@@ -37,7 +37,7 @@
  *     own half, when offside is on), inside the pitch, outfielders outside their own goal area; during KICK_OFF
  *     own half and, for the defending side, outside the centre circle.
  *  8. getInBox spacing: a box player whose (clamped) spot lands on a team-mate's home slides sideways to the
- *     nearest free spot inside the box (LOCAL_TUNING.boxSeparation).
+ *     nearest free spot inside the box (T_SHAPE.boxSeparation).
  *
  * Staggering: team.shapeT counts down; the shape is recomputed when it reaches 1 (or 0 = forced, see
  * invalidateShape) on ticks aligned to the interval, team 1 offset by half an interval. Every tick each active
@@ -50,7 +50,7 @@ import {
 import { MatchPhase, RestartKind, Role, TeamPhase } from '../contracts/enums';
 import type { EventSink } from '../contracts/events';
 import type { SimState } from '../contracts/state';
-import { T_AI } from '../contracts/tuning';
+import { T_AI, T_SHAPE } from '../contracts/tuning';
 import { FORMATIONS, ShapeLine, slotLine } from '../data/formations';
 import {
   BOX_SPOTS, createTacticParams, EXTRA_STRIKER_SHAPES, resolveTactics, slotLineFor, TacticFlag, tacticFlags,
@@ -61,84 +61,8 @@ import { effectiveFocus } from './cpu/levels';
 // Per-phase tables are indexed by TeamPhase: BUILD_UP, ATTACK, DEFEND, TRANSITION_ATTACK, TRANSITION_DEFEND,
 // SET_PIECE. SET_PIECE is resolved to BUILD_UP/ATTACK (restart team) or DEFEND (other team) before lookup, so its
 // column is only a fallback. Team-frame u: metres from the centre spot toward the opposition goal.
-export const LOCAL_TUNING = {
-  /** Back-line height: u = dataBack + lineOffset + lineSlope * ballU, clamped to [lineMin, lineMax]. dataBack is
-   *  the formation's deepest outfield slot (its neutral back line). m, m/m, m (team frame), m (team frame). */
-  lineOffset: [8, 14, 0, 14, -3, 0],
-  /** [INT-A] Extra height of the back line out of possession, m (per phase), fading in with the ball's u from
-   *  defendLiftFrom (none: ball near our box) to defendLiftTo (full): a mid-block instead of a low block that left
-   *  every attack facing ten men inside 25 m (mirrors TAI-04 defshape lineOffset). */
-  defendLift: [0, 0, 7, 0, 6, 7],
-  defendLiftFrom: -30,
-  defendLiftTo: -12,
-  lineSlope: [0.55, 0.6, 0.55, 0.55, 0.55, 0.55],
-  lineMin: [-40, -36, -46.5, -36, -46.5, -44],
-  lineMax: [2, 16, 9, 14, 3, 9],
-  /** Absolute back-line limits after focus and TAI-04 lineX, m (floor = own goal-area edge + 0.5 m). */
-  lineFloor: -46.5,
-  lineCeil: 18,
-  /** Vertical stretch of formation depths relative to the deepest outfield slot (1 = data depths). */
-  depthScale: [1.25, 1.3, 0.9, 1.4, 0.95, 1],
-  /** Back-line depth stagger kept in defending phases (0 = perfectly flat, 1 = data stagger). */
-  defFlatten: 0.3,
-  /** Lateral stretch of the formation width (1 = data width). */
-  widthScale: [1.1, 1.05, 0.85, 1, 0.88, 0.95],
-  /** Fraction of the ball's lateral offset the block slides by; cap, m. */
-  slide: [0.25, 0.3, 0.45, 0.25, 0.4, 0.3],
-  slideMax: 14,
-  /** Width factor on the ball side / far side with the ball fully wide (1 = unchanged); full at narrowRange m. */
-  nearNarrow: [1, 1, 0.9, 1, 0.9, 1],
-  farNarrow: [0.95, 1, 0.7, 1, 0.75, 0.9],
-  narrowRange: 20,
-  /** Role depth offsets per phase, m (+ = toward the opposition goal). */
-  fullBackPush: [4, 8, 0, 5, 0, 0],
-  wingBackPush: [4, 6, -6, 6, -6, 0],
-  wideMidPush: [0, 2, -2, 3, -2, 0],
-  wingerPush: [2, 7, -2, 8, -2, 0],
-  forwardPush: [2, 6, 3, 8, 0, 0],
-  /** Tactical focus (DEFAULT, DEFENDING, ATTACKING): multiplier on the formation depths. The focus block push
-   *  and width multipliers are DAT-04's (data/tactics resolveTactics), shared with every other module. */
-  focusDepth: [1, 0.9, 1.08],
-  /** Accepted deviation of TAI-04's team.lineX from this module's own back-line estimate, m. */
-  lineXTrust: 15,
-  /** Max gap between consecutive outfield depths as a fraction of T_AI.lineSpacingMax ... */
-  lineGapFraction: 0.97,
-  /** ... x this per phase [INT-A: a team in possession stretches (about 40 m from the back line to the forwards);
-   *  one capped at 14 m gaps in possession had nobody between or beyond the opponents' lines]. */
-  lineGapScale: [1.35, 1.5, 1, 1.5, 1, 1],
-  /** Formation slots of one line whose nx differ by at most this form one sub-line (normalised units). */
-  subLineTolerance: 0.12,
-  /** Span kept by a sub-line with k of n members: spreadMin + (1 - spreadMin) * (k - 1) / (n - 1). */
-  spreadMin: 0.5,
-  /** Sub-lines whose members are all at least this wide (|nz|) are flank pairs and keep their spots. */
-  flankNz: 0.4,
-  /** Extra striker: lateral offset beside a lone forward (nz units, short-handed sides only); share of the move
-   *  to the EXTRA_STRIKER_SHAPES positions (and of the push up) out of possession. */
-  extraStrikerNz: 0.22,
-  extraStrikerDefend: 0.5,
-  /** Get in the box: min |nz| to count as wide (targets: data/tactics BOX_SPOTS far post and penalty spot). */
-  getInBoxMinNz: 0.25,
-  /** Get in the box: min distance of a box player's home from any team-mate's home, m; numeric slack, m; he stays
-   *  this far inside the penalty area's side lines, m. */
-  boxSeparation: 4,
-  boxSeparationSlack: 1e-6,
-  boxSideMargin: 1,
-  /** Margins, m: inside the touchlines, inside the goal lines, outside the own goal area, onside. */
-  sideMargin: 1.5,
-  endMargin: 1,
-  goalAreaMargin: 0.5,
-  offsideMargin: 0.7,
-  /** Kick-off: stay this far inside the own half / outside the centre circle, m. */
-  kickOffMargin: 0.5,
-  /** Keeper home: depth off the goal line with the ball at the own / opposition goal line, m; lateral follow. */
-  keeperDepthNear: 2,
-  keeperDepthFar: 12,
-  keeperFollow: 0.15,
-  /** Keeper home stays this far inside the posts laterally, m. */
-  keeperPostMargin: 0.5,
-} as const; // TUNING-CR
 
-const T = LOCAL_TUNING;
+const T = T_SHAPE;
 const N = PLAYERS_PER_TEAM;
 
 /**

@@ -56,84 +56,17 @@ import { AiJob, KickKind, MatchPhase, TeamPhase } from '../contracts/enums';
 import { EventType, type EventSink } from '../contracts/events';
 import type { SimState, TeamState } from '../contracts/state';
 import { RESTART_PHASES } from '../contracts/transitions';
-import { T_AI } from '../contracts/tuning';
+import { T_AI, T_TRANSITION } from '../contracts/tuning';
 import { focusModifier, phaseOffset, rolePreset, slotRole, tacticFlags } from '../data/tactics';
 import { otherTeam, secondLastDefenderX, teamEnd, teamStart } from '../sim/core/query';
 import { effectiveFocus } from './cpu/levels';
 import { assignJob, isJobDriven } from './jobs';
 
-/** TUNING-CR: move into contracts/tuning.ts as T_TRANSITION. Per-style arrays are indexed by TeamStyle
- *  (POSSESSION, COUNTER, DIRECT, HIGH_PRESS, WING_PLAY). */
-export const LOCAL_TUNING = {
-  /** BUILD_UP <-> ATTACK switch this far either side of the own-third line (u = -17.5 m), m. */
-  thirdHysteresis: 2.5,
-  /** Space ahead: the opponents' rest defence is counted beyond max(ball u + breakAhead, breakMinU), m (team frame). */
-  breakAhead: 8,
-  breakMinU: -5,
-  /** Our attackers count when beyond that line minus runnerReach, m. */
-  runnerReach: 6,
-  /** Extra opponents tolerated in the rest defence vs our attackers for a counter to be on, players (per style). */
-  counterExtra: [0, 2, 1, 1, 1] as readonly number[],
-  /** A counter stays on while the space margin is >= -stayTolerance, players. */
-  stayTolerance: 1,
-  /** TRANSITION_ATTACK window as a multiple of T_AI.transitionTicks (per style). */
-  attackWindowScale: [0.75, 1, 1, 1, 1] as readonly number[],
-  /** TRANSITION_DEFEND window as a multiple of T_AI.transitionTicks. */
-  defendWindowScale: 1,
-  /** Reaction before the runners break after the ball is won, ticks (per style). */
-  breakDelay: [12, 0, 3, 6, 6] as readonly number[],
-  /** Runners making RUN_IN_BEHIND / SUPPORT breaks, players (per style). */
-  inBehindRunners: [1, 2, 2, 1, 2] as readonly number[],
-  supportRunners: [1, 1, 1, 1, 1] as readonly number[],
-  /** In-behind run target ahead of the ball, m (per style). */
-  runAhead: [14, 24, 22, 18, 18] as readonly number[],
-  /** Supporting break: target ahead of the ball and to the runner's side of it, m. */
-  supportAhead: 8,
-  supportWide: 10,
-  /** Min counter weight (role runs.counter x phase and focus run scales) to break forward. */
-  minCounterWeight: 0.3,
-  /** Position factor: full weight up to behindFull m behind the ball, falling linearly over behindRange m to
-   *  behindFloor. m, m, fraction. */
-  behindFull: 5,
-  behindRange: 30,
-  behindFloor: 0.2,
-  /** Runner lanes: centre follows the ball's lateral position by laneBallFollow (capped at laneCentreMax m); lanes
-   *  laneGap m apart; a lone runner keeps his own lane within laneGap / 2 of the centre. */
-  laneBallFollow: 0.35,
-  laneCentreMax: 8,
-  laneGap: 16,
-  /** Run targets stay this far inside the touchlines, short of the goal line, behind the offside line, m. */
-  sideMargin: 4,
-  goalLineMargin: 6,
-  onsideMargin: 0.7,
-  /** Min recover duty (role duties.recover x phase, focus and style duty scales) to make a recovery run. */
-  recoverDutyMin: 0.5,
-  /** Recover duty multiplier per style (counter teams drop deep at once, high-press teams counter-press). */
-  recoverStyleScale: [1, 1.2, 1, 0.85, 1] as readonly number[],
-  /** Level with or ahead of (ball u - goalSideMargin) counts as caught upfield, m. */
-  goalSideMargin: 1,
-  /** Recovery point at least this far goal-side of the ball, m. */
-  recoverDepth: 6,
-  /** A player whose home is ahead of the recovery point is left alone when this far deeper than it, m. */
-  holdTolerance: 1,
-  /** Lateral of the recovery point: 0 = on the ball-goal line, 1 = the player's home lane. */
-  lateralKeep: 0.45,
-  /** Recovery points stay outside the own goal area by this much, m. */
-  goalAreaMargin: 1,
-  /** Lateral limit of recovery points inside the touchlines, m. */
-  recoverSideMargin: 1.5,
-  /** ATTACK_BUILD re-emission period while in possession in the final third, ticks. */
-  attackBuildInterval: 60,
-  /** ATTACK_BUILD intensity: full depth this far beyond the final-third line, m; lateral fall-off beyond centralZ m
-   *  over centralRange m down to 1 - centralLoss; bonus during a counter. */
-  buildDepthRange: 30,
-  buildCentralZ: 9,
-  buildCentralRange: 25,
-  buildCentralLoss: 0.4,
-  buildCounterBonus: 0.15,
-} as const; // TUNING-CR
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_TRANSITION. */
+export const LOCAL_TUNING = T_TRANSITION;
 
-const LT = LOCAL_TUNING;
+
+const LT = T_TRANSITION;
 
 /** Upper bound of the phase and possession clocks (structural; ~207 days of play). */
 export const CLOCK_MAX = 1 << 30;

@@ -69,7 +69,7 @@ import { EventType, type EventSink } from '../../contracts/events';
 import { MoveMode, type PlayerState, type SimState } from '../../contracts/state';
 import { createActionRequest, createKickLaunch, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_GK, T_PASS } from '../../contracts/tuning';
+import { T_BALL, T_GK, T_PASS, T_GK_HANDLING } from '../../contracts/tuning';
 import { beginAction, clearAction, endAction } from '../actions/dispatch';
 import { createLaunchSolution, groundPassSpeed, solveLaunchSpin } from '../ball/flight';
 import { applyKick, takePossession } from '../core/kick';
@@ -81,146 +81,10 @@ import { selectReceiver } from '../kicks/pass';
 import { clampToPitch } from '../pitch/geometry';
 import { maxSpeed } from '../players/locomotion';
 
-export const LOCAL_TUNING = { // TUNING-CR (GKP-05): move into T_GK
-  // ---- holding
-  /** Ball centre height while held in his hands, m. */
-  holdHeight: 1.05,
-  /** Ball centre distance in front of the keeper's centre while held, m. */
-  holdAhead: 0.32,
-  /** Walking speed cap while holding the ball, m/s. */
-  holdWalkSpeed: 2.2,
-  /** Hold box: keeper's centre at least this far in front of his goal line while holding, m. */
-  holdLineMargin: 0.7,
-  /** Hold box: keeper's centre at least this far inside the other penalty-area lines while holding, m. */
-  holdEdgeMargin: 0.6,
-  /** Max speed at which a keeper outside the hold box is eased back in, m/s. */
-  holdRecoverSpeed: 2.5,
-  /** Ball centre in hands stays at least BALL_RADIUS + this in front of the goal line, m. */
-  ballLineMargin: 0.03,
-  /** canHandle: the keeper's centre may be this far outside his area (his arms reach the ball inside it), m. */
-  handleKeeperSlack: 0.6,
-  /** keeperPickUp: max horizontal distance ball - keeper centre (dive catches at full stretch included), m. */
-  pickUpReach: 4.0,
-  /** keeperPickUp: max ball height, m. */
-  pickUpMaxHeight: 3.2,
-  // ---- releases (common)
-  /** Facing turn rate toward the aim during a release wind-up, rad/s. */
-  releaseTurnRate: 9,
-  /** A power charge still running this many ticks after the contact tick is ended here (lost power-bar owner). */
-  chargeCapTicks: 80,
-  /** Ticks the keeper cannot regain possession after a throw, roll or kick (sets p.noTouchT). */
-  releaseNoTouchTicks: 12,
-  /** Fraction of the receiver's velocity x estimated flight time added to the target (lead). */
-  receiverLead: 0.8,
-  /** Max lead time, s. */
-  leadMaxTime: 2.5,
-  /** Fallback receiver search: openness reaches 1 at this nearest-opponent distance, m. */
-  openDist: 8,
-  /** Fallback receiver search: weight of the mismatch between his distance and the power-implied distance. */
-  distanceWeight: 0.5,
-  /** Fallback receiver search: candidates up to this multiple of the kind's max range. */
-  rangeSlack: 1.25,
-  /** Target points stay this far inside the pitch lines, m. */
-  pitchMargin: 1.0,
-  /** Throws / rolls with no receiver aim this fraction of their max range at power 0 (full range at power 1). */
-  wantMinFrac: 0.35,
-  /** Horizontal ball speed assumed for kick lead estimates, m/s. */
-  kickLeadSpeed: 22,
-  /** Movement intent toward a hold-box edge is removed within this distance of it, m. */
-  holdEdgeEps: 0.05,
-  // ---- overarm throw (GK_THROW)
-  /** Launch speed band, m/s. */
-  throwSpeedMin: 14,
-  throwSpeedMax: 22,
-  /** Distance at which the throw speed reaches the top of its band (with full power), m. */
-  throwRefDist: 40,
-  /** Max throw range used for targets / auto release, m. */
-  throwMaxDist: 40,
-  /** A GK_THROW to a target nearer than this is rolled instead, m. */
-  throwRollBelow: 10,
-  /** Release point: ball centre height and distance in front of him, m. */
-  throwReleaseHeight: 2.0,
-  throwReleaseAhead: 0.25,
-  /** Wind-up / recovery ticks. */
-  throwWindup: 16,
-  throwRecovery: 14,
-  /** Share of power (vs distance) in the speed choice, 0..1. */
-  throwPowerShare: 0.25,
-  // ---- driven throw (GK_DRIVEN_THROW): flatter and faster
-  drivenThrowSpeedMin: 17,
-  drivenThrowSpeedMax: 26,
-  drivenThrowRefDist: 45,
-  drivenThrowMaxDist: 45,
-  drivenThrowReleaseHeight: 1.9,
-  drivenThrowWindup: 14,
-  drivenThrowRecovery: 14,
-  /** Drag allowance for the throw elevation: the drag-free solve aims at carry * (1 + this * carry), 1/m. */
-  throwDragComp: 0.004,
-  /** Elevation search bounds for throws (drag-free closed form, then drag-exact speed), rad. */
-  throwAngleMin: 0.02,
-  throwAngleMax: 0.72,
-  // ---- roll (GK_ROLL)
-  rollSpeedMin: 8,
-  rollSpeedMax: 14,
-  /** Arrival speed at the receiver at power 0 / 1, m/s. */
-  rollArriveMin: 1.5,
-  rollArriveMax: 4,
-  rollMaxDist: 30,
-  rollReleaseAhead: 0.6,
-  rollWindup: 14,
-  rollRecovery: 12,
-  // ---- drop kick (GK_DROP_KICK)
-  /** Launch elevation, rad. */
-  dropKickAngle: 0.68,
-  /** Carry (first landing) at power 0 / 1 with no nearer target, m. */
-  dropKickRangeMin: 50,
-  dropKickRangeMax: 60,
-  /** Nearer targets still get at least this carry, m. */
-  dropKickMinDist: 35,
-  /** Contact point: ball centre height and distance in front of him, m. */
-  dropKickHeight: 0.3,
-  dropKickAhead: 0.55,
-  dropKickWindup: 22,
-  dropKickRecovery: 18,
-  // ---- driven kick (GK_DRIVEN_KICK): lower and flatter
-  drivenKickAngle: 0.3,
-  drivenKickRangeMin: 40,
-  drivenKickRangeMax: 50,
-  drivenKickMinDist: 25,
-  drivenKickHeight: 0.25,
-  drivenKickWindup: 20,
-  drivenKickRecovery: 16,
-  // ---- drop at his feet (GK_RELEASE)
-  dropAhead: 0.55,
-  /** Forward push of the dropped ball, m/s. */
-  dropPushSpeed: 0.5,
-  dropWindup: 6,
-  /** No recovery: the action ends on the drop tick so SIM-06 sees a free owner and he can dribble at once. */
-  dropRecovery: 0,
-  // ---- error
-  /** Horizontal angle error bound at gkHandling 1 / 99 for throws and rolls, rad. */
-  throwErrWorst: 0.07,
-  throwErrBest: 0.015,
-  /** Horizontal angle error bound at gkKicking 1 / 99 for kicks, rad. */
-  kickErrWorst: 0.09,
-  kickErrBest: 0.02,
-  /** Distance error bound (fraction) at gkKicking 1 / 99 for kicks. */
-  kickDistErrWorst: 0.08,
-  kickDistErrBest: 0.02,
-  /** Above this power error grows, up to errPowerMul x at full power. */
-  errPowerKnee: 0.85,
-  errPowerMul: 1.6,
-  // ---- 6-second rule default release
-  /** Power of the automatic / forced release, 0..1. */
-  autoPower: 0.55,
-  /** Teammates with an opponent nearer than this are not "open", m. */
-  autoOpenRadius: 5,
-  /** Auto release: roll to a target nearer than this, m. */
-  autoRollBelow: 16,
-  /** Teammates further than this are not considered for the auto release (a drop kick upfield instead), m. */
-  autoMaxDist: 60,
-} as const;
-const L = LOCAL_TUNING;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_GK_HANDLING. */
+export const LOCAL_TUNING = T_GK_HANDLING;
+
+const L = T_GK_HANDLING;
 
 // ---------------------------------------------------------------- scratch (module level, reused; no per-tick allocation)
 

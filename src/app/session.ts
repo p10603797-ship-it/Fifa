@@ -32,6 +32,12 @@
  * ones created through devices.createSource; devices kept in the list keep their source). False online, with a
  * custom input provider, outside a loaded match, for a human that is not playing (or was handed to the CPU), or when
  * a named device is bound explicitly to another playing human.
+ *
+ * [QF-17] Half-time hitch: the router keeps the match screen mounted under the half-time overlay (ui/index.ts
+ * SCREEN_OVERLAYS), and the session has the router build that overlay ahead (AppRouter.prepare) on the loading screen
+ * while the renderer warms up, for a match whose first half is ahead, and again a second into the break before extra
+ * time; the prepared screen is dropped when the match reaches full time / the shoot-out / its end, or is torn down
+ * (the full-time screens share its test ids and it must not linger hidden).
  */
 import type {
   AppContext, AudioEngine, DeviceRegistry, Diagnostics, GameRenderer, HudPart, HumanBinding, MatchSetup, MatchSummary, ScreenId,
@@ -39,7 +45,7 @@ import type {
 } from '../contracts/app';
 import { MAX_HUMANS } from '../contracts/constants';
 import type { Club } from '../contracts/data';
-import { Command, ControllerKind, MatchPhase } from '../contracts/enums';
+import { Command, ControllerKind, MatchPhase, ModeId, Period, PracticeKind } from '../contracts/enums';
 import type { EventBuffer } from '../contracts/events';
 import { createInputFrame, type CameraProjector, type InputFrame } from '../contracts/input';
 import type { MatchConfig, SimState } from '../contracts/state';
@@ -55,6 +61,22 @@ export const PAUSE_DEBOUNCE_MS = 250;
 
 /** Screens that belong to a running match; the session only steers the router while one of them is shown. */
 const MATCH_SCREENS: readonly ScreenId[] = ['match', 'half-time', 'full-time'];
+
+const LOCAL_TUNING = { // TUNING-CR (app timing, not gameplay)
+  /** Ticks into the break before extra time at which the extra-time half-time screen is built ahead (1 s at 60 Hz). */
+  etPrepareTicks: 60,
+} as const;
+
+/** [QF-17] True when the match `s` will still show a half-time break (its first half is ahead or running). Pure. */
+export function halfTimeAhead(s: Pick<SimState, 'config' | 'match'>): boolean {
+  const c = s.config as SimState['config'] | undefined;
+  const m = s.match as SimState['match'] | undefined;
+  if (!c || !m) return false; // partial states (test doubles)
+  if (c.mode === ModeId.PRACTICE || (c.practice ?? PracticeKind.NONE) !== PracticeKind.NONE) return false; // periods never end
+  if (m.finished === 1 || c.startPhase === MatchPhase.SHOOT_OUT) return false;
+  const p = m.period;
+  return (p === Period.FIRST_HALF || p === Period.ET_FIRST) && m.phase !== MatchPhase.HALF_TIME && m.phase !== MatchPhase.SHOOT_OUT;
+}
 
 export interface SessionDeps {
   router: AppRouter;
@@ -241,6 +263,8 @@ export function createSession(deps: SessionDeps): AppSession {
   const cpuHumans: number[] = [];
   /** deps.onTick failed this match (reported once). */
   let tickHookFailed = false;
+  /** [QF-17] The extra-time half-time screen is still to be built ahead in this break before extra time. */
+  let etPreparePending = false;
   const fallbackQueue = createCommandQueue();
 
   function setLayer(on: boolean): void {
@@ -293,6 +317,18 @@ export function createSession(deps: SessionDeps): AppSession {
     if (cur === want && !(want === 'full-time' && finished && !finalShown)) return;
     if (want === 'full-time' && finished) finalShown = true;
     router.go(want, params);
+  }
+
+  /** [QF-17] Have the router build the half-time screen ahead (a hidden overlay; see the module doc). */
+  function prepareHalfTime(): void {
+    if (typeof router.prepare !== 'function') return;
+    safe(() => { router.prepare!('half-time'); }, 'router.prepare');
+  }
+
+  function discardHalfTime(): void {
+    etPreparePending = false;
+    if (typeof router.discardPrepared !== 'function') return;
+    safe(() => router.discardPrepared!(), 'router.discardPrepared');
   }
 
   function markPauseChange(): void {
@@ -369,6 +405,7 @@ export function createSession(deps: SessionDeps): AppSession {
 
   function teardown(): void {
     gen++;
+    discardHalfTime();
     setPerspective(-1);
     const p = provider;
     provider = null;
@@ -426,6 +463,8 @@ export function createSession(deps: SessionDeps): AppSession {
       // during play (AudioEngineImpl.warmUp; optional on the contract's AudioEngine).
       const audioWarmUp = (audio as Partial<{ warmUp(): void }>).warmUp;
       if (typeof audioWarmUp === 'function') safe(() => audioWarmUp.call(audio), 'audio.warmUp');
+      // [QF-17] Built now, behind the loading screen: the browser styles and lays it out during the warm-up frames.
+      if (halfTimeAhead(curr)) prepareHalfTime();
       await renderer.warmUp();
       if (gen !== myGen) return;
       hud.setMatch(curr, clubs);
@@ -449,6 +488,7 @@ export function createSession(deps: SessionDeps): AppSession {
 
   function finish(rt: MatchRuntime): void {
     finished = true;
+    discardHalfTime();
     let summary: MatchSummary | null = null;
     try {
       summary = rt.stats.summary(rt.curr);
@@ -590,8 +630,14 @@ export function createSession(deps: SessionDeps): AppSession {
         }
       }
       const ph = rt.curr.match.phase;
+      if (etPreparePending && ph === MatchPhase.EXTRA_TIME && rt.curr.match.phaseT >= LOCAL_TUNING.etPrepareTicks) {
+        etPreparePending = false;
+        prepareHalfTime();
+      }
       if (ph === lastPhase) return;
       lastPhase = ph;
+      etPreparePending = ph === MatchPhase.EXTRA_TIME;
+      if (ph === MatchPhase.FULL_TIME || ph === MatchPhase.SHOOT_OUT || ph === MatchPhase.POST_MATCH) discardHalfTime();
       if (ph === MatchPhase.POST_MATCH && !finished) finish(rt);
       else syncScreen();
     },

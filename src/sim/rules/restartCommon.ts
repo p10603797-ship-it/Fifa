@@ -29,37 +29,15 @@ import { ActionKind, MatchPhase, RestartKind, type WatchdogReason } from '../../
 import { EventType, type EventSink } from '../../contracts/events';
 import type { ActionHandler } from '../../contracts/systems';
 import { MoveMode, type SimState } from '../../contracts/state';
-import { T_PLAYER } from '../../contracts/tuning';
+import { T_PLAYER, T_RESTART_COMMON } from '../../contracts/tuning';
 
-/** TUNING-CR (RUL-11): proposed additions to T_RULES. */
-export const COMMON_TUNING = { // TUNING-CR
-  /** SET_PIECE wait budget; the handler extends it by this much whenever it is about to expire, ticks. */
-  setPieceWaitTicks: 60,
-  /** Aim points closer than this to the ball are ignored for the taker's facing, m. */
-  aimMinDist: 0.5,
-  /** Distance of the default look point ahead of the ball, m. */
-  lookAhead: 10,
-  /** The taker stands this far behind the ball (opposite the default kick direction), m (RUL-11 takerBehind). */
-  takerBehind: 0.6,
-  /** [QF-10] Before a walked set-up is ready the taker runs to his spot at this fraction of his top speed ... */
-  approachSpeedFrac: 0.85,
-  /** ... and has arrived within this distance of it, m; a straight run passing closer than approachClear to the ball
-   *  goes round it (via the point approachClear beside it), m. */
-  approachArrive: 0.25,
-  approachClear: 0.8,
-  /** [QF-10] A waiting taker turns this fraction of the way to his look point per tick (RUL-06 faceGain). */
-  faceGain: 0.2,
-  /** [QF-10] A taker swapped in at a walked free kick runs to his spot for at most this many ticks (RUL-05 takers
-   *  stand within takerWalkMaxDist 18 m: ~3 s at approachSpeedFrac), then RUL-11 places him. */
-  swapRunMaxTicks: 240,
-} as const;
 
 /** p.actA bit of a SET_PIECE action: the taker runs to his spot although the restart is ready (walked taker swap). */
 export const SET_PIECE_RUN = 1;
 
 /** The restart taker `p` is still running to his spot after a walked taker swap (see SET_PIECE_RUN). */
 export function takerRunning(p: Readonly<{ act: number; actA: number; actT: number }>): boolean {
-  return p.act === ActionKind.SET_PIECE && (p.actA & SET_PIECE_RUN) !== 0 && p.actT < COMMON_TUNING.swapRunMaxTicks;
+  return p.act === ActionKind.SET_PIECE && (p.actA & SET_PIECE_RUN) !== 0 && p.actT < T_RESTART_COMMON.swapRunMaxTicks;
 }
 
 const N_PHASES = MatchPhase.POST_MATCH + 1;
@@ -132,11 +110,11 @@ export function restartLookPoint(s: SimState, out: { x: number; z: number }): vo
   const r = s.match.restart;
   const dx = r.aimX - r.x;
   const dz = r.aimZ - r.z;
-  const md = COMMON_TUNING.aimMinDist;
+  const md = T_RESTART_COMMON.aimMinDist;
   if (dx * dx + dz * dz > md * md) { out.x = r.aimX; out.z = r.aimZ; return; }
   restartForward(s, FWD);
-  out.x = r.x + FWD.x * COMMON_TUNING.lookAhead;
-  out.z = r.z + FWD.z * COMMON_TUNING.lookAhead;
+  out.x = r.x + FWD.x * T_RESTART_COMMON.lookAhead;
+  out.z = r.z + FWD.z * T_RESTART_COMMON.lookAhead;
 }
 
 /** Log a watchdog intervention: match.watchdogCount++ and WATCHDOG (a = reason, b = detail, x/y/z = ball). */
@@ -158,20 +136,20 @@ export const setPieceHandler: ActionHandler = {
       p.actDur = p.actT; // the dispatcher ends the action after this update
       return;
     }
-    if (p.actT + 1 >= p.actDur) p.actDur = p.actT + COMMON_TUNING.setPieceWaitTicks;
+    if (p.actT + 1 >= p.actDur) p.actDur = p.actT + T_RESTART_COMMON.setPieceWaitTicks;
     if ((p.actA & SET_PIECE_RUN) !== 0 && !takerRunning(p)) p.actA = (p.actA & ~SET_PIECE_RUN) >>> 0; // ran too long
     if (r.ready !== 1 || (p.actA & SET_PIECE_RUN) !== 0) {
       // [QF-10] Walked set-up: run to the taker spot behind the ball.
       restartForward(s, FWD);
-      let sx = r.x - FWD.x * COMMON_TUNING.takerBehind, sz = r.z - FWD.z * COMMON_TUNING.takerBehind;
+      let sx = r.x - FWD.x * T_RESTART_COMMON.takerBehind, sz = r.z - FWD.z * T_RESTART_COMMON.takerBehind;
       const dx = sx - p.x, dz = sz - p.z;
-      const ar = COMMON_TUNING.approachArrive;
+      const ar = T_RESTART_COMMON.approachArrive;
       if (dx * dx + dz * dz > ar * ar) {
         // Round the ball, not over it: the run's closest point to the ball inside approachClear -> via the side.
         const d2 = dx * dx + dz * dz;
         const bx = r.x - p.x, bz = r.z - p.z;
         const t = (bx * dx + bz * dz) / d2;
-        const c = COMMON_TUNING.approachClear;
+        const c = T_RESTART_COMMON.approachClear;
         if (t > 0 && t < 1) {
           const cx = p.x + dx * t - r.x, cz = p.z + dz * t - r.z;
           const cd = Math.sqrt(cx * cx + cz * cz);
@@ -184,7 +162,7 @@ export const setPieceHandler: ActionHandler = {
           }
         }
         const top = s.attrs[slot]!.topSpeed > 0 ? s.attrs[slot]!.topSpeed : T_PLAYER.topSpeedMin;
-        const sp = top * COMMON_TUNING.approachSpeedFrac;
+        const sp = top * T_RESTART_COMMON.approachSpeedFrac;
         p.moveMode = MoveMode.ARRIVE;
         p.tgtX = sx;
         p.tgtZ = sz;
@@ -210,7 +188,7 @@ export const setPieceHandler: ActionHandler = {
     const dx = LOOK.x - p.x, dz = LOOK.z - p.z;
     const d = Math.sqrt(dx * dx + dz * dz);
     if (d > 1e-6) {
-      const g = COMMON_TUNING.faceGain;
+      const g = T_RESTART_COMMON.faceGain;
       let tx = dx / d, tz = dz / d;
       // Facing straight away: the blend would not turn him; head for his side first (a quarter turn away).
       if (p.fx * tx + p.fz * tz < -0.95) { tx = -p.fz; tz = p.fx; }

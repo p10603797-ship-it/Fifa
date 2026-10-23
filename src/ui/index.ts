@@ -45,6 +45,14 @@ export const SCREEN_FACTORIES: Readonly<Record<ScreenId, ScreenFactory>> = {
   remap: createRemapScreen,
 };
 
+/**
+ * [QF-17] Overlay screens and the screens each is shown over without unmounting them (RouterOptions.overlays): the
+ * match screen stays mounted under the half-time overlay, so half time and the second-half kick-off swap no DOM.
+ */
+export const SCREEN_OVERLAYS: Readonly<Partial<Record<ScreenId, readonly ScreenId[]>>> = {
+  'half-time': ['match'],
+};
+
 /** Register every screen with the router. */
 export function registerScreens(router: Router): void {
   for (const id of Object.keys(SCREEN_FACTORIES) as ScreenId[]) router.register(id, SCREEN_FACTORIES[id]);

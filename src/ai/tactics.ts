@@ -83,7 +83,7 @@ import { ActionKind, AiJob, Command, ControllerKind, KickKind, MatchPhase, Role,
 import { EventType, type EventSink } from '../contracts/events';
 import { MoveMode, type SimState, type TeamState } from '../contracts/state';
 import { createBallPrediction, MAX_PREDICT_TICKS } from '../contracts/systems';
-import { T_PLAYER, T_TOUCH } from '../contracts/tuning';
+import { T_PLAYER, T_TOUCH, T_TACTICS } from '../contracts/tuning';
 import { FORMATIONS, getFormation, remapFormation } from '../data/formations';
 import { focusForCommand, TacticFlag, tacticFlagForCommand } from '../data/tactics';
 import { predictBall } from '../sim/ball/flight';
@@ -92,23 +92,8 @@ import { assignJob, isJobDriven } from './jobs';
 import { invalidateShape } from './shape';
 import { busyTicks } from './steer';
 
-export const LOCAL_TUNING = {
-  /** Ball prediction horizon for the receiver's interception search, ticks (<= MAX_PREDICT_TICKS = 180). */
-  receivePredictTicks: 120,
-  /** Highest ball-centre height at which a receiver can play the ball (feet, chest, head), m. */
-  receiveMaxHeight: 2.0,
-  /** Lower-bound slack: ticksToReach may count a point as reached from up to this far away, m. */
-  receiveReachSlack: 1.2,
-  /** Safety factor (>= 1) on the Lipschitz sample skip after a failed ticksToReach (larger = fewer skips). */
-  receiveSkipSafety: 2.0,
-  /** Max ticksToReach evaluations per receiver per tick (budget guard; the end-of-horizon fallback follows). */
-  receiveMaxEvals: 24,
-  /** Through balls are met in stride: the meeting point may lie at most this far behind the receiver along the
-   *  attack direction (unless no such point is reachable), m. */
-  throughBackTol: 1.0,
-} as const; // TUNING-CR
 
-const LT = LOCAL_TUNING;
+const LT = T_TACTICS;
 const N = PLAYERS_PER_TEAM;
 const N_FORMATIONS = FORMATIONS.length;
 
@@ -548,4 +533,4 @@ export function receiverAssist(s: SimState, team: number, ev: EventSink): void {
 }
 
 /** Exposed for tests and tuning tools (read-only). */
-export const TACTICS_TUNING = LOCAL_TUNING;
+export const TACTICS_TUNING = T_TACTICS;

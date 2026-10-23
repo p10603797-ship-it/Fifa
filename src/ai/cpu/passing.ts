@@ -85,165 +85,17 @@ import {
 } from '../../contracts/constants';
 import { ActionKind, AiJob, KickKind } from '../../contracts/enums';
 import { MoveMode, type PlayerState, type SimState } from '../../contracts/state';
-import { T_BALL, T_CPU, T_PASS, T_PLAYER, T_RULES, T_TACKLE, T_TOUCH } from '../../contracts/tuning';
+import { T_BALL, T_PASS, T_PLAYER, T_RULES, T_TACKLE, T_TOUCH, T_PASSING } from '../../contracts/tuning';
 import { crossTarget } from '../../sim/kicks/lob';
 import { throughLeadPoint } from '../../sim/kicks/through';
 import { staminaFactor } from '../../sim/players/locomotion';
 import { styleWeights } from './levels';
 
-export const LOCAL_TUNING = { // TUNING-CR (TAI-09): move into T_AI as pass* (times s, distances m, speeds m/s)
-  // ---- lane model (laneSafety)
-  /** Opponent reaction time after the ball is struck, s. */
-  reactS: 0.18,
-  /** A ball path within this distance of an opponent's centre hits his body (no reaction needed), m. */
-  blockRadius: 0.45,
-  /** Keeper reach inside his own penalty area: ground balls x T_TACKLE.interceptReach; lofted balls (hands), m. */
-  keeperReachMul: 1.6,
-  keeperAirReach: 2.6,
-  /** Interception chance vs margin m = ball time - opponent time at a lane point (s): 0 at m <= -marginLate, the cap
-   *  at m >= marginEarly (smoothstep between). */
-  marginLate: 0.3,
-  marginEarly: 0.2,
-  /** Interception chance cap, 0..1 ... */
-  pMax: 0.95,
-  /** ... falling linearly to pEnd over the last endZone m of a ground lane, pEnd over a lofted landing segment. */
-  endZone: 2.5,
-  pEnd: 0.45,
-  /** Opponents whose closest approach to the lane is further than they can run by the ball's arrival (+ marginLate)
-   *  plus this are skipped, m. */
-  rejectSlack: 0.5,
-  /** Opponent top speed / ball speed at or above this: his best interception point is the segment end. */
-  chaseRatioMax: 0.97,
-  // ---- lofted flight model (fitted to SIM-01 solveLaunchSpin, 10..60 m at 0.45..0.62 rad)
-  /** Drag-equivalent range = R x (1 + loftDragPerM x R), 1/m. */
-  loftDragPerM: 0.0062,
-  /** Flight time = drag-free time x (1 - loftTimePerM x R), 1/m. */
-  loftTimePerM: 0.0017,
-  /** Apex height = drag-free apex x this. */
-  loftApexMul: 0.9,
-  /** A lofted ball below this height can be reached by an opponent (head, raised foot), m. */
-  loftReachHeight: 2.3,
-  // ---- receiver
-  /** Ground pass arrival speed = lerp(groundArriveMin, groundArriveMax, clamp(distance / groundArriveDist,
-   *  groundArriveFloor, 1)) — what the CPU's tap plays (SIM-15 gesture power = distance / 45 m, at least 0.2; SIM-08
-   *  assisted arrival lerp(3.5, 8, power)), m/s / m / 0..1. */
-  groundArriveMin: T_CPU.passGroundArriveMin,
-  groundArriveMax: T_CPU.passGroundArriveMax,
-  groundArriveDist: 45,
-  groundArriveFloor: 0.2,
-  /** Minimum arrival speed of a through ball, m/s. */
-  throughArrive: 7,
-  /** A through ball arrives at least this much faster than the runner runs away from it (SIM-08 leadArriveMargin), m/s. */
-  leadArriveMargin: 2,
-  /** Lead: receiver velocity extrapolated over the ball's travel time, capped, s. */
-  leadMaxS: T_CPU.passLeadMaxS, // [QF-2] was 2.5: through balls led 20 m+ landed with the keeper
-  /** Lead / target points stay this far inside the lines, m. */
-  pitchMargin: 1,
-  /** [QF-2] A receiver's run is led only until it comes within this of a line (mirrors SIM-08 leadLineMargin), m. */
-  leadLineMargin: T_PASS.leadLineMargin,
-  /** A ground pass is met min(meetBackMax, meetBackFrac x distance) in front of the receiver, m / fraction. */
-  meetBackMax: 1.8,
-  meetBackFrac: 0.2,
-  /** Receiver pressure at arrival: the nearest opponent reaches the reception point this long after the ball (s):
-   *  completion x (1 - pressMax) at <= pressNear, no penalty at >= pressFar. */
-  pressNear: 0,
-  pressFar: 0.9,
-  pressMax: 0.25,
-  /** Aerial reception: completion x lerp(aerialMin, aerialMax, ballControl 1..99) [INT-A: was 0.72 .. 0.95 while
-   *  measured lob / lobbed-through completion was 4% / 0% over soak matches: landing duels, charge-downs, keepers]. */
-  aerialMin: T_CPU.passAerialMin,
-  aerialMax: T_CPU.passAerialMax,
-  /** Arrival faster than T_TOUCH.hardBallSpeed: completion x (1 - hardLoss x min(1, excess / hardBallSpeed)). */
-  hardLoss: 0.25,
-  /** Teammates' reaction before running to a reception point (SIM-04-style run time for runners / cross attackers), s. */
-  mateReactS: 0.1,
-  // ---- accuracy (distance penalty)
-  /** Error sigma = T_PASS.errorMax x (accMinFrac + (1 - accMinFrac) x (1 - attr)^2) x (1 + accPressMul x carrier
-   *  pressure) x (loftErrMul when lofted), rad; factor 1 / (1 + (distance x sigma / accTol)^2), accTol m. */
-  accMinFrac: 0.12,
-  accPressMul: 0.8,
-  loftErrMul: 1.3,
-  accTol: 3,
-  /** Pass attribute: shortPassing up to shortRange, longPassing from longRange (blended between), m. */
-  shortRange: 12,
-  longRange: 35,
-  /** Carrier pressure 0..1 from the nearest opponent: 1 at <= pressDistNear m, 0 at >= pressDistFar m (as core/query
-   *  pressureOn). */
-  pressDistNear: 1,
-  pressDistFar: 6,
-  // ---- candidates
-  /** Teammates closer than this are not options, m. */
-  minDist: 4,
-  /** A keeper is an option only within this distance (ground pass), m. */
-  keeperMaxDist: 30,
-  /** Lob over a blocked lane: ground completion below lobTrigger and at least lobMinDist m. */
-  lobMinDist: 12,
-  lobTrigger: 0.6,
-  /** Driven pass tried when the ground completion is below drivenTrigger and the pass is at least drivenMinDist m. */
-  drivenTrigger: 0.8,
-  drivenMinDist: 10,
-  // ---- through balls
-  /** Forward runner: forward speed >= runnerMinFwd m/s and forward share of his speed >= runnerFwdCos; or a run
-   *  job (RUN_IN_BEHIND / OVERLAP / LATE_RUN) moving forward at >= runnerJobMinFwd m/s. */
-  runnerMinFwd: 3,
-  runnerFwdCos: 0.5,
-  runnerJobMinFwd: 1,
-  /** Lead point at least this far ahead of the runner (along the attack), m; pass at least throughMinDist m. */
-  throughMinLead: 2.5,
-  throughMinDist: 8,
-  /** Runner later than the ball by more than throughSlackS loses completion, all of it at + throughLateS, s. */
-  throughSlackS: 0.15,
-  throughLateS: 0.6,
-  /** Fixed-point iterations of the own lead model. */
-  throughIters: 3,
-  /** Completion multipliers for ground / lofted through balls (calibration, see throughBall) [INT-A]. */
-  throughGroundCompletionMul: T_CPU.passThroughGroundCompletionMul, // [QF-2] was 0.6 (with the shorter lead the estimate holds)
-  throughLobCompletionMul: T_CPU.passThroughLobCompletionMul,
-  /** Completion multiplier for a DRIVEN_PASS (calibration: the hard pass is rated as the ground lane says) [QF-11]. */
-  drivenCompletionMul: T_CPU.passDrivenCompletionMul,
-  // ---- crosses
-  /** Own cross targets: near / far post depth from the goal line and |z|; penalty spot |z| toward the ball side, m. */
-  nearPostDepth: 4.5,
-  nearPostZ: 2.2,
-  farPostDepth: 5,
-  farPostZ: 3,
-  spotZ: 1,
-  /** Cross launch angle (lofted lane model), rad. */
-  crossAngle: 0.5,
-  /** Attackers considered for a cross target: within this distance of it, m; arriving at most crossLateS after it, s. */
-  crossAttackRange: 22,
-  crossLateS: 0.5,
-  /** Cross targets closer than this to an earlier one are dropped, m. */
-  crossDedupe: 2,
-  /** Header xG multiplier on the spot's xG (x lerp(0.6, 1, heading)). */
-  headerXgMul: 0.55,
-  /** Cross completion = min(1, lane safety x crossCompletionMul + crossCompletionAdd) (x lateness) [INT-A]. */
-  crossCompletionMul: T_CPU.passCrossCompletionMul,
-  crossCompletionAdd: T_CPU.passCrossCompletionAdd,
-  // ---- danger (xG-ish of the receiving spot)
-  /** xG = xgK x angle^2 (angle subtended by the goal mouth, rad), capped at xgCap. */
-  xgK: 0.48,
-  xgCap: 0.6,
-  /** x blockMul per outfield opponent in the shooting triangle (+ blockLane m), at most blockMax of them. */
-  blockMul: 0.7,
-  blockMax: 3,
-  blockLane: 0.5,
-  /** Behind the deepest outfield defender: + behindBonus x (1 - distance to goal / behindRange). */
-  behindBonus: 0.08,
-  behindRange: 35,
-  // ---- score (weights x (0.5 + style weight); neutral style = these)
-  wCompletion: 1,
-  wProgress: 0.6,
-  wDanger: 1.2,
-  /** Progress normaliser (m) and danger normaliser (xG) with its cap. */
-  progressRef: 30,
-  dangerRef: 0.3,
-  dangerCapN: 2,
-  /** Passes at least this long are long balls (style directness), m. */
-  longBallDist: 30,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_PASSING. */
+export const LOCAL_TUNING = T_PASSING;
 
-const LT = LOCAL_TUNING;
+
+const LT = T_PASSING;
 
 export interface PassOption {
   target: number;
@@ -441,6 +293,20 @@ export function loftLaunchSpeed(dist: number): number {
   F[RS_D] = dist;
   loftSpeed(0);
   return F[O_V]!;
+}
+
+/**
+ * [QF-7S] loftLaunchSpeed through a scratch for per-tick callers (GKP-04's keeper evaluation): LOFT_IO[0] = dist in,
+ * LOFT_IO[0] = the launch speed out. Same arithmetic; no double crosses the call (V8 boxed the argument and the result
+ * whenever the call was not inlined: 32 B per call, 256 B per keeper evaluation).
+ */
+export const LOFT_IO = new Float64Array(1);
+export function loftLaunchSpeedIO(): void {
+  const dist = LOFT_IO[0]!;
+  if (!(dist > 0) || !(dist < 1e4)) { LOFT_IO[0] = 0; return; }
+  F[RS_D] = dist;
+  loftSpeed(0);
+  LOFT_IO[0] = F[O_V]!;
 }
 
 // ---------------------------------------------------------------- players

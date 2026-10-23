@@ -35,77 +35,13 @@ import type { SimState } from '../contracts/state';
 import { dcos, dsin, PI } from '../sim/core/dmath';
 import { otherTeam, teamEnd, teamStart } from '../sim/core/query';
 import { assignJob, isJobDriven } from './jobs';
+import { T_SUPPORT } from '../contracts/tuning';
 
-/** TUNING-CR: move into contracts/tuning.ts as T_SUPPORT. */
-export const LOCAL_TUNING = {
-  /** Distance band of a triangle support point from the carrier, m (hard minimum, soft maximum). */
-  bandMin: 8,
-  bandMax: 20,
-  /** No support target (width spot, called supporter fan) closer than this to the carrier, m. */
-  minFromCarrier: 5,
-  /** Close options around the carrier (near supporters + holding midfielder + called supporter), count. */
-  maxClose: 3,
-  /** Selection range: 0.5 * (|home - carrier| + |position - carrier|) must be within this, m. */
-  selectRange: 35,
-  /** Candidate rings around a supporter's (pulled) home, m. */
-  ringInner: 4.5,
-  ringOuter: 9,
-  /** A home farther than this from the carrier is pulled toward him to this distance before the rings, m. */
-  pullDist: 15,
-  /** Lane interception reach of a defender: base (m) + growth per metre of pass distance (m/m). */
-  laneReachBase: 0.9,
-  laneReachPerM: 0.22,
-  /** Lane clearance scoring cap (+-), m. */
-  laneCap: 5,
-  /** Space (nearest opponent to the point) scoring cap, m. */
-  spaceCap: 8,
-  /** Score weights, per metre (wAngle per unit of normalised lane overlap). */
-  wLane: 1.5,
-  wSpace: 0.4,
-  wBand: 1.0,
-  wProg: 0.25, // [INT-A] was 0.08: supporters offer forward options ahead of the ball, not square / behind it
-  wMove: 0.12,
-  wHome: 0.08,
-  wCrowd: 1.2,
-  wAngle: 3,
-  /** Progress term cap, m. */
-  progCap: 10,
-  /** Move cost is measured from where the player's velocity carries him in this time, s (commitment). */
-  commitLookahead: 0.6,
-  /** Soft spacing to teammates' planned spots, m; candidates closer than hardSeparation are rejected, m. */
-  minSeparation: 6,
-  hardSeparation: 3,
-  /** Two lanes from the carrier with direction cosine above this overlap (cos 20 deg). */
-  laneCosMax: 0.94,
-  /** Width: wide players hold this far inside the touchline, m; full-back fallback in build-up, m. */
-  widthMargin: 3,
-  fbWidthMargin: 5,
-  /** Holding midfielder back option: carrier at least holdAheadMin and at most holdAheadMax ahead of his home
-   *  (beyond that he keeps the rest-defence position), m; fan radii behind the carrier, m. */
-  holdAheadMin: 3,
-  holdAheadMax: 26,
-  holdNear: 10,
-  holdFar: 14,
-  /** Call for support: duration s; distance from the carrier the called player comes to, m; max range, m. */
-  callSeconds: 2,
-  callDist: 6.5,
-  callRange: 45,
-  /** Call selection penalty for forwards / defenders (m-equivalent; midfielders 0). */
-  callPenaltyFwd: 6,
-  callPenaltyDef: 10,
-  /** Speed caps as a fraction of the player's top speed: supporters jog (= T_PLAYER.jogFraction); a called
-   *  supporter sprints (TAI-07 should set wantSprint for a SUPPORT job whose cap is above jog speed). */
-  speedSupport: 0.6,
-  speedWidth: 0.6,
-  speedHold: 0.6,
-  speedCall: 1.0,
-  /** Margin behind the offside line, m. */
-  onsideMargin: 0.8,
-  /** Targets stay this far inside the touchlines and goal lines (and outside the own goal area), m. */
-  edgeMargin: 1.0,
-} as const; // TUNING-CR
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_SUPPORT. */
+export const LOCAL_TUNING = T_SUPPORT;
 
-const T = LOCAL_TUNING;
+
+const T = T_SUPPORT;
 /** Ticks a call for support lasts. */
 export const SUPPORT_CALL_TICKS = secToTicks(T.callSeconds);
 const REJECT = -1e18;

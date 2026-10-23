@@ -20,7 +20,7 @@
  *  - contact (first tick with actT >= actContact and not charging): the phase must be live for him (IN_PLAY; a restart
  *    phase as its taker or once taken; the shoot-out kicker), the ball untouched by anyone else this tick and in reach
  *    of his foot ([QF-10] kickCommon.ts footCanStrike: within LT.reachRadius of his body, at most LT.reachHeight high
- *    and within KICK_TUNING.spotReach of his kicking spot, also for his own ball). His own ball out of reach (a touch
+ *    and within T_KICK.spotReach of his kicking spot, also for his own ball). His own ball out of reach (a touch
  *    ahead, still dropping, behind him) delays the contact up to LT.ownReachWaitTicks while SIM-06 holds it onto the
  *    kicking spot; a loose ball still arriving (first-time kicks) up to LT.contactGraceTicks; a restart taker's dead
  *    ball not at his kicking spot: he side-steps round it first (kickCommon.ts lineUpOnDeadBall). Then
@@ -93,154 +93,21 @@ import type { EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type BallState, type PlayerState, type SimState } from '../../contracts/state';
 import { createKickLaunch, ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_PASS, T_PLAYER } from '../../contracts/tuning';
-import { BALL_CONTACT_TUNING, MAX_SUBSTEPS } from '../ball/contact';
+import { T_BALL, T_PASS, T_PLAYER, T_PASS_KICK, T_BALL_CONTACT, T_KICK } from '../../contracts/tuning';
+import { MAX_SUBSTEPS } from '../ball/contact';
 import { ballAirStep, groundPassSpeed, groundRollTime } from '../ball/flight';
 import { dcos, dexp, dlog, dsin } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
 import { pressureOn } from '../core/query';
 import { rngGauss } from '../core/rng';
 import { staminaFactor } from '../players/locomotion';
-import { footCanStrike, isDeadBallTaker, KICK_TUNING, lineUpOnDeadBall, noteCharging, releaseStrike } from './kickCommon';
+import { footCanStrike, isDeadBallTaker, lineUpOnDeadBall, noteCharging, releaseStrike } from './kickCommon';
 
-/** TUNING-CR (SIM-08): proposed additions to T_PASS (units in the comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  // ---- KICK action: timing and movement
-  /** Max |DIRECT stick| (0..1) while winding up / charging a kick; an ARRIVE intent is capped at this x jog speed. */
-  windupMoveScale: 0.4,
-  /** Ticks the kicker stays MoveMode.LOCKED from the contact tick (follow-through), ticks. */
-  contactLockTicks: 4,
-  /** A held charge waits at most T_PASS.powerFillTicks + this many ticks past the planned contact, ticks. */
-  chargeWaitExtraTicks: 20,
-  /** A loose ball still arriving (first-time kicks), or his own ball still above reachHeight, may delay the contact by
-   *  up to this many ticks, ticks. */
-  contactGraceTicks: 6,
-  /** [QF-10] His own ball out of reach at the contact tick (a sprint touch ahead, still dropping, behind him): the contact
-   *  waits up to this many ticks while SIM-06 pulls it onto the kicking spot, ticks. */
-  ownReachWaitTicks: 14,
-  /** The ball can be kicked within this horizontal distance of the body centre, m ... */
-  reachRadius: 1.2,
-  /** ... with its centre at or below this height, m. */
-  reachHeight: 0.8,
-  /** startPass accepts a loose ball arriving within T_PASS.windup + this many ticks, ticks ... */
-  startArriveTicks: 14,
-  /** ... on a path (relative to him) passing within this distance of him, m ... */
-  startArriveLane: 1.6,
-  /** ... with its centre no higher than this now, m. */
-  startArriveHeight: 1.0,
-  /** Pass and go: ticks the passer's run request lasts (team.passGoT). */
-  passGoTicks: 120,
-  // ---- receiver selection
-  /** Power-implied distance of a ground pass at power 0 and 1, m. */
-  groundDistMin: 4,
-  groundDistMax: 40,
-  /** Power-implied distance of a lofted pass at power 0 (power 1 = T_PASS.maxRange), m. */
-  loftedDistMin: 10,
-  /** Cone half-angle multipliers on T_PASS.coneHalfAngle: Assisted (wider) and Semi (narrower). */
-  assistedConeMul: 1.3,
-  semiConeMul: 0.75,
-  /** Teammates closer than this are not candidates, m. */
-  minReceiverDist: 1.5,
-  /** Score weights: alignment with the stick (Assisted / Semi), fit to the power-implied distance, forward progress. */
-  alignWeight: 0.45,
-  alignWeightSemi: 0.6,
-  distWeight: 0.3,
-  progressWeight: 0.1,
-  /** Distance fit tolerance = distTol + distTolFrac x power-implied distance, m. */
-  distTol: 4,
-  distTolFrac: 0.35,
-  /** Forward progress (toward the attacked goal) that scores 1, m. */
-  progressNorm: 30,
-  /** Selection looks ahead along a receiver's run by distance / selectRefSpeed (m/s), at most selectLeadMax (s). */
-  selectRefSpeed: 14,
-  selectLeadMax: 1.2,
-  /** Passing lane half-width at the passer, m, and its growth per metre along the pass, m/m. */
-  laneWidth: 1.5,
-  laneWidthGrow: 0.05,
-  /** Opponents within this distance of a receiver mark him, m. */
-  markRadius: 4,
-  /** Openness penalties (0..1) for the worst lane opponent and the tightest marker. */
-  laneWeight: 0.7,
-  markWeight: 0.6,
-  /** Lofted passes fly over the lane: lane risk multiplier, 0..1. */
-  loftLaneMul: 0.3,
-  // ---- speed and lead
-  /** Assisted arrival speed of a ground pass at power 0 and 1, m/s (INT-A: was 3.5 / 8 — soft passes took 2+ s over
-   *  20 m, closing every forward lane). */
-  arriveMin: T_PASS.assistArriveMin, // (contracts/tuning.ts since QF-2)
-  arriveMax: T_PASS.assistArriveMax,
-  /** Semi assistance: share of the power-only speed blended into the assisted speed, 0..1. */
-  semiPowerBlend: 0.5,
-  /** Power floor of a pass (an instant tap), 0..1. */
-  minPower: 0.05,
-  /** Lead: secant iterations, and the max look-ahead, s. */
-  leadIters: 6,
-  leadMaxSec: 4.0,
-  /** A lead pass arrives at least this much faster than the receiver runs away from the ball, m/s. */
-  leadArriveMargin: 2,
-  /** Lead / target points stay this far inside the touchlines and goal lines, m. */
-  pitchMargin: 1.0,
-  /** [QF-2] A receiver's run is extrapolated only until it comes within this of a touchline / goal line (he pulls up
-   *  there, so the lead stops too and is no longer "running away"): extrapolating a wide player's run out of the pitch
-   *  and clamping the point onto the line sent ~3 passes a match rolling out for throw-ins, m. */
-  leadLineMargin: T_PASS.leadLineMargin,
-  /** No receiver: a teammate within this distance of the ball's line (before it stops) becomes the target, m. */
-  laneReceiverWidth: 2.5,
-  // ---- dinked pass
-  /** Horizontal arrival speed of a dinked pass at the target at power 0 and 1, m/s. */
-  dinkArriveMin: 3.5,
-  dinkArriveMax: 7,
-  /** Dinked launch speed search range, m/s; bisection iterations; first-flight horizon of a model trial, ticks. */
-  dinkSpeedMin: 4,
-  dinkSpeedMax: 26,
-  dinkIters: 9,
-  dinkMaxTicks: 300,
-  /** Search bracket as multiples of the ground-pass speed for the same distance and arrival speed. */
-  dinkBracketLo: 0.6,
-  dinkBracketHi: 1.05,
-  /** Receivers moving faster than this get a second dinked solve with the flight's own arrival time, m/s. */
-  dinkReleadSpeed: 0.5,
-  /** [QF-10] The dinked arrival speed jumps by T_BALL.bounceFriction at every bounce, and the bisection tends to settle
-   *  exactly where a bounce meets the target (the sim's tick then shows the ball 1-1.7 m/s off the plan with
-   *  bounceFriction 0.2): launch angles T_PASS.dinkedAngle + these offsets are tried in order until the solution
-   *  reaches the target at least dinkBounceMargin from a bounce, rad / s. */
-  dinkAngleOffsets: [0, 0.06, -0.06, 0.12, -0.1] as readonly number[],
-  dinkBounceMargin: 0.04,
-  /** ... a solution with a bounce nearer the target is nudged by dinkNudge (fraction of the speed, up to dinkNudgeSteps
-   *  times, down and up) until it is that clear; the first angle whose model arrival speed is then within dinkArriveTol
-   *  of the plan is taken, else the closest, m/s. */
-  dinkNudge: 0.01,
-  dinkNudgeSteps: 4,
-  dinkArriveTol: 0.3,
-  /** Work cap of one dinked solve: no further angle is tried after this many model trials (~0.3 ms in Node). */
-  dinkMaxTrials: 40,
-  /** Power-only (Manual) dinked launch speed at power 0 and 1, m/s. */
-  dinkPowerSpeedMin: 6,
-  dinkPowerSpeedMax: 20,
-  // ---- error
-  /** Pass accuracy attribute: shortPassing up to shortRange, longPassing from longRange (blended between), m. */
-  shortRange: 12,
-  longRange: 35,
-  /** Error sigma at perfect accuracy as a fraction of T_PASS.errorMax (grows with (1 - accuracy)^2 to 1). */
-  minErrorFrac: 0.12,
-  /** Error multipliers: body facing away (x (1 - cos) / 2), pressure (x pressureOn 0..1), full sprint (x sprint
-   *  fraction above jog), low stamina (x fraction of the stamina drop to T_PLAYER.staminaFloorMul). */
-  facingErrorMul: 1.2,
-  pressureErrorMul: 1.0,
-  sprintErrorMul: 0.8,
-  staminaErrorMul: 1.0,
-  /** Power above powerKnee (0..1) grows the error by up to powerErrorMul at full power. */
-  powerKnee: 0.85,
-  powerErrorMul: 0.8,
-  /** Cap on the error sigma as a multiple of T_PASS.errorMax. */
-  errorCapMul: 1.5,
-  /** Foot used: the ball this far to one side of the body centre picks that foot, m ... */
-  footSideBand: 0.12,
-  /** ... else a pass turning toward the preferred foot's side by more than this sine is played with the weaker foot. */
-  weakTurnSin: 0.6,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_PASS_KICK. */
+export const LOCAL_TUNING = T_PASS_KICK;
 
-const LT = LOCAL_TUNING;
+
+const LT = T_PASS_KICK;
 
 /** [QF-10] Model trials run by the current solveDink (bounded by LT.dinkMaxTrials). */
 let dinkTrials = 0;
@@ -281,7 +148,7 @@ const LEAD_TOL = 1e-3;
 const DINK_DT = 3 / TICK_HZ;
 const DINK_FLIGHT_STEPS = Math.ceil(LT.dinkMaxTicks / 3);
 /** SIM-02: ground impacts slower than this (vertical, m/s) grip only partly. */
-const FULL_GRIP = BALL_CONTACT_TUNING.fullGripImpactSpeed;
+const FULL_GRIP = T_BALL_CONTACT.fullGripImpactSpeed;
 
 /** 1 for restart phases (index = MatchPhase). */
 const RESTART_PHASE = new Uint8Array(MatchPhase.POST_MATCH + 1);
@@ -1142,7 +1009,7 @@ function kickUpdate(s: SimState, slot: number, ev: EventSink): void {
     return;
   }
   // [QF-10] The dead ball not at his kicking spot yet: keep lining up (the contact moves on a tick at a time).
-  if (taker && p.actT < KICK_TUNING.takerLineUpMaxTicks && lineUpOnDeadBall(s, slot) === 0) {
+  if (taker && p.actT < T_KICK.takerLineUpMaxTicks && lineUpOnDeadBall(s, slot) === 0) {
     p.actContact = p.actT + 1;
     p.actDur += 1;
     kickMove(s, p);

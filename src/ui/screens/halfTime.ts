@@ -13,13 +13,19 @@
  *
  * Shared exports for fullTime.ts: StatRow / statRows (formatted per-team stats), scorersByTeam, pickPlayerOfMatch,
  * clubOf, liveSummary, createScoreHeader, injectBreakStyle.
+ *
+ * [QF-17] The session builds this screen ahead, on the loading screen (AppRouter.prepare, before any match state
+ * exists), and the router shows that instance at half time over the still-mounted match screen: onReveal refreshes
+ * the title, score, scorers, stats and shortcuts in place (text and transforms only, so no new style or layout pass of
+ * the whole panel). A screen mounted the usual way (no prepare) builds exactly what it did before.
  */
-import type { AppContext, MatchSummary, Screen } from '../../contracts/app';
+import type { AppContext, MatchSummary } from '../../contracts/app';
 import type { Club } from '../../contracts/data';
 import { Command, MatchPhase, ModeId, Period } from '../../contracts/enums';
 import { T_RULES } from '../../contracts/tuning';
 import type { ReadonlySimState } from '../../contracts/state';
 import { uiHumanOf } from '../../app/session';
+import type { LayeredScreen } from '../../app/types';
 import { crestDataUrl } from '../../render/kits';
 import { createButton, h, injectStyle } from '../components';
 import { isReplayPlayback, manageableTeams, openPausePage } from './pause';
@@ -343,6 +349,10 @@ export function injectBreakStyle(): void {
   injectStyle('break-screens', CSS);
 }
 
+function scoreAria(ctx: AppContext, goals: readonly [number, number]): string {
+  return `${clubOf(ctx, 0)?.name ?? 'Home'} ${goals[0]}, ${clubOf(ctx, 1)?.name ?? 'Away'} ${goals[1]}`;
+}
+
 /** Crests, codes, names and the score; `winner` 0 / 1 dims the other side. */
 export function createScoreHeader(ctx: AppContext, goals: readonly [number, number], winner = -1, testId = 'brk-score'): HTMLElement {
   const side = (team: number): HTMLElement => {
@@ -364,7 +374,7 @@ export function createScoreHeader(ctx: AppContext, goals: readonly [number, numb
   };
   return h(
     'div',
-    { class: 'brk-score', testId, attrs: { 'aria-label': `${clubOf(ctx, 0)?.name ?? 'Home'} ${goals[0]}, ${clubOf(ctx, 1)?.name ?? 'Away'} ${goals[1]}` } },
+    { class: 'brk-score', testId, attrs: { 'aria-label': scoreAria(ctx, goals) } },
     side(0),
     h('div', { class: 'brk-goals num' },
       h('span', { text: String(goals[0]), testId: 'brk-goals-0' }),
@@ -388,36 +398,145 @@ export function createScorers(ctx: AppContext, summary: MatchSummary | null): HT
   return box;
 }
 
-/** Comparison rows (value | label | value, with a two-sided bar). */
-export function createStatList(rows: readonly StatRow[], testId: string): HTMLElement {
+/** A stat list with an in-place update for the same keys in the same order (texts and bar transforms only). */
+export interface StatListView {
+  readonly el: HTMLElement;
+  update(rows: readonly StatRow[]): void;
+}
+
+function fillTransforms(r: StatRow): [string, string] {
+  const share = homeShare(r);
+  const tot = r.homeValue + r.awayValue;
+  return [`scaleX(${(tot > 0 ? share : 0).toFixed(3)})`, `scaleX(${(tot > 0 ? 1 - share : 0).toFixed(3)})`];
+}
+
+/** Comparison rows (value | label | value, with a two-sided bar), with update(). */
+export function createStatListView(rows: readonly StatRow[], testId: string): StatListView {
   const box = h('div', { class: 'brk-stats', testId });
+  const refs: { home: HTMLElement; away: HTMLElement; fillH: HTMLElement; fillA: HTMLElement }[] = [];
   for (const r of rows) {
-    const share = homeShare(r);
     const fillH = h('span', { class: 'brk-stat__fill' });
     const fillA = h('span', { class: 'brk-stat__fill' });
-    const tot = r.homeValue + r.awayValue;
-    fillH.style.transform = `scaleX(${(tot > 0 ? share : 0).toFixed(3)})`;
-    fillA.style.transform = `scaleX(${(tot > 0 ? 1 - share : 0).toFixed(3)})`;
+    const [th, ta] = fillTransforms(r);
+    fillH.style.transform = th;
+    fillA.style.transform = ta;
+    const home = h('span', { class: 'brk-stat__v brk-stat__v--home', text: r.home, testId: `stat-${r.key}-home` });
+    const away = h('span', { class: 'brk-stat__v', text: r.away, testId: `stat-${r.key}-away` });
+    refs.push({ home, away, fillH, fillA });
     box.append(
       h(
         'div',
         { class: 'brk-stat', testId: `stat-${r.key}` },
-        h('span', { class: 'brk-stat__v brk-stat__v--home', text: r.home, testId: `stat-${r.key}-home` }),
+        home,
         h('span', { class: 'brk-stat__label', text: r.label }),
-        h('span', { class: 'brk-stat__v', text: r.away, testId: `stat-${r.key}-away` }),
+        away,
         h('span', { class: 'brk-stat__bar', attrs: { 'aria-hidden': 'true' } },
           h('span', { class: 'brk-stat__half brk-stat__half--home' }, fillH),
           h('span', { class: 'brk-stat__half brk-stat__half--away' }, fillA)),
       ),
     );
   }
-  return box;
+  return {
+    el: box,
+    update(next) {
+      for (let i = 0; i < refs.length && i < next.length; i++) {
+        const ref = refs[i]!;
+        const r = next[i]!;
+        if (ref.home.textContent !== r.home) ref.home.textContent = r.home;
+        if (ref.away.textContent !== r.away) ref.away.textContent = r.away;
+        const [th, ta] = fillTransforms(r);
+        if (ref.fillH.style.transform !== th) ref.fillH.style.transform = th;
+        if (ref.fillA.style.transform !== ta) ref.fillA.style.transform = ta;
+      }
+    },
+  };
+}
+
+/** Comparison rows (value | label | value, with a two-sided bar). */
+export function createStatList(rows: readonly StatRow[], testId: string): HTMLElement {
+  return createStatListView(rows, testId).el;
+}
+
+/** A summary with every count 0 (the half-time screen built ahead, before the match has stats). */
+export function emptySummary(): MatchSummary {
+  const team = (): MatchSummary['teams'][0] => ({
+    goals: 0, shots: 0, shotsOnTarget: 0, possession: 0.5, passes: 0, passesCompleted: 0, tackles: 0, tacklesWon: 0, fouls: 0,
+    yellow: 0, red: 0, offsides: 0, corners: 0, saves: 0, interceptions: 0,
+  });
+  return { teams: [team(), team()], players: [], goals: [], playerOfMatch: null, shootout: null, winner: -1, forfeit: -1, ticks: 0 };
 }
 
 // ============================================================ screen
 
-export function createHalfTimeScreen(): Screen {
+export function createHalfTimeScreen(): LayeredScreen {
   let ctxRef: AppContext | null = null;
+  let panel: HTMLElement | null = null;
+  let title: HTMLElement | null = null;
+  let score: HTMLElement | null = null;
+  let scorers: HTMLElement | null = null;
+  let stats: StatListView | null = null;
+  let actions: HTMLElement | null = null;
+  let cont: HTMLButtonElement | null = null;
+  let manage: HTMLButtonElement[] = [];
+
+  function canManage(ctx: AppContext, s: ReadonlySimState | null): boolean {
+    // [QF-12] Not while a replay plays (its provider ignores team orders; the shortcut paused it for nothing).
+    return !!s && !isReplayPlayback(ctx.session.getSetup()) &&
+      manageableTeams(s, uiHumanOf(ctx), ctx.session.getSetup()?.config.mode === ModeId.FRIEND_ONLINE).length > 0;
+  }
+
+  function manageButtons(ctx: AppContext): HTMLButtonElement[] {
+    return [
+      createButton('Substitutions', () => openPausePage(ctx, 'team'), { testId: 'ht-team', hint: 'Formation and changes', ctx }),
+      createButton('Tactics', () => openPausePage(ctx, 'tactics'), { testId: 'ht-tactics', hint: 'Quick tactics, focus', ctx }),
+    ];
+  }
+
+  function goalsOf(s: ReadonlySimState | null, summary: MatchSummary | null): [number, number] {
+    return s ? [s.teams[0]!.goals, s.teams[1]!.goals] : summary ? [summary.teams[0].goals, summary.teams[1].goals] : [0, 0];
+  }
+
+  /** [QF-17] Bring a screen built ahead up to date: text, transforms and the few nodes that changed only. */
+  function refresh(ctx: AppContext): void {
+    if (!panel || !title || !score || !scorers || !actions || !cont) return;
+    const s = ctx.session.getState();
+    const summary = liveSummary(ctx);
+    const goals = goalsOf(s, summary);
+    const extra = !!s && s.match.period >= Period.ET_FIRST;
+    const titleText = extra ? 'Extra time · half time' : 'Half time';
+    if (title.textContent !== titleText) title.textContent = titleText;
+    const contText = extra ? 'Continue' : 'Second half';
+    if (cont.textContent !== contText) cont.textContent = contText;
+    for (let t = 0; t < 2; t++) {
+      const el = score.querySelector<HTMLElement>(`[data-testid="brk-goals-${t}"]`);
+      if (el && el.textContent !== String(goals[t])) el.textContent = String(goals[t]);
+    }
+    const aria = scoreAria(ctx, goals);
+    if (score.getAttribute('aria-label') !== aria) score.setAttribute('aria-label', aria);
+    if ((summary && summary.goals.length > 0) || scorers.firstChild !== null) {
+      const next = createScorers(ctx, summary);
+      panel.insertBefore(next, scorers);
+      scorers.remove();
+      scorers = next;
+    }
+    if (summary && stats) stats.update(statRows(summary, HALF_STAT_KEYS));
+    else if (!summary && stats) {
+      stats.el.remove();
+      stats = null;
+    } else if (summary && !stats) {
+      stats = createStatListView(statRows(summary, HALF_STAT_KEYS), 'ht-stats');
+      panel.insertBefore(stats.el, actions);
+    }
+    const want = canManage(ctx, s);
+    if (!want && manage.length > 0) {
+      for (const b of manage) b.remove();
+      manage = [];
+    } else if (want && manage.length === 0) {
+      manage = manageButtons(ctx);
+      actions.append(...manage);
+    }
+  }
+
   return {
     id: 'half-time',
     mount(root: HTMLElement, ctx: AppContext) {
@@ -425,36 +544,41 @@ export function createHalfTimeScreen(): Screen {
       ctxRef = ctx;
       root.classList.add('screen--overlay', 'brk');
       const s = ctx.session.getState();
-      const summary = liveSummary(ctx);
-      const goals: [number, number] = s ? [s.teams[0]!.goals, s.teams[1]!.goals] : summary ? [summary.teams[0].goals, summary.teams[1].goals] : [0, 0];
+      // Built ahead (AppRouter.prepare on the loading screen): no state yet, so every part the real break may show is
+      // built now (zero stats, both shortcuts) and onReveal fills in or drops what the break calls for.
+      const ahead = s === null;
+      const summary = liveSummary(ctx) ?? (ahead ? emptySummary() : null);
+      const goals = goalsOf(s, summary);
       const extra = !!s && s.match.period >= Period.ET_FIRST;
-      const panel = h(
-        'div',
-        { class: 'brk-panel', testId: 'half-time-panel' },
-        h('h1', { class: 'brk-eyebrow eyebrow', text: extra ? 'Extra time · half time' : 'Half time', testId: 'half-time-title' }),
-        createScoreHeader(ctx, goals, -1, 'half-time-score'),
-        createScorers(ctx, summary),
-      );
-      if (summary) panel.append(createStatList(statRows(summary, HALF_STAT_KEYS), 'ht-stats'));
-      const actions = h(
-        'div',
-        { class: 'brk-actions' },
-        createButton(extra ? 'Continue' : 'Second half', () => sendSkip(ctx), { testId: 'ht-continue', variant: 'primary', autofocus: true, ctx }),
-      );
-      // [QF-12] Not while a replay plays (its provider ignores team orders; the shortcut paused it for nothing).
-      const canManage = !!s && !isReplayPlayback(ctx.session.getSetup()) &&
-        manageableTeams(s, uiHumanOf(ctx), ctx.session.getSetup()?.config.mode === ModeId.FRIEND_ONLINE).length > 0;
-      if (canManage) {
-        actions.append(
-          createButton('Substitutions', () => openPausePage(ctx, 'team'), { testId: 'ht-team', hint: 'Formation and changes', ctx }),
-          createButton('Tactics', () => openPausePage(ctx, 'tactics'), { testId: 'ht-tactics', hint: 'Quick tactics, focus', ctx }),
-        );
+      title = h('h1', { class: 'brk-eyebrow eyebrow', text: extra ? 'Extra time · half time' : 'Half time', testId: 'half-time-title' });
+      score = createScoreHeader(ctx, goals, -1, 'half-time-score');
+      scorers = createScorers(ctx, summary);
+      panel = h('div', { class: 'brk-panel', testId: 'half-time-panel' }, title, score, scorers);
+      stats = null;
+      if (summary) {
+        stats = createStatListView(statRows(summary, HALF_STAT_KEYS), 'ht-stats');
+        panel.append(stats.el);
       }
+      cont = createButton(extra ? 'Continue' : 'Second half', () => sendSkip(ctx), { testId: 'ht-continue', variant: 'primary', autofocus: true, ctx });
+      actions = h('div', { class: 'brk-actions' }, cont);
+      manage = ahead || canManage(ctx, s) ? manageButtons(ctx) : [];
+      if (manage.length > 0) actions.append(...manage);
       panel.append(actions);
       root.append(panel);
     },
+    onReveal() {
+      if (ctxRef) refresh(ctxRef);
+    },
     unmount() {
       ctxRef = null;
+      panel = null;
+      title = null;
+      score = null;
+      scorers = null;
+      stats = null;
+      actions = null;
+      cont = null;
+      manage = [];
     },
     onBack() {
       if (ctxRef) sendSkip(ctxRef);

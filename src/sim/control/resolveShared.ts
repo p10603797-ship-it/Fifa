@@ -19,104 +19,13 @@ import { ControllerKind, KickKind } from '../../contracts/enums';
 import { Btn } from '../../contracts/input';
 import type { ControllerState, PlayerState, SimState } from '../../contracts/state';
 import { createActionRequest, ReqFlag, type ActionRequest } from '../../contracts/systems';
-import { T_BALL, T_INPUT, T_PASS, T_PLAYER, T_SHOT, T_TOUCH } from '../../contracts/tuning';
+import { T_BALL, T_INPUT, T_PASS, T_PLAYER, T_SHOT, T_TOUCH, T_RESOLVE } from '../../contracts/tuning';
 
-export const LOCAL_TUNING = {
-  /** A tapped kick (released before T_INPUT.tapTicks) of the ball at the kicker's feet that a second press can still
-   *  convert (PASS,PASS dinked; LOB,LOB ground cross; THROUGH,THROUGH dinked; SHOOT then SHOOT low driven; a lob or
-   *  shot faked by PASS) keeps charging, power frozen, until this many ticks after its press. Derived from
-   *  T_INPUT.doubleTapTicks so the whole double-tap window converts (a second press at exactly doubleTapTicks is
-   *  resolved before the grace ends on that tick), ticks. */
-  tapGraceTicks: T_INPUT.doubleTapTicks,
-  /** After releasing a held SHOOT, a second SHOOT press within this many ticks still makes a low driven shot. */
-  lowDrivenGraceTicks: 4,
-  /** A held button auto-releases its charge this many ticks after the bar is full (no stuck power bar), ticks. */
-  chargeAfterFullTicks: 24,
-  /** Max ticks a pass/shot press made while the ball travels to the player waits for it (first-time), ticks. */
-  firstTimeWaitTicks: 120,
-  /** A first-time press whose ball has arrived but whose player is busy (first touch) still fires within, ticks. */
-  pendingBusyTicks: 16,
-  /** Start a first-time kick when the ball is this many ticks beyond the kind's wind-up away, ticks. */
-  firstTimeLeadTicks: 1,
-  /** Max ball height for a first-time foot kick start (higher balls wait for the aerial window), m. */
-  firstTimeMaxHeight: 0.8,
-  /** The loose ball is "arriving" when its path passes within this distance of the player, m ... */
-  receiveLane: 1.6,
-  /** ... or within this distance for the intended receiver of our pass, m. */
-  receiveLaneTarget: 5.0,
-  /** Ball within this horizontal distance of the player counts as in reach, m. */
-  reachRadius: 1.2,
-  /** Slower loose balls are not "arriving", m/s. */
-  arriveMinSpeed: 0.8,
-  /** Loose ball: the player is the attacker if he is at most this much farther from it than the nearest opponent, m. */
-  looseAttackMargin: 0.5,
-  /** Own third: progress (-1 own goal line .. +1 opposition line) below which SHOOT on an arriving ball clears. */
-  ownThirdProgress: -1 / 3,
-  /** SHOOT clears a loose ball arriving within this many ticks (own third), ticks. */
-  clearArriveTicks: 30,
-  /** Header vs volley when aerialChance does not say (1 header / 2 volley): ball height threshold, m. */
-  volleyMaxHeight: 1.2,
-  /** The receiver auto-collecting a pass meets the ball's track at most this far ahead, s. */
-  receiveLookAheadSec: 2,
-  /** Sampling step along the ball track for the receiver's meeting point, s. */
-  meetStepSec: 0.125,
-  /** [QF-9] The receiver's meeting point skips the part of an airborne ball's track above this height (it flies over
-   *  him there) and meets it where it comes down through it: SIM-07's chest-trap height, so he can take it on the chest
-   *  or thigh with no button pressed (2.0 m, head height, left a CPU receiver waiting under a ball that passed at 1.9 m
-   *  with no header started, and a human's idle stick never heads), m. */
-  meetMaxHeight: T_TOUCH.trapHeight,
-  /** Contain (PASS held in defence): shadow distance goal-side of the carrier, m. */
-  containDist: 2.0,
-  /** Sprint held with the stick idle presses a carrier within this distance, m. */
-  sprintPressDist: 10.0,
-  /** Press target distance goal-side of the carrier, m. */
-  pressDist: 1.0,
-  /** Auto-jockey: stick moving without sprint within this distance of the carrier while goal-side, m. */
-  autoJockeyDist: 5.0,
-  /** Shield looks at the nearest opponent within this distance, m. */
-  shieldLookDist: 8.0,
-  /** Controlled sprint (MOD_R held with the ball): stick magnitude scale with sprint requested (0..1). */
-  controlledSprintScale: 0.8,
-  /** Stop ball / stop and face goal need the dribbler moving faster than this, m/s. */
-  stopMinSpeed: 1.5,
-  /** Stop ball fires when the stick was released at most this many ticks ago with SPRINT held, ticks. */
-  stopReleaseWindow: 3,
-  /** Stop and face goal needs MOD_L held this long with the stick released (a quicker L1+face is a combo), ticks. */
-  stopHoldTicks: 5,
-  /** A second defender called by a tap (or the double-tap gesture) keeps pressing this long, ticks. */
-  secondDefTapTicks: 90,
-  /** Gesture "tap the carrier": the controlled player presses him this long unless the stick moves, ticks. */
-  gesturePressTicks: 90,
-  /** Tackle choice: goal-side when cos(defender dir from carrier, carrier->own goal) >= this. */
-  goalSideCos: 0.3,
-  /** Tackle choice: chasing (push/pull) when that cosine <= this. */
-  chaseCos: -0.2,
-  /** Shoulder challenge: alongside within this distance, m ... */
-  shoulderMaxDist: 1.6,
-  /** ... with |sin| of the offset to the carrier's run at least this ... */
-  shoulderSideMin: 0.7,
-  /** ... both running the same way (cos of the velocities) at least this ... */
-  shoulderParallelMin: 0.5,
-  /** ... and the carrier faster than this, m/s. */
-  shoulderMinSpeed: 2.0,
-  /** Gesture tap more than this far ahead (attack direction) of the teammate = through ball into space, m. */
-  tapThroughLead: 1.5,
-  /** Gesture tap on space: the nearest teammate within this distance of the point is the target, m. */
-  tapSpaceRadius: 12,
-  /** Gesture pass power = distance / this, clamped to [gesturePassMinPower, 1], m. */
-  gesturePassFullDist: 45,
-  gesturePassMinPower: 0.2,
-  /** Gesture shot power when the swipe carries none (0..1). */
-  gestureShotDefaultPower: 0.6,
-  /** A swipe is "toward goal" when cos(swipe, direction to the goal centre) >= this. */
-  swipeGoalCos: 0.35,
-  /** Crossing-zone double-tap within this distance of a post's cross spot crosses to that post, m. */
-  crossPostRadius: 9,
-  /** Cross spot depth off the goal line, m. */
-  crossPostDepth: 5,
-} as const; // TUNING-CR
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_RESOLVE. */
+export const LOCAL_TUNING = T_RESOLVE;
 
-export const LT = LOCAL_TUNING;
+
+export const LT = T_RESOLVE;
 
 // ---------------------------------------------------------------- small enums (plain objects; no const enums)
 

@@ -101,7 +101,9 @@ describe('RUL-01 budget', () => {
       if (deferred.match.phase !== 2) throw new Error('deferred regime ended');
       console.log(JSON.stringify(out));
     `;
-    const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', '--input-type=module', '-e', code], {
+    // [TUN-7S] --single-threaded (tests/perf/qf-7r-alloc-flags.ts): synchronous compilation, so the measured bytes do not
+    // depend on CPU load (this read > 1 B/tick once with the round-6 agents running; 0 when rerun alone).
+    const r = spawnSync(process.execPath, ['--single-threaded', '--expose-gc', '--import', 'tsx', '--input-type=module', '-e', code], {
       cwd: root, encoding: 'utf8', timeout: 180_000,
     });
     expect(r.status, r.stderr).toBe(0);

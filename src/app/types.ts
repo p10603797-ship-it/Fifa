@@ -23,7 +23,38 @@ export interface AppRouter extends Router {
    * key press seen twice (keydown + menu input latch) and is ignored; pad B and browser back always count.
    */
   backFromInput(source: 'key' | 'menu' | 'history'): void;
+  /**
+   * [QF-17] Build an overlay screen (RouterOptions.overlays) ahead of time: it is mounted now in a hidden container
+   * (opacity 0, scale(0), aria-hidden, [data-prepared]; no focus root, no onFrame) and shown without a new
+   * build, style and layout pass when the router next navigates to it as an overlay with equal params
+   * (LayeredScreen.onReveal refreshes it). False when `id` is not an overlay screen or its mount failed.
+   */
+  prepare?(id: ScreenId, params?: ScreenParams): boolean;
+  /** Unmount the prepared screen, if any (the match it was built for ended or will not reach it). */
+  discardPrepared?(): void;
+  /** Id of the prepared (hidden) screen, or null (tests). */
+  readonly prepared?: ScreenId | null;
+  /** [QF-17] Ids of the mounted screens, bottom first: the current one, or 'match' under 'half-time' (tests). */
+  readonly mounted?: readonly ScreenId[];
   dispose(): void;
+}
+
+/**
+ * [QF-17] A screen the router can keep mounted under another one (RouterOptions.overlays, e.g. the match screen under
+ * the half-time overlay): instead of an unmount / remount pair it is told when it gets covered and uncovered. While
+ * covered it stays in the DOM (under the overlay's container) but gets no onFrame and no onBack; its focus root stays
+ * below the overlay's in the focus navigator. Every method is optional: a plain Screen is covered silently.
+ */
+export interface LayeredScreen extends Screen {
+  /** An overlay screen was mounted over this one. */
+  onCovered?(): void;
+  /** The overlay over this one was removed: this screen is the current screen again (it was not remounted). */
+  onUncovered?(): void;
+  /**
+   * This screen was built ahead of time (AppRouter.prepare: mounted hidden, possibly before any match state existed)
+   * and is being shown now: refresh what may have changed since mount. Called right before the focus root attaches.
+   */
+  onReveal?(): void;
 }
 
 /** Everything the loop needs to run ticks for the current match. Created by the session at match start. */

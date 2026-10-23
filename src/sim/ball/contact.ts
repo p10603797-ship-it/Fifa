@@ -10,7 +10,7 @@
  *      spin friction that turns part of the spin into roll); rolling -> rollDecel + rollDamping * v (trapezoid
  *      position update), rest below restSpeed.
  *   2. goal frame (swept time of impact, then a discrete push-out pass), net sheets, in-net hold + damping.
- *   3. advertising boards (thin walls LOCAL_TUNING.boardHeight high) and the stand walls at the world bounds.
+ *   3. advertising boards (thin walls T_BALL_CONTACT.boardHeight high) and the stand walls at the world bounds.
  *   4. speed clamp (maxSpeed); ballTick only: SIM-03 detectCrossing on the substep segment; then the inNet flag.
  *
  * GEOMETRY (end = +1 for the goal at x = +52.5, -1 at x = -52.5; u = end * x, so u grows into the goal). It matches
@@ -23,7 +23,7 @@
  *  - Net: box u in [HALF_LENGTH, HALF_LENGTH + GOAL_DEPTH], |z| <= GOAL_HALF_WIDTH, y <= GOAL_HEIGHT, open at the
  *    goal mouth (u = HALF_LENGTH). The roof, back and two sides are thin TWO-SIDED sheets: the ball centre can
  *    never cross one (the push-out side is the side the centre started the substep on). From outside they deflect
- *    (T_BALL.netOutsideRestitution), from inside they absorb (LOCAL_TUNING.netInsideRestitution). The sheets are
+ *    (T_BALL.netOutsideRestitution), from inside they absorb (T_BALL_CONTACT.netInsideRestitution). The sheets are
  *    ignored while the centre is in front of the goal line (u < HALF_LENGTH): the frame covers their front edges.
  *    A last guard rejects any substep whose centre enters or leaves the box other than through the goal mouth.
  *  - In the net: on the substep whose centre crosses into the box past u = HALF_LENGTH + BALL_RADIUS (the whole
@@ -33,11 +33,11 @@
  *    clears when the ball is found outside the box (a restart moved it); a kick clears it too (sim/core/kick.ts) and
  *    the ball may then leave through the mouth without a second NET.
  *  - bounces counts ground impacts that bounce (vertical speed after >= rollThresholdVy), reset by kicks.
- *  - Boards: rectangle |x| = BOARD_X, |z| = BOARD_Z, LOCAL_TUNING.boardHeight high, two-sided, boardRestitution.
+ *  - Boards: rectangle |x| = BOARD_X, |z| = BOARD_Z, T_BALL_CONTACT.boardHeight high, two-sided, boardRestitution.
  *    Stand walls at the world bounds (same restitution) and a ceiling at WORLD_MAX_Y keep the ball in the world.
- * ANTI-STUCK: a ball on the net roof is given LOCAL_TUNING.roofRollSpeed toward the nearest back/side edge; a ball
+ * ANTI-STUCK: a ball on the net roof is given T_BALL_CONTACT.roofRollSpeed toward the nearest back/side edge; a ball
  * slower than stuckSpeed touching a post, the bar or a board is nudged away along the contact normal.
- * EVENTS: BOUNCE (c = normal impact speed, ground / boards / stands) and POST above LOCAL_TUNING.eventMinSpeed.
+ * EVENTS: BOUNCE (c = normal impact speed, ground / boards / stands) and POST above T_BALL_CONTACT.eventMinSpeed.
  * Deterministic (no Math trig, no allocation: module-level scratch only).
  */
 import {
@@ -45,47 +45,15 @@ import {
   WORLD_MAX_X, WORLD_MAX_Y, WORLD_MAX_Z, WORLD_MIN_X, WORLD_MIN_Z,
 } from '../../contracts/constants';
 import { EventType, type EventSink } from '../../contracts/events';
-import { T_BALL } from '../../contracts/tuning';
+import { T_BALL, T_BALL_CONTACT } from '../../contracts/tuning';
 import type { BallState, SimState } from '../../contracts/state';
 import { dpow } from '../core/dmath';
 import { detectCrossing } from '../pitch/geometry';
 import { ballAirStep } from './flight';
 
-const LOCAL_TUNING = {
-  /** Minimum normal impact speed for BOUNCE and POST events, m/s. */
-  eventMinSpeed: 1,
-  /**
-   * Ground impact speed (vertical, m/s) from which bounceFriction and the spin friction apply in full; below it
-   * they scale linearly (a grazing landing or a tiny hop barely grips).
-   */
-  fullGripImpactSpeed: 2,
-  /** Fraction of the ball's spin lost in one full-grip ground bounce. */
-  bounceSpinFriction: 0.4,
-  /**
-   * Share of the lost spin's contact-point speed (r * spin) that becomes linear speed (hollow ball:
-   * I / (I + m r^2) = 0.4). Topspin speeds a bounce up, backspin checks it.
-   */
-  spinToRoll: 0.4,
-  /** Spin decay rate while rolling on grass, 1/s. */
-  groundSpinDecay: 3,
-  /** Restitution off the net from inside (the net absorbs). */
-  netInsideRestitution: 0.1,
-  /** Minimum horizontal speed (m/s) a ball on the net roof gets toward the nearest back/side edge (rolls off). */
-  roofRollSpeed: 1.2,
-  /** A ball slower than this (m/s) touching a post, the bar or a board is nudged away from it. */
-  stuckSpeed: 0.3,
-  /** Speed of that nudge along the horizontal contact normal, m/s. */
-  nudgeSpeed: 0.8,
-  /** Contact tolerance for "touching" a post, the bar, a board or the roof, m. */
-  touchSlop: 0.003,
-  /** Fraction of spin kept after hitting a post or the bar. */
-  postSpinKeep: 0.5,
-  /** Advertising board height, m (a ball above it flies over into the stand area). */
-  boardHeight: 0.9,
-} as const; // TUNING-CR
 
 /** SIM-02 local tuning (read-only; exported for tests, render and the lead's tuning review). */
-export const BALL_CONTACT_TUNING = LOCAL_TUNING;
+export const BALL_CONTACT_TUNING = T_BALL_CONTACT;
 
 // ---------------------------------------------------------------- geometry (end-relative u = end * x)
 
@@ -159,9 +127,9 @@ const NEG_BOARD_X = -BOARD_X;
 const NEG_BOARD_Z = -BOARD_Z;
 const E_POST = T_BALL.postRestitution;
 const E_NET_OUT = T_BALL.netOutsideRestitution;
-const E_NET_IN = LOCAL_TUNING.netInsideRestitution;
+const E_NET_IN = T_BALL_CONTACT.netInsideRestitution;
 const E_BOARD = T_BALL.boardRestitution;
-const BOARD_H = LOCAL_TUNING.boardHeight;
+const BOARD_H = T_BALL_CONTACT.boardHeight;
 
 /**
  * Thin two-sided sheets (net and boards), one row of SHEET_COLS numbers each: the normal axis (0 = u|x, 1 = y,
@@ -282,11 +250,11 @@ function groundImpact(b: BallState, ev: EventSink | null): void {
   b.y = R;
   const vi = -b.vy;
   if (!(vi > 0)) return; // rising through the floor (started below it): just lift
-  const fg = LOCAL_TUNING.fullGripImpactSpeed;
+  const fg = T_BALL_CONTACT.fullGripImpactSpeed;
   const grip = vi >= fg ? 1 : vi / fg;
   // Spin friction: part of the spin is lost; its contact-point speed (spin x (-r y)) partly becomes roll.
-  const q = LOCAL_TUNING.bounceSpinFriction * grip;
-  const conv = LOCAL_TUNING.spinToRoll * q * R;
+  const q = T_BALL_CONTACT.bounceSpinFriction * grip;
+  const conv = T_BALL_CONTACT.spinToRoll * q * R;
   b.vx -= conv * b.sz;
   b.vz += conv * b.sx;
   const keep = 1 - q;
@@ -306,7 +274,7 @@ function groundImpact(b: BallState, ev: EventSink | null): void {
     b.grounded = 0;
     b.bounces++;
   }
-  if (ev !== null && vi > LOCAL_TUNING.eventMinSpeed) ev.emit(EventType.BOUNCE, 0, 0, vi, 0, b.x, b.y, b.z);
+  if (ev !== null && vi > T_BALL_CONTACT.eventMinSpeed) ev.emit(EventType.BOUNCE, 0, 0, vi, 0, b.x, b.y, b.z);
 }
 
 function roll(b: BallState, dt: number): void {
@@ -327,7 +295,7 @@ function roll(b: BallState, dt: number): void {
     b.vx = nx;
     b.vz = nz;
   }
-  let f = 1 - LOCAL_TUNING.groundSpinDecay * dt;
+  let f = 1 - T_BALL_CONTACT.groundSpinDecay * dt;
   if (f < 0) f = 0;
   b.sx *= f;
   b.sy *= f;
@@ -437,9 +405,9 @@ function reflect(e: number): void {
 function postHit(b: BallState, end: number, bar: number, ev: EventSink | null, emitted: number): number {
   const impact = IMP[0];
   if (impact <= 0) return emitted;
-  const keep = LOCAL_TUNING.postSpinKeep;
+  const keep = T_BALL_CONTACT.postSpinKeep;
   b.sx *= keep; b.sy *= keep; b.sz *= keep;
-  if (emitted === 0 && ev !== null && impact > LOCAL_TUNING.eventMinSpeed) {
+  if (emitted === 0 && ev !== null && impact > T_BALL_CONTACT.eventMinSpeed) {
     ev.emit(EventType.POST, end, bar, impact, 0, end * P[0], P[1], P[2]);
     return 1;
   }
@@ -458,7 +426,7 @@ function capsule(): number {
   const dy = P[1] - cy;
   const dz = P[2] - cz;
   const d2 = du * du + dy * dy + dz * dz;
-  const tr = FR_R + LOCAL_TUNING.touchSlop;
+  const tr = FR_R + T_BALL_CONTACT.touchSlop;
   IMP[0] = 0;
   if (d2 >= tr * tr) return 0;
   if (d2 > 1e-18) {
@@ -526,7 +494,7 @@ function frame(b: BallState, end: number, ev: EventSink | null): void {
  */
 function nudgeIfStuck(): void {
   const v2 = V[0] * V[0] + V[1] * V[1] + V[2] * V[2];
-  const ss = LOCAL_TUNING.stuckSpeed;
+  const ss = T_BALL_CONTACT.stuckSpeed;
   if (v2 >= ss * ss) return;
   const hu = TN[0];
   const hz = TN[1];
@@ -535,7 +503,7 @@ function nudgeIfStuck(): void {
   let dz = TN[3];
   if (hn >= MIN_HORIZONTAL_NORMAL) { du = hu / hn; dz = hz / hn; }
   const vd = V[0] * du + V[2] * dz;
-  const ns = LOCAL_TUNING.nudgeSpeed;
+  const ns = T_BALL_CONTACT.nudgeSpeed;
   if (vd < ns) {
     V[0] += du * (ns - vd);
     V[2] += dz * (ns - vd);
@@ -565,7 +533,7 @@ function sheet(id: number, s0: number): number {
   const da = pa - ca;
   const db = pb - cb;
   const dn = P[axis]! - plane;
-  const tr = R + LOCAL_TUNING.touchSlop;
+  const tr = R + T_BALL_CONTACT.touchSlop;
   IMP[0] = 0;
   if (da === 0 && db === 0) {
     // Over the face: the normal is the plane normal on the start side, even if the centre crossed the plane.
@@ -659,7 +627,7 @@ function net(b: BallState, end: number): void {
 
 /** On the roof from above: make sure the ball rolls off toward the nearest back or side edge (never the bar). */
 function roofRollOff(): void {
-  const rs = LOCAL_TUNING.roofRollSpeed;
+  const rs = T_BALL_CONTACT.roofRollSpeed;
   if (V[0] * V[0] + V[2] * V[2] >= rs * rs) return;
   const az = P[2] < 0 ? -P[2] : P[2];
   let du = 0;
@@ -727,7 +695,7 @@ function boards(b: BallState, ev: EventSink | null): void {
 }
 
 function boardBounce(ev: EventSink | null): void {
-  if (ev !== null && IMP[0] > LOCAL_TUNING.eventMinSpeed) ev.emit(EventType.BOUNCE, 0, 0, IMP[0], 0, P[0], P[1], P[2]);
+  if (ev !== null && IMP[0] > T_BALL_CONTACT.eventMinSpeed) ev.emit(EventType.BOUNCE, 0, 0, IMP[0], 0, P[0], P[1], P[2]);
 }
 
 /** Stand walls at the world bounds (boardRestitution) and the ceiling. */
@@ -752,7 +720,7 @@ function standWalls(b: BallState, ev: EventSink | null): void {
     b.y = WORLD_MAX_Y - R;
     if (b.vy > 0) b.vy = 0;
   }
-  if (ev !== null && hit > LOCAL_TUNING.eventMinSpeed) ev.emit(EventType.BOUNCE, 0, 0, hit, 0, b.x, b.y, b.z);
+  if (ev !== null && hit > T_BALL_CONTACT.eventMinSpeed) ev.emit(EventType.BOUNCE, 0, 0, hit, 0, b.x, b.y, b.z);
 }
 
 function clampSpeed(b: BallState): void {

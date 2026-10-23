@@ -80,7 +80,9 @@ const PROBE = `
 
 describe('SIM-07 budget', () => {
   const r = spawnSync(process.execPath, [
-    '--expose-gc', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', PROBE,
+// [TUN-7S] --single-threaded (tests/perf/qf-7r-alloc-flags.ts): compiles synchronously, so the measured bytes do not
+// depend on CPU load (under load the optimised code arrived later and the window ran boxing baseline code).
+    '--single-threaded', '--expose-gc', '--min-semi-space-size=256', '--max-semi-space-size=256', '--import', 'tsx', '--input-type=module', '-e', PROBE,
   ], { cwd: ROOT, encoding: 'utf8', timeout: 240_000 });
   const ok = r.status === 0;
   const res = ok ? JSON.parse(r.stdout.trim().split('\n').pop()!) as { us: Record<string, number>; bytes: Record<string, number>; events: number } : null;

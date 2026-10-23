@@ -7,20 +7,21 @@
  * players/firstTouch.ts is the module that enters that cycle (a test or tool importing it before anything imports
  * the dispatcher), the registry would read the handler before it exists (TDZ in a bundle, `undefined` -> the idle
  * handler under vitest) and FIRST_TOUCH would never slow the receiver or end early. This module has NO runtime
- * imports, so it is always fully evaluated first; firstTouch.ts re-exports the shell as its first statement and binds
+ * imports (contracts/tuning.ts only), so it is always fully evaluated first; firstTouch.ts re-exports the shell as its first statement and binds
  * the real implementation (bindFirstTouchImpl) at the end of its body, long before the first tick runs. The shell
  * only forwards calls (no allocation).
  */
 import type { EventSink } from '../../contracts/events';
 import type { SimState } from '../../contracts/state';
 import type { ActionHandler } from '../../contracts/systems';
+// [TUN-1] contracts/tuning.ts has no sim imports, so this stays cycle-free (evaluated before any sim module).
+import { T_FIRST_TOUCH } from '../../contracts/tuning';
 
 /**
- * [QF-9] Thigh / chest reach radius as a fraction of T_TOUCH.receiveRadius (SIM-07 LOCAL_TUNING.chestReachMul reads it):
- * here so that SIM-16 switching can use SIM-07's receive reach without importing firstTouch.ts (whose dispatcher import
- * would close a cycle through actions/registry and rules/subs).
+ * [QF-9] Thigh / chest reach radius as a fraction of T_TOUCH.receiveRadius. [TUN-1] The value is contracts/tuning.ts
+ * T_FIRST_TOUCH.chestReachMul (SIM-16 switching reads it there); this old name stays for importers.
  */
-export const CHEST_REACH_MUL = 0.65;
+export const CHEST_REACH_MUL = T_FIRST_TOUCH.chestReachMul;
 
 /** The real implementation, provided by players/firstTouch.ts. */
 export interface FirstTouchImpl {

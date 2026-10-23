@@ -82,118 +82,17 @@ import { EventType, type EventSink } from '../../contracts/events';
 import { Btn } from '../../contracts/input';
 import { MoveMode, type PlayerState, type SimState } from '../../contracts/state';
 import { createKickLaunch, type KickLaunch } from '../../contracts/systems';
-import { T_BALL, T_DRIBBLE, T_PLAYER, T_SKILL } from '../../contracts/tuning';
+import { T_BALL, T_DRIBBLE, T_PLAYER, T_SKILL, T_SKILL_MOVES, T_LOCOMOTION } from '../../contracts/tuning';
 import { applyKick, ballTouchedThisTick, recordTouch, takePossession } from '../core/kick';
 import { clamp01, dcos, dlog, dsin, HALF_PI, PI, TWO_PI } from '../core/dmath';
 import { rngRange } from '../core/rng';
 import { createV2 } from '../core/vec';
-import { LOCAL_TUNING as LOCO_TUNING } from '../players/locomotion';
 
-/**
- * TUNING-CR (SIM-13): proposed additions to T_SKILL. Per-move arrays are indexed by SkillMove (0 = NONE). Script
- * times are fractions of the move's duration (u = actT / actDur); speeds m/s; offsets m; angles rad.
- */
-export const LOCAL_TUNING = { // TUNING-CR
-  /** The ball must lie within this horizontal distance of the player to start a move, m. */
-  startReach: 1.4,
-  /** ... for a knock-on (at a sprint the ball runs further ahead), m. */
-  knockStartReach: 2.6,
-  /** Request directions shorter than this count as none (facing), 0..1. */
-  dirDead: 0.1,
-  /** |Lateral component| of the request at or below which the preferred foot picks the side, 0..1. */
-  sideDead: 0.15,
-  /** Exit angle from the start facing toward the chosen side, rad. */
-  exitAngle: [0, 1.5707963267948966, 0.7853981633974483, 1.0471975511965976, 3.141592653589793, 1.3962634015954636,
-    0.7853981633974483, 0.4363323129985824, 0, 0, 0, 0] as readonly number[],
-  /** Exit touch at this fraction of the move (ball released along the exit); >= 1 = held at the feet to the end. */
-  releaseFrac: [1, 0.82, 0.62, 0.6, 0.75, 0.7, 0.8, 0.3, 1, 1, 1, 1] as readonly number[],
-  /** Ball speed on top of the body's run along the exit at the exit touch, m/s. */
-  pushSpeed: [0, 1.2, 1.2, 1.4, 1.8, 1.8, 1.4, 1.0, 0, 0, 0, 0] as readonly number[],
-  /** Body speed along the exit at the end of the move (x agility scale), m/s. */
-  exitSpeed: [0, 2.6, 4.5, 5.0, 2.5, 3.0, 4.0, 4.0, 0, 0, 0, 0] as readonly number[],
-  /** Vertical ball speed at the exit touch (heel flick lifts the ball forward over), m/s. */
-  lift: [0, 0, 0, 0, 0, 0, 0, 4.0, 0, 0, 0, 0] as readonly number[],
-  /** Exit speed x (agilityMin .. agilityMax) for agility 1 .. 99. */
-  agilityMin: 0.85,
-  agilityMax: 1.15,
-  /** Ball at the feet: ahead of the body centre along the facing, m. */
-  footAhead: 0.35,
-  /** Ball lead along the exit at the exit touch, m. */
-  exitLead: 0.55,
-  /** Max ball speed relative to the body while scripted, m/s. */
-  ballMaxRel: 9,
-  /** Body acceleration limit during a move, m/s^2. */
-  skillAccel: 24,
-  /** Ticks to the next dribble touch after the move ends (exit touch: remaining ticks + this). */
-  exitTouchCd: 6,
-  /** KICK event power of a skill touch = ball speed relative to the body / this, m/s. */
-  touchPowerRef: 22,
-  /** Vulnerable window: an opponent this close to the low ball (horizontal, m) wins it ... */
-  stealRadius: 0.7,
-  /** ... x stealCtrlMax .. stealCtrlMin for the skiller's dribbling + ball control 1 .. 99. */
-  stealCtrlMax: 1.15,
-  stealCtrlMin: 0.85,
-  /** Ball roll: forward carry of the entry speed (fades by carryEnd), sideways run from sideIn to sideFull, ball
-   *  rolled back by ballBack (by ballBackEnd) and across to exitLead (by ballSideEnd). */
-  ballRoll: { carry: 0.5, carryEnd: 0.4, sideIn: 0.1, sideFull: 0.4, ballBack: 0.1, ballBackEnd: 0.6, ballSideEnd: 0.7 },
-  /** Step-over: sway against the exit side (feintSpeed, lean feintLean) in [feintIn, feintOut], then the run along the
-   *  exit (exitIn), the turn (turnIn) and the ball moving onto the exit from ballIn. */
-  stepOver: {
-    carry: 0.6, feintSpeed: 1.4, feintLean: 0.35, feintIn: [0.05, 0.2] as readonly number[],
-    feintOut: [0.3, 0.45] as readonly number[], exitIn: [0.45, 0.7] as readonly number[],
-    turnIn: [0.45, 0.75] as readonly number[], ballIn: 0.38,
-  },
-  /** Body feint: dip against the exit side, then the lateral burst along the exit. */
-  bodyFeint: {
-    carry: 0.7, carryEnd: 0.5, dipSpeed: 1.2, dipLean: 0.3, dipIn: [0, 0.15] as readonly number[],
-    dipOut: [0.25, 0.4] as readonly number[], exitIn: [0.3, 0.6] as readonly number[],
-    turnIn: [0.35, 0.7] as readonly number[], ballIn: 0.3,
-  },
-  /** Drag-back: stop by stopEnd, ball pulled back under the body (ballPull) to exitLead behind, turn (turnIn), back
-   *  run (backIn). */
-  dragBack: {
-    stopEnd: 0.35, ballPull: [0.1, 0.65] as readonly number[], turnIn: [0.3, 0.8] as readonly number[],
-    backIn: [0.45, 0.9] as readonly number[],
-  },
-  /** Fake shot: plant with the ball on the kicking spot (shapeAhead), then the cut along the exit. */
-  fakeShot: {
-    carry: 0.8, plantEnd: 0.4, shapeAhead: 0.45, exitIn: [0.45, 0.8] as readonly number[],
-    turnIn: [0.45, 0.85] as readonly number[], ballIn: 0.4,
-  },
-  /** Roulette: plant, sideways drift while spinning (spins full turns + the exit angle over turn), ball carried round to
-   *  the side (sideBall ahead-side, sideBack back), then the run along the exit. */
-  roulette: {
-    plantEnd: 0.2, spinSpeed: 2.0, spinIn: [0.15, 0.3] as readonly number[], spinOut: [0.65, 0.8] as readonly number[],
-    exitIn: [0.7, 0.95] as readonly number[], turn: [0.12, 0.85] as readonly number[], spins: 1,
-    sideIn: [0.15, 0.5] as readonly number[], sideBall: 0.4, sideBack: 0.2, ballIn: 0.5,
-  },
-  /** Heel flick: slow down (carry, plantEnd) rolling the ball back to the heel (heelBack behind the centre), flick it
-   *  up and over at releaseFrac, run along the exit (exitIn). */
-  heelFlick: { carry: 0.6, plantEnd: 0.3, heelBack: 0.25, exitIn: [0.2, 0.7] as readonly number[], turnIn: [0.3, 0.8] as readonly number[] },
-  /** Stop ball / stop and face goal: deceleration >= decelMin m/s^2 and enough to stop within stopFrac of the move. */
-  stopDecelMin: 14,
-  stopFrac: 0.75,
-  /** Hard stop: same, harder. */
-  hardStopDecelMin: 22,
-  hardStopFrac: 0.6,
-  /** Stop and face goal: body turn rate, rad/s; ball held this far ahead along the facing, m. */
-  faceTurnRate: 18,
-  faceAhead: 0.4,
-  /** Knock-on: touch tick (from the start), power (0..1), body acceleration x accel attribute, turn rate rad/s. */
-  knockTouchTick: 2,
-  knockPower: 0.5,
-  knockAccelMul: 1.25,
-  knockTurnRate: 16,
-  /** solveSkillTouch: ball speed = speed along the direction + rel x (0.5 + power), clamped to [min, max], m/s;
-   *  direction error up to errMax x (1 - quality), rad. Per kind: knock-on, skill touch, dribble touch. */
-  knockRel: 5.5, knockMin: 7.5, knockMax: 15, knockErrMax: 0.1,
-  skillTouchRel: 2.5, skillTouchMin: 1.5, skillTouchMax: 9, skillTouchErrMax: 0.06,
-  dribbleTouchRel: 1.5, dribbleTouchMin: 1, dribbleTouchMax: 7, dribbleTouchErrMax: 0.06,
-  /** Touch reach: controlRadius + the player's speed x this, s. */
-  touchLookahead: 0.1,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_SKILL_MOVES. */
+export const LOCAL_TUNING = T_SKILL_MOVES;
 
-const L = LOCAL_TUNING;
+
+const L = T_SKILL_MOVES;
 const CTRL_H = T_DRIBBLE.controlHeight;
 const NUM_MOVES = SkillMove.HARD_STOP + 1;
 /** Max smoothstep intervals in one move script. */
@@ -376,7 +275,7 @@ function steerBody(p: PlayerState, last: boolean): void {
   BV.z = vz;
   const sp = Math.sqrt(vx * vx + vz * vz);
   if (!last && sp > 1e-9) {
-    const k = (sp + LOCO_TUNING.lockedFriction * DT) / sp;
+    const k = (sp + T_LOCOMOTION.lockedFriction * DT) / sp;
     vx *= k;
     vz *= k;
   }

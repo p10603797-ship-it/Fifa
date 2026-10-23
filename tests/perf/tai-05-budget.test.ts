@@ -95,7 +95,9 @@ describe('TAI-05 budget', () => {
   const bundle = join(dir, 'probe.bundle.mjs');
   writeFileSync(entry, PROBE);
   buildSync({ entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', outfile: bundle, logLevel: 'error' });
-  const r = spawnSync(process.execPath, ['--expose-gc', '--max-semi-space-size=128', bundle], {
+  // [TUN-7S] --single-threaded (tests/perf/qf-7r-alloc-flags.ts): compiles synchronously, so the measured bytes do not
+  // depend on CPU load (under load the optimised code arrived later and the window ran boxing baseline code).
+  const r = spawnSync(process.execPath, ['--single-threaded', '--expose-gc', '--max-semi-space-size=128', bundle], {
     cwd: ROOT, encoding: 'utf8', timeout: 240_000,
   });
   rmSync(dir, { recursive: true, force: true });

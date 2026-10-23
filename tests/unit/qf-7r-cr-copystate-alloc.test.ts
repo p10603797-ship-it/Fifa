@@ -9,7 +9,7 @@
  * object a list of [key, kind] with explicit numeric copies `d.x = s.x` through generated accessors, or a cached
  * `new Function` body per hidden class where the CSP allows), keeping the generic walk as the fallback for
  * mismatched shapes. Measured by tests/unit/qf-7r-live-state-probe.ts (exact allocation count, src/sim/core/clone.ts).
- * Marked it.fails until the CR lands; then drop `.fails`.
+ * [TUN-7S] Landed (specialised generated copier in clone.ts): it() now.
  */
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
@@ -20,7 +20,7 @@ import { ALLOC_FLAGS } from '../perf/qf-7r-alloc-flags';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 describe('QF-7R CR: copyState allocation per tick', () => {
-  it.fails('copyState(prev, curr) with matching shapes allocates nothing per tick in live play', () => {
+  it('copyState(prev, curr) with matching shapes allocates nothing per tick in live play', () => {
     const r = spawnSync(process.execPath, [
       '--allow-natives-syntax', ...ALLOC_FLAGS, '--expose-gc', '--import', 'tsx', 'tests/unit/qf-7r-live-state-probe.ts',
     ], { cwd: ROOT, encoding: 'utf8', timeout: 200_000 });

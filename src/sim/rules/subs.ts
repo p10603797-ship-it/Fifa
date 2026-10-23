@@ -25,7 +25,7 @@
  *    and stun cleared, role GK / isKeeper / keeperSlot when a keeper comes on, control released through SIM-16
  *    releasePlayer (which re-picks at once), subsUsed++, SUBSTITUTION (a = team, b = slot, c = in roster index,
  *    d = out roster index).
- *  - sendOff: ball released, action ended (same order as above), active = 0, parked off the pitch (LOCAL_TUNING park spot, near-side
+ *  - sendOff: ball released, action ended (same order as above), active = 0, parked off the pitch (T_SUBS park spot, near-side
  *    touchline beyond the boards, one spot per slot), motion cleared, roster SENT_OFF, onPitch--, team / ball /
  *    controller references to him cleared (chaser, press/cover, support/run/pass-and-go calls, pass target, receiver,
  *    second defender), queued subs for him dropped. A keeper sent off is replaced: the bench keeper (if a substitution
@@ -40,7 +40,7 @@
  *    3-0 and ends the match.
  *  - Per-tick cost: subsTick returns at once when both queues are empty; checkForfeit is O(22). No allocation.
  *
- * Extra exports: canRequestSub (pure validation for menus), isSubStoppage, subsLeft, LOCAL_TUNING.
+ * Extra exports: canRequestSub (pure validation for menus), isSubStoppage, subsLeft, LOCAL_TUNING (old name of contracts/tuning.ts T_SUBS).
  */
 import {
   HALF_LENGTH, MAX_SUBS, MIN_PLAYERS, NUM_CONTROLLERS, NUM_SLOTS, PLAYERS_PER_TEAM, SQUAD_SIZE, teamFirstSlot,
@@ -57,19 +57,11 @@ import { copyAttrs } from '../init';
 // ThrowState is only read at tick time (never while modules evaluate), so the import cycle subs -> throwin ->
 // restart -> machine -> subs is harmless; throwin.ts is already in this module's graph through actions/dispatch.
 import { ThrowState } from './throwin';
+import { T_SUBS } from '../../contracts/tuning';
 
-/** TUNING-CR (RUL-10): proposed additions to T_RULES (units in comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  /** Parking spot of players who left the pitch: z (m), near-side touchline beyond the boards (BOARD_Z = 40) and
-   *  inside the world bounds (WORLD_MAX_Z = 44). */
-  parkZ: 42,
-  /** Parking x: the first spot is this far from the halfway line on the team's own side (team 0 at -x), m ... */
-  parkX0: 2,
-  /** ... and each further slot of the team this much further along, m. */
-  parkDX: 1.5,
-  /** A keeper coming on from the bench after a red card is placed this far in front of his goal line, centred, m. */
-  keeperSpawnDepth: 1,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_SUBS. */
+export const LOCAL_TUNING = T_SUBS;
+
 
 // ---------------------------------------------------------------- helpers
 
@@ -262,7 +254,7 @@ function substitute(s: SimState, slot: number, inRoster: number, keeperSpawn: bo
   if (keeperSpawn) {
     const dir = t.dir === -1 ? -1 : 1;
     p.formIdx = 0;
-    p.x = -dir * (HALF_LENGTH - LOCAL_TUNING.keeperSpawnDepth);
+    p.x = -dir * (HALF_LENGTH - T_SUBS.keeperSpawnDepth);
     p.z = 0;
     p.fx = dir;
     p.fz = 0;
@@ -370,8 +362,8 @@ function clearReferences(s: SimState, slot: number): void {
 function park(p: PlayerState): void {
   const idx = p.slot - teamFirstSlot(p.team);
   const side = p.team === 0 ? -1 : 1;
-  p.x = side * (LOCAL_TUNING.parkX0 + idx * LOCAL_TUNING.parkDX);
-  p.z = LOCAL_TUNING.parkZ;
+  p.x = side * (T_SUBS.parkX0 + idx * T_SUBS.parkDX);
+  p.z = T_SUBS.parkZ;
   p.fx = 0;
   p.fz = -1;
 }

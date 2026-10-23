@@ -3,10 +3,18 @@
  * (pause.ts) whenever the session is paused. Back / Escape pauses; Back again resumes (only the pauser can).
  * The touch overlay owns the top-right PAUSE button (brief section 9); this screen adds its own pause button only
  * when no touch device is bound to the match (mouse / desktop play). The canvas is shown by the session.
+ *
+ * [QF-17] The router keeps this screen mounted under the half-time overlay (ui/index.ts SCREEN_OVERLAYS). Covered, it
+ * hides a stale pause menu, hands the queued team orders over (as an unmount used to) and hides the HUD and touch
+ * layers (body.match-covered: the look of before, when half time unmounted this screen and body.in-match went; by
+ * opacity, which restyles two elements instead of both layers' whole trees; the overlay above takes every touch);
+ * uncovered, it re-syncs. [QF-17 skeptic] Its own pause button (keyboard / pad / mouse play) hides under the overlay
+ * too (visibility, no layout): through the half-time scrim it showed as a dimmed pause icon in the corner.
  */
-import type { AppContext, FrameInfo, Screen } from '../../contracts/app';
+import type { AppContext, FrameInfo } from '../../contracts/app';
 import { ANY_DEVICE } from '../../app/localInput';
 import { uiHumanOf } from '../../app/session';
+import type { LayeredScreen } from '../../app/types';
 import { createButton, injectStyle } from '../components';
 import { createPauseMenu, type PauseMenu } from './pause';
 
@@ -17,7 +25,12 @@ const CSS = `
 .screen--match .match-pause::before, .screen--match .match-pause::after { content:''; display:inline-block; width:6px;
   height:22px; margin: 0 4px; border-radius:2px; background: var(--text-1); }
 .screen--match .match-pause[hidden] { display:none; }
+body.in-match.match-covered #hud, body.in-match.match-covered #touch { opacity: 0; }
+body.match-covered .screen--match .match-pause { visibility: hidden; }
 `;
+
+/** Body class while an overlay (half time) covers the mounted match screen: HUD and touch layers hidden. */
+export const MATCH_COVERED_CLASS = 'match-covered';
 
 /**
  * Ignore Back within this time of a pause change: one physical press can reach the app through several paths
@@ -39,7 +52,7 @@ export function touchBound(c: AppContext): boolean {
   return setup.bindings.some((b) => b.deviceIds.some((id) => id === ANY_DEVICE || touchIds.includes(id)));
 }
 
-export function createMatchScreen(): Screen {
+export function createMatchScreen(): LayeredScreen {
   let ctx: AppContext | null = null;
   let pause: PauseMenu | null = null;
   let pauseBtn: HTMLButtonElement | null = null;
@@ -78,7 +91,7 @@ export function createMatchScreen(): Screen {
       sync(c, performance.now());
     },
     unmount() {
-      document.body.classList.remove('in-match', 'match-paused');
+      document.body.classList.remove('in-match', 'match-paused', MATCH_COVERED_CLASS);
       pause?.dispose();
       pause = null;
       pauseBtn = null;
@@ -89,6 +102,24 @@ export function createMatchScreen(): Screen {
       if (!ctx) return;
       sync(ctx, frame.nowMs);
       pause?.update(frame.nowMs);
+    },
+    onCovered() {
+      document.body.classList.add(MATCH_COVERED_CLASS);
+      const c = ctx;
+      if (!c) return;
+      // The session covers this screen only while play runs (half time): a pause menu still shown from before the
+      // resume that led here hides now (its key listener and focus root must not sit under the overlay).
+      if (!c.session.paused) sync(c, performance.now());
+      pause?.flushOrders();
+    },
+    onUncovered() {
+      document.body.classList.remove(MATCH_COVERED_CLASS);
+      const c = ctx;
+      if (!c) return;
+      // What a remount at the second-half kick-off used to recompute: a touch device may have been bound meanwhile.
+      ownPauseButton = !touchBound(c);
+      if (pauseBtn) pauseBtn.hidden = shownPaused || !ownPauseButton;
+      sync(c, performance.now());
     },
     onBack() {
       const c = ctx;

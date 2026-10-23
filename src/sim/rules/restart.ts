@@ -58,7 +58,7 @@ import { EventType, WhistleKind, type EventSink } from '../../contracts/events';
 import type { PlayerState, SimState } from '../../contracts/state';
 import { createKickLaunch, type SetPieceInputFn } from '../../contracts/systems';
 import { isLegalTransition } from '../../contracts/transitions';
-import { T_BALL, T_PASS, T_PLAYER, T_RULES } from '../../contracts/tuning';
+import { T_BALL, T_PASS, T_PLAYER, T_RULES, T_RESTART, T_RESTART_COMMON } from '../../contracts/tuning';
 import { beginAction, endAction } from '../actions/dispatch';
 import { NULL_SINK } from '../core/events';
 import { applyKick, releasePossession } from '../core/kick';
@@ -74,79 +74,14 @@ import { freeKickDefault, freeKickInput, freeKickSetup } from './freekick';
 import { penaltyDefault, penaltyInput, penaltySetup } from './penalty';
 import { showCard } from './fouls';
 import {
-  COMMON_TUNING, KIND_PHASE, PHASE_KIND, isRestartPhase, logWatchdog, restartForward, restartLookPoint, restartPending,
-  takerRunning,
+  KIND_PHASE, PHASE_KIND, isRestartPhase, logWatchdog, restartForward, restartLookPoint, restartPending, takerRunning,
 } from './restartCommon';
+
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_RESTART. */
+export const LOCAL_TUNING = T_RESTART;
 
 export { isRestartPhase, isRestartTaker, restartPending, restartForward, restartLookPoint } from './restartCommon';
 
-/** TUNING-CR (RUL-11): proposed additions to T_RULES (units in comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  /** A CPU taker that has not acted this long after ready gets the kind's Default (logged), ticks (4 s). */
-  cpuTakeTimeoutTicks: 240,
-  /** After the Default was due, the restart kick is forced directly this many ticks later, ticks (2 s). */
-  defaultGraceTicks: 120,
-  /** The taker stands this far behind the ball (opposite the default kick direction), m. */
-  takerBehind: COMMON_TUNING.takerBehind,
-  /** A waiting taker further than this from the ball spot is put back on his spot, m (kicks reach ~1.2 m). */
-  takerReach: 1.0,
-  /** The throw-in taker stands this far outside the touchline, m. */
-  throwInTakerOut: 0.4,
-  /** A waiting throw-in taker further than this from his spot is put back, m (RUL-02 lets him move +-3 m). */
-  throwInLeash: 3.5,
-  /** A loose ball further than this from the restart spot is re-placed, m. */
-  replaceDist: 0.75,
-  /** A loose ball faster than this before the restart is taken is re-placed, m/s. */
-  replaceSpeed: 0.5,
-  /** A loose ball higher than this above resting height before the restart is taken is re-placed, m. */
-  replaceHeight: 0.3,
-  /** Tolerance on legal distances, m. */
-  legalSlack: 0.05,
-  /** Players moved to a legal spot are placed this far inside the legal region, m. */
-  placeMargin: 0.3,
-  /** Minimum spacing between a placed player and any other player, m (> 2 x body radius). */
-  placeSpacing: 0.9,
-  /** Push toward the nearest legal spot per tick: this fraction of the distance, clamped to [min, max], m/tick. */
-  pushGain: 0.15,
-  pushMinStep: 0.03,
-  pushMaxStep: 0.25,
-  /** Penalty: the defending keeper may stand this far off his goal line, m. */
-  keeperLineSlack: 1.0,
-  /** Free kick near goal: a defender this close to his goal line between the posts counts as on the line, m. */
-  goalLineSlack: 0.6,
-  /** Penalty keeper placed this far inside his goal line, m. */
-  lineInset: 0.2,
-  /** Defenders moved onto their goal line (free kick near goal) are placed this far in front of it, m (outfield
-   *  bodies are kept about a body radius in front of the goal line by SIM-04/05). */
-  goalLineInset: 0.45,
-  /** Forced (safety-net) kicks: ground pass arrival speed m/s; throw speed range m/s; penalty speed m/s. */
-  forcedPassArrive: 4,
-  forcedThrowMin: 8,
-  forcedThrowMax: 18,
-  forcedPenaltySpeed: 20,
-  /** Forced penalty aim: |z| at the goal line, m, and height, m. */
-  forcedPenaltyZ: 2.2,
-  forcedPenaltyY: 0.6,
-  /** Forced kick without a teammate to aim at: distance ahead, m. */
-  forcedAheadDist: 15,
-  /** Forced kick power reported in the KICK event, 0..1. */
-  forcedPower: 0.5,
-  /** [QF-10] Walked set-ups (throw-ins; free kicks further than cutFreeKickGoalDist from the attacked goal centre, which
-   *  GFX-15 shows on the main camera: render/camera/cinematic.ts fkNearGoal): illegal players walk out at least at this
-   *  speed (their velocity away from the nearest legal spot is raised to it each tick), m/s ... */
-  setupWalkSpeed: 4.5,
-  /** ... and the set-up waits past restartSetupTicks for them and the taker, at most this many ticks; then whoever is
-   *  still not there is placed (teleport). [QF-10 skeptic] 180 -> 270: this cap only applies while the taker is still
-   *  running in (not in place, closing on his spot at setupTakerRunMinSpeed m/s or more; a throw-in taker 25-30 m away
-   *  was placed 6-25 m at 180, in view); otherwise stragglers are placed at setupStragglerMaxTicks. 270 keeps ready +
-   *  the human timeout (720) + the Default grace (120) inside T_RULES.phaseMaxTicks for throw-ins (1200), ticks. */
-  setupExtendMaxTicks: 270,
-  setupStragglerMaxTicks: 180,
-  setupTakerRunMinSpeed: 2,
-  /** Free kicks within this distance of the attacked goal centre cut to the set-piece camera at ready (teleports
-   *  hidden, D-008), m. */
-  cutFreeKickGoalDist: 35,
-} as const;
 
 // ---------------------------------------------------------------- module scratch (no allocation per tick)
 
@@ -369,12 +304,12 @@ export function restartTakerSpot(s: SimState, out: { x: number; z: number }): vo
   const r = s.match.restart;
   if (r.kind === RestartKind.THROW_IN) {
     out.x = clamp(r.x, -HALF_LENGTH, HALF_LENGTH);
-    out.z = (r.z < 0 ? -1 : 1) * (HALF_WIDTH + LOCAL_TUNING.throwInTakerOut);
+    out.z = (r.z < 0 ? -1 : 1) * (HALF_WIDTH + T_RESTART.throwInTakerOut);
     return;
   }
   restartForward(s, FWD);
-  out.x = r.x - FWD.x * LOCAL_TUNING.takerBehind;
-  out.z = r.z - FWD.z * LOCAL_TUNING.takerBehind;
+  out.x = r.x - FWD.x * T_RESTART.takerBehind;
+  out.z = r.z - FWD.z * T_RESTART.takerBehind;
 }
 
 /** Taker close enough to take: within reach of the spot (throw-in: within the leash of his spot by the line). */
@@ -384,12 +319,12 @@ function takerInPlace(s: SimState, slot: number): boolean {
   if (r.kind === RestartKind.THROW_IN) {
     restartTakerSpot(s, CAND);
     const dx = p.x - CAND.x, dz = p.z - CAND.z;
-    const l = LOCAL_TUNING.throwInLeash;
+    const l = T_RESTART.throwInLeash;
     return dx * dx + dz * dz <= l * l;
   }
   if (r.kind === RestartKind.KICK_OFF && s.teams[p.team]!.dir * p.x > 0) return false; // own half at a kick-off
   const dx = p.x - r.x, dz = p.z - r.z;
-  const reach = LOCAL_TUNING.takerReach;
+  const reach = T_RESTART.takerReach;
   return dx * dx + dz * dz <= reach * reach;
 }
 
@@ -402,9 +337,9 @@ function placeTakerOnSpot(s: SimState, slot: number): void {
 function beginTakerAction(s: SimState, slot: number): void {
   const p = s.players[slot]!;
   if (s.match.restart.kind === RestartKind.THROW_IN) {
-    beginAction(p, ActionKind.THROW_IN, T_RULES.phaseMaxTicks[MatchPhase.THROW_IN]! + COMMON_TUNING.setPieceWaitTicks, -1);
+    beginAction(p, ActionKind.THROW_IN, T_RULES.phaseMaxTicks[MatchPhase.THROW_IN]! + T_RESTART_COMMON.setPieceWaitTicks, -1);
   } else {
-    beginAction(p, ActionKind.SET_PIECE, COMMON_TUNING.setPieceWaitTicks, -1);
+    beginAction(p, ActionKind.SET_PIECE, T_RESTART_COMMON.setPieceWaitTicks, -1);
     p.actA = 0;
   }
 }
@@ -474,7 +409,7 @@ function buildCtx(s: SimState): void {
 
 function onGoalLine(x: number, z: number, end: number): boolean {
   const dx = x - end * HALF_LENGTH;
-  return dx >= -LOCAL_TUNING.goalLineSlack && dx <= LOCAL_TUNING.goalLineSlack && z >= -GOAL_HALF_WIDTH && z <= GOAL_HALF_WIDTH;
+  return dx >= -T_RESTART.goalLineSlack && dx <= T_RESTART.goalLineSlack && z >= -GOAL_HALF_WIDTH && z <= GOAL_HALF_WIDTH;
 }
 
 /**
@@ -517,7 +452,7 @@ function clearRadius(s: SimState, slot: number): number {
 
 function ptOnGoalLine(end: number): boolean {
   const dx = PT.x - end * HALF_LENGTH, z = PT.z;
-  return dx >= -LOCAL_TUNING.goalLineSlack && dx <= LOCAL_TUNING.goalLineSlack && z >= -GOAL_HALF_WIDTH && z <= GOAL_HALF_WIDTH;
+  return dx >= -T_RESTART.goalLineSlack && dx <= T_RESTART.goalLineSlack && z >= -GOAL_HALF_WIDTH && z <= GOAL_HALF_WIDTH;
 }
 
 /** Is PT a legal position for `slot` in the current restart (ctx must be built)? The taker is always legal. */
@@ -526,7 +461,7 @@ function legalPt(s: SimState, slot: number): boolean {
   const x = PT.x, z = PT.z;
   if (slot === ctx.defKeeper) {
     const dx = x - ctx.keeperLineX;
-    return dx >= -LOCAL_TUNING.keeperLineSlack && dx <= LOCAL_TUNING.keeperLineSlack && z >= -GOAL_HALF_WIDTH &&
+    return dx >= -T_RESTART.keeperLineSlack && dx <= T_RESTART.keeperLineSlack && z >= -GOAL_HALF_WIDTH &&
       z <= GOAL_HALF_WIDTH && ptInField();
   }
   if (!ptInField()) return false;
@@ -535,7 +470,7 @@ function legalPt(s: SimState, slot: number): boolean {
   const opp = p.team !== ctx.team;
   const dx = x - ctx.cx, dz = z - ctx.cz;
   const br = clearRadius(s, slot);
-  const rr = ctx.r + br - LOCAL_TUNING.legalSlack;
+  const rr = ctx.r + br - T_RESTART.legalSlack;
   const inDisc = dx * dx + dz * dz < rr * rr;
   switch (ctx.kind) {
     case RestartKind.KICK_OFF:
@@ -543,7 +478,7 @@ function legalPt(s: SimState, slot: number): boolean {
       return !(opp && inDisc);
     case RestartKind.PENALTY:
       // [QF-10] Outside the area and the arc with the whole body (a centre on the line leaves half of him inside).
-      return !inDisc && !ptInArea(ctx.paEnd, br > LOCAL_TUNING.legalSlack ? br - LOCAL_TUNING.legalSlack : 0);
+      return !inDisc && !ptInArea(ctx.paEnd, br > T_RESTART.legalSlack ? br - T_RESTART.legalSlack : 0);
     case RestartKind.GOAL_KICK:
       return !opp || (!inDisc && !ptInArea(ctx.paEnd, 0));
     case RestartKind.FREE_KICK:
@@ -596,12 +531,12 @@ function distSq(ax: number, az: number, bx: number, bz: number): number {
  */
 function nearestLegal(s: SimState, slot: number, out: { x: number; z: number }): void {
   const br = clearRadius(s, slot);
-  const m = LOCAL_TUNING.placeMargin + br;
+  const m = T_RESTART.placeMargin + br;
   const p = s.players[slot]!;
   const x = p.x, z = p.z;
   const pdir = s.teams[p.team]!.dir;
   if (slot === ctx.defKeeper) {
-    out.x = ctx.keeperLineX - (ctx.keeperLineX > 0 ? 1 : -1) * LOCAL_TUNING.lineInset;
+    out.x = ctx.keeperLineX - (ctx.keeperLineX > 0 ? 1 : -1) * T_RESTART.lineInset;
     out.z = clamp(z, -GOAL_HALF_WIDTH + m, GOAL_HALF_WIDTH - m);
     return;
   }
@@ -613,12 +548,12 @@ function nearestLegal(s: SimState, slot: number, out: { x: number; z: number }):
     if (px < -HALF_LENGTH) px = -HALF_LENGTH + m; else if (px > HALF_LENGTH) px = HALF_LENGTH - m;
     if (pz < -HALF_WIDTH) pz = -HALF_WIDTH + m; else if (pz > HALF_WIDTH) pz = HALF_WIDTH - m;
     PT.x = px; PT.z = pz;
-    if (p.isKeeper !== 1 && ptInGoalFrame()) px = (px < 0 ? -1 : 1) * (FRAME_FRONT - LOCAL_TUNING.placeMargin);
+    if (p.isKeeper !== 1 && ptInGoalFrame()) px = (px < 0 ? -1 : 1) * (FRAME_FRONT - T_RESTART.placeMargin);
     if (ctx.kind === RestartKind.KICK_OFF && pdir * px > 0) px = -pdir * m;
     if (discApplies(s, slot) && !(ctx.goalLineEnd !== 0 && onGoalLine(px, pz, ctx.goalLineEnd))) {
       const dx = px - ctx.cx, dz = pz - ctx.cz;
       const d = Math.sqrt(dx * dx + dz * dz);
-      if (d < ctx.r - LOCAL_TUNING.legalSlack) {
+      if (d < ctx.r - T_RESTART.legalSlack) {
         let ux = -pdir, uz = 0; // toward his own goal when standing on the ball
         if (d > 1e-6) { ux = dx / d; uz = dz / d; }
         px = ctx.cx + ux * (ctx.r + m);
@@ -639,7 +574,7 @@ function nearestLegal(s: SimState, slot: number, out: { x: number; z: number }):
   if (legalFor(s, slot, px, pz)) { bestD = distSq(px, pz, x, z); bx = px; bz = pz; }
   // 2. on the goal line between the posts (free kick near goal, defenders)
   if (ctx.goalLineEnd !== 0 && discApplies(s, slot)) {
-    const gx = ctx.goalLineEnd * (HALF_LENGTH - LOCAL_TUNING.goalLineInset);
+    const gx = ctx.goalLineEnd * (HALF_LENGTH - T_RESTART.goalLineInset);
     const gz = clamp(z, -GOAL_HALF_WIDTH + m, GOAL_HALF_WIDTH - m);
     const d = distSq(gx, gz, x, z);
     if (d < bestD && legalFor(s, slot, gx, gz)) { bestD = d; bx = gx; bz = gz; }
@@ -668,7 +603,7 @@ function nearestLegal(s: SimState, slot: number, out: { x: number; z: number }):
 
 /** True if no other active player stands within placeSpacing of (x, z). */
 function spotFree(s: SimState, slot: number, x: number, z: number): boolean {
-  const sp = LOCAL_TUNING.placeSpacing;
+  const sp = T_RESTART.placeSpacing;
   const sp2 = sp * sp;
   for (let i = 0; i < NUM_SLOTS; i++) {
     if (i === slot) continue;
@@ -689,7 +624,7 @@ function freeSpot(s: SimState, slot: number, spot: { x: number; z: number }): vo
   let tz = spot.x - ctx.cx;
   const tl = Math.sqrt(tx * tx + tz * tz);
   if (tl < 1e-6) { tx = 0; tz = 1; } else { tx /= tl; tz /= tl; }
-  const step = LOCAL_TUNING.placeSpacing;
+  const step = T_RESTART.placeSpacing;
   for (let k = 1; k <= 4; k++) {
     for (let sgn = 1; sgn >= -1; sgn -= 2) {
       const x = spot.x + tx * step * k * sgn;
@@ -749,7 +684,7 @@ function pushOutIllegal(s: SimState): void {
     const d = Math.sqrt(dx * dx + dz * dz);
     if (d < 1e-9) continue;
     const ux = dx / d, uz = dz / d;
-    const step = clamp(d * LOCAL_TUNING.pushGain, LOCAL_TUNING.pushMinStep, LOCAL_TUNING.pushMaxStep);
+    const step = clamp(d * T_RESTART.pushGain, T_RESTART.pushMinStep, T_RESTART.pushMaxStep);
     if (step >= d) { p.x = SPOT2.x; p.z = SPOT2.z; } else { p.x += ux * step; p.z += uz * step; }
     const vu = p.vx * ux + p.vz * uz;
     if (vu < 0) { p.vx -= vu * ux; p.vz -= vu * uz; }
@@ -766,14 +701,14 @@ function keepBallOnSpot(s: SimState, ev: EventSink): void {
   if (r.kind === RestartKind.THROW_IN && t >= 0 && b.owner === t && b.heldBy < 0) return; // RUL-02 holds it
   if (b.heldBy >= 0 || (b.owner >= 0 && b.owner !== t)) { placeBall(s, r.x, r.z, ev); return; }
   const fx = b.x - r.x, fz = b.z - r.z;
-  const far = fx * fx + fz * fz > LOCAL_TUNING.replaceDist * LOCAL_TUNING.replaceDist;
+  const far = fx * fx + fz * fz > T_RESTART.replaceDist * T_RESTART.replaceDist;
   if (b.owner >= 0) { // the taker controls it (kick wind-up)
     if (far) placeBall(s, r.x, r.z, ev);
     return;
   }
   const sp2 = b.vx * b.vx + b.vy * b.vy + b.vz * b.vz;
-  const rs = LOCAL_TUNING.replaceSpeed;
-  if (far || sp2 > rs * rs || b.y > BALL_RADIUS + LOCAL_TUNING.replaceHeight || b.inNet !== 0) placeBall(s, r.x, r.z, ev);
+  const rs = T_RESTART.replaceSpeed;
+  if (far || sp2 > rs * rs || b.y > BALL_RADIUS + T_RESTART.replaceHeight || b.inNet !== 0) placeBall(s, r.x, r.z, ev);
 }
 
 // ---------------------------------------------------------------- award
@@ -935,7 +870,7 @@ function becomeReady(s: SimState): void {
   if (t >= 0 && !isWaitingAct(s.players[t]!.act)) endAction(s, t, 1);
   legalizePositions(s);
   r.ready = 1;
-  r.timeoutT = teamHasHuman(s, r.team) ? T_RULES.restartTimeoutTicks : LOCAL_TUNING.cpuTakeTimeoutTicks;
+  r.timeoutT = teamHasHuman(s, r.team) ? T_RULES.restartTimeoutTicks : T_RESTART.cpuTakeTimeoutTicks;
   settleTaker(s);
 }
 
@@ -950,7 +885,7 @@ export function isWalkedSetup(s: SimState): boolean {
   if (r.kind === RestartKind.THROW_IN) return true;
   if (r.kind !== RestartKind.FREE_KICK) return false;
   const gx = s.teams[r.team === 1 ? 1 : 0]!.dir * HALF_LENGTH - r.x;
-  const d = LOCAL_TUNING.cutFreeKickGoalDist;
+  const d = T_RESTART.cutFreeKickGoalDist;
   return gx * gx + r.z * r.z > d * d;
 }
 
@@ -968,7 +903,7 @@ function approachTaker(s: SimState): void {
 /** Every illegal non-taker player walks out: his velocity away from his nearest legal spot is raised to setupWalkSpeed. */
 function walkOutIllegal(s: SimState): void {
   buildCtx(s);
-  const w = LOCAL_TUNING.setupWalkSpeed;
+  const w = T_RESTART.setupWalkSpeed;
   for (let slot = 0; slot < NUM_SLOTS; slot++) {
     if (slot === ctx.taker) continue;
     const p = s.players[slot]!;
@@ -1020,7 +955,7 @@ function takerRunningIn(s: SimState): boolean {
   const dx = CAND.x - p.x, dz = CAND.z - p.z;
   const d = Math.sqrt(dx * dx + dz * dz);
   if (!(d > 1e-6)) return false;
-  return (p.vx * dx + p.vz * dz) / d >= LOCAL_TUNING.setupTakerRunMinSpeed;
+  return (p.vx * dx + p.vz * dz) / d >= T_RESTART.setupTakerRunMinSpeed;
 }
 
 /** Per tick during a restart phase (RUL-01 calls it before the kind's tick). */
@@ -1047,8 +982,8 @@ export function restartTick(s: SimState, ev: EventSink): void {
     walkOutIllegal(s);
   }
   if ((!walked && r.t === setup) ||
-    (r.ready === 0 && r.t >= setup && (!walked || setupSettled(s) || (r.t >= setup + LOCAL_TUNING.setupStragglerMaxTicks &&
-      (r.t >= setup + LOCAL_TUNING.setupExtendMaxTicks || !takerRunningIn(s)))))) {
+    (r.ready === 0 && r.t >= setup && (!walked || setupSettled(s) || (r.t >= setup + T_RESTART.setupStragglerMaxTicks &&
+      (r.t >= setup + T_RESTART.setupExtendMaxTicks || !takerRunningIn(s)))))) {
     // A set-up that ran long is counted as restartSetupTicks: every "ticks past ready" reading (r.t - setup: the kind
     // modules' CPU fallbacks, TAI-13's cpuRestartDelay) keeps its meaning.
     if (r.t > setup) r.t = setup;
@@ -1063,7 +998,7 @@ export function restartTick(s: SimState, ev: EventSink): void {
     if (!teamHasHuman(s, r.team)) logWatchdog(s, ev, WatchdogReason.RESTART_BLOCKED, r.kind); // CPU never acted
     if (r.taker >= 0) prepareTakerKick(s, r.taker);
     callDefault(s, r.kind, ev);
-  } else if (r.timeoutT <= -LOCAL_TUNING.defaultGraceTicks) {
+  } else if (r.timeoutT <= -T_RESTART.defaultGraceTicks) {
     logWatchdog(s, ev, WatchdogReason.RESTART_BLOCKED, r.kind); // the Default did not take it
     forceRestartKick(s, ev);
   }
@@ -1126,14 +1061,14 @@ export function forceRestartKick(s: SimState, ev: EventSink): number {
   if (r.kind === RestartKind.PENALTY) {
     const dir = s.teams[r.team]!.dir;
     const tx = dir * HALF_LENGTH;
-    const tz = (rngInt(s.rng, 2) === 0 ? -1 : 1) * LOCAL_TUNING.forcedPenaltyZ;
+    const tz = (rngInt(s.rng, 2) === 0 ? -1 : 1) * T_RESTART.forcedPenaltyZ;
     const dx = tx - b.x, dz = tz - b.z;
     const d = Math.sqrt(dx * dx + dz * dz);
-    const v = LOCAL_TUNING.forcedPenaltySpeed;
+    const v = T_RESTART.forcedPenaltySpeed;
     const tf = d / v;
     L.vx = (dx / d) * v;
     L.vz = (dz / d) * v;
-    L.vy = (LOCAL_TUNING.forcedPenaltyY - b.y) / tf + 0.5 * g * tf;
+    L.vy = (T_RESTART.forcedPenaltyY - b.y) / tf + 0.5 * g * tf;
     L.target = -1;
     L.tx = tx;
     L.tz = tz;
@@ -1146,20 +1081,20 @@ export function forceRestartKick(s: SimState, ev: EventSink): number {
       tz = s.players[mate]!.z;
     } else {
       restartForward(s, FWD);
-      tx = b.x + FWD.x * LOCAL_TUNING.forcedAheadDist;
-      tz = b.z + FWD.z * LOCAL_TUNING.forcedAheadDist;
+      tx = b.x + FWD.x * T_RESTART.forcedAheadDist;
+      tz = b.z + FWD.z * T_RESTART.forcedAheadDist;
     }
     let dx = tx - b.x, dz = tz - b.z;
     let d = Math.sqrt(dx * dx + dz * dz);
     if (d < 1e-6) { restartForward(s, FWD); dx = FWD.x; dz = FWD.z; d = 1; }
     const ux = dx / d, uz = dz / d;
     if (r.kind === RestartKind.THROW_IN) {
-      const vh = clamp(4 + 0.4 * d, LOCAL_TUNING.forcedThrowMin, LOCAL_TUNING.forcedThrowMax);
+      const vh = clamp(4 + 0.4 * d, T_RESTART.forcedThrowMin, T_RESTART.forcedThrowMax);
       L.vx = ux * vh;
       L.vz = uz * vh;
       L.vy = clamp(0.5 * g * (d / vh), 1, 9);
     } else {
-      const a = LOCAL_TUNING.forcedPassArrive;
+      const a = T_RESTART.forcedPassArrive;
       const v0 = clamp(Math.sqrt(a * a + 2 * T_BALL.rollDecel * d), T_PASS.groundMin, T_PASS.groundMax);
       L.vx = ux * v0;
       L.vz = uz * v0;
@@ -1171,7 +1106,7 @@ export function forceRestartKick(s: SimState, ev: EventSink): number {
   }
   const hv = Math.sqrt(L.vx * L.vx + L.vz * L.vz);
   if (hv > 1e-6) { p.fx = L.vx / hv; p.fz = L.vz / hv; }
-  applyKick(s, t, L, LOCAL_TUNING.forcedPower, ev);
+  applyKick(s, t, L, T_RESTART.forcedPower, ev);
   r.taken = 1;
   return 1;
 }

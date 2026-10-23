@@ -263,7 +263,8 @@ describe('SIM-02 ballTick', () => {
       }
       console.log(JSON.stringify(out));
     `;
-    const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', '--input-type=module', '-e', code], {
+    // [TUN-7S] --single-threaded: synchronous compilation, load-independent bytes (tests/perf/qf-7r-alloc-flags.ts).
+    const r = spawnSync(process.execPath, ['--single-threaded', '--expose-gc', '--import', 'tsx', '--input-type=module', '-e', code], {
       cwd: root, encoding: 'utf8', timeout: 120_000,
     });
     expect(r.status, r.stderr).toBe(0);

@@ -27,51 +27,13 @@ import { DT, GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH, GOAL_HALF_WIDTH, HALF_LENGTH
 import { ActionKind } from '../../contracts/enums';
 import type { EventSink } from '../../contracts/events';
 import { MoveMode, type SimState } from '../../contracts/state';
-import { T_BALL, T_GK, T_PLAYER } from '../../contracts/tuning';
+import { T_BALL, T_GK, T_PLAYER, T_GK_POSITION } from '../../contracts/tuning';
 import { arrive } from '../../ai/steer';
 import { clamp, clamp01, datan2, lerp, PI, smoothstep, unlerp } from '../core/dmath';
 import { isHumanSlot } from '../core/query';
 
-// TUNING-CR: candidates for T_GK in contracts/tuning.ts.
-export const LOCAL_TUNING = {
-  /** Ball distance from the goal centre (m) at which the depth is T_GK.depthNear / T_GK.depthFar. */
-  depthNearDist: 5,
-  depthFarDist: 28,
-  /** Ball bearing from the near post (degrees off straight out) where the near-post shift starts / is full. */
-  tightAngleStartDeg: 55,
-  tightAngleFullDeg: 80,
-  /** Depth multiplier at a fully tight angle (unitless). */
-  tightDepthMul: 0.45,
-  /** Near-post anchor: this far inside the inside of the post at a fully tight angle (m). */
-  nearPostInset: 0.45,
-  /** The spot is never closer than this to the keeper's own goal line (m). */
-  minLineDist: 0.3,
-  /** Lateral limit |z| <= GOAL_HALF_WIDTH - coneInset + u * coneSlope (m, m per m of depth). */
-  coneInset: 0.3,
-  coneSlope: 0.8,
-  /** Distance kept between the spot and the ball along the anchor-to-ball line (m). */
-  ballGap: 1.0,
-  /** A ball at or behind the goal line is treated as this far in front of it for the geometry (m). */
-  minBallU: 0.5,
-  /** Ball look-ahead at gkPositioning 99 / 1 (ticks; negative = reads the ball late). */
-  leadTicksBest: 10,
-  leadTicksWorst: -6,
-  /** Cap on the look-ahead displacement of the ball (m). */
-  leadMaxDist: 4,
-  /** gkPositioning 1: fraction of the lateral (angle) shift not taken, and relative depth error (unitless). */
-  shiftErrWorst: 0.35,
-  depthErrWorst: 0.25,
-  /** Shuffle speed cap = topSpeed * T_PLAYER.jogFraction * lerp(speedMulWorst, 1, accuracy). */
-  speedMulWorst: 0.8,
-  /** Hurry (sprint, still facing the ball) when the spot is farther than hurryEnter; calm again below hurryExit (m). */
-  hurryEnter: 3,
-  hurryExit: 1.5,
-  /** Turn and run (stop facing the ball) when farther than runEnter, e.g. caught high; back to facing below runExit (m). */
-  runEnter: 10,
-  runExit: 6,
-} as const;
 
-const L = LOCAL_TUNING;
+const L = T_GK_POSITION;
 const DEG = PI / 180;
 const TIGHT_START = L.tightAngleStartDeg * DEG;
 const TIGHT_FULL = L.tightAngleFullDeg * DEG;
@@ -209,10 +171,10 @@ export function keeperPositioning(s: SimState, team: number, ev: EventSink): voi
   p.lookZ = b.z;
 }
 
-/** Back-pass reception: look-ahead step and horizon along the ball's roll, s; reach slack, m [INT-A]. */
-const RECEIVE_STEP_S = 0.1;
-const RECEIVE_HORIZON_S = 3;
-const RECEIVE_REACH = 0.6;
+// Back-pass reception look-ahead: contracts/tuning.ts T_GK_POSITION.receive* [TUN-1].
+const RECEIVE_STEP_S = T_GK_POSITION.receiveStepS;
+const RECEIVE_HORIZON_S = T_GK_POSITION.receiveHorizonS;
+const RECEIVE_REACH = T_GK_POSITION.receiveReach;
 
 /**
  * [INT-A] A teammate's pass to the keeper (ball.passTarget === k, untouched since our kick, loose on the ground): he

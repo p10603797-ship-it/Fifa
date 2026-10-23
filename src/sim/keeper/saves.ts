@@ -11,7 +11,7 @@
  *  ball physics (SIM-02 ballStepTick, which is what SIM-01 predictBall runs; memoised while the ball flies
  *  untouched). It is a threat only if the prediction crosses the goal line inside the mouth (a teammate's pass meant
  *  for him never is: SIM-07 receives it). Until the reaction delay has passed (gkReflexes -> T_GK.reactWorst ..
- *  reactBest ticks after the last touch, + LOCAL_TUNING.screenTicks per player screening the sight line) he only
+ *  reactBest ticks after the last touch, + T_GK_SAVE.screenTicks per player screening the sight line) he only
  *  plants his feet (GK_CATCH ready stance on his spot, body only, so positioning cannot move him early). Then he
  *  plans against every predicted sample until the ball would be over the line:
  *   - STAND: a sample within his standing reach (the standing capsule + a short step; [QF-14] the step closes the
@@ -63,9 +63,7 @@
 // Re-export the handlers FIRST: see saveKinematics.ts (import-cycle safety with actions/registry).
 export { catchHandler, diveHandler } from './saveKinematics';
 import {
-  armExt, CAP_TOL, createKeeperKin, depthOf, diveHandOffset, diveTargetDist, diveTop, diveTravelFor, flightTicks,
-  getUpTicks, heightM, hipTravel, keeperMaxReach, keeperReactTicks, kinDiveTicks, kinDiveTop, kinStandReach,
-  loadKeeperKin, LOCAL_TUNING, NEVER, STAND_AXIS_LOW, standAxisTop, standTop, xOfDepth,
+  armExt, CAP_TOL, createKeeperKin, depthOf, diveHandOffset, diveTargetDist, diveTop, diveTravelFor, flightTicks, getUpTicks, heightM, hipTravel, keeperMaxReach, keeperReactTicks, kinDiveTicks, kinDiveTop, kinStandReach, loadKeeperKin, NEVER, STAND_AXIS_LOW, standAxisTop, standTop, xOfDepth,
 } from './saveKinematics';
 // actions/dispatch (-> registry) before keeper/handling so the registry never meets a half-evaluated handler module.
 import { beginAction, endAction } from '../actions/dispatch';
@@ -78,7 +76,7 @@ import { EventType, type EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type BallState, type PlayerAttrs, type SimState } from '../../contracts/state';
 import { createKickLaunch, MAX_PREDICT_TICKS } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_GK, T_LEVEL, T_PLAYER } from '../../contracts/tuning';
+import { T_BALL, T_GK, T_LEVEL, T_PLAYER, T_GK_SAVE } from '../../contracts/tuning';
 import { ballStepTick } from '../ball/contact';
 import { attr, clamp, clamp01, datan2, dcos, dsin, lerp, PI } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
@@ -88,7 +86,7 @@ import { canHandle, keeperPickUp } from './handling';
 
 export { keeperDiveSpeed, keeperDiveTicks, keeperMaxReach, keeperReactTicks } from './saveKinematics';
 
-const L = LOCAL_TUNING;
+const L = T_GK_SAVE;
 const EPS = 1e-9;
 
 // ---------------------------------------- scratch (module level, reused: no per-tick allocation)

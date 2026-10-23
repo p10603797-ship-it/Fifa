@@ -37,7 +37,7 @@ import { createSettingsStore } from '../platform/settingsStore';
 import { createGameRenderer } from '../render/index';
 import { installDebugOverlay } from '../ui/debugOverlay';
 import { createHud, type Hud } from '../ui/hud/index';
-import { registerScreens } from '../ui/index';
+import { registerScreens, SCREEN_OVERLAYS } from '../ui/index';
 import { createBlockers, isPlayBusy } from './blockers';
 import { createLoop, type GameLoop } from './loop';
 import { createNullRenderer } from './nullRenderer';
@@ -118,7 +118,9 @@ export function boot(): AppHandle {
     if (recovery) recovery.reportError(err, where);
     else diagnostics.log('error', `${where}: ${String(err)}`, err instanceof Error ? err : undefined);
   };
-  const router = createRouter(uiRoot, () => ctx!, { onError: reportError, onUserBack: () => audio.playUi(UiSound.BACK) });
+  const router = createRouter(uiRoot, () => ctx!, {
+    onError: reportError, onUserBack: () => audio.playUi(UiSound.BACK), overlays: SCREEN_OVERLAYS,
+  });
 
   let renderer: GameRenderer;
   try {

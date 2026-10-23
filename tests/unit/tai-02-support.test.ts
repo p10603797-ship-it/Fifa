@@ -599,7 +599,8 @@ describe('TAI-02 budget', () => {
       }
       console.log(JSON.stringify({ bytesPerTick: best }));
     `;
-    const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', '--input-type=module', '-e', code], {
+    // [TUN-7S] --single-threaded: synchronous compilation, load-independent bytes (tests/perf/qf-7r-alloc-flags.ts).
+    const r = spawnSync(process.execPath, ['--single-threaded', '--expose-gc', '--import', 'tsx', '--input-type=module', '-e', code], {
       cwd: process.cwd(), encoding: 'utf8', timeout: 120_000,
     });
     expect(r.status, r.stderr).toBe(0);

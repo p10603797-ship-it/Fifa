@@ -39,131 +39,17 @@ import { ActionKind, AssistLevel, Difficulty, KickKind, MatchPhase, Role, TeamPh
 import type { EventSink } from '../../contracts/events';
 import type { SimState } from '../../contracts/state';
 import { createActionRequest } from '../../contracts/systems';
-import { T_LEVEL } from '../../contracts/tuning';
-import { laneSafety, loftLaunchSpeed } from '../../ai/cpu/passing';
+import { T_LEVEL, T_GK_DISTRIBUTION } from '../../contracts/tuning';
+import { laneSafety, LOFT_IO, loftLaunchSpeedIO } from '../../ai/cpu/passing';
 import { isHumanSlot, nearestDistOfTeam, otherTeam, secondLastDefenderX, teamEnd, teamStart } from '../core/query';
 import { maxSpeed } from '../players/locomotion';
 // Only the GKP-05 contract export (tests replace keeper/handling with contract doubles that have nothing else).
 import { startKeeperRelease } from './handling';
 
-export const LOCAL_TUNING = { // TUNING-CR (GKP-04): move into T_GK as distribution*
-  // ---- timing, ticks at 60 Hz
-  /** Normal wait before the first release decision (0.9..1.6 s, per-possession jitter), ticks. */
-  waitMinTicks: 54,
-  waitMaxTicks: 96,
-  /** Wait when a counter-attack is on (0.5..0.75 s), ticks. */
-  counterWaitMinTicks: 30,
-  counterWaitMaxTicks: 45,
-  /** A long ball without press / direct style / counter only after this hold time (2.0 s), ticks. */
-  patienceTicks: 120,
-  /** He always releases at this hold time (2.5 s; GKP-05's forced release is at T_GK.autoReleaseTicks), ticks. */
-  deadlineTicks: 150,
-  /** Options are re-evaluated every this many ticks after the wait, ticks. */
-  evalInterval: 4,
-  // ---- situation
-  /** Counter-attack also when the opponents have at most this many outfield players in their own half ... */
-  counterRestMax: 2,
-  /** ... and a teammate is a free outlet: at least this far up the pitch (team frame x, 0 = halfway), m ... */
-  counterOutletX: -10,
-  /** ... with no opponent within this distance, m. */
-  counterOutletSpace: 8,
-  /** Opponent outfield players within this depth of our goal line count as pressing, m. */
-  pressZoneDepth: 32,
-  /** High press: at least this many pressing opponents. */
-  pressHighCount: 4,
-  // ---- candidates
-  /** Teammates nearer than this (m) are not targets. */
-  minTargetDist: 7,
-  /** Teammates further than this (m) are not targets. */
-  maxTargetDist: 64,
-  /** Kind by distance, m: roll up to rollMaxUse, overarm throw up to throwMaxUse (driven throw from
-   *  drivenThrowMinUse for midfielders / on a counter), driven throw up to drivenThrowMaxUse, driven kick up to
-   *  drivenKickMaxUse, drop kick beyond. */
-  rollMaxUse: 18,
-  throwMaxUse: 34,
-  drivenThrowMinUse: 20,
-  drivenThrowMaxUse: 42,
-  drivenKickMaxUse: 50,
-  /** Offside: skip receivers within this distance behind the offside line at the release contact, m. */
-  offsideSafety: 0.5,
-  /** Offside: receivers are judged where they will be after this many ticks (>= GKP-05's longest release wind-up,
-   *  the drop kick's 22 ticks). */
-  offsideLookAheadTicks: 22,
-  /** Receiver lead used for the aim / evaluation: fraction of his velocity x flight time, capped at leadMaxTime s. */
-  leadFrac: 0.8,
-  leadMaxTime: 2,
-  /** Aim points stay this far inside the pitch lines, m. */
-  pitchMargin: 1,
-  // ---- powers 0..1
-  rollPower: 0.4,
-  throwPower: 0.5,
-  drivenThrowPower: 0.6,
-  /** Throws on a counter (faster). */
-  counterThrowPower: 0.75,
-  /** Kicks: the power whose carry band reaches the target (+ kickPowerMargin), at least kickPowerMin. */
-  kickPowerMin: 0.3,
-  kickPowerMargin: 0.05,
-  /** Carry band (first landing) at power 0 / 1 of GKP-05's drop kick and driven kick (mirrors its
-   *  dropKickRangeMin/Max and drivenKickRangeMin/Max; a GKP-04 test keeps them equal), m. */
-  dropKickCarryMin: 50,
-  dropKickCarryMax: 60,
-  drivenKickCarryMin: 40,
-  drivenKickCarryMax: 50,
-  /** Untargeted drop kick upfield (deadline with nobody to aim at). */
-  blindKickPower: 0.6,
-  // ---- own safety model (used while TAI-09 laneSafety is unavailable)
-  /** Average horizontal ball speed by kind for timing, m/s. */
-  rollSpeed: 10,
-  throwSpeed: 15,
-  drivenThrowSpeed: 19,
-  kickSpeed: 17,
-  /** Opponent reaction before moving to intercept, s. */
-  reactTime: 0.25,
-  /** Opponent reach for a lane interception / at the reception point, m. */
-  laneReach: 1.0,
-  endReach: 1.5,
-  /** Lane (rolls): safety = (opponent time - ball time + pathSlack) / pathWindow, s. */
-  pathSlack: 0.1,
-  pathWindow: 0.5,
-  /** Reception: safety = (opponent time - ball time + endSlack) / endWindow (the receiver is already there), s. */
-  endSlack: 1.0,
-  endWindow: 0.8,
-  /** Reception: space term (distance of the nearest opponent from the reception point - min) / range, m. */
-  spaceMin: 2,
-  spaceRange: 8,
-  /** LONG balls: safety = (space - longSpaceMin) / longSpaceRange only (always a duel), m. */
-  longSpaceMin: 1.5,
-  longSpaceRange: 8,
-  // ---- scoring
-  wSafety: 1.0,
-  wProgress: 0.6,
-  /** Progress (m toward the opposition goal) that counts 1. */
-  progressRef: 60,
-  /** Progress weight multiplier on a counter. */
-  counterProgressMul: 2,
-  /** Acceptable safety per class (normal / on a counter). */
-  minSafetyShort: 0.6,
-  minSafetyMid: 0.55,
-  minSafetyLong: 0.2,
-  counterMinSafety: 0.45,
-  /** Class biases per TeamStyle (POSSESSION, COUNTER, DIRECT, HIGH_PRESS, WING_PLAY). */
-  styleShort: [0.35, 0, -0.25, 0.1, 0.15] as readonly number[],
-  styleMid: [0.05, 0.1, 0, 0.1, 0.05] as readonly number[],
-  styleLong: [-0.3, 0, 0.35, -0.1, -0.1] as readonly number[],
-  /** Wing play: bonus for a short / mid target at least this wide (|z|), m. */
-  wingWideZ: 15,
-  wingBonus: 0.15,
-  /** High press class biases. */
-  pressShort: -0.4,
-  pressMid: -0.1,
-  pressLong: 0.4,
-  /** Counter class biases. */
-  counterMid: 0.15,
-  counterLong: 0.1,
-  /** Decision noise amplitude = T_LEVEL.decisionNoise[level] x noiseScale (CPU teams; others use PROFESSIONAL). */
-  noiseScale: 0.25,
-} as const;
-const L = LOCAL_TUNING;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_GK_DISTRIBUTION. */
+export const LOCAL_TUNING = T_GK_DISTRIBUTION;
+
+const L = T_GK_DISTRIBUTION;
 /** offsideLookAheadTicks in seconds. */
 const OFFSIDE_LOOKAHEAD_S = L.offsideLookAheadTicks * DT;
 
@@ -515,7 +401,9 @@ function evaluate(s: SimState, team: number, k: number, counter: boolean, press:
     let lv = speedOf(kind);
     if (roll === 0) {
       const ldx = tx - kx, ldz = tz - kz;
-      const ls = loftLaunchSpeed(Math.sqrt(ldx * ldx + ldz * ldz));
+      LOFT_IO[0] = Math.sqrt(ldx * ldx + ldz * ldz);
+      loftLaunchSpeedIO(); // loftLaunchSpeed through a scratch (no boxed doubles per call) [QF-7S]
+      const ls = LOFT_IO[0]!;
       if (ls > lv) lv = ls;
     }
     const ts = laneSafety(s, team, kx, kz, tx, tz, lv, roll === 1 ? 0 : 1);

@@ -18,7 +18,7 @@
  *  Our ball, or a loose ball that is nobody's pass: nothing (TAI-07 chases it).
  *
  * Intensity I (0..1, teamPressIntensity): base = TAI-12 levelParams(cpu.level).pressIntensity for a CPU-driven team,
- * LOCAL_TUNING.humanPressIntensity otherwise; x the style factor styleBase + styleGain * styleWeights(style).press
+ * T_PRESS.humanPressIntensity otherwise; x the style factor styleBase + styleGain * styleWeights(style).press
  * (0.5 = neutral = 1); x focus pressScale, + team-press pressAdd (data/tactics resolveTactics, as pressIntensity());
  * + counterPressAdd in TRANSITION_DEFEND (counter-press right after losing the ball). I sets the standoff
  * (standoffMax .. standoffMin), the engage radius and the closing speed.
@@ -73,7 +73,7 @@ import {
 import { AiJob, ControllerKind, MatchPhase, TeamPhase } from '../contracts/enums';
 import type { EventSink } from '../contracts/events';
 import type { SimState, TeamState } from '../contracts/state';
-import { T_AI, T_PLAYER } from '../contracts/tuning';
+import { T_AI, T_PLAYER, T_PRESS } from '../contracts/tuning';
 import { ShapeLine } from '../data/formations';
 import { createTacticParams, phaseOffset, resolveTactics, rolePreset, slotLineFor, slotRole, tacticFlags } from '../data/tactics';
 import { otherTeam, teamEnd, teamStart } from '../sim/core/query';
@@ -81,103 +81,8 @@ import { ticksToReach } from '../sim/players/locomotion';
 import { effectiveFocus, levelParams, styleWeights } from './cpu/levels';
 import { assignJob, isJobDriven } from './jobs';
 
-export const LOCAL_TUNING = {
-  // ---- intensity (0..1)
-  /** Base press intensity of a team without a CPU brain (human sides): T_LEVEL.pressIntensity of Professional. */
-  humanPressIntensity: 0.75,
-  /** Style factor on the base: styleBase + styleGain * StyleWeights.press (TAI-12; 0.5 = neutral = x1), clamped. */
-  styleBase: 0.5,
-  styleGain: 1,
-  styleMin: 0.6,
-  styleMax: 1.4,
-  /** Added intensity while the team is in TRANSITION_DEFEND (counter-press). */
-  counterPressAdd: 0.1,
-  // ---- engagement
-  /** Engage radius = T_AI.pressDistance x pressDistanceScale x (engageBase + engageGain * I), multipliers. */
-  engageBase: 0.6,
-  engageGain: 0.8,
-  /** Engage radius multiplier with the carrier in our defensive third. */
-  dangerScale: 1.5,
-  /** Our defensive third: within this distance of our goal line, m. */
-  dangerDepth: 35,
-  /** The current pressSlot keeps engaging up to this multiple of the engage radius (hysteresis). */
-  engageKeep: 1.25,
-  // ---- presser choice
-  /** Arrival-time bonus of the current presser / cover (hysteresis), ticks. */
-  pressHystTicks: 10,
-  coverHystTicks: 15,
-  /** Arrival time x (1 + penalty * (1 - duty)) for low press / cover duty (data/tactics duties). */
-  pressDutyPenalty: 0.3,
-  coverDutyPenalty: 0.5,
-  // ---- press spots
-  /** Standoff goal-side of the carrier: standoffMax at intensity 0 .. standoffMin at 1, m. */
-  standoffMax: 2.5,
-  standoffMin: 1.5,
-  /** Hard press (called second defender): this far goal-side of the ball, m. */
-  hardStandoff: 0.7,
-  /** The carrier is led by his velocity times this, s. */
-  pressLead: 0.25,
-  /** Presser speed cap: top speed x (speedMin at intensity 0 .. 1 at 1). */
-  speedMin: 0.8,
-  /** A presser more than arcStep (cos, sin: 60 degrees) round from goal-side of the carrier aims arcStep further
-   *  round toward goal-side, tangent to the standoff circle (he circles round the carrier, never through him). */
-  arcStepCos: 0.5,
-  arcStepSin: 0.8660254037844386,
-  /** Side spot direction from the carrier: goal-side x sideAlong + lateral x sideLat (unit length). */
-  sideAlong: 0.5,
-  sideLat: 0.8660254037844386,
-  /** Support presser (a controlled team-mate is the front presser): distance from the carrier, m. */
-  supportDist: 4.5,
-  /** A controlled team-mate engages the carrier within this distance, m ... */
-  ctlEngageDist: 5,
-  /** ... and no further from him than the AI presser + ctlMargin, m. */
-  ctlMargin: 1.5,
-  // ---- cover
-  /** Cover point: standoff + coverGap from the carrier toward our goal, m. */
-  coverGap: 5,
-  /** Roles whose cover duty (x phase and focus duty scales) is below this never cover. */
-  coverDutyMin: 0.3,
-  /** Back-liners cover only when the cover point is at most this far in front of our line, m. */
-  coverLineSlack: 3,
-  /** The cover point stays this far outside our goal area, m. */
-  coverBoxMargin: 1,
-  /** Max arrival time of a cover, ticks. */
-  coverMaxTicks: 240,
-  /** Extra cost for taking a player off a TAI-04 lane cover (COVER), ticks. */
-  laneCoverPenalty: 30,
-  /** In TRANSITION_DEFEND a player at or ahead of (ball u - caughtMargin) is caught upfield: TAI-06's RECOVER run
-   *  (its goalSideMargin), never a cover or a tracker here, m. */
-  caughtMargin: 1,
-  // ---- track runners
-  /** Max runners tracked at once. */
-  trackMax: 3,
-  /** Speed toward our goal that makes a run, m/s; a run already being tracked stays one down to runKeep. */
-  runStart: 3.5,
-  runKeep: 2,
-  /** A run counts when the runner's position this far ahead is in our defensive third, s. */
-  trackLook: 0.6,
-  /** Track point: the runner led by trackLead s, then trackGap m goal-side of that. */
-  trackLead: 0.4,
-  trackGap: 1.5,
-  /** Trackers come from within this distance of the runner, m. */
-  trackRange: 12,
-  /** Roles whose track duty (x scales) is below this never track. */
-  trackDutyMin: 0.4,
-  /** Cost bonus per m/s of a candidate's speed along the run (keeps the tracker who runs with him), s. */
-  alignBonus: 0.5,
-  /** A candidate within this of the runner running with him at >= runKeep keeps a slowing run tracked, m. */
-  trackKeepDist: 4,
-  /** Cost bonus for the player TAI-04 had marking this runner / penalty for leaving another mark, m. */
-  markBonus: 4,
-  markPenalty: 6,
-  // ---- geometry
-  /** Targets stay this far inside the touchlines and goal lines, m. */
-  edge: 0.5,
-  /** Lower-bound slack for skipping hopeless arrival-time evaluations, m (> SIM-04 reachRadius). */
-  lbSlack: 1.5,
-} as const; // TUNING-CR
 
-const LT = LOCAL_TUNING;
+const LT = T_PRESS;
 const N = PLAYERS_PER_TEAM;
 const BIG = 1e9;
 const X_MAX = HALF_LENGTH - LT.edge;
@@ -669,4 +574,4 @@ function trackRunners(s: SimState, team: number, opp: number, carrier: number, d
 }
 
 /** Exposed for tests and tuning tools (read-only). */
-export const PRESS_TUNING = LOCAL_TUNING;
+export const PRESS_TUNING = T_PRESS;

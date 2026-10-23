@@ -55,98 +55,17 @@ import { CROSS_ZONE_DEPTH, CROSS_ZONE_MIN_Z, DT, HALF_LENGTH, HALF_WIDTH, NUM_SL
 import { ActionKind, AiJob, KickKind, MatchPhase, Role, TeamPhase } from '../contracts/enums';
 import type { EventSink } from '../contracts/events';
 import type { SimState, TeamState } from '../contracts/state';
-import { T_RULES } from '../contracts/tuning';
+import { T_RULES, T_RUNS } from '../contracts/tuning';
 import { BOX_SPOTS, createTacticParams, phaseOffset, resolveTactics, rolePreset, tacticFlags } from '../data/tactics';
 import { otherTeam, secondLastDefenderX, teamEnd, teamStart } from '../sim/core/query';
 import { effectiveFocus } from './cpu/levels';
 import { assignJob, isJobDriven } from './jobs';
 
-/** TUNING-CR: move into contracts/tuning.ts as T_RUNS. */
-export const LOCAL_TUNING = {
-  /** Hard cap on simultaneous runners (in behind + overlaps); the tactic's maxRunners is clamped to it, count. */
-  maxRunnersHard: 3,
-  /** Box attackers on a cross when the tactic sets none (GET_IN_BOX sets 4), count. */
-  boxRunnersDefault: 3,
-  /** Minimum run weight (role tendency x phase runScale x tactic runScale) for an automatic run, 0..1. */
-  minRunWeight: 0.3,
-  /** Targets before the pass stay this far behind the onside limit, m. */
-  onsideMargin: 1.0,
-  /** Release: the runner's furthest possible position at the pass contact stays this far behind the limit, m. */
-  releaseMargin: 0.3,
-  /** Safety factor on the acceleration used to bound a runner's progress until the contact (>= 1). */
-  releaseAccelSafety: 1.25,
-  /** The offside line is also predicted this far ahead from the defenders' velocities (deeper one used), s. */
-  lineLookahead: 0.3,
-  /** A through ball is on when the run's lane point on the line is within this distance of the ball, m ... */
-  throughRange: 42,
-  /** ... and at least this much room lies between the line and the goal-line margin (behindGoalMargin), m. */
-  minSpaceBehind: 6,
-  /** Released / triggered run target this far beyond the line, m, but not closer to the goal line than
-   *  behindGoalMargin, m. */
-  behindDepth: 11,
-  behindGoalMargin: 6,
-  /** Lane v behind the line as a fraction of the lane v at the line (< 1 bends the run in toward goal). */
-  curveIn: 0.6,
-  /** Waiting runners hold this far behind the onside target (room to start the run), m. */
-  launchDepth: 2.5,
-  /** Carrier looks up: facing . attack direction >= lookUpCos and nearest opponent >= lookUpSpace, m. */
-  lookUpCos: 0.5,
-  lookUpSpace: 3.5,
-  /** Relaxed look-up test for a runner already on his way (hysteresis without memory). */
-  commitLookUpCos: 0.1,
-  commitLookUpSpace: 2.0,
-  /** Forward speed from which a runner counts as already running, m/s. */
-  commitSpeed: 2.0,
-  /** Back line: non-keeper opponents within this depth of the offside line, m. Lanes are gaps at least minGap
-   *  wide, m, inside +-laneMaxV, m; lanes of two runners at least laneSep apart (soft, crowdPenalty per m), m; a
-   *  lane outside the outermost defender costs edgeLanePenalty, m. */
-  backLineBand: 7,
-  minGap: 4,
-  laneMaxV: 24,
-  laneSep: 7,
-  crowdPenalty: 2,
-  edgeLanePenalty: 4,
-  /** Overlap: ball at least this wide on the full-back's side, m; ball ahead of him by overlapAheadMin ..
-   *  overlapAheadMax, m; ball u at least overlapMinBallU, m; target overlapAhead beyond and overlapWide outside the
-   *  ball, m; slack on the channel / ahead tests for a full-back already overlapping, m. */
-  wideChannelV: 12,
-  overlapAheadMin: 2,
-  overlapAheadMax: 35,
-  overlapMinBallU: -10,
-  overlapAhead: 8,
-  overlapWide: 4,
-  commitSlack: 3,
-  /** Cover: a teammate at least coverDepth deeper than the full-back within coverLateral of his home lane, m. */
-  coverDepth: 2,
-  coverLateral: 16,
-  /** A teammate this far behind the ball counts as rest defence, m. */
-  restBehind: 1,
-  /** Cross imminent when the ball is within this distance of the byline, m. */
-  crossReadyDepth: 12,
-  /** Late runners stage at u = HALF_LENGTH - lateStageDepth (3 m outside the box) until the cross is imminent, m. */
-  lateStageDepth: 19.5,
-  /** Box spot pick: cost = distance (m) - boxWeightBonus * run weight. */
-  boxWeightBonus: 10,
-  /** Trigger run duration, s; pass-and-go run: target this far ahead and this far away from the receiver, m. */
-  runCallSeconds: 2.5,
-  passGoAhead: 14,
-  passGoSide: 3,
-  /** Trigger-run pick: score = in-behind tendency - lineCost * m behind the line - carrierCost * m from the ball
-   *  - offsidePenalty when already beyond the limit. */
-  triggerLineCost: 0.02,
-  triggerCarrierCost: 0.005,
-  triggerOffsidePenalty: 0.5,
-  /** Speed caps as a fraction of the player's top speed: holding the line jogs, runs sprint. */
-  speedHold: 0.6,
-  speedRun: 1.0,
-  /** [QF-2] The box is attacked (box spots filled) with our carrier within this of the goal line anywhere across the
-   *  pitch, not only in the crossing zone (0 = crossing zone only), m. */
-  boxAttackDepth: 30,
-  /** Targets stay this far inside the touchlines and goal lines, m. */
-  edgeMargin: 1.5,
-} as const; // TUNING-CR
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_RUNS. */
+export const LOCAL_TUNING = T_RUNS;
 
-const T = LOCAL_TUNING;
+
+const T = T_RUNS;
 /** Ticks a triggered run lasts. */
 export const RUN_CALL_TICKS = secToTicks(T.runCallSeconds);
 const STAGE_U = HALF_LENGTH - T.lateStageDepth;

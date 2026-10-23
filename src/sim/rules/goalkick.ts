@@ -6,7 +6,7 @@
  * Implementation notes (RUL-03):
  *  - Setup (called by RUL-11 awardRestart after it filled s.match.restart): the ball goes on the goal-area line of the
  *    kicking team's own end, on the side the ball went out (sign of the award z, else of ball.crossZ), |z| clamped to
- *    LOCAL_TUNING.spotZMin..spotZMax; restart.side = that side; aim reset onto the ball; taker = the keeper, else the
+ *    T_GOAL_KICK.spotZMin..spotZMax; restart.side = that side; aim reset onto the ball; taker = the keeper, else the
  *    nearest defender, else the nearest outfield player (players who are down are avoided when possible). RUL-11 then
  *    adopts the ball position as the spot, places everybody legally at ready (opponents outside the kicking team's
  *    penalty area and >= 9.15 m from the ball) and keeps pushing intruders out every tick until the ball is played.
@@ -22,7 +22,7 @@
  *    or a second human on the taking side) moves his free controlled player with the stick (RUL-11 keeps him legal).
  *  - Tick: the waiting taker lines up behind the ball along the aim (slides lineUpStep per tick, inside RUL-11's
  *    reach); restart.aimPower mirrors the power bar while he charges; a side with no human takes the kick by Default
- *    LOCAL_TUNING.cpuGraceTicks after T_RULES.cpuRestartDelay (retried every cpuRetryTicks) if its CPU brain (TAI-13)
+ *    T_GOAL_KICK.cpuGraceTicks after T_RULES.cpuRestartDelay (retried every cpuRetryTicks) if its CPU brain (TAI-13)
  *    has not, so RUL-11's 4 s CPU watchdog never has to fire.
  *  - Default (RUL-11 calls it at the human timeout; also the CPU fallback): short ground pass to an open defender
  *    (receiver >= openDist from every opponent and a safe lane: TAI-09 laneSafety >= laneSafeMin while it gives any
@@ -43,71 +43,19 @@ import type { EventSink } from '../../contracts/events';
 import { AXIS_SCALE, Btn, GESTURE_POS_SCALE, UNIT_SCALE, type InputFrame } from '../../contracts/input';
 import { MoveMode, type PlayerState, type SimState } from '../../contracts/state';
 import { createActionRequest, ReqFlag } from '../../contracts/systems';
-import { T_INPUT, T_PASS, T_RULES } from '../../contracts/tuning';
+import { T_INPUT, T_PASS, T_RULES, T_GOAL_KICK, T_RESTART_COMMON, T_RESTART } from '../../contracts/tuning';
 import { laneSafety } from '../../ai/cpu/passing';
 import { groundPassSpeed } from '../ball/flight';
 import { releasePossession } from '../core/kick';
 import { teamHasHuman } from '../core/query';
 import { startLob } from '../kicks/lob';
 import { startPass } from '../kicks/pass';
-import { COMMON_TUNING, restartLookPoint } from './restartCommon';
-import { LOCAL_TUNING as RESTART_TUNING, isValidTaker, prepareTakerKick } from './restart';
+import { restartLookPoint } from './restartCommon';
+import { isValidTaker, prepareTakerKick } from './restart';
 
-/** TUNING-CR (RUL-03): proposed additions to T_RULES (units in comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  /** Goal-kick spot: |z| on the goal-area line is clamped to this range, m (goal-area half width is 9.16). */
-  spotZMin: 4,
-  spotZMax: 9,
-  /** Aim point distance from the ball along the stick direction (taker facing / preview), m. */
-  aimDist: 20,
-  /** The waiting taker slides toward his spot behind the ball along the aim at most this far per tick, m/tick. */
-  lineUpStep: 0.05,
-  /** A kick line may not reach the own goal line within this distance outside a post, m. */
-  ownGoalMargin: 2,
-  /** Teammates further than this inside the touch/goal lines are not targets, m. */
-  targetPitchMargin: 0.5,
-  /** Short option: receiver distance range from the ball, m. */
-  shortMin: 5,
-  shortMax: 35,
-  /** Short option counts as open: nearest opponent at least this far from the receiver, m ... */
-  openDist: 8,
-  /** ... and no opponent within this distance of the lane (geometric check), m ... */
-  laneClear: 4,
-  /** ... or TAI-09 laneSafety at least this (completion probability 0..1) while laneSafety gives any signal. */
-  laneSafeMin: 0.75,
-  /** Short option scoring: openness capped at this, m; lane clearance capped at this, m; weights (per m). */
-  openCap: 15,
-  laneCap: 8,
-  laneWeight: 0.5,
-  distWeight: 0.1,
-  /** Short option scoring bonus for a defender (RB, CB, LB, RWB, LWB), m-equivalent. */
-  defenderBonus: 5,
-  /** Ground pass arrival speed used to size short goal kicks (SIM-01 groundPassSpeed), m/s. */
-  shortArrive: 5,
-  /** Lowest power of a Default / gesture ground pass, 0..1. */
-  shortPowerMin: 0.15,
-  /** Long option: receiver distance range from the ball, m. */
-  longMin: 25,
-  longMax: 75,
-  /** Long kick power = distance / longPowerRange, at least longPowerMin (0..1). */
-  longPowerRange: 70,
-  longPowerMin: 0.45,
-  /** Target man scoring: per role tier (forwards 3, attacking mids 2, other mids 1, defenders 0), attribute points. */
-  tierWeight: 1000,
-  /** Target man scoring: heading attribute + heightWeight per cm above 180 cm; openness weight per m (capped). */
-  heightWeight: 0.5,
-  longOpenWeight: 1,
-  /** Long kick with nobody to aim at: this far straight ahead, m. */
-  longFallbackDist: 45,
-  /** Gesture tap on a teammate / spot: a ground pass up to this distance, a lob beyond, m. */
-  tapGroundMax: 30,
-  /** Gesture taps closer than this to the ball are ignored, m. */
-  tapMinDist: 3,
-  /** CPU fallback: Default this many ticks after T_RULES.cpuRestartDelay past ready (ticks, 1 s) ... */
-  cpuGraceTicks: 60,
-  /** ... retried every this many ticks while the kick has not started, ticks. */
-  cpuRetryTicks: 30,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_GOAL_KICK. */
+export const LOCAL_TUNING = T_GOAL_KICK;
+
 
 // ---------------------------------------------------------------- module scratch (no allocation per tick)
 
@@ -183,7 +131,7 @@ export function clearOfOwnGoal(s: SimState, team: number, x0: number, z0: number
   if (e * dx <= 1e-9) return true;
   const t = (e * HALF_LENGTH - x0) / dx;
   const zHit = z0 + dz * t;
-  const lim = GOAL_HALF_WIDTH + LOCAL_TUNING.ownGoalMargin;
+  const lim = GOAL_HALF_WIDTH + T_GOAL_KICK.ownGoalMargin;
   return zHit > lim || zHit < -lim;
 }
 
@@ -242,14 +190,14 @@ function evalLane(s: SimState, team: number, x0: number, z0: number, x1: number,
 
 /** Power 0..1 of a ground pass over `d` metres (the speed it needs, mapped onto the T_PASS ground speed range). */
 export function shortPower(d: number): number {
-  const v = clamp(groundPassSpeed(d, LOCAL_TUNING.shortArrive), T_PASS.groundMin, T_PASS.groundMax);
+  const v = clamp(groundPassSpeed(d, T_GOAL_KICK.shortArrive), T_PASS.groundMin, T_PASS.groundMax);
   const p = (v - T_PASS.groundMin) / (T_PASS.groundMax - T_PASS.groundMin);
-  return clamp(p, LOCAL_TUNING.shortPowerMin, 1);
+  return clamp(p, T_GOAL_KICK.shortPowerMin, 1);
 }
 
 /** Power 0..1 of a long kick over `d` metres. */
 export function longPower(d: number): number {
-  return clamp(d / LOCAL_TUNING.longPowerRange, LOCAL_TUNING.longPowerMin, 1);
+  return clamp(d / T_GOAL_KICK.longPowerRange, T_GOAL_KICK.longPowerMin, 1);
 }
 
 // ---------------------------------------------------------------- taker, spot
@@ -294,7 +242,7 @@ export function goalKickSpot(s: SimState, team: number, side: number, absZ: numb
   const e = -s.teams[team === 1 ? 1 : 0]!.dir;
   const az = absZ === absZ ? (absZ < 0 ? -absZ : absZ) : 0;
   out.x = e * (HALF_LENGTH - GOAL_AREA_DEPTH);
-  out.z = (side < 0 ? -1 : 1) * clamp(az, LOCAL_TUNING.spotZMin, LOCAL_TUNING.spotZMax);
+  out.z = (side < 0 ? -1 : 1) * clamp(az, T_GOAL_KICK.spotZMin, T_GOAL_KICK.spotZMax);
 }
 
 // ---------------------------------------------------------------- choice (Default / assisted targets)
@@ -311,7 +259,7 @@ export function bestShortOption(s: SimState, team: number, taker: number, strict
   const x0 = r.x, z0 = r.z;
   const tm = team === 1 ? 1 : 0;
   const first = teamFirstSlot(tm);
-  const T = LOCAL_TUNING;
+  const T = T_GOAL_KICK;
   let bestGeo = -1, bestGeoScore = -1e18;
   let bestLs = -1, bestLsScore = -1e18;
   let anyLs = 0;
@@ -356,7 +304,7 @@ export function bestLongOption(s: SimState, team: number, taker: number): number
   const x0 = r.x, z0 = r.z;
   const tm = team === 1 ? 1 : 0;
   const first = teamFirstSlot(tm);
-  const T = LOCAL_TUNING;
+  const T = T_GOAL_KICK;
   let best = -1;
   let bestScore = -1e18;
   for (let slot = first; slot < first + PLAYERS_PER_TEAM; slot++) {
@@ -412,9 +360,9 @@ export function chooseGoalKick(s: SimState, out: GoalKickChoice): number {
   }
   const dir = s.teams[team]!.dir;
   out.kind = KickKind.LOB_PASS;
-  out.x = clamp(r.x + dir * LOCAL_TUNING.longFallbackDist, -HALF_LENGTH, HALF_LENGTH);
+  out.x = clamp(r.x + dir * T_GOAL_KICK.longFallbackDist, -HALF_LENGTH, HALF_LENGTH);
   out.z = r.z;
-  out.power = longPower(LOCAL_TUNING.longFallbackDist);
+  out.power = longPower(T_GOAL_KICK.longFallbackDist);
   return 1;
 }
 
@@ -425,7 +373,7 @@ function aimDirection(s: SimState): number {
   const r = s.match.restart;
   const dx = r.aimX - r.x, dz = r.aimZ - r.z;
   const d = Math.sqrt(dx * dx + dz * dz);
-  if (d > COMMON_TUNING.aimMinDist) { AIM.x = dx / d; AIM.z = dz / d; return 1; }
+  if (d > T_RESTART_COMMON.aimMinDist) { AIM.x = dx / d; AIM.z = dz / d; return 1; }
   AIM.x = s.teams[r.team === 1 ? 1 : 0]!.dir;
   AIM.z = 0;
   return 0;
@@ -525,7 +473,7 @@ function aimWithStick(s: SimState, f: Readonly<InputFrame>): void {
   if (dir * ax < 0) ax = 0; // never back toward the own goal line
   const d = Math.sqrt(ax * ax + az * az);
   if (d < 1e-6) { ax = dir; az = 0; } else { ax /= d; az /= d; }
-  const x = r.x + ax * LOCAL_TUNING.aimDist, z = r.z + az * LOCAL_TUNING.aimDist;
+  const x = r.x + ax * T_GOAL_KICK.aimDist, z = r.z + az * T_GOAL_KICK.aimDist;
   r.aimX = x < -HALF_LENGTH ? -HALF_LENGTH : x > HALF_LENGTH ? HALF_LENGTH : x;
   r.aimZ = z < -HALF_WIDTH ? -HALF_WIDTH : z > HALF_WIDTH ? HALF_WIDTH : z;
 }
@@ -562,7 +510,7 @@ function buttonKick(s: SimState, c: Readonly<{ kind: ControllerKind; assist: Ass
   } else {
     REQ.dirX = AIM.x;
     REQ.dirZ = AIM.z;
-    if (!aimed) setAimPoint(s, r.x + AIM.x * LOCAL_TUNING.aimDist, r.z + AIM.z * LOCAL_TUNING.aimDist);
+    if (!aimed) setAimPoint(s, r.x + AIM.x * T_GOAL_KICK.aimDist, r.z + AIM.z * T_GOAL_KICK.aimDist);
   }
   return startTakerKick(s, slot, kind, ev);
 }
@@ -587,13 +535,13 @@ function gestureKick(s: SimState, c: Readonly<{ kind: ControllerKind; assist: As
   } else {
     const gx = f.gx / GESTURE_POS_SCALE, gz = f.gz / GESTURE_POS_SCALE;
     if (!(gx === gx && gz === gz)) return 0;
-    tx = clamp(gx, -HALF_LENGTH + LOCAL_TUNING.targetPitchMargin, HALF_LENGTH - LOCAL_TUNING.targetPitchMargin);
-    tz = clamp(gz, -HALF_WIDTH + LOCAL_TUNING.targetPitchMargin, HALF_WIDTH - LOCAL_TUNING.targetPitchMargin);
+    tx = clamp(gx, -HALF_LENGTH + T_GOAL_KICK.targetPitchMargin, HALF_LENGTH - T_GOAL_KICK.targetPitchMargin);
+    tz = clamp(gz, -HALF_WIDTH + T_GOAL_KICK.targetPitchMargin, HALF_WIDTH - T_GOAL_KICK.targetPitchMargin);
   }
   const dx = tx - r.x, dz = tz - r.z;
   const d = Math.sqrt(dx * dx + dz * dz);
-  if (d < LOCAL_TUNING.tapMinDist || !clearOfOwnGoal(s, team, r.x, r.z, dx, dz)) return 0;
-  const lob = f.gesture === GestureKind.DOUBLE_TAP || d > LOCAL_TUNING.tapGroundMax;
+  if (d < T_GOAL_KICK.tapMinDist || !clearOfOwnGoal(s, team, r.x, r.z, dx, dz)) return 0;
+  const lob = f.gesture === GestureKind.DOUBLE_TAP || d > T_GOAL_KICK.tapGroundMax;
   resetReq(c.assist, ReqFlag.GESTURE | (c.kind === ControllerKind.CPU ? ReqFlag.CPU : 0));
   REQ.dirX = dx / d;
   REQ.dirZ = dz / d;
@@ -663,10 +611,10 @@ export function goalKickTick(s: SimState, ev: EventSink): void {
     const ul = Math.sqrt(ux * ux + uz * uz);
     if (ul > 1e-6) {
       ux /= ul; uz /= ul;
-      const behind = RESTART_TUNING.takerBehind;
+      const behind = T_RESTART.takerBehind;
       const dx = r.x - ux * behind - p.x, dz = r.z - uz * behind - p.z;
       const d = Math.sqrt(dx * dx + dz * dz);
-      const step = LOCAL_TUNING.lineUpStep;
+      const step = T_GOAL_KICK.lineUpStep;
       if (d <= step) { p.x += dx; p.z += dz; } else if (d > 1e-9) { p.x += (dx / d) * step; p.z += (dz / d) * step; }
       // Never closer to the ball than his spot (the slide follows the circle around it, not the chord).
       const bx = p.x - r.x, bz = p.z - r.z;
@@ -679,8 +627,8 @@ export function goalKickTick(s: SimState, ev: EventSink): void {
   // A side without a human: the CPU brain (TAI-13) normally takes it after cpuRestartDelay; fall back to the Default.
   if (!teamHasHuman(s, r.team)) {
     const waited = r.t - T_RULES.restartSetupTicks;
-    const due = T_RULES.cpuRestartDelay + LOCAL_TUNING.cpuGraceTicks;
-    if (waited >= due && (waited - due) % LOCAL_TUNING.cpuRetryTicks === 0) takeDefault(s, ev);
+    const due = T_RULES.cpuRestartDelay + T_GOAL_KICK.cpuGraceTicks;
+    if (waited >= due && (waited - due) % T_GOAL_KICK.cpuRetryTicks === 0) takeDefault(s, ev);
   }
 }
 

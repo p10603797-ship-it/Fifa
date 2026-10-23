@@ -9,7 +9,7 @@
  * Implementation notes (RUL-08):
  *  - offsideTick runs first in rulesTick (clock phases only). Order per tick: (0) the late snapshot of a safety-net
  *    free kick from the previous tick (see below); (1) involvement of a flagged player (his touch this tick; a
- *    ChallengeRecord he made after the pass; the intended receiver within LOCAL_TUNING.receiverReach of a playable
+ *    ChallengeRecord he made after the pass; the intended receiver within T_OFFSIDE.receiverReach of a playable
  *    ball) -> OFFSIDE + free kick to the defending team at his position (RUL-11 awardRestart; it clears the flags);
  *    (2) resets: a touch by an unflagged teammate (a new phase of play), a deliberate play or possession by an
  *    opponent, the ball over a line; otherwise the save window may close (see below); (3) a new snapshot when the
@@ -50,21 +50,12 @@ import { DT, HALF_LENGTH, NUM_SLOTS, PLAYERS_PER_TEAM, teamFirstSlot } from '../
 import { ActionKind, CrossKind, KickKind, MatchPhase, RestartKind } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
 import type { SimState } from '../../contracts/state';
-import { T_RULES } from '../../contracts/tuning';
+import { T_RULES, T_OFFSIDE } from '../../contracts/tuning';
 import { awardRestart } from './restart';
 
-/** TUNING-CR (RUL-08): proposed additions to T_RULES (units in comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  /** A flagged intended receiver is involved once the ball is this close to him, horizontal m (brief: 2 m). */
-  receiverReach: 2,
-  /** ... and no higher than this, m (a ball he could still head; higher balls fly over him). */
-  receiverMaxBallHeight: 2.6,
-  /**
-   * An on-target shot whose speed toward the centre of the goal drops to this or less without a contact (off the
-   * woodwork, or rolling to a stop) is no longer "going into the goal": the save window closes, m/s.
-   */
-  saveMinGoalSpeed: 0.5,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_OFFSIDE. */
+export const LOCAL_TUNING = T_OFFSIDE;
+
 
 /** Kick kinds that are a teammate "playing" the ball for offside: PLAY_KIND[kind] = 1. */
 const PLAY_KIND = new Uint8Array(64);
@@ -274,10 +265,10 @@ function receiverArrives(s: SimState, slot: number): boolean {
   const p = s.players[slot]!;
   if (p.act === ActionKind.FALLEN || p.act === ActionKind.GET_UP) return false;
   const b = s.ball;
-  if (b.y > LOCAL_TUNING.receiverMaxBallHeight) return false;
+  if (b.y > T_OFFSIDE.receiverMaxBallHeight) return false;
   const dx = b.x - p.x;
   const dz = b.z - p.z;
-  const r = LOCAL_TUNING.receiverReach;
+  const r = T_OFFSIDE.receiverReach;
   return dx * dx + dz * dz <= r * r;
 }
 
@@ -323,7 +314,7 @@ function checkInvolvement(s: SimState, ev: EventSink): number {
   const rcv = b.passTarget;
   if (isFlagged(s, rcv) && receiverArrives(s, rcv)) return callOffside(s, rcv, ev);
   // (6) an unmet on-target shot that stopped going in (woodwork, or rolling to a stop) can no longer be saved
-  if (touch < 0 && saveWindowOpen(s) && goalwardSpeed(s) <= LOCAL_TUNING.saveMinGoalSpeed) closeSaveWindow(s);
+  if (touch < 0 && saveWindowOpen(s) && goalwardSpeed(s) <= T_OFFSIDE.saveMinGoalSpeed) closeSaveWindow(s);
   return 0;
 }
 

@@ -11,7 +11,7 @@
  *   physics, attribute or stamina field, so a level can never change what a player's body can do. An invalid level
  *   (not an integer 0..5) gets Professional, like createCpuBrainState's default.
  *
- * styleWeights(style): frozen StyleWeights per TeamStyle (LOCAL_TUNING.style, all 0..1, 0.5 = neutral, which is
+ * styleWeights(style): frozen StyleWeights per TeamStyle (T_STYLE.style, all 0..1, 0.5 = neutral, which is
  *   what the consumers treat as "no bias": carrier styleMul / safety multiplier, press.ts style factor, counter x2).
  *   Each style leads the league in its signature weight:
  *     POSSESSION  safety highest, directness / longShot / counter lowest (keep the ball, build patiently);
@@ -33,29 +33,12 @@
 import { Difficulty, TacticalFocus, TeamStyle } from '../../contracts/enums';
 import type { SimState } from '../../contracts/state';
 import type { LevelParams, StyleWeights } from '../../contracts/systems';
-import { T_AI, T_LEVEL } from '../../contracts/tuning';
+import { T_AI, T_LEVEL, T_STYLE } from '../../contracts/tuning';
 import { rngGauss } from '../../sim/core/rng';
 
-export const LOCAL_TUNING = { // TUNING-CR (TAI-12): move into contracts/tuning.ts as T_STYLE
-  /**
-   * StyleWeights per TeamStyle (index = TeamStyle), every weight 0..1, 0.5 = neutral. Field meanings: see
-   * contracts/systems.ts StyleWeights (safety vs progress, directness = through / long balls and runs in behind,
-   * width = crosses / wide play, dribble = dribbles and skills, longShot = long shots, press = pressing height and
-   * intensity, counter = counter-attack urgency after winning the ball).
-   */
-  style: [
-    // POSSESSION
-    { safety: 0.85, progress: 0.35, directness: 0.2, width: 0.45, dribble: 0.55, longShot: 0.25, press: 0.55, counter: 0.25 },
-    // COUNTER
-    { safety: 0.45, progress: 0.65, directness: 0.75, width: 0.45, dribble: 0.55, longShot: 0.5, press: 0.3, counter: 0.95 },
-    // DIRECT
-    { safety: 0.3, progress: 0.85, directness: 0.85, width: 0.5, dribble: 0.3, longShot: 0.7, press: 0.5, counter: 0.6 },
-    // HIGH_PRESS
-    { safety: 0.5, progress: 0.6, directness: 0.5, width: 0.5, dribble: 0.5, longShot: 0.45, press: 0.9, counter: 0.7 },
-    // WING_PLAY
-    { safety: 0.55, progress: 0.55, directness: 0.4, width: 0.9, dribble: 0.65, longShot: 0.3, press: 0.5, counter: 0.5 },
-  ] as readonly StyleWeights[],
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_STYLE. */
+export const LOCAL_TUNING = T_STYLE;
+
 
 /** Number of difficulty levels (Beginner..Legend). */
 export const LEVEL_COUNT = Difficulty.LEGEND + 1;
@@ -90,7 +73,7 @@ export const NEUTRAL_STYLE: StyleWeights = Object.freeze({
 const STYLES: readonly StyleWeights[] = (() => {
   const out: StyleWeights[] = [];
   for (let i = 0; i < STYLE_COUNT; i++) {
-    const w = LOCAL_TUNING.style[i];
+    const w = T_STYLE.style[i];
     out.push(w ? Object.freeze({ ...w }) : NEUTRAL_STYLE);
   }
   return Object.freeze(out);

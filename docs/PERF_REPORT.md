@@ -137,3 +137,89 @@ no longer runs interpreted); tests/unit/qf-7r-warm.test.ts checks bit for bit th
 HUD DOM writes in live play (tests/e2e/qf-7r-hud.spec.ts, 30 s with a goal and a throw-in): 6-11 writes per second,
 all the clock's seconds, plus event-time writes (toast, score, hint); 0 redundant writes. Radar redraws at 20 Hz
 (tests/unit/qf-7r-radar.test.ts).
+
+## Sim and AI (TUN-7S: QA-36, QA-37, FIX-13 part 2; round 6)
+
+Every change in this section is behaviour-identical: `npx tsx tools/hash-table.ts --compare <before.json>` (28
+headless runs: every difficulty, two cup ties, rule toggles, every practice kind, bot and human shoot-outs, a scripted
+human v Legend, a hostile p1 v p2, soak jobs 0-2 and fuzz jobs 0-5; end-of-run `hashState` plus a digest of
+`hashState` every 500 ticks) is identical after every step.
+
+### 1. Allocation per tick (V8)
+
+Method: `tests/perf/tun-7s-sim-alloc-probe.ts` in a child process with the QF-7R exact flags (`--single-threaded`,
+constant 4-byte sampling interval, TurboFan at Maglev's 400-call threshold): every allocation with a src/sim or src/ai
+frame on top, by function. "Steady" = a second match after a whole first match (a field's first double generalises its
+hidden class and deoptimises the code that read it: a once-per-session cost that a single-match window mixes in).
+JavaScriptCore (iPad Safari) NaN-boxes doubles, so the boxed-number bytes below exist in Chromium / Android only.
+
+| | before | after |
+|---|---:|---:|
+| app loop `copyState(prev, curr)` per tick (tests/unit/qf-7r-live-state-probe.ts) | 10 408 B | 0 B |
+| `hashState` of a live state, per call (replay recorder / net desync) | 10 227 B | 385 B |
+| sim + AI, steady (2nd match, 3000 ticks) | 10 418 B | 4 006 B |
+| sim + AI, test window (tests/perf/tun-7s-sim-alloc.test.ts: 15000-tick first match, 1500 ticks) | 14 388 B | 7 749 B |
+| sim + AI, inside the first match (6000-tick warm-up, 3000 ticks; includes the one-off deopt / re-optimise) | 25 935 B | ~19 000 B |
+
+Fixed sites: `copyState` (a generated per-shape copier with explicit named accesses, built with `new Function` from the
+state's own keys, generic walk kept as the fallback and for any shape mismatch; tests/unit/tun-7s-copystate.test.ts,
+tests/e2e/tun-7s-live-copy.spec.ts); `ticksToReach` / `ticksToReachAtSpeed` (4.4 KB/tick: the speed cap parameter
+merged with a double made a tagged phi, and every caller boxed the target; now target and cap go through a scratch
+and the turn / run-time helpers are inlined with the same arithmetic); SIM-16 `computeEff` 1.3 KB -> 0.45 KB and TAI-07
+`evalIntercept` 0.6 KB -> 0.2 KB as a consequence; RUL-05 preview scratch state built with createSimState (it was a
+dictionary-mode cloneState copy). Remaining steady sites (B/tick): steerJob 534, defendCarrier 372, assignPressing 258,
+xgKernel 257, bestReceiver 245, leadSearch 163, receiveTurn 156, keeperSpotForBall 137, runDribble 121, then < 100 each
+(all double boxing at call boundaries or tagged phis; no source-level literals, closures or arrays: 95% of the bytes
+are 16-byte heap numbers, the rest one-off feedback / code objects). `hashState` (the replay recorder every 60 ticks of
+every match, net desync every 30) got the same generated treatment as copyState: 10.2 KB -> 0.4 KB per call and ~40x
+faster, same hash (tests/unit/tun-7s-hashstate.test.ts; the hash table above is computed through it). [TUN-7S
+skeptic] 0.4 KB is the best window: hashing between ticks of another seed measured 0.75-1.5 KB per call (some fields'
+loads still box), still 7-13x below the generic walk.
+
+[TUN-7S skeptic] The steady numbers depend on the difficulty (the AI's evaluation volume): the same probe (2nd match,
+1500 ticks) reads 4.1 KB/tick at Beginner (seed 4040), 7.3 KB at World Class (seed 99) and 14.0 KB at Legend (seed 77;
+top sites planIntercept 907, dribbleKernel 774, defendCarrier 615, assignPressing 573, steerJob 538, laneKernel 355
+B/tick), 93% of it 16-byte heap numbers (double boxing at call boundaries). None of it exists on the target
+(JavaScriptCore NaN-boxes doubles); `ticksToReach*`, `computeEff` and `evalIntercept` stay at 0 B in all three.
+
+[TUN-7S skeptic] The generated copier / hasher now guard every load by the kind the shape had when validated (a number
+slot that later holds a boolean / string / object, an object slot that later holds null, an array slot that holds
+anything else take the generic path for that value): before, copyState shared the object or threw a TypeError and
+hashState coerced the value to a double (true hashed as 1) or threw. Same 0 B per copyState, hash table identical
+(tests/unit/tun-7s-skeptic-codegen.test.ts). A new state of a known shape is looked up by its shape signature before
+any code is generated (first hashState of a fresh clone ~2.5 ms -> ~1 ms; the signature walk is the rest).
+
+Allocation tests made load-independent (child processes now run `--single-threaded`, so the tiering and the measured
+bytes no longer depend on CPU load; no limit changed): gkp-03, sim-06, sim-07, tai-05, tai-08, tai-09, gkp-04, and
+sim-14 moved out of the Vitest worker into tests/perf/tun-7s-sim-14-probe.ts. Deterministic tiering exposed three real
+boxing paths, fixed: GKP-04 keeper evaluation 256 B/call (`loftLaunchSpeed` double in and out; now `loftLaunchSpeedIO`),
+TAI-08 shot decision 313 -> 173 B/call (`posValue` returned a double per option; now a scratch, and the loss value is
+computed once per evaluation: decideOwnHalf 32 -> 0, decideEveryCall 77 -> 44), SIM-14 contact scene 96 -> 0.2 B/tick
+(`bodyRadiusOf`'s returned double; now `bodyRadiusInto`). All passed with three busy CPU loops running.
+
+### 2. Tick time in worst cases (QA-37)
+
+Method: `tests/perf/tun-7s-tick-probe.ts` (CPU v CPU at Legend, whole `step()` timed per tick with performance.now();
+a warm pass, then 3000 measured ticks, both from the scenario's template; dispersing scenes restored from the template
+every 30-240 ticks, untimed; `valid` = share of measured ticks that were the scenario: in its phase, >= 18 of 22 in one
+penalty area, >= 18 within 20 m of the ball; the test requires 0.8 / 0.8 / 0.8 / corner 0.4 / free kick 0.6 /
+shoot-out 0.9). [TUN-7S skeptic] The first table's shoot-out row timed the idle state after the shoot-out: the measured
+pass continued from the end of the warm-up pass, and 77% of its ticks were POST_MATCH. This
+container's Node is taken as 4x an iPad's JavaScriptCore (the factor the TAI budgets use; conservative for M-series),
+so the 2.5 ms average iPad budget is 625 us here (tests/perf/tun-7s-tick-time.test.ts). Shared 4-CPU container: maxima
+include scheduler / GC noise.
+
+| scenario | mean us | p99 us | max us | iPad mean (x4) | valid |
+|---|---:|---:|---:|---:|---:|
+| live play | 110 | 469 | 1271 | 0.44 ms | 1.00 |
+| crowded box (all 22 in one penalty area, bouncing loose ball) | 135 | 309 | 785 | 0.54 ms | 1.00 |
+| 22 chasers (everyone within 15 m of a slow loose ball) | 76 | 277 | 4965 | 0.30 ms | 1.00 |
+| corner (award, setup, taker, then the delivery's play) | 108 | 372 | 4460 | 0.43 ms | 0.51 |
+| free kick on the edge of the box (wall) | 83 | 241 | 1593 | 0.33 ms | 1.00 |
+| shoot-out (measured inside SHOOT_OUT) | 15 | 63 | 1231 | 0.06 ms | 0.96 |
+
+(Re-measured after the probe fix, load average ~3.5; means vary +-30% run to run with the other agents' load, maxima
+are scheduler / GC noise.)
+
+Every worst case is below a quarter of the budget on average; the heaviest single ticks (p99 0.3-0.8 ms here,
+~1.2-3.2 ms scaled) are CPU decision ticks (TAI-08 full evaluations, set-piece setup), well inside a 16.7 ms frame.

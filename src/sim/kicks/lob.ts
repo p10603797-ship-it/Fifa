@@ -57,103 +57,17 @@ import type { EventSink } from '../../contracts/events';
 import type { SimState } from '../../contracts/state';
 import { ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_PASS } from '../../contracts/tuning';
+import { T_PASS, T_LOB, T_PASS_KICK } from '../../contracts/tuning';
 import { curlSpinY, groundPassSpeed, groundRollTime, solveLaunchSpin, type LaunchSolution } from '../ball/flight';
 import { dcos, dsin } from '../core/dmath';
 import { inCrossingZone } from '../pitch/geometry';
-import { ballInReach, kickErrorAim, LOCAL_TUNING as PASS_TUNING, selectReceiver } from './pass';
+import { ballInReach, kickErrorAim, selectReceiver } from './pass';
 
-/** TUNING-CR (SIM-09): proposed additions to T_PASS (units in the comments). */
-export const LOCAL_TUNING = { // TUNING-CR
-  // ---- lobs
-  /** Lead of a moving receiver: fixed-point iterations on the flight time, the tolerance (s) and the max look-ahead (s). */
-  lobLeadIters: 4,
-  lobLeadTol: 0.02,
-  lobLeadMaxSec: T_PASS.lobLeadMaxSec, // [INT-A] was 3.5 s: a long ball led a sprinting forward by 30 m (contracts/tuning.ts since QF-2)
-  /** Receivers slower than this are not led (one solve), m/s. */
-  lobLeadMinSpeed: 0.3,
-  /** Backspin (rad/s; + floats, - dips) of LOB_PASS / GOAL_KICK, HIGH_LOB and DRIVEN_LOB. */
-  lobBackspin: 3,
-  highLobBackspin: 4,
-  drivenLobBackspin: -2,
-  /** Curl spin at |request curve| = 1 on a lob, rad/s. */
-  lobCurlSpin: 5,
-  /** Power-implied lob distance at power 0 and 1 (no receiver / Manual / Semi blend), m. */
-  lobDistMin: 12,
-  lobDistMax: 50,
-  /** Max launch speed of a lob, m/s (a farther target falls short). */
-  loftSpeedMax: 32,
-  /** Max launch speed of an aerial cross, m/s (a low cross needs pace). */
-  crossSpeedMax: 36,
-  /** Semi assistance: share of the power-implied distance blended into the receiver's distance, 0..1. */
-  semiPowerBlend: 0.5,
-  /** Power floor of a lob / cross (an instant tap), 0..1. */
-  minPower: 0.05,
-  /** A teammate within this distance of the landing / aim point becomes the target, m ... */
-  spaceReceiverRadius: 6,
-  /** ... judged at his position this far ahead along his run (at most), s. */
-  receiverLookSec: 1.5,
-  /** Lengthwise error: speed x (1 + lengthErrorMul x a second angular error draw in rad), clamped to +-lengthErrorCap. */
-  lengthErrorMul: 0.35,
-  lengthErrorCap: 0.1,
-  /** Target points stay this far inside the touchlines and goal lines, m. */
-  pitchMargin: 1,
-  // ---- cross targets: depth from the attacked goal line, lateral offset toward the crosser's side (+) / far side (-), m
-  nearPostDepth: 5.5,
-  nearPostSide: 3.5,
-  spotDepth: 11,
-  spotSide: 0,
-  farPostDepth: 6,
-  farPostSide: -5,
-  /** Power bands (0..1): below powerNear = near post, below powerFar = penalty spot, else far post. */
-  powerNear: 1 / 3,
-  powerFar: 2 / 3,
-  /** Ground cross: power below this = near post, else penalty spot (0..1). */
-  groundPowerSplit: 0.5,
-  /** Stick nudge: lateral (toward the far side) up to this, m ... */
-  stickSideShift: 3,
-  /** ... and pulling back (stick pointing away from the goal) up to this, m. */
-  stickBackShift: 5,
-  /** Pull of the cross target toward the team's corner-tactic zone, 0..1. */
-  cornerTacticWeight: 0.75,
-  /** Corner-tactic zones (depth, side as above): far post, edge of the box, crowd the keeper, near post, m. */
-  cornerFarDepth: 6,
-  cornerFarSide: -5,
-  cornerEdgeDepth: 15.8,
-  cornerEdgeSide: 0,
-  cornerKeeperDepth: 3,
-  cornerKeeperSide: 0,
-  cornerNearDepth: 5.5,
-  cornerNearSide: 3.5,
-  /** Cross targets stay at least this far out from the goal line, m. */
-  crossMinDepth: 1.5,
-  // ---- cross launch
-  /** Launch angles: whipped cross, floated cross (ReqFlag.LOFTED), low driven cross, rad. */
-  crossAngle: 0.38,
-  floatCrossAngle: 0.55,
-  lowCrossAngle: 0.2,
-  /** Whip: curl spin from the crossing attribute 1 -> 99, rad/s. */
-  crossCurlMin: 3,
-  crossCurlMax: 7,
-  /** Curl multipliers of the low cross and the floated cross. */
-  lowCrossCurlMul: 0.5,
-  floatCrossCurlMul: 0.8,
-  /** |request curve| above this sets the curl (sign = side, x the whip) instead of the automatic outswinger, 0..1. */
-  curveDeadZone: 0.05,
-  /** Ground cross arrival speed at the target at power 0 and 1, m/s. */
-  groundCrossArriveMin: 6,
-  groundCrossArriveMax: 10,
-  /** Manual cross distance along the request direction at power 0 and 1, m. */
-  crossDistMin: 15,
-  crossDistMax: 45,
-  /** A zone aim farther than this from the ball (a cross asked for far from the box) goes to a teammate chosen like a
-   *  pass (SIM-08 selectReceiver) when there is one, m. */
-  crossMaxDist: 45,
-  /** Ground cross lead: travel-time look-ahead cap, s. */
-  groundLeadMaxSec: 3,
-} as const;
+/** [TUN-1] Old name kept for importers outside the sim / AI (tests, input): the block is contracts/tuning.ts T_LOB. */
+export const LOCAL_TUNING = T_LOB;
 
-const LT = LOCAL_TUNING;
+
+const LT = T_LOB;
 
 const NS = NUM_SLOTS;
 const PPT = PLAYERS_PER_TEAM;
@@ -171,7 +85,7 @@ for (const ph of RESTART_PHASES) RESTART_PHASE[ph] = 1;
 // ---------------------------------------------------------------- module scratch (no per-tick allocation)
 
 /** Launch solution scratch (a literal, not SIM-01's factory: nothing imported from a module that can sit in the
- *  registry import cycle is read while this module evaluates). SIM-08 tuning (PASS_TUNING) is likewise read only inside
+ *  registry import cycle is read while this module evaluates). SIM-08 tuning (T_PASS_KICK) is likewise read only inside
  *  functions, at call time. */
 const SOL: LaunchSolution = { vx: 0, vy: 0, vz: 0, sx: 0, sy: 0, sz: 0, speed: 0, flightT: 0, landX: 0, landZ: 0, reached: 0 };
 /** Solver scratch (doubles handed between helpers without boxing). */
@@ -232,7 +146,7 @@ export function kickLiveFor(s: SimState, slot: number): boolean {
 function ballArriving(s: SimState, slot: number, ticks: number, lane: number): boolean {
   const b = s.ball;
   if (b.owner >= 0 || b.heldBy >= 0 || b.inNet !== 0) return false;
-  if (!(b.y <= PASS_TUNING.startArriveHeight)) return false;
+  if (!(b.y <= T_PASS_KICK.startArriveHeight)) return false;
   const p = s.players[slot]!;
   const dx = b.x - p.x, dz = b.z - p.z;
   const rvx = b.vx - p.vx, rvz = b.vz - p.vz;
@@ -262,7 +176,7 @@ export function beginFootKick(s: SimState, slot: number, kind: KickKind, req: Ac
   if (b.heldBy >= 0) return 0;
   if (b.owner >= 0 && b.owner !== slot) return 0;
   if (b.owner !== slot && !ballInReach(s, slot) &&
-      !ballArriving(s, slot, T_PASS.windup + PASS_TUNING.startArriveTicks, PASS_TUNING.startArriveLane)) return 0;
+      !ballArriving(s, slot, T_PASS.windup + T_PASS_KICK.startArriveTicks, T_PASS_KICK.startArriveLane)) return 0;
   beginAction(p, ActionKind.KICK, T_PASS.windup + DEFAULT_REC, T_PASS.windup);
   p.actKick = kind;
   p.actSkill = SkillMove.NONE;
@@ -665,7 +579,7 @@ function solveCrossImpl(s: SimState, slot: number, out: KickLaunch): number {
   if (r < 0) r = attackerNear(s, slot, F[F_TX]!, F[F_TZ]!, F[F_T]!);
   // The power bar picks the cross's zone (the launch speed is solved), so it is no "extreme power" strike: the error
   // sees at most SIM-08's power knee.
-  const knee = PASS_TUNING.powerKnee;
+  const knee = T_PASS_KICK.powerKnee;
   const errPower = power < knee ? power : knee;
   applyError(s, slot, errPower, attr01(s.attrs[slot]!.crossing), ground ? T_PASS.groundMax * T_PASS.drivenMul : LT.crossSpeedMax, out);
   out.kind = kind;

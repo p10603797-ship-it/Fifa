@@ -620,6 +620,11 @@ export interface PauseMenu {
   onBack(): boolean;
   /** Quick-sub prompt for `human` (pauses the match for him when running). */
   openQuickSub(human: number): void;
+  /**
+   * [QF-17] Hand every queued team order over now while play runs (dispose does the same): the match screen calls it
+   * when the half-time overlay covers it, since it gets no frames (update) until the second half.
+   */
+  flushOrders(): void;
   dispose(): void;
 }
 
@@ -1528,6 +1533,12 @@ export function createPauseMenu(): PauseMenu {
         quickHuman = -1;
       }
     },
+    flushOrders() {
+      const c = ctx;
+      if (!c) return;
+      const s = c.session.getState();
+      if (s && !c.session.paused) pumpTeamOrders(s, send, Number.POSITIVE_INFINITY);
+    },
     dispose() {
       cancelDrag();
       quitModal?.close();
@@ -1536,12 +1547,9 @@ export function createPauseMenu(): PauseMenu {
       unsubAction?.();
       unsubAction = null;
       const c = ctx;
-      if (c) {
-        // Leaving the match screen while play runs (half-time, full-time): hand every remaining order over now.
-        // While paused (settings, remap) the orders wait in the module store for the menu that comes back.
-        const s = c.session.getState();
-        if (s && !c.session.paused) pumpTeamOrders(s, send, Number.POSITIVE_INFINITY);
-      }
+      // Leaving the match screen while play runs (full-time): hand every remaining order over now. While paused
+      // (settings, remap) the orders wait in the module store for the menu that comes back.
+      api.flushOrders();
       if (visible && c && el) {
         try {
           c.focus.detach(el);

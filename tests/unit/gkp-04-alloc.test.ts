@@ -11,7 +11,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 describe('GKP-04 allocation', () => {
   it('waiting, evaluating and deciding allocate nothing per call', () => {
-    const r = spawnSync(process.execPath, ['--expose-gc', '--import', 'tsx', 'tests/unit/gkp-04-alloc-probe.ts', '20000'], {
+    // [TUN-7S] --single-threaded (tests/perf/qf-7r-alloc-flags.ts): compiles synchronously, so the measured bytes do not
+    // depend on CPU load (under load the optimised code arrived later and the window ran boxing baseline code).
+    const r = spawnSync(process.execPath, ['--single-threaded', '--expose-gc', '--import', 'tsx', 'tests/unit/gkp-04-alloc-probe.ts', '20000'], {
       cwd: ROOT, encoding: 'utf8', timeout: 120_000,
     });
     expect(r.status, r.stderr).toBe(0);

@@ -68,8 +68,9 @@ const PROBE = `
 `;
 
 describe('TAI-06 budget', () => {
+  // [TUN-7S] --single-threaded: synchronous compilation, load-independent bytes (tests/perf/qf-7r-alloc-flags.ts).
   const r = spawnSync(process.execPath, [
-    '--expose-gc', '--no-concurrent-recompilation', '--import', 'tsx', '--input-type=module', '-e', PROBE,
+    '--single-threaded', '--expose-gc', '--no-concurrent-recompilation', '--import', 'tsx', '--input-type=module', '-e', PROBE,
   ], {
     cwd: ROOT, encoding: 'utf8', timeout: 240_000,
   });
