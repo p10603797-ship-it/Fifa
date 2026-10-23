@@ -18,7 +18,7 @@
  */
 import { IMMUTABLE_STATE_KEYS, type SimState } from '../../contracts/state';
 import { INPUT_FIELDS, type InputFrame } from '../../contracts/input';
-import { stateShapeSignature } from './clone';
+import { stateShapeIndex } from './clone';
 
 const F64 = new Float64Array(1);
 const U32 = new Uint32Array(F64.buffer);
@@ -155,8 +155,8 @@ function isImmutableKey(k: string): boolean {
 // moves the raw double. It is generated once per state shape from the state's own keys (no hand-kept field list) with
 // `new Function`; without it (a CSP that forbids eval) hashState stays on the generic walk. It mixes exactly the words
 // the generic walk mixes, in the same order (tags, lengths, number bits with -0 as +0 and one canonical NaN), so the
-// hash is identical; a state uses it only after its full shape signature matched (clone.ts stateShapeSignature: every
-// key, value kind and array length), and states keep their shape for life (contracts/state.ts).
+// hash is identical; a state uses it only after it matched the shape (clone.ts stateShapeIndex: every key in order, value
+// kind and array length, checked by a generated checker or the signature), and states keep their shape for life.
 
 /** mixNumber of the value already in F64[0] (no double crosses the call). */
 function mixF64(): void {
@@ -243,9 +243,8 @@ function genHashObject(g: HashGen, v: Record<string, unknown>, root: boolean): s
   return name;
 }
 
-/** Compiled hashers by state shape signature (clone.ts stateShapeSignature). */
-const hasherSigs: string[] = [];
-const hasherFns: Hasher[] = [];
+/** Compiled hashers by clone.ts shape index (stateShapeIndex: the shape registry shared with copyState). */
+const hasherFns: (Hasher | null)[] = [];
 let hashCodegenOff = 0;
 /** States already validated against a compiled hasher (small ring; null fn = generic). */
 const H_RING = 6;
@@ -253,14 +252,22 @@ const hState: (SimState | null)[] = new Array<SimState | null>(H_RING).fill(null
 const hFn: (Hasher | null)[] = new Array<Hasher | null>(H_RING).fill(null);
 let hNext = 0;
 
-/** Compile generated hasher code and cache it under `shape` (null and codegen off when `new Function` is unavailable). */
-function compileHasher(g: HashGen, root: string, shape: string): Hasher | null {
+/**
+ * The hasher of shape `k` (generated from `s`, which has that shape), compiled on first use; null when `new Function` is
+ * unavailable.
+ */
+function hasherOfShape(k: number, s: SimState): Hasher | null {
+  const have = k < hasherFns.length ? hasherFns[k] : undefined;
+  if (have !== undefined && have !== null) return have;
+  if (hashCodegenOff) return null;
+  const g: HashGen = { fns: [], sigs: [], names: [] };
+  const root = genHashObject(g, s as unknown as Record<string, unknown>, true);
   try {
     const make = new Function('mw', 'mf', 'F64', 'walk', `'use strict';\n${g.fns.join('')}return ${root};`) as
       (mw: (w: number) => void, mf: () => void, f64: Float64Array, walk: (v: unknown) => void) => Hasher;
     const fn = make(mixWord, mixF64, F64, walk);
-    hasherSigs.push(shape);
-    hasherFns.push(fn);
+    while (hasherFns.length <= k) hasherFns.push(null);
+    hasherFns[k] = fn;
     return fn;
   } catch {
     hashCodegenOff = 1;
@@ -270,18 +277,11 @@ function compileHasher(g: HashGen, root: string, shape: string): Hasher | null {
 
 function hasherFor(s: SimState): Hasher | null {
   for (let i = 0; i < H_RING; i++) if (hState[i] === s) return hFn[i]!;
-  let fn: Hasher | null = null;
-  const shape = hashCodegenOff ? '?' : stateShapeSignature(s);
-  if (shape.indexOf('?') < 0) {
-    // [TUN-7S skeptic] Look the compiled hasher up by the shape signature before generating any code: a new state of a
-    // known shape (a clone, a deserialized snapshot) cost ~2 ms of code generation per first hash (generic walk ~0.2 ms).
-    for (let i = 0; i < hasherSigs.length; i++) if (hasherSigs[i] === shape) fn = hasherFns[i]!;
-    if (fn === null) {
-      const g: HashGen = { fns: [], sigs: [], names: [] };
-      const root = genHashObject(g, s as unknown as Record<string, unknown>, true);
-      fn = compileHasher(g, root, shape);
-    }
-  }
+  // [TUN-7S skeptic] A state of a compiled shape is recognised by clone.ts's generated shape checker (no signature string:
+  // the first hash of each match's new state cost a ~28 KB signature, ~0.6 ms warm and several ms cold, plus regenerating
+  // the hasher's code, ~2 ms, even when it was compiled).
+  const k = hashCodegenOff ? -1 : stateShapeIndex(s);
+  const fn = k >= 0 ? hasherOfShape(k, s) : null;
   hState[hNext] = s;
   hFn[hNext] = fn;
   hNext = (hNext + 1) % H_RING;
@@ -296,11 +296,14 @@ function hasherFor(s: SimState): Hasher | null {
  */
 export function primeHashCodegen(s: SimState): void {
   if (hashCodegenOff || hasherFns.length > 0) return;
-  const shape = stateShapeSignature(s);
-  if (shape.indexOf('?') >= 0) return;
-  const g: HashGen = { fns: [], sigs: [], names: [] };
-  const root = genHashObject(g, s as unknown as Record<string, unknown>, true);
-  compileHasher(g, root, shape);
+  const k = stateShapeIndex(s);
+  const fn = k >= 0 ? hasherOfShape(k, s) : null;
+  if (fn === null) return;
+  // Run it once (its inner functions' bytecode is compiled on first call); the result is discarded.
+  begin(HASH_SEED);
+  withKeys = false;
+  fn(s);
+  finish();
 }
 
 /** True when hashState(s) runs the specialised hasher (tests, perf reports). */

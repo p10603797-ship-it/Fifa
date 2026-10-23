@@ -120,9 +120,10 @@ export function copyStateGeneric(dst: SimState, src: SimState): void {
 // list: it follows contracts/state.ts) with `new Function`; where that is unavailable (a CSP without 'unsafe-eval')
 // copyState stays on the generic walk.
 //
-// Safety: a (dst, src) pair uses the generated copier only after both states' full shape signatures (every key, value
-// kind and array length, in order) matched the shape the copier was built from; the last few validated pairs are
-// remembered, so the app loop's (prev, curr) validates once per match. States keep their shape for life (the sim never
+// Safety: a (dst, src) pair uses the generated copier only after both states matched the shape the copier was built from
+// (every key in order, value kind and array length: the shape's generated checker, or the full signature for a shape not
+// compiled yet); the last few validated pairs are remembered, so the app loop's (prev, curr) validates once per match.
+// initMatch compiles the copier on the loading screen (primeStateCodegen), so the first tick only runs the checkers. States keep their shape for life (the sim never
 // adds, removes or retypes fields: contracts/state.ts), and the generated code still guards every value's kind and every
 // array length (a value whose kind changed since validation, or an array whose length did, is copied by the generic
 // copyInto). The result is exactly the generic walk's: same values, no shared nested references, same key order; the one
@@ -226,9 +227,71 @@ function genArray(g: Gen, a: unknown[], p: string, n: number): string {
   return out;
 }
 
-/** Compiled copiers by root shape signature (a handful at most: states of one SIM_VERSION share one shape). */
+// ---- shape checkers [TUN-7S skeptic]
+// Validating a new state against a compiled shape used to build its full signature string (shapeSig: ~28 KB, ~3000
+// JSON.stringify calls; ~0.6 ms warm, several ms cold), twice per new copy pair and once per new hashed state, so the
+// first tick of every match paid it (copyState(prev, curr) and the replay recorder's first hashState of the new state).
+// Each compiled shape now carries a generated checker that answers "does this object have exactly this shape" (same
+// keys in the same for-in order, same value kinds, same array lengths: what the signature encodes) with no allocation.
+
+/** Code generator state for checkers: one function and one key list per distinct object shape. */
+interface CheckGen { fns: string[]; bySig: string[]; names: string[]; n: number }
+
+/** Statements returning false unless `x` (an expression read once into a local) has the kind / shape of `v`. */
+function genCheckValue(g: CheckGen, x: string, v: unknown): string {
+  if (typeof v === 'number') return `if (typeof ${x} !== 'number') return false;\n`;
+  if (Array.isArray(v)) {
+    const a = `a${g.n++}`;
+    let out = `{ const ${a} = ${x}; if (!Array.isArray(${a}) || ${a}.length !== ${v.length}) return false;\n`;
+    let allNum = true;
+    let elemSig: string | null = null;
+    let uniform = v.length > 0;
+    for (let i = 0; i < v.length; i++) {
+      const e: unknown = v[i];
+      if (typeof e === 'number') { uniform = false; continue; }
+      allNum = false;
+      if (typeof e !== 'object' || e === null || Array.isArray(e) || ArrayBuffer.isView(e)) { uniform = false; continue; }
+      const sig = shapeSig(e, false);
+      if (elemSig === null) elemSig = sig; else if (elemSig !== sig) uniform = false;
+    }
+    if (allNum) out += `for (let i = 0; i < ${v.length}; i++) if (typeof ${a}[i] !== 'number') return false;\n`;
+    else if (uniform) out += `for (let i = 0; i < ${v.length}; i++) if (!${genCheckObject(g, v[0] as Rec, false)}(${a}[i])) return false;\n`;
+    else for (let i = 0; i < v.length; i++) out += genCheckValue(g, `${a}[${i}]`, v[i]);
+    return `${out}}\n`;
+  }
+  return `if (!${genCheckObject(g, v as Rec, false)}(${x})) return false;\n`;
+}
+
+/** Name of the generated checker for objects of `v`'s shape (keys in order, then every value's kind / shape). */
+function genCheckObject(g: CheckGen, v: Rec, root: boolean): string {
+  const sig = shapeSig(v, root);
+  for (let i = 0; i < g.bySig.length; i++) if (g.bySig[i] === sig) return g.names[i]!;
+  const name = `k${g.names.length}`;
+  g.bySig.push(sig);
+  g.names.push(name);
+  const keys: string[] = [];
+  let body = '';
+  for (const k in v) {
+    keys.push(k);
+    if (root && isImmutableKey(k)) continue; // referenced, any value (shapeSig: 'R')
+    body += genCheckValue(g, `o${prop(k)}`, v[k]);
+  }
+  g.fns.push(`const ${name}K = ${JSON.stringify(keys)};\nfunction ${name}(o) {\n` +
+    `if (o === null || typeof o !== 'object' || Array.isArray(o) || ArrayBuffer.isView(o)) return false;\n` +
+    `let i = 0;\nfor (const k in o) { if (k !== ${name}K[i]) return false; i++; }\nif (i !== ${name}K.length) return false;\n` +
+    `${body}return true;\n}\n`);
+  return name;
+}
+
+type Checker = (o: unknown) => boolean;
+
+/**
+ * Compiled shapes (a handful at most: states of one SIM_VERSION share one shape): signature, copier and checker.
+ * A shape is registered only from a state whose signature has no '?' (numbers, plain objects and arrays only).
+ */
 const compiledSig: string[] = [];
-const compiledFn: (Copier | null)[] = [];
+const compiledFn: Copier[] = [];
+const compiledCheck: Checker[] = [];
 /** 1 once `new Function` was found unavailable (CSP): every copy stays generic. */
 let codegenUnavailable = 0;
 
@@ -239,31 +302,60 @@ const pairSrc: (SimState | null)[] = new Array<SimState | null>(PAIR_RING).fill(
 const pairFn: (Copier | null)[] = new Array<Copier | null>(PAIR_RING).fill(null);
 let pairNext = 0;
 
-function compile(src: SimState, sig: string): Copier | null {
-  if (codegenUnavailable) return null;
+/** Generate and compile the copier and checker of `src`'s shape (signature `sig`, no '?'); its index, or -1. */
+function compile(src: SimState, sig: string): number {
+  if (codegenUnavailable) return -1;
   const g: Gen = { fns: [], bySig: [], names: [] };
   const root = genObject(g, src as unknown as Rec, true);
+  const cg: CheckGen = { fns: [], bySig: [], names: [], n: 0 };
+  const rootCheck = genCheckObject(cg, src as unknown as Rec, true);
   try {
-    const make = new Function(`'use strict';\n${g.fns.join('')}return ${root};`) as () => Copier;
-    const fn = make();
+    const make = new Function(`'use strict';\n${g.fns.join('')}${cg.fns.join('')}return [${root}, ${rootCheck}];`) as
+      () => [Copier, Checker];
+    const [fn, check] = make();
     compiledSig.push(sig);
     compiledFn.push(fn);
-    return fn;
+    compiledCheck.push(check);
+    return compiledFn.length - 1;
   } catch {
     codegenUnavailable = 1;
-    return null;
+    return -1;
   }
+}
+
+/** Index of the compiled shape `s` has now (checkers first; no allocation when one matches), or -1. */
+function matchShape(s: unknown): number {
+  for (let i = 0; i < compiledCheck.length; i++) if (compiledCheck[i]!(s)) return i;
+  return -1;
+}
+
+/**
+ * Index of the compiled shape of `s`, compiling it when `s` has a new shape with no '?' (-1: not specialisable or no
+ * codegen). For hash.ts's hasher: a state of a known shape is recognised by the checker, without a signature.
+ */
+export function stateShapeIndex(s: SimState): number {
+  if (codegenUnavailable) return -1;
+  const k = matchShape(s);
+  if (k >= 0) return k;
+  const sig = shapeSig(s, true);
+  return sig.indexOf('?') < 0 ? compile(s, sig) : -1;
 }
 
 /** The specialised copier for this pair, or null (shapes differ / unsupported / no codegen). Allocates only on a new pair. */
 function copierFor(dst: SimState, src: SimState): Copier | null {
   for (let i = 0; i < PAIR_RING; i++) if (pairDst[i] === dst && pairSrc[i] === src) return pairFn[i]!;
   if (codegenUnavailable) return null;
-  const sig = shapeSig(src, true);
   let fn: Copier | null = null;
-  if (sig.indexOf('?') < 0 && shapeSig(dst, true) === sig) {
-    for (let i = 0; i < compiledSig.length; i++) if (compiledSig[i] === sig) fn = compiledFn[i]!;
-    if (fn === null) fn = compile(src, sig);
+  const k = matchShape(src);
+  if (k >= 0) {
+    if (compiledCheck[k]!(dst)) fn = compiledFn[k]!;
+  } else {
+    // A shape not compiled yet: compile it when both states have it.
+    const sig = shapeSig(src, true);
+    if (sig.indexOf('?') < 0 && shapeSig(dst, true) === sig) {
+      const c = compile(src, sig);
+      if (c >= 0) fn = compiledFn[c]!;
+    }
   }
   pairDst[pairNext] = dst;
   pairSrc[pairNext] = src;
@@ -275,23 +367,30 @@ function copierFor(dst: SimState, src: SimState): Copier | null {
 /**
  * Shape signature of a state: every key, value kind and array length in walk order (immutable keys as references).
  * Contains '?' when some value is not a number / plain object / array (null, string, typed array, own "__proto__"...).
- * Allocates (a string); for one-off validation (hash.ts's specialised hasher). [TUN-7S]
+ * Allocates (a string); for one-off validation and tests. [TUN-7S]
  */
 export function stateShapeSignature(s: SimState): string {
   return shapeSig(s, true);
 }
 
 /**
- * [TUN-7S skeptic] Generate and compile the copier for `s`'s shape now (sim/init.ts initMatch: on the loading screen)
- * instead of inside the first copyState(prev, curr) of the first match: generating and compiling cost ~11 ms there in a
- * cold process (HEAD's generic first copy ~0.85 ms), a hitch on the first tick of play (x4 on an iPad). Once per process:
- * after a copier exists this returns at once (every state of one SIM_VERSION has the same shape; a state of another
- * shape still compiles lazily on its first copy). Pairs are still validated on first use: nothing is assumed about `s`.
+ * [TUN-7S skeptic] Generate and compile the copier (and shape checker) for `s`'s shape now (sim/init.ts initMatch: on the
+ * loading screen) instead of inside the first copyState(prev, curr) of the first match: generating and compiling cost
+ * ~11 ms there in a cold process (HEAD's generic first copy ~0.85 ms), a hitch on the first tick of play (x4 on an iPad).
+ * Once per process: after a shape is compiled this returns at once (every state of one SIM_VERSION has the same shape; a
+ * state of another shape still compiles lazily on its first copy). Pairs are still validated on first use (by the
+ * checker): nothing is assumed about `s`.
  */
 export function primeStateCodegen(s: SimState): void {
   if (codegenUnavailable || compiledFn.length > 0) return;
   const sig = shapeSig(s, true);
-  if (sig.indexOf('?') < 0) compile(s, sig);
+  if (sig.indexOf('?') >= 0) return;
+  const k = compile(s, sig);
+  if (k < 0) return;
+  // Run the checker and the copier once (into a throwaway clone): V8 / JSC compile a generated inner function's bytecode
+  // on its first call, which would otherwise still land on the first tick.
+  compiledCheck[k]!(s);
+  compiledFn[k]!(cloneState(s), s, copyInto);
 }
 
 /** Forget validated pairs (tests that reshape a state in place after copying it). */

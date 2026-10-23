@@ -184,7 +184,9 @@ function main(): void {
     let bad = 0;
     for (const row of rows) {
       const r = ref.find((x) => x.name === row.name);
-      if (!r) { console.log(`MISSING in reference: ${row.name}`); continue; }
+      // [TUN-7S skeptic] A run the reference lacks (renamed / new entry) is a difference, not a silent skip: a compare
+      // that silently ran fewer comparable rows still printed "IDENTICAL".
+      if (!r) { bad++; console.log(`MISSING in reference: ${row.name}`); continue; }
       if (r.hash !== row.hash || r.digest !== row.digest || r.ticks !== row.ticks) {
         bad++;
         console.log(`DIFF ${row.name}: ref ${r.hash}/${r.digest}/${r.ticks} now ${row.hash}/${row.digest}/${row.ticks}`);

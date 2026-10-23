@@ -186,8 +186,19 @@ B/tick), 93% of it 16-byte heap numbers (double boxing at call boundaries). None
 slot that later holds a boolean / string / object, an object slot that later holds null, an array slot that holds
 anything else take the generic path for that value): before, copyState shared the object or threw a TypeError and
 hashState coerced the value to a double (true hashed as 1) or threw. Same 0 B per copyState, hash table identical
-(tests/unit/tun-7s-skeptic-codegen.test.ts). A new state of a known shape is looked up by its shape signature before
-any code is generated (first hashState of a fresh clone ~2.5 ms -> ~1 ms; the signature walk is the rest).
+(tests/unit/tun-7s-skeptic-codegen.test.ts).
+
+[TUN-7S skeptic] First hash of a match: the hasher was generated, compiled and validated inside the first hashState of
+the live state (the replay recorder at tick 60, net desync at tick 30) of the first match: 1.59 MB allocated and a `new
+Function` compile in one tick (~13 ms here without a profiler, HEAD's generic first hash ~2.3 ms; x4 on an iPad), and
+every later match regenerated the hasher's code and a ~28 KB shape signature on its first hash (0.48 MB, ~7 ms). (The
+copier was compiled on the loading screen already: app/liveState.ts cloneLiveState's copyState validates the copy pair
+there; the RUL-05 free-kick preview's scratch pair and a net hard-sync paid two signatures on first use.) Now initMatch
+(the loading screen) compiles and runs both once per process (+~25 ms on the first initMatch only), and each compiled
+shape carries a generated checker (same keys in order, value kinds, array lengths: what the signature encoded) that
+recognises a new state with no signature string. First tick now: 0 compiles, 0.10 MB first match / 0.025 MB later, first
+hash ~1.0 ms first match / ~0.45 ms later (tests/perf/tun-7s-skeptic-first-tick.test.ts). A fresh clone's first
+hashState / a new copy pair: ~2.5 / ~1.9 ms -> ~0.3 ms (the generic walk's cost).
 
 Allocation tests made load-independent (child processes now run `--single-threaded`, so the tiering and the measured
 bytes no longer depend on CPU load; no limit changed): gkp-03, sim-06, sim-07, tai-05, tai-08, tai-09, gkp-04, and
