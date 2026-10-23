@@ -223,5 +223,6 @@ Total assignments: 201.
 | QF-17 | done (5 defects: half-time screen swap now keeps the match mounted and builds half time ahead: 4x 18-24 -> 6.6 ms, real frame 50-100 -> 17-33 ms; flaky session fuzz test made deterministic) | quality step-down can land in the break (83-117 ms frame at 4x) |
 | QF-7 | queued (after TUN-1) | performance |
 | SGN-05 | done | originality and licence audit: names screened against ~1,700 famous names + Wikidata (98k footballers, 37k clubs); 6 player names renamed (names only, attributes identical); visuals, audio, dependencies, licence notices in dist, runtime network (proxy + NetLog logs: no request outside online 1v1) all PASS |
-| QF-8 | queued (last) | determinism, soak 2000, fuzz 500 |
+| TUN-2 | done (444 new tuning leaves: set-piece spots, inline sim/AI literals, input and modes blocks; 28-run hash table IDENTICAL; byte-level value proof; TUNING-CR markers 0; whole suite 515 files / 7,325 tests pass) | |
+| QF-8 + SGN-03 | queued | determinism, soak 2000, fuzz 500 on the final tree |
 
