@@ -219,7 +219,8 @@ Total assignments: 201.
 | QF-15 | done (6 defects: final-whistle divergence that moves the whistle, snapshot overtaken by the final, garbled final message, unusable final state, reload at full time with the link down; tests/net 183 pass; netsim seeds 3/7/11/19 0 desyncs; online e2e pass) | online final-whistle desync detection |
 | QF-16 | done (18 defects: 11 + 7; human walkers, joggers, shielders and box walkers no longer get past a top-level CPU defender, fouls in proportion; Beginner v Beginner 8.7 shots; keeper reflexes matter at every level; ladder over 400 71.5/73.0/70.75/71.75/69.0%; balance 83.4% over 800, equal 59.0%; soak 500 PASS goals 2.96 shots 14.95; fuzz PASS) | open: bot-v-bot escorts 1.1-1.5 a match |
 | QF-7R | done (8 defects: prev state in dictionary mode, three.js uniform boxing, unwarmed poses, CLOSE-camera arrow, program-list sync; render 0.016 B/frame steady play; HUD no redundant DOM writes; throttled bench in PERF_REPORT) | CR: copyState allocates ~10 KB/tick -> QF-7S; half-time screen swap one long frame |
-| TUN-1 | queued (after QF-16) | gameplay constants into tuning.ts, hash-identical (BRIEF §4 rule 6) |
+| TUN-7S | running | gameplay constants into tuning.ts (TUN-1) + sim/AI performance (QF-7S), hash-identical |
+| QF-17 | running | half-time transition hitch, flaky session fuzz test |
 | QF-7 | queued (after TUN-1) | performance |
 | SGN-05 | done | originality and licence audit: names screened against ~1,700 famous names + Wikidata (98k footballers, 37k clubs); 6 player names renamed (names only, attributes identical); visuals, audio, dependencies, licence notices in dist, runtime network (proxy + NetLog logs: no request outside online 1v1) all PASS |
 | QF-8 | queued (last) | determinism, soak 2000, fuzz 500 |
