@@ -62,7 +62,7 @@ export const PAUSE_DEBOUNCE_MS = 250;
 /** Screens that belong to a running match; the session only steers the router while one of them is shown. */
 const MATCH_SCREENS: readonly ScreenId[] = ['match', 'half-time', 'full-time'];
 
-const LOCAL_TUNING = { // TUNING-CR (app timing, not gameplay)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: app timing)
   /** Ticks into the break before extra time at which the extra-time half-time screen is built ahead (1 s at 60 Hz). */
   etPrepareTicks: 60,
 } as const;

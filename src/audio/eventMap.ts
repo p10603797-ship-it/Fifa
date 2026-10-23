@@ -35,7 +35,7 @@ const LOCAL_TUNING = {
   interceptPower: 0.4,
   /** Strength of a keeper pick-up glove sound, 0..1. */
   pickUpStrength: 0.5,
-} as const; // TUNING-CR
+} as const; // LOCAL_TUNING (non-gameplay: audio event mapping)
 
 export const EVENT_MAP_TUNING = LOCAL_TUNING;
 

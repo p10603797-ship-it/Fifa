@@ -39,7 +39,7 @@ import type { ReadonlySimState } from '../../contracts/state';
 import { T_BALL, T_CAMERA, T_TOUCHUI } from '../../contracts/tuning';
 import type { CameraModule, EulerFields, RenderContext, RenderFrame } from '../types';
 
-export const LOCAL_TUNING = { // TUNING-CR (GFX-14 broadcast camera)
+export const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: GFX-14 broadcast camera)
   // ---- settings sliders (0..20, 10 = the T_CAMERA baseline)
   /** Height slider: height multiplier = heightAt0 + heightPerStep * slider (0.7 .. 1.3). */
   heightAt0: 0.7,

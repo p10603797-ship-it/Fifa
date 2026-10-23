@@ -39,7 +39,7 @@ import { CONTACT_POSES } from './anim/contact';
 import { LOCOMOTION_POSES } from './anim/locomotion';
 import type { PoseTable } from './types';
 
-export const WARM_TUNING = { // TUNING-CR (render-only: loading-screen warm-up)
+export const WARM_TUNING = { // LOCAL_TUNING (non-gameplay: render only, loading-screen warm-up)
   /** Scripted sim ticks (two animation frames each). */
   ticks: 300,
   /** Ticks per action slot of a player's programme (actions last up to actionSpan - 2 ticks). */

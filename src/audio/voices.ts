@@ -22,7 +22,7 @@ const LOCAL_TUNING = {
   /** Playback rate limits (Web Audio accepts far more; these keep durations sane). */
   minRate: 0.0625,
   maxRate: 16,
-} as const; // TUNING-CR
+} as const; // LOCAL_TUNING (non-gameplay: audio voices)
 
 export const VOICE_TUNING = LOCAL_TUNING;
 

@@ -18,7 +18,7 @@ import type { ReadonlySimState } from '../../contracts/state';
 import { h, injectStyle } from '../components';
 import { HUD_LARGE_SCALE, HUD_SHARED_CSS, bindLargerHud } from './hudShared';
 
-/** Presentation constants (UI, not gameplay; no TUNING-CR needed). */
+/** Presentation constants (UI, not gameplay; no tuning.ts entry needed). */
 export const POWER_BAR_TUNING = {
   /** Height above the ground the bar anchors to: the tip of the renderer's overhead marker (render/markers.ts MARKER_Y), m. */
   anchorY: 2.25,

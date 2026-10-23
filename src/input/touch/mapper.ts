@@ -78,7 +78,7 @@ import {
   ClusterMode, SwipeDir, TOUCH_BUTTON_COUNT, TouchButtonId, TouchEdge, type TouchButtonEvent, type TouchGestureEvent,
   type TouchIntentState,
 } from '../../contracts/touch';
-import { T_INPUT, T_TOUCHUI } from '../../contracts/tuning';
+import { T_INPUT, T_TOUCH_MAPPER, T_TOUCHUI } from '../../contracts/tuning';
 import { Ctx, controlContext, ourPassInFlight, LOCAL_TUNING as RESOLVE_TUNING } from '../../sim/control/resolveShared';
 import { inCrossingZone } from '../../sim/pitch/geometry';
 import { writeAimAxes } from '../axes';
@@ -86,38 +86,8 @@ import { TAP_MS } from './button';
 import { clearanceOn, clusterModeFor, controlledSlot } from './cluster';
 import { GestureRule, isGestureRuleOn, type GestureSettings } from './gestures';
 
-/** Mapper constants (TUNING-CR: candidates for T_TOUCHUI / T_INPUT). */
-export const LOCAL_TUNING = {
-  /** A button swipe whose finger lifts within this time of the swipe is a flick (one press, explicit power), ms. */
-  flickLiftMs: 70,
-  /** Explicit power of a flicked PASS / THROUGH swipe (lob, pass and go, driven, lobbed through), 0..1. */
-  flickPassPower: 0.5,
-  /** Explicit power of a flicked SHOOT swipe (chip, finesse, power shot), 0..1. */
-  flickShotPower: 0.65,
-  /** Loose ball: a cluster-mode change must persist this long before the cluster swaps, ticks. */
-  looseSwapTicks: 8,
-  /** Stick strafe sends MOD_L once it has lasted this long (shorter = a double tap, never an L1 tap), ticks. */
-  strafeDelayTicks: T_INPUT.tapTicks,
-  /** Gesture target player: nearest within this distance of the target point (ground or body on screen), m. */
-  gestureSlotRadius: 1.5,
-  /** Body height used to hit-test a tapped player on screen, m. */
-  gestureBodyHeight: 1.8,
-  /** Players whose feet are this close to the tap's ground point are also hit-tested on screen (a tap on a body lands
-   *  behind him on the ground), m. */
-  gestureBodySearchM: 10,
-  /** Swipe end speed that gives full gPower, px/ms. */
-  gestureFullSpeed: 3,
-  /** Minimum gPower of a recognised swipe, 0..1 (0 would mean "default" to the sim). */
-  gestureMinPower: 0.15,
-  /** ON_GOAL: margin around the goal mouth on screen, px. */
-  goalMarginPx: 16,
-  /** ON_GOAL ground test (no projection of the frame): beside the posts, in front of and behind the goal line, m. */
-  goalMarginM: 1,
-  goalFrontM: 1.5,
-  goalBehindM: 3,
-  /** ON_GOAL: the goal frame is tested on screen only for ground points this close to the goal centre, m. */
-  goalSearchM: 20,
-} as const; // TUNING-CR
+/** Mapper constants: contracts/tuning.ts T_TOUCH_MAPPER ([TUN-2]; the old name is kept for importers). */
+export const LOCAL_TUNING = T_TOUCH_MAPPER;
 
 /** Sim tick length, ms. */
 const TICK_MS = 1000 / TICK_HZ;

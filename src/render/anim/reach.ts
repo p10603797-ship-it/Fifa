@@ -19,7 +19,7 @@ import { ACTION_CONTACT, ACTION_IMPLS } from './actions';
 import { PP } from './locomotion';
 import { FPA, FPR, footPitchS, IKT, legIKS, setFootPitchS } from './poseMath';
 
-const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: render-only animation constants)
   /** Largest root shift toward the ball (m, model) and the share of the contact offset the root takes. */
   rootMax: 0.3,
   rootShare: 0.5,

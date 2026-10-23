@@ -111,7 +111,7 @@ import { EventType, type EventSink } from '../../contracts/events';
 import { Btn } from '../../contracts/input';
 import { createChallengeRecord, MoveMode, type PlayerAttrs, type SimState } from '../../contracts/state';
 import { createBallPrediction, createKickLaunch } from '../../contracts/systems';
-import { T_BALL, T_DRIBBLE, T_GK, T_PLAYER, T_GK_SWEEP } from '../../contracts/tuning';
+import { T_BALL, T_DRIBBLE, T_GK, T_KICK, T_PLAYER, T_GK_SWEEP } from '../../contracts/tuning';
 import { createInterceptEstimate, estimateIntercept, estimateInterceptSlack } from '../../ai/steer';
 import { predictBall } from '../ball/flight';
 import { applyKick, ballTouchedThisTick, releasePossession } from '../core/kick';
@@ -707,7 +707,7 @@ function launch(s: SimState, k: number, vx: number, vy: number, vz: number, kind
   LAUNCH.tx = b.x + vx; LAUNCH.tz = b.z + vz;
   LAUNCH.onTarget = 0;
   applyKick(s, k, LAUNCH, 1, ev);
-  if (b.y > BALL_RADIUS + 1e-6 || vy > 0.5) b.grounded = 0;
+  if (b.y > BALL_RADIUS + 1e-6 || vy > T_KICK.liftVy) b.grounded = 0;
 }
 
 /** First-time clearance: long and high, away from goal toward the nearer touchline. */
@@ -734,8 +734,8 @@ function blockAway(s: SimState, k: number, ux: number, uz: number, ev: EventSink
   if (sp < L.smotherBlockSpeed) sp = L.smotherBlockSpeed;
   // Away from goal, sideways along his push / the ball's lateral side.
   const side = uz > 0.1 ? 1 : uz < -0.1 ? -1 : (b.z >= p.z ? 1 : -1);
-  let hx = dir + ux * 0.5, hz = side * 0.7 + uz * 0.5;
-  if (dir * hx < 0.3) hx = dir * 0.3;
+  let hx = dir + ux * L.blockAwayPushW, hz = side * L.blockAwaySideW + uz * L.blockAwayPushW;
+  if (dir * hx < L.blockAwayMinFwd) hx = dir * L.blockAwayMinFwd;
   const hl = Math.sqrt(hx * hx + hz * hz);
   hx /= hl; hz /= hl;
   launch(s, k, hx * sp, L.smotherBlockLift, hz * sp, KickKind.DEFLECTION, ev);
@@ -787,7 +787,7 @@ function tryCollect(s: SimState, k: number, ev: EventSink): number {
   const pressured = nearestOpponentWithin(s, team) >= 0;
   if (!pressured && sp <= L.feetPickUpMaxSpeed) {
     // Nobody near: let SIM-06 give him the ball at his feet once it is within control range.
-    if (dh <= T_DRIBBLE.controlRadius * 0.9 && cy <= T_DRIBBLE.controlHeight) {
+    if (dh <= T_DRIBBLE.controlRadius * L.feetPickUpReachFrac && cy <= T_DRIBBLE.controlHeight) {
       endAction(s, k, 0);
       return 1;
     }

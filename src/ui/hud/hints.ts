@@ -43,7 +43,7 @@ function sessionSetup(ctx: AppContext): { modeData?: unknown } | null {
   }
 }
 
-/** Hint constants (UI, not gameplay; no TUNING-CR needed). */
+/** Hint constants (UI, not gameplay; no tuning.ts entry needed). */
 export const HINT_TUNING = {
   /** Set-piece hint cards show for this many uses of each restart kind. */
   uses: 3,

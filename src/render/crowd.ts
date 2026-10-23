@@ -49,7 +49,7 @@ import {
 } from './stadium';
 import type { RenderContext, RenderFrame, RenderModule } from './types';
 
-export const LOCAL_TUNING = { // TUNING-CR (GFX-06, render only)
+export const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: GFX-06, render only)
   // ---- sprite (m)
   /** Sprite width (about one seat) and full height (standing with arms up fits inside). */
   spriteWidth: 0.72,

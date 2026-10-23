@@ -7,6 +7,7 @@ import { KickKind } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
 import type { KickLaunch } from '../../contracts/systems';
 import type { SimState } from '../../contracts/state';
+import { T_KICK } from '../../contracts/tuning';
 import { RESTART_PHASES } from '../../contracts/transitions';
 
 /** Record a touch by `slot` (any contact). Clears a shot in flight when touched by someone else. */
@@ -58,7 +59,7 @@ export function applyKick(s: SimState, slot: number, l: KickLaunch, power: numbe
   recordTouch(s, slot);
   b.vx = l.vx; b.vy = l.vy; b.vz = l.vz;
   b.sx = l.sx; b.sy = l.sy; b.sz = l.sz;
-  b.grounded = l.vy > 0.5 ? 0 : b.grounded;
+  b.grounded = l.vy > T_KICK.liftVy ? 0 : b.grounded;
   b.bounces = 0;
   b.lastKickBy = slot;
   b.lastKickTeam = p.team;

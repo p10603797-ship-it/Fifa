@@ -25,13 +25,10 @@
  * EventTarget for the connection events.
  */
 
-import { T_PAD } from '../../contracts/tuning';
+import { T_PAD, T_PAD_TRIGGER } from '../../contracts/tuning';
 import { radialDeadZone } from '../axes';
 
-const LOCAL_TUNING = {
-  /** A trigger that is down stays down until its value falls to this or below (0..1). Engages past T_PAD.triggerThreshold. */
-  triggerRelease: 0.25,
-} as const; // TUNING-CR: move to T_PAD.triggerRelease
+const LOCAL_TUNING = T_PAD_TRIGGER; // [TUN-2] trigger hysteresis: contracts/tuning.ts T_PAD_TRIGGER
 
 /** Standard Gamepad mapping indices (section 10). */
 export const PadButton = {

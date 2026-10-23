@@ -35,7 +35,7 @@ import { getTierParams } from './quality';
 import { replayPlaybackOf } from './replay';
 import { createInterpState, type RenderContext, type RenderFrame, type RenderModule } from './types';
 
-export const LOCAL_TUNING = { // TUNING-CR (GFX-16 effects)
+export const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: GFX-16 effects, render only)
   /** Particle pool at effectsScale 1 (Quality); tiers scale it by getTierParams().effectsScale. */
   maxParticles: 256,
   // ---- ball trail

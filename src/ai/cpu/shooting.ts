@@ -332,7 +332,7 @@ function xgKernel(s: SimState, slot: number): void {
   if (kj >= 0) {
     const kx = OX[kj]! - x, kz = OZ[kj]! - z;
     const tk = kx * ux + kz * uz;
-    if (tk > 0.3) {
+    if (tk > LT.keeperAheadMin) {
       const ka = s.attrs[OSLOT[kj]!]!;
       const ref = clamp01((ka.gkReflexes - 1) / 98), div = clamp01((ka.gkDiving - 1) / 98);
       const react = (T_GK.reactWorst + (T_GK.reactBest - T_GK.reactWorst) * ref) / TICK_HZ;

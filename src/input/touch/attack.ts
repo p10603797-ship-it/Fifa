@@ -35,17 +35,11 @@ import type { ControlPlacement } from '../../contracts/settings';
 import {
   CLUSTER_SLOT, ClusterMode, ClusterSlot, SwipeDir, TouchButtonId, type TouchIntentState,
 } from '../../contracts/touch';
-import { T_TOUCHUI } from '../../contracts/tuning';
+import { T_TOUCH_ATTACK, T_TOUCHUI } from '../../contracts/tuning';
 import { createTouchButton, type ButtonGeom, type TouchButtonControl } from './button';
 
-/** Layout constants (TUNING-CR: candidates for T_TOUCHUI). */
-export const LOCAL_TUNING = {
-  /** Size multiplier range for the cluster and each button (ControlPlacement.scale). */
-  scaleMin: 0.7,
-  scaleMax: 1.4,
-  /** Angular step between neighbouring small buttons on the arc, rad (45 deg: LOW 180, MID 135, HIGH 90). */
-  arcStep: Math.PI / 4,
-} as const; // TUNING-CR
+/** Layout constants: contracts/tuning.ts T_TOUCH_ATTACK ([TUN-2]; the old name is kept for importers). */
+export const LOCAL_TUNING = T_TOUCH_ATTACK;
 
 export interface SafeInsets {
   top: number;

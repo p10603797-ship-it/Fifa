@@ -27,7 +27,7 @@
 import type { Diagnostics } from '../contracts/app';
 import { showToast } from '../ui/components';
 
-const LOCAL_TUNING = { // TUNING-CR (platform, not gameplay)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: platform, PWA)
   /** Shortest time between two update checks triggered by the page becoming visible, ms. */
   updateCheckMs: 60_000,
   /** The update toast stays this long unless accepted (it is also re-offered on the next check), ms. */

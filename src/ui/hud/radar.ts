@@ -25,7 +25,7 @@ import { h, injectStyle } from '../components';
 import { HUD_LARGE_SCALE, HUD_SHARED_CSS, bindLargerHud, onRadarPref, radarEnabled } from './hudShared';
 import { kitHex, wornShirts } from './scoreboard';
 
-/** Radar presentation constants (UI, not gameplay; no TUNING-CR needed). */
+/** Radar presentation constants (UI, not gameplay; no tuning.ts entry needed). */
 export const RADAR_TUNING = {
   /** Canvas size in CSS px at HUD scale 1. */
   width: 168,

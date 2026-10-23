@@ -49,7 +49,7 @@ import {
 import { TAU } from './poseMath';
 import { kickApply, kickOffset, KOF, RCH, REACH_SWITCH, reachClip, touchReach, touchStepS, TST } from './reach';
 
-const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: render-only animation constants)
   /** Idle below / locomotion above these speeds (m/s, hysteresis). */
   idleEnter: 0.25,
   idleLeave: 0.5,

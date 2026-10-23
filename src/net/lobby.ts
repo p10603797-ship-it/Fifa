@@ -58,7 +58,7 @@ const LOCAL_TUNING = {
   /** Shortest / longest half accepted from the network, minutes (tests use short halves). */
   halfMinutesMin: 0.05,
   halfMinutesMax: 10,
-} as const; // TUNING-CR
+} as const; // LOCAL_TUNING (non-gameplay: lobby / transport timing)
 
 export const LOBBY_HELLO = 'lobby:hello';
 export const LOBBY_STATE = 'lobby:state';

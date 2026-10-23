@@ -4,6 +4,7 @@
 import { HALF_LENGTH, NUM_SLOTS, PLAYERS_PER_TEAM, teamFirstSlot } from '../../contracts/constants';
 import { ControllerKind } from '../../contracts/enums';
 import type { SimState } from '../../contracts/state';
+import { T_QUERY } from '../../contracts/tuning';
 
 export function otherTeam(team: number): number { return team === 0 ? 1 : 0; }
 export function teamStart(team: number): number { return teamFirstSlot(team); }
@@ -66,9 +67,9 @@ export function nearestDistOfTeam(s: SimState, team: number, x: number, z: numbe
 export function pressureOn(s: SimState, slot: number): number {
   const p = s.players[slot]!;
   const d = nearestDistOfTeam(s, otherTeam(p.team), p.x, p.z);
-  if (d <= 1) return 1;
-  if (d >= 6) return 0;
-  return 1 - (d - 1) / 5;
+  if (d <= T_QUERY.pressureFullDist) return 1;
+  if (d >= T_QUERY.pressureZeroDist) return 0;
+  return 1 - (d - T_QUERY.pressureFullDist) / (T_QUERY.pressureZeroDist - T_QUERY.pressureFullDist);
 }
 
 /** Number of active opponents of `team` within r metres of (x, z). */

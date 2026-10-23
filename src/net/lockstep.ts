@@ -64,7 +64,7 @@ const LOCAL_TUNING = {
    * totalStallMs count only time spent waiting for the friend), frames.
    */
   idlePumps: 2,
-} as const; // TUNING-CR
+} as const; // LOCAL_TUNING (non-gameplay: lockstep transport timing)
 
 export const HISTORY_TICKS: number = LOCAL_TUNING.historyTicks;
 export const RESEND_WAITING_MS: number = LOCAL_TUNING.resendWaitingMs;

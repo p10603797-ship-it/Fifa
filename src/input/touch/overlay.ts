@@ -41,40 +41,14 @@ import type { TouchSettings } from '../../contracts/settings';
 import {
   ClusterMode, ClusterSlot, SwipeDir, TouchButtonId, type TouchIntentState,
 } from '../../contracts/touch';
-import { T_TOUCHUI } from '../../contracts/tuning';
+import { T_TOUCH_OVERLAY, T_TOUCHUI } from '../../contracts/tuning';
 import { ATTACK_SWIPE_HINTS, SLOT_ATTACK_BUTTON, type ClusterLayout, type SafeInsets } from './attack';
 import { buttonLabel, DEFENCE_SWIPE_HINTS, SLOT_DEFENCE_BUTTON, slotButton } from './cluster';
 import type { StickConfig } from './stick';
 
-const LOCAL_TUNING = {
-  /** Stick thumb diameter at the default stick radius, pt (scales with the radius). */
-  knob: 56,
-  /** Set-piece preview dots drawn at most. */
-  previewDots: 24,
-  /** Power ring quantisation steps (DOM writes only when the step changes). */
-  powerSteps: 64,
-  /** HUD regions (CSS px at the larger-HUD scale, so both HUD sizes fit): scoreboard box from its top-left anchor. */
-  scoreboardW: 360,
-  scoreboardH: 64,
-  scoreboardTop: 16,
-  /** Top-centre HUD lane (toasts, hints): half width and height below the safe top edge. */
-  laneHalfW: 220,
-  laneH: 120,
-  /** Radar box (canvas + padding + border at the larger-HUD scale) and its gap to the bottom safe edge. */
-  radarW: 230,
-  radarH: 152,
-  radarBottom: 16,
-  /** Swipe-hint size estimate (11 px semi-bold caps): px per character, fixed extra width (padding, border, arrow,
-   *  gap), height (arrow + gap + label), and the offset from the button edge (overlay.css translate). */
-  hintCharPx: 7,
-  hintExtraW: 30,
-  hintH: 34,
-  hintOffset: 8,
-  /** Keep hints this far inside the viewport / safe area, px. */
-  hintMargin: 4,
-} as const; // TUNING-CR (HUD-anchored layout, not gameplay): T_TOUCHUI.overlay = { ... }
+const LOCAL_TUNING = T_TOUCH_OVERLAY; // [TUN-2] HUD-anchored layout: contracts/tuning.ts T_TOUCH_OVERLAY
 
-/** The LOCAL_TUNING block (read-only; tests, the controls editor and the lead's TUNING-CR review). */
+/** The LOCAL_TUNING block (read-only; tests and the controls editor). */
 export const OVERLAY_TUNING = LOCAL_TUNING;
 export const PREVIEW_DOTS = LOCAL_TUNING.previewDots;
 

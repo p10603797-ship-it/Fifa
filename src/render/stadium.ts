@@ -55,7 +55,7 @@ import type { ReadonlySimState } from '../contracts/state';
 import { getTierParams } from './quality';
 import type { RenderContext, RenderFrame, RenderModule } from './types';
 
-export const LOCAL_TUNING = { // TUNING-CR (GFX-05, render only)
+export const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: GFX-05, render only)
   // ---- stand profiles (m)
   /** Pitch-level front wall height (behind the boards; the sim's stand wall). */
   frontWallHeight: 1.6,

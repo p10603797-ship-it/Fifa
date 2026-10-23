@@ -26,7 +26,7 @@ import { createButton, copyText, createBackButton, h, injectStyle, showToast } f
 import { createCreditsView } from '../../platform/licences';
 import { createPointerTracker, readPads, type PadLike } from '../debugOverlay';
 
-const LOCAL_TUNING = { // TUNING-CR (UI, not gameplay)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: diagnostics UI)
   /** Holding pad button 1 (B / Circle) this long closes the input tester, ms. */
   padHoldCloseMs: 1000,
 } as const;

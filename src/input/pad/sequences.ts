@@ -45,17 +45,12 @@ import { MAX_HUMANS } from '../../contracts/constants';
 import { Command, MatchPhase, RestartKind } from '../../contracts/enums';
 import type { InputFrame } from '../../contracts/input';
 import type { ReadonlySimState } from '../../contracts/state';
-import { T_PAD } from '../../contracts/tuning';
+import { T_PAD, T_PAD_SEQUENCES } from '../../contracts/tuning';
 import { PadButton, type PadSlot } from './manager';
 
-const LOCAL_TUNING = {
-  /** A completed command not written into a frame (applyTo) within this time is dropped (sampling stopped), ms. */
-  latchMaxMs: 1000,
-  /** Double-press latch: press edges queued per button while earlier ones are still being reported (count). */
-  pressQueueMax: 2,
-} as const; // TUNING-CR: move to T_PAD.dpadLatchMaxMs / T_PAD.pressQueueMax
+const LOCAL_TUNING = T_PAD_SEQUENCES; // [TUN-2] latch timing: contracts/tuning.ts T_PAD_SEQUENCES
 
-/** The LOCAL_TUNING block (read-only; tests and the lead's TUNING-CR review). */
+/** The LOCAL_TUNING block (read-only; tests). */
 export const PAD_SEQUENCE_TUNING = LOCAL_TUNING;
 
 /** D-pad direction indices = bit numbers in the dpadEdges / held masks (standard buttons 12..15 minus 12). */

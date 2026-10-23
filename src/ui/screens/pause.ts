@@ -53,7 +53,7 @@ import {
   openModalCount, setSelected, type ModalHandle,
 } from '../components';
 
-const LOCAL_TUNING = { // TUNING-CR (menu timing, not gameplay)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: pause menu timing)
   /** Sim ticks a sent team order may take to show in the state before the menu stops waiting for it (1.5 s). */
   commandConfirmTicks: 90,
   /** Team orders handed to the session at once when play resumes; the rest follow one per animation frame. */
@@ -66,7 +66,7 @@ const LOCAL_TUNING = { // TUNING-CR (menu timing, not gameplay)
   quickTired: 4,
 } as const;
 
-/** The LOCAL_TUNING block (tests, TUNING-CR review). */
+/** The LOCAL_TUNING block (tests, tuning review). */
 export const PAUSE_TUNING = LOCAL_TUNING;
 
 /** How long a refused-action note stays before the line returns to who paused, ms. */

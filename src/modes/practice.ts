@@ -37,23 +37,15 @@ import { HALF_WIDTH, NUM_SLOTS, PENALTY_SPOT_DIST } from '../contracts/constants
 import { Difficulty, KickKind, MatchPhase, ModeId, PracticeKind, type RestartKind } from '../contracts/enums';
 import { EventType, type EventBuffer } from '../contracts/events';
 import type { MatchConfig, ReadonlySimState } from '../contracts/state';
+import { T_PRACTICE_MODE } from '../contracts/tuning';
 import {
-  LOCAL_TUNING as SIM_PRACTICE_TUNING, practiceAttemptDone as simPracticeAttemptDone, practiceSpotIndex as simPracticeSpotIndex,
+  practiceAttemptDone as simPracticeAttemptDone, practiceSpotIndex as simPracticeSpotIndex,
   practiceSpotPoint as simPracticeSpotPoint, practiceTeam as simPracticeTeam,
 } from '../sim/rules/practice';
 import { buildSetup, type HumanChoice } from './setup';
 
-/** TUNING-CR (MOD-04): tutorial thresholds; the attempt timing is the sim's (sim/rules/practice LOCAL_TUNING). */
-export const LOCAL_TUNING = { // TUNING-CR
-  /** Live play allowed after a free kick or corner is taken before the attempt is over, ticks (sim value). */
-  attemptTicks: SIM_PRACTICE_TUNING.attemptTicks,
-  /** Live play allowed after a penalty kick before the attempt is over, ticks (sim value). */
-  penaltyAttemptTicks: SIM_PRACTICE_TUNING.penaltyAttemptTicks,
-  /** Tutorial: metres the controlled player must move for the Move step. */
-  tutorialMoveM: 6,
-  /** Tutorial: consecutive sprinting ticks for the Sprint step (0.75 s). */
-  tutorialSprintTicks: 45,
-} as const;
+/** Tutorial thresholds and the sim's attempt timing: contracts/tuning.ts T_PRACTICE_MODE ([TUN-2]; old name kept). */
+export const LOCAL_TUNING = T_PRACTICE_MODE;
 
 /** A practice spot: `dist` metres out from the attacked goal line, `right` metres to the attacker's right (+z when
  *  attacking +x). Corners use dist 0 and right = +-HALF_WIDTH. */

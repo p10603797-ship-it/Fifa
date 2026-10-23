@@ -16,7 +16,7 @@ import type { Contour, Shape } from './raster';
 /** One colour layer: shapes filled in order (each shape: outer contour + holes with opposite winding). */
 export interface CrestLayer { rgb: Rgb; shapes: Shape[] }
 
-const LOCAL_TUNING = { // TUNING-CR (crest look; menus/HUD/atlas only, no gameplay effect)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: crest look; menus / HUD / atlas only)
   /** Width of the outer rim in the secondary colour (crest units of 100). */
   rimWidth: 6,
   /** Emblem radius on a plain field (crest units). */

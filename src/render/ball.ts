@@ -26,7 +26,7 @@ import { QualityTier } from '../contracts/enums';
 import { getTierParams } from './quality';
 import type { RenderContext, RenderFrame, RenderModule } from './types';
 
-const LOCAL_TUNING = { // TUNING-CR (GFX-13 ball and blob shadows)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: GFX-13 ball and blob shadows, render only)
   /** Ball blob diameter with the ball on the grass, in ball radii (0.11 m ball -> 0.35 m blob). */
   ballBlobRadii: 3.2,
   /** Ball blob diameter growth per metre of height above resting (1/m): diameter * (1 + k * h). */

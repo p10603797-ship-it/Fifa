@@ -54,7 +54,7 @@ import { EventType, type EventBuffer } from '../contracts/events';
 import type { ReadonlySimState, SimState } from '../contracts/state';
 import { displayClock } from '../sim/rules/machine';
 
-/** Player-rating weights (rating points). Presentation numbers, not gameplay tuning. // TUNING-CR (MOD-05) */
+/** Player-rating weights (rating points). Presentation numbers. // LOCAL_TUNING (non-gameplay: MOD-05 post-match ratings) */
 export const RATING = {
   base: 6.0,
   goal: 1.0,

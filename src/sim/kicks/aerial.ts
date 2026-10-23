@@ -72,7 +72,7 @@ import { ActionKind, AssistLevel, ControllerKind, CrossKind, KickKind, MatchPhas
 import { EventType, type EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type BallState, type SimState } from '../../contracts/state';
 import { createKickLaunch, type ActionRequest, type KickLaunch } from '../../contracts/systems';
-import { T_BALL, T_PASS, T_PLAYER, T_SHOT, T_TACKLE, T_AERIAL_PLAY } from '../../contracts/tuning';
+import { T_BALL, T_KICK, T_PASS, T_PLAYER, T_SHOT, T_TACKLE, T_AERIAL_PLAY } from '../../contracts/tuning';
 import { ballStepTick } from '../ball/contact';
 import { ballAirStep, copyBallState, createLaunchSolution, solveLaunchSpin } from '../ball/flight';
 import { clamp01, datan2, dcos, dlog, dsin, lerp, PI } from '../core/dmath';
@@ -923,7 +923,7 @@ function duelScore(s: SimState, slot: number, close: number): number {
   const header = p.act === ActionKind.HEADER;
   const skill = header ? attr01(a.heading) : attr01((a.finishing + a.ballControl) * 0.5);
   bodyGeo(s, slot);
-  const reach = header ? clamp01((R[R_STAND]! + R[R_MAXJ]! - LT.reachRef) / LT.reachSpan) : 0.5;
+  const reach = header ? clamp01((R[R_STAND]! + R[R_MAXJ]! - LT.reachRef) / LT.reachSpan) : LT.volleyReachQ;
   const off = p.actT - peakTick(s, slot);
   const timing = clamp01(1 - absf(off) / LT.timingScale);
   return LT.wSkill * skill + LT.wStrength * attr01(a.strength) + LT.wHeight * reach + LT.wTiming * timing +
@@ -1093,9 +1093,9 @@ function aiChoose(s: SimState, slot: number): void {
     if ((AI.flags & F_CLEAR) !== 0) {
       // Away from goal and toward the near touchline.
       const side = b.z >= 0 ? 1 : -1;
-      const l = Math.sqrt(1 + 0.36);
+      const l = Math.sqrt(1 + LT.aiClearSideRatio * LT.aiClearSideRatio);
       AI.dirX = dir / l;
-      AI.dirZ = side * 0.6 / l;
+      AI.dirZ = side * LT.aiClearSideRatio / l;
     } else {
       AI.dirX = dir;
       AI.dirZ = 0;
@@ -1225,7 +1225,7 @@ function pickReceiver(
     const dx = q.x - cx;
     const dz = q.z - cz;
     const d = Math.sqrt(dx * dx + dz * dz);
-    if (d < minD * 0.75 || d > maxD * 1.1) continue;
+    if (d < minD * LT.receiverMinDistFrac || d > maxD * LT.receiverMaxDistFrac) continue;
     const c = (dx * dirX + dz * dirZ) / d;
     if (c < cosMax) continue;
     let open: number = LT.opennessCap;
@@ -1264,13 +1264,13 @@ function aerialError(
   e *= 1 + LT.balanceErr * (1 - c) * 0.5;
   // Awkward contact: fast incoming ball, a stooping header or a high volley.
   const vin = Math.sqrt(b.vx * b.vx + b.vy * b.vy + b.vz * b.vz);
-  let awk = clamp01((vin - LT.fastBallFrom) / LT.fastBallSpan) * 0.5;
+  let awk = clamp01((vin - LT.fastBallFrom) / LT.fastBallSpan) * LT.awkFastBallW;
   if (header) {
     bodyGeo(s, slot);
     const stand = R[R_STAND]!;
-    if (b.y < stand) awk += clamp01((stand - b.y) / 0.5) * 0.4;
+    if (b.y < stand) awk += clamp01((stand - b.y) / LT.awkLowBallSpan) * LT.awkLowBallW;
   } else {
-    awk += clamp01((b.y - LT.volleyHighFrom) / LT.volleyHighSpan) * 0.5;
+    awk += clamp01((b.y - LT.volleyHighFrom) / LT.volleyHighSpan) * LT.awkHighVolleyW;
     // Weaker foot: the side of the body the ball arrives on.
     const fl = Math.sqrt(p.fx * p.fx + p.fz * p.fz);
     if (fl > 1e-6) {
@@ -1366,7 +1366,7 @@ function onTargetCheck(s: SimState, end: number, out: KickLaunch): number {
   SIMB.vx = out.vx; SIMB.vy = out.vy; SIMB.vz = out.vz;
   SIMB.sx = out.sx; SIMB.sy = out.sy; SIMB.sz = out.sz;
   SIMB.owner = -1; SIMB.heldBy = -1; SIMB.inNet = 0; SIMB.bounces = 0;
-  SIMB.grounded = SIMB.y > BR + 1e-6 || out.vy > 0.5 ? 0 : SIMB.grounded;
+  SIMB.grounded = SIMB.y > BR + 1e-6 || out.vy > T_KICK.liftVy ? 0 : SIMB.grounded;
   for (let k = 0; k < LT.onTargetTicks; k++) {
     const px = SIMB.x;
     const py = SIMB.y;
@@ -1556,13 +1556,13 @@ function solveAerial(s: SimState, slot: number, out: KickLaunch, header: boolean
   if (clear) {
     // Never toward the own goal.
     if (dirX * tdir < 0) dirX = -dirX;
-    if (absf(dirX) < 0.3) {
-      dirX = tdir * 0.3;
+    if (absf(dirX) < LT.clearMinForward) {
+      dirX = tdir * LT.clearMinForward;
       const l = Math.sqrt(dirX * dirX + dirZ * dirZ);
       dirX /= l;
       dirZ /= l;
     }
-    const mix = 0.5 * power + 0.5 * pskill;
+    const mix = LT.clearPowerMix * power + LT.clearSkillMix * pskill;
     const v = header ? lerp(LT.headerClearMin, LT.headerClearMax, mix) : lerp(LT.volleyClearMin, LT.volleyClearMax, mix);
     const th = header ? LT.headerClearAngle : LT.volleyClearAngle;
     const vh = v * dcos(th);
@@ -1571,8 +1571,8 @@ function solveAerial(s: SimState, slot: number, out: KickLaunch, header: boolean
     out.vy = v * dsin(th);
     const err = aerialError(s, slot, pbase, power, dirX, dirZ, header, false);
     yawOut(out, err * rngGauss(s.rng));
-    out.tx = b.x + dirX * v * 1.6;
-    out.tz = b.z + dirZ * v * 1.6;
+    out.tx = b.x + dirX * v * LT.clearAimAheadS;
+    out.tz = b.z + dirZ * v * LT.clearAimAheadS;
     return 1;
   }
   let tx: number;
@@ -1649,7 +1649,7 @@ function solveAerial(s: SimState, slot: number, out: KickLaunch, header: boolean
   const ldx = lx - b.x;
   const ldz = lz - b.z;
   const landD = Math.sqrt(ldx * ldx + ldz * ldz) + short;
-  const ang = header ? lerp(LT.headerPassAngleNear, LT.headerPassAngleFar, clamp01((landD - 5) / 20)) : LT.volleyPassAngle;
+  const ang = header ? lerp(LT.headerPassAngleNear, LT.headerPassAngleFar, clamp01((landD - LT.headerPassAngleNearD) / LT.headerPassAngleSpanD)) : LT.volleyPassAngle;
   const vcap = header ? LT.headerPassMaxSpeed : LT.volleyPassMaxSpeed;
   launchToPoint(s, lx, lz, ang, vcap, out);
   let ux = dirX;
@@ -1676,7 +1676,7 @@ function solveAerial(s: SimState, slot: number, out: KickLaunch, header: boolean
       tx = lx;
       tz = lz;
       const nd = Math.sqrt((lx - b.x) * (lx - b.x) + (lz - b.z) * (lz - b.z));
-      const na = header ? lerp(LT.headerPassAngleNear, LT.headerPassAngleFar, clamp01((nd - 5) / 20)) : LT.volleyPassAngle;
+      const na = header ? lerp(LT.headerPassAngleNear, LT.headerPassAngleFar, clamp01((nd - LT.headerPassAngleNearD) / LT.headerPassAngleSpanD)) : LT.volleyPassAngle;
       launchToPoint(s, lx, lz, na, vcap, out);
       yawOut(out, yaw);
     }

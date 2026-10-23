@@ -59,18 +59,14 @@
 import { MatchPhase, SkillMove } from '../contracts/enums';
 import { Btn, clearInputFrame, type InputFrame, type InputSampleContext, type InputSource } from '../contracts/input';
 import { quantStick } from './axes';
+import { T_KEYBOARD } from '../contracts/tuning';
 import { writePadSticks } from './pad/mapper';
 import { createRightStick, type PadSticks, type RightStickTracker } from './pad/rightStick';
 import { createPadSequences, createPressLatch, type PadSequences } from './pad/sequences';
 
-const LOCAL_TUNING = {
-  /** sample() polls the right-stick / D-pad recognisers itself when pollFrame was not called for longer, ms. */
-  fallbackPollMs: 12,
-  /** D-pad presses queued between two polls (more within one frame are dropped). */
-  dpadQueueMax: 8,
-} as const; // TUNING-CR (device timing, not gameplay): T_PAD.keyboardFallbackPollMs
+const LOCAL_TUNING = T_KEYBOARD; // [TUN-2] device timing: contracts/tuning.ts T_KEYBOARD
 
-/** The LOCAL_TUNING block (read-only; tests and the lead's TUNING-CR review). */
+/** The LOCAL_TUNING block (read-only; tests). */
 export const KEYBOARD_TUNING = LOCAL_TUNING;
 
 export const DIR_UP = 1, DIR_DOWN = 2, DIR_LEFT = 4, DIR_RIGHT = 8;

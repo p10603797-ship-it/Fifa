@@ -506,7 +506,7 @@ function aimSide(s: SimState, p: Readonly<PlayerState>): void {
 
 /** Toward the attacked goal, turned 45 degrees away from an opponent close ahead (into DRB). */
 function fallbackDribble(s: SimState, p: Readonly<PlayerState>): void {
-  let gx = C.dir * HALF_LENGTH - p.x, gz = -p.z * 0.5;
+  let gx = C.dir * HALF_LENGTH - p.x, gz = -p.z * LT.fallbackCentreK;
   const gl = Math.sqrt(gx * gx + gz * gz);
   if (gl > 1e-6) { gx /= gl; gz /= gl; } else { gx = C.dir; gz = 0; }
   const o = C.nearOpp;
@@ -538,7 +538,7 @@ function dribbleOptionInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<S
   }
   dx /= dl; dz /= dl;
   sc = clamp01(sc);
-  const step = LT.dribbleStep * (0.3 + 0.7 * sc);
+  const step = LT.dribbleStep * (LT.dribbleStepMinFrac + LT.dribbleStepScoreFrac * sc);
   const nprog = (C.dir * (p.x + dx * step)) / HALF_LENGTH;
   // [QF-2] In our own half a carry into little space (TAI-10 score sc near 0) risks more: up to x (1 +
   // dribbleTightLossMul). In the attacking half a tight dribble is how chances are made (and the drive credit prices it).
@@ -546,7 +546,7 @@ function dribbleOptionInto(s: SimState, p: Readonly<PlayerState>, sw: Readonly<S
   // ground was priced as safe there.
   const tight = C.prog > 0 ? LT.dribbleTightAttackMul : LT.dribbleTightLossMul;
   const lossMax = LT.dribbleLossMax * (1 + tight * (1 - sc));
-  const keep = clamp01(1 - lossMax * C.pressure * (1.2 - (0.4 * s.attrs[p.slot]!.dribbling) / 99));
+  const keep = clamp01(1 - lossMax * C.pressure * (LT.dribbleLossBase - (LT.dribbleLossAttrW * s.attrs[p.slot]!.dribbling) / 99));
   CARRIER_DRIBBLE[0] = keep; CARRIER_DRIBBLE[1] = sc;
   const nz = p.z + dz * step;
   PV[0] = nprog; PV[1] = nz; pvInto();

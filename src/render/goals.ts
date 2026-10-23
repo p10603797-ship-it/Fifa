@@ -53,7 +53,7 @@ import type { ReadonlySimState } from '../contracts/state';
 import { getTierParams } from './quality';
 import { createInterpState, type RenderContext, type RenderFrame, type RenderModule } from './types';
 
-const LOCAL_TUNING = { // TUNING-CR (render only; no gameplay effect)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: render only)
   // ---- net look
   /** Drawn net mesh cell size, m. */
   netCell: 0.15,

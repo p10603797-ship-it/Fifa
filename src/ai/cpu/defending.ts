@@ -1084,7 +1084,7 @@ function coverLoose(s: SimState, team: number, p: Readonly<PlayerState>): void {
   let gx = -dir * HALF_LENGTH - b.x, gz = -b.z;
   const gl = Math.sqrt(gx * gx + gz * gz);
   if (gl > EPS) { gx /= gl; gz /= gl; } else { gx = -dir; gz = 0; }
-  const c = gl < L.looseCoverDist ? gl * 0.5 : L.looseCoverDist;
+  const c = gl < L.looseCoverDist ? gl * L.looseCoverFrac : L.looseCoverDist;
   steerTo(p, b.x + gx * c, b.z + gz * c, 1);
 }
 
@@ -1111,7 +1111,7 @@ function clearKeeperLane(s: SimState, p: Readonly<PlayerState>): void {
   const ao = off < 0 ? -off : off;
   if (ao >= L.keeperLaneClear) return;
   const side = off < 0 ? -1 : 1;
-  steerTo(p, p.x - uz * side * (L.keeperLaneClear - ao + 0.5), p.z + ux * side * (L.keeperLaneClear - ao + 0.5), 0);
+  steerTo(p, p.x - uz * side * (L.keeperLaneClear - ao + L.keeperLaneMargin), p.z + ux * side * (L.keeperLaneClear - ao + L.keeperLaneMargin), 0);
   stM = 1;
 }
 

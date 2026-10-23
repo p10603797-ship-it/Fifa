@@ -382,7 +382,7 @@ export function aiDiveChoiceFrom(
   } else {
     let pNat = lerp(LT.aiNaturalWorst, LT.aiNaturalBest, clamp01((composure - 1) / 98));
     if (hist > 0 || hist < 0) pNat += (hist > 0 ? 1 : -1) === nat ? LT.aiHistoryWeight : -LT.aiHistoryWeight;
-    pNat = clamp(pNat, 0.05, 0.95);
+    pNat = clamp(pNat, LT.aiNaturalMin, LT.aiNaturalMax);
     const v = (u1 - LT.aiMiddleChance) / (1 - LT.aiMiddleChance);
     out.side = v < pNat ? nat : -nat;
   }
@@ -419,7 +419,7 @@ export function humanDiveChoice(s: SimState, out: DiveChoice): void {
   const r = s.match.restart;
   out.side = r.side > 0 ? 1 : r.side < 0 ? -1 : 0;
   const h = r.aimPower;
-  out.height = h >= 1.5 ? 2 : h >= 0.5 ? 1 : 0;
+  out.height = h >= LT.aimHighFrom ? 2 : h >= LT.aimMidFrom ? 1 : 0;
 }
 
 /**

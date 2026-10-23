@@ -30,7 +30,7 @@ import { hashHex, hashState, hashValue } from '../sim/core/hash';
 import { PACKED_FRAME_INTS, packFrames } from '../sim/core/serialize';
 import { REPLAY_FORMAT, REPLAY_HASH_INTERVAL, replayFramesAt, replayProblem, type Replay } from '../sim/replay';
 
-const LOCAL_TUNING = { // TUNING-CR (platform, not gameplay)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: platform, replay recorder)
   /** Ticks per preallocated frame chunk (60 s at 60 Hz), ticks. */
   chunkTicks: 3600,
   /** Longest recording; later ticks are not recorded (the replay stays a valid prefix), minutes of play. */

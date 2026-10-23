@@ -57,39 +57,10 @@ import type { TouchSettings } from '../../contracts/settings';
 import {
   ClusterMode, TOUCH_QUEUE_SIZE, type TouchControl, type TouchGestureEvent, type TouchIntentState,
 } from '../../contracts/touch';
-import { T_TOUCHUI } from '../../contracts/tuning';
+import { T_TOUCH_GESTURES, T_TOUCHUI } from '../../contracts/tuning';
 
-/** Pitch gesture recogniser constants (TUNING-CR: candidates for T_TOUCHUI). Distances in CSS pt (= px), times ms. */
-export const LOCAL_TUNING = {
-  /** Minimum straight travel of a swipe (of the main stroke of a back-and-forth swipe), pt. */
-  swipeMinPt: 36,
-  /** A swipe of any kind must be finished within this from touch-down, ms. Slower paths are drags (ignored). */
-  swipeMaxMs: 700,
-  /** Minimum mean speed along the path for a swipe, pt/ms. */
-  swipeMinSpeed: 0.3,
-  /** A finger resting longer than this before it lifts makes the path a drag-and-hold (ignored), ms. */
-  swipeRestMaxMs: 120,
-  /** Movement within this distance of the lift point counts as resting, pt. */
-  restPt: 4,
-  /** End velocity is measured over this much of the final movement, ms. */
-  velWindowMs: 50,
-  /** |signed area| / chord^2 that gives curve = +-1 (a circular arc of about 100 degrees). */
-  curveFullRatio: 0.16,
-  /** |curve| from which a swipe is a CURVED_SWIPE (about a 37 degree arc), 0..1. */
-  curvedMin: 0.33,
-  /** Each stroke of a back-and-forth swipe is at least this long, pt. */
-  reverseMinPt: 24,
-  /** The return stroke turns at least 120 degrees from the stroke before it (cosine at most this). */
-  reverseCos: -0.5,
-  /** The second tap of a double tap lands within this distance of the first, pt. */
-  doubleTapSlopPt: 44,
-  /** A touch-down within this distance of the ball's screen position is "from the ball", pt. */
-  fromBallPt: 44,
-  /** Path samples kept per pointer (thinned in place when full). */
-  pathSamples: 128,
-  /** Pitch pointers tracked at once. */
-  pointers: 5,
-} as const; // TUNING-CR
+/** Pitch gesture recogniser constants: contracts/tuning.ts T_TOUCH_GESTURES ([TUN-2]; the old name is kept for importers). */
+export const LOCAL_TUNING = T_TOUCH_GESTURES;
 
 // ================================================================== section 9 rules (settings keys)
 

@@ -42,9 +42,9 @@ const LOCAL_TUNING = {
   holdCancelMs: 1500,
   /** The hold-to-cancel bar starts to fill after this, ms (a normal press never shows it). */
   holdHintMs: 350,
-} as const; // TUNING-CR (menu feel, not gameplay): T_MENU.remapHoldCancelMs / remapHoldHintMs
+} as const; // LOCAL_TUNING (non-gameplay: menu feel, remap screen hold-to-cancel)
 
-/** The LOCAL_TUNING block (read-only; tests and the lead's TUNING-CR review). */
+/** The LOCAL_TUNING block (read-only; tests and the lead's tuning review). */
 export const REMAP_TUNING = LOCAL_TUNING;
 
 // ============================================================ steps

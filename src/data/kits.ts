@@ -35,7 +35,7 @@ import type { RngState } from '../contracts/state';
 import { dpow } from '../sim/core/dmath';
 import { rngFloat } from '../sim/core/rng';
 
-const LOCAL_TUNING = { // TUNING-CR (kit generation; generation-time only — re-run `npm run gen:data` after a change)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: kit generation; generation-time only — re-run `npm run gen:data` after a change)
   /** Minimum WCAG contrast ratio of the shirt number against every shirt colour it is printed over (AA text). */
   numberMinContrast: 4.5,
   /** Minimum CIE76 deltaE between the two colours of a pattern, so the pattern is visible. */
@@ -547,7 +547,7 @@ export function validateClubKits(kits: ClubKits): string[] {
   return out;
 }
 
-/** Thresholds the generator guarantees (read-only view of the TUNING-CR block, for tests and tools). */
+/** Thresholds the generator guarantees (read-only view of the LOCAL_TUNING block, for tests and tools). */
 export const KIT_RULES = LOCAL_TUNING;
 
 // ---------------------------------------------------------------- generator

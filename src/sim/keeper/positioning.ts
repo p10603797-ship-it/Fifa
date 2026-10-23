@@ -186,11 +186,11 @@ function receivePass(s: SimState, k: number): boolean {
   const b = s.ball;
   const p = s.players[k]!;
   if (b.owner >= 0 || b.heldBy >= 0 || b.passTarget !== k || b.lastTouchTeam !== p.team || b.lastTouch === k) return false;
-  if (b.y > T_PLAYER.bodyRadius * 3) return false;
+  if (b.y > T_PLAYER.bodyRadius * L.receiveMaxBallYMul) return false;
   const v = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
   const top = s.attrs[k]!.topSpeed;
   let tx = b.x, tz = b.z;
-  if (v >= 0.3) {
+  if (v >= L.receiveMovingSpeed) {
     const ux = b.vx / v, uz = b.vz / v;
     const a = T_BALL.rollDecel + T_BALL.rollDamping * v;
     const n = Math.floor(RECEIVE_HORIZON_S / RECEIVE_STEP_S);

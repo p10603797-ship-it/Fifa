@@ -39,7 +39,7 @@ import { createBlobStore, createSafeStorage, type BlobStore, type KeyValueStorag
 
 export { createDefaultSettings };
 
-const LOCAL_TUNING = { // TUNING-CR (platform timing, not gameplay)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: platform settings-store timing)
   /** Quiet time after the last settings change of a burst before it is written, ms. */
   saveDebounceMs: 300,
   /** Longest a pending settings write waits while changes keep coming (slider drag), ms. */

@@ -32,26 +32,10 @@
 
 import type { TouchSettings } from '../../contracts/settings';
 import type { TouchControl, TouchIntentState } from '../../contracts/touch';
-import { T_TOUCHUI } from '../../contracts/tuning';
+import { T_TOUCH_STICK, T_TOUCHUI } from '../../contracts/tuning';
 
-/** Stick feel constants (TUNING-CR: candidates for T_TOUCHUI). */
-export const LOCAL_TUNING = {
-  /** Radial dead zone, fraction of the radius (0..1). Deflection is rescaled to start at 0 just past it. */
-  deadZone: 0.12,
-  /** Floating origin is dragged along once the thumb is further than this from it, x radius. */
-  followMul: 1.4,
-  /** Fixed stick: touch-downs within this distance of the fixed origin are claimed, x radius. */
-  fixedCatchMul: 2,
-  /** Fixed stick default centre: offset from the safe-area left edge (right edge when mirrored), pt. */
-  fixedDx: 160,
-  /** Fixed stick default centre: offset from the safe-area bottom edge, pt. */
-  fixedDy: 150,
-  /** Double tap: the second touch-down must land within this distance of the first, x radius. */
-  doubleTapSlopMul: 1,
-  /** Size multiplier range of the editor's stick placement (ControlPlacement.scale). */
-  scaleMin: 0.7,
-  scaleMax: 1.4,
-} as const; // TUNING-CR
+/** Stick feel constants: contracts/tuning.ts T_TOUCH_STICK ([TUN-2]; the old name is kept for importers). */
+export const LOCAL_TUNING = T_TOUCH_STICK;
 
 /** Radial dead zone of the touch stick (fraction of the radius). */
 export const STICK_DEAD_ZONE = LOCAL_TUNING.deadZone;

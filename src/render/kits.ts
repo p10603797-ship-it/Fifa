@@ -65,7 +65,7 @@ import {
   strokeLines, type Img, type MipLevel,
 } from './kit/raster';
 
-const LOCAL_TUNING = { // TUNING-CR (render-only: kit clash check, high contrast, atlas look; no gameplay effect)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: render only, kit clash check, high contrast, atlas look)
   /** Two outfield shirts clash below this earth mover's distance between their colour mixes (CIEDE2000 / 100). */
   shirtClash: 0.25,
   /** Two colours count as "the same colour" below this distance (shared-colour rule and shorts). */

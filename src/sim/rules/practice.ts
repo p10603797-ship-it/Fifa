@@ -39,7 +39,7 @@ export const LOCAL_TUNING = T_PRACTICE;
  * attacker's right (+z when attacking +x)] pairs, in the order of the setup's `spot` option.
  */
 const SPOT_GEOMETRY: Readonly<Record<number, readonly number[]>> = {
-  [PracticeKind.FREE_KICKS]: [22, 0, 21, -9, 21, 9, 30, 4, 14, -26, 14, 26],
+  [PracticeKind.FREE_KICKS]: T_PRACTICE.freeKickSpots,
   [PracticeKind.CORNERS]: [0, -HALF_WIDTH, 0, HALF_WIDTH],
   [PracticeKind.PENALTIES]: [PENALTY_SPOT_DIST, 0],
 };

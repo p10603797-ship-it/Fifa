@@ -45,7 +45,7 @@ import { touchZones, type TouchZones } from './camera/broadcast';
 import { drawnOffsetsOf } from './players/drawn';
 import type { InterpState, RenderContext, RenderFrame, RenderModule } from './types';
 
-const LOCAL_TUNING = { // TUNING-CR (GFX-13 on-pitch aids)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: GFX-13 on-pitch aids, render only)
   /** Ground decal height above the grass (m), above the blob shadows (0.02). */
   groundY: 0.03,
   /** Controlled-player ring radii (m). */

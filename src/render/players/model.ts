@@ -56,7 +56,7 @@ export {
   Joint, JOINT_COUNT, liftSkeleton, lowestPoint, placeSkeleton, placeSkeletonAt, SKELETON_SIZE, solvePoseFK,
 } from './fk';
 
-const LOCAL_TUNING = { // TUNING-CR (render-only; the ground snap distance lives in fk.ts)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: render only; the ground snap distance lives in fk.ts)
   /** Interpolated travel above this in one frame is a teleport (restart, replay cut): no stride advance (m). */
   teleportDist: 3,
   /** Player height scale clamp (attrs.height / 180). */

@@ -9,6 +9,7 @@ import { HALF_LENGTH, HALF_WIDTH, PLAYERS_PER_TEAM, teamFirstSlot } from '../con
 import { ATTRIBUTE_KEYS, type Club, type PlayerData } from '../contracts/data';
 import { AutoSwitch, AssistLevel, ControllerKind, MatchPhase, Period } from '../contracts/enums';
 import { createSimState, RosterStatus, type MatchConfig, type PlayerAttrs, type SimState } from '../contracts/state';
+import { T_MATCH_FLOW } from '../contracts/tuning';
 import { CLUBS } from '../data/clubs';
 import { getFormation } from '../data/formations';
 import { primeStateCodegen } from './core/clone';
@@ -72,10 +73,10 @@ export function initMatch(config: MatchConfig, clubs: readonly Club[] = CLUBS): 
       p.active = 1;
       copyAttrs(s.attrs[slot]!, club.squad[i]!);
       // Own half, formation shape (RUL-01 setupKickOff refines).
-      let x = t.dir * fs.nx * HALF_LENGTH * 0.95;
-      if (t.dir * x > -1) x = -t.dir * 1;
+      let x = t.dir * fs.nx * HALF_LENGTH * T_MATCH_FLOW.initDepthScale;
+      if (t.dir * x > -T_MATCH_FLOW.initOwnHalfMargin) x = -t.dir * T_MATCH_FLOW.initOwnHalfMargin;
       p.x = x;
-      p.z = t.dir * fs.nz * HALF_WIDTH * 0.9;
+      p.z = t.dir * fs.nz * HALF_WIDTH * T_MATCH_FLOW.initWidthScale;
       p.homeX = p.x;
       p.homeZ = p.z;
       p.fx = t.dir;

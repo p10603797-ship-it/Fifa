@@ -24,7 +24,7 @@ import { Command, FormationId, Role, TacticalFocus, TeamPhase } from '../contrac
 import type { TeamState } from '../contracts/state';
 import { getFormation, roleSide, ShapeLine, slotLine } from './formations';
 
-const LOCAL_TUNING = { // TUNING-CR (shape limits used by tacticalHome)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: shape limits of tacticalHome, which no sim / AI path calls)
   /** Max |nz| of an outfield home: 0.9 * 34 = 30.6 m, 3.4 m inside the touchline. */
   outfieldMaxNz: 0.9,
   /** Max |nz| of the keeper's home: inside the goal mouth (3.66 / 34). */

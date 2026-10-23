@@ -749,7 +749,7 @@ function solveSkillTouchImpl(s: SimState, slot: number, out: KickLaunch): number
   }
   const pw = Number.isFinite(p.actPower) ? clamp01(p.actPower) : L.knockPower;
   const along = pvx * dx + pvz * dz;
-  let v = (along > 0 ? along : 0) + rel * (0.5 + pw);
+  let v = (along > 0 ? along : 0) + rel * (L.knockRelBase + pw);
   if (v < vmin) v = vmin;
   if (v > vmax) v = vmax;
   if (v > T_BALL.maxSpeed) v = T_BALL.maxSpeed;

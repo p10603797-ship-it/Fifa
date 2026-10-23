@@ -23,7 +23,7 @@ import { RADAR_TUNING, radarCanvasSize } from './radar';
 import { numStr } from './scoreboard';
 import { rosterName } from './toasts';
 
-/** Presentation constants (UI, not gameplay; no TUNING-CR needed). */
+/** Presentation constants (UI, not gameplay; no tuning.ts entry needed). */
 export const PLAYER_INFO_TUNING = {
   /** Panel width, CSS px at HUD scale 1. */
   width: 150,

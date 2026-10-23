@@ -33,26 +33,14 @@
 
 import { MenuAction, type FocusNavigator } from '../contracts/app';
 import type { Settings } from '../contracts/settings';
+import { T_MENU_INPUT } from '../contracts/tuning';
 import { dirKeyBit, dirsFromKeyMask, isEditableTarget, isMetaCode } from './keyboard';
 import { getPadManager, PAD_BUTTON_COUNT, PadButton, type PadManager, type PadSlot } from './pad/manager';
 import { PAD_ACTION_COUNT, PadAction, resolvePadRemap } from './pad/mapper';
 
-const LOCAL_TUNING = {
-  /** First repeat of a held direction after this delay, ms. */
-  repeatDelayMs: 300,
-  /** Then one repeat every interval, ms. */
-  repeatIntervalMs: 120,
-  /** A repeat due within this much of the frame time fires on that frame (rAF stamps jitter), ms. */
-  repeatSlackMs: 0.5,
-  /** Left-stick deflection (dominant axis, 0..1 after the radial dead zone) that counts as a direction. */
-  stickEngage: 0.5,
-  /** A stick direction is held until its component falls below this (0..1, hysteresis). */
-  stickRelease: 0.35,
-  /** Keyboard presses queued between two polls (more within one frame are dropped). */
-  keyQueueMax: 16,
-} as const; // TUNING-CR (menu feel, not gameplay): T_MENU = { repeatDelayMs, repeatIntervalMs, ... }
+const LOCAL_TUNING = T_MENU_INPUT; // [TUN-2] menu feel: contracts/tuning.ts T_MENU_INPUT
 
-/** The LOCAL_TUNING block (read-only; tests and the lead's TUNING-CR review). */
+/** The LOCAL_TUNING block (read-only; tests). */
 export const MENU_TUNING = LOCAL_TUNING;
 
 /** Directional repeat: first repeat after this delay, then every interval (ms). */

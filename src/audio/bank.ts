@@ -22,7 +22,7 @@ const LOCAL_TUNING = {
   maxSeconds: 30,
   /** Used when the context reports no sample rate (test fakes), Hz. */
   fallbackRate: 48000,
-} as const; // TUNING-CR
+} as const; // LOCAL_TUNING (non-gameplay: audio bank)
 
 export const BANK_TUNING = LOCAL_TUNING;
 

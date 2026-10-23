@@ -23,7 +23,7 @@ import { h, injectStyle } from '../components';
 import { HUD_SHARED_CSS, bindLargerHud, minuteLabel } from './hudShared';
 import { highContrastOn, kitHex, wornShirts } from './scoreboard';
 
-/** HUD presentation constants (UI timing, not gameplay; no TUNING-CR needed). */
+/** HUD presentation constants (UI timing, not gameplay; no tuning.ts entry needed). */
 export const TOAST_TUNING = {
   /** Time on screen per toast including its slide-in and fade-out, ms. */
   lifeMs: 2400,

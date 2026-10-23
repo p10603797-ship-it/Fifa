@@ -28,7 +28,7 @@ import type { ReadonlySimState } from '../../contracts/state';
 import type { DeviceLines } from '../hud/controlGlyphs';
 import type { ControlDevice } from '../hud/hudShared';
 
-/** Observation thresholds (UI tutorial checks, not gameplay; no TUNING-CR needed). */
+/** Observation thresholds (UI tutorial checks, not gameplay; no tuning.ts entry needed). */
 export const TUTORIAL_TUNING = {
   /** Ticks of running under stick input that complete "move" (1.5 s). */
   moveTicks: 90,

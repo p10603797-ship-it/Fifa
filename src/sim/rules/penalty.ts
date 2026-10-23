@@ -199,7 +199,7 @@ export function penaltyDiveChoice(s: SimState, out: PenaltyDiveChoice): number {
   const r = s.match.restart;
   out.dir = r.side > 0 ? 1 : r.side < 0 ? -1 : 0;
   const h = r.aimPower;
-  out.height = h >= 1.5 ? DiveHeight.HIGH : h >= 0.5 ? DiveHeight.MID : DiveHeight.LOW;
+  out.height = h >= LT.aimHighFrom ? DiveHeight.HIGH : h >= LT.aimMidFrom ? DiveHeight.MID : DiveHeight.LOW;
   return penaltyLive(s) ? 1 : 0;
 }
 

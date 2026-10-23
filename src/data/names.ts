@@ -27,7 +27,7 @@
  */
 import { OFFENSIVE_FRAGMENTS, nameKey, normalizeName, withinOneEdit } from './screen';
 
-const LOCAL_TUNING = { // TUNING-CR (club-name generation; generation-time only: re-run `npm run gen:data` after a change)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: club-name generation; generation-time only: re-run `npm run gen:data` after a change)
   /** Longest club name / city, characters (menus and the team-select carousel). */
   maxNameLength: 20,
   maxCityLength: 14,

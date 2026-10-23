@@ -93,7 +93,7 @@ import {
 import type { EventSink } from '../contracts/events';
 import { AXIS_SCALE, Btn, GESTURE_POS_SCALE, type InputFrame } from '../contracts/input';
 import { CpuPlan, type ControllerState, type CpuBrainState, type PlayerState, type SimState } from '../contracts/state';
-import { T_LEVEL, T_PASS, T_PLAYER, T_RULES, T_SETPIECE_AI } from '../contracts/tuning';
+import { T_LEVEL, T_PASS, T_PLAYER, T_RULES, T_SETPIECE_AI, T_SETPIECE_SPOTS } from '../contracts/tuning';
 import { slotWorld } from '../data/formations';
 import { datan2, dcos, dsin } from '../sim/core/dmath';
 import { rngFloat, rngGauss, rngRange } from '../sim/core/rng';
@@ -106,6 +106,8 @@ export const LOCAL_TUNING = T_SETPIECE_AI;
 
 
 const LT = T_SETPIECE_AI;
+/** [TUN-2] Spot templates and run-time spot offsets: contracts/tuning.ts T_SETPIECE_SPOTS. */
+const SP = T_SETPIECE_SPOTS;
 
 /** Role of a set-piece spot (setPieceTarget result). */
 export const SpotRole = {
@@ -137,66 +139,66 @@ const tpl = (role: number, suit: number, a: number, z: number, wd: number): Tpl 
 const R = SpotRole;
 
 // Corners (attacked goal line; z mirrored to the corner's side).
-const C_PEN = tpl(R.PEN_SPOT, S_AERIAL, 10.5, 0.5, T_SETPIECE_AI.cornerRunWd);
-const C_FAR = tpl(R.FAR_POST, S_AERIAL, 5.0, -4.5, T_SETPIECE_AI.cornerRunWd);
-const C_NEAR = tpl(R.NEAR_POST, S_AERIAL, 4.5, 2.8, T_SETPIECE_AI.cornerRunWd);
-const C_STAY1 = tpl(R.STAY_BACK, S_STAY, 54, -8, 0.2);
-const C_EDGE = tpl(R.EDGE, S_SHOOTER, 18.5, -2.5, 0.2);
-const C_SHORT = tpl(R.SHORT, S_SHORT, 4.5, 27, 0.2);
-const C_STAY2 = tpl(R.STAY_BACK, S_STAY, 56, 9, 0.2);
+const C_PEN = tpl(R.PEN_SPOT, S_AERIAL, SP.cornerPen.a, SP.cornerPen.z, T_SETPIECE_AI.cornerRunWd);
+const C_FAR = tpl(R.FAR_POST, S_AERIAL, SP.cornerFarPost.a, SP.cornerFarPost.z, T_SETPIECE_AI.cornerRunWd);
+const C_NEAR = tpl(R.NEAR_POST, S_AERIAL, SP.cornerNearPost.a, SP.cornerNearPost.z, T_SETPIECE_AI.cornerRunWd);
+const C_STAY1 = tpl(R.STAY_BACK, S_STAY, SP.cornerStay1.a, SP.cornerStay1.z, SP.cornerStay1.wd);
+const C_EDGE = tpl(R.EDGE, S_SHOOTER, SP.cornerEdge.a, SP.cornerEdge.z, SP.cornerEdge.wd);
+const C_SHORT = tpl(R.SHORT, S_SHORT, SP.cornerShort.a, SP.cornerShort.z, SP.cornerShort.wd);
+const C_STAY2 = tpl(R.STAY_BACK, S_STAY, SP.cornerStay2.a, SP.cornerStay2.z, SP.cornerStay2.wd);
 /** Tactic spots X1, X2 per tactic index (0 default, 1 far post, 2 edge of box, 3 crowd the keeper, 4 near post). */
 const CRW = T_SETPIECE_AI.cornerRunWd;
 const C_X1: readonly Tpl[] = [
-  tpl(R.BOX, S_AERIAL, 5.5, 0.8, CRW), tpl(R.FAR_POST, S_AERIAL, 6.5, -6.5, CRW), tpl(R.EDGE, S_SHOOTER, 17.5, 5.5, 0.2),
-  tpl(R.SCREEN_KEEPER, S_AERIAL, 1.6, -0.6, CRW), tpl(R.NEAR_POST, S_AERIAL, 6.0, 4.5, CRW),
+  tpl(R.BOX, S_AERIAL, SP.cornerX1[0].a, SP.cornerX1[0].z, CRW), tpl(R.FAR_POST, S_AERIAL, SP.cornerX1[1].a, SP.cornerX1[1].z, CRW), tpl(R.EDGE, S_SHOOTER, SP.cornerX1[2].a, SP.cornerX1[2].z, SP.cornerX1[2].wd),
+  tpl(R.SCREEN_KEEPER, S_AERIAL, SP.cornerX1[3].a, SP.cornerX1[3].z, CRW), tpl(R.NEAR_POST, S_AERIAL, SP.cornerX1[4].a, SP.cornerX1[4].z, CRW),
 ];
 const C_X2: readonly Tpl[] = [
-  tpl(R.BOX, S_AERIAL, 8.5, -7.5, CRW), tpl(R.FAR_POST, S_AERIAL, 9.5, -9, CRW), tpl(R.EDGE, S_SHOOTER, 20.5, -9, 0.2),
-  tpl(R.SCREEN_KEEPER, S_AERIAL, 2.0, 1.6, CRW), tpl(R.NEAR_POST, S_AERIAL, 8.0, 1.5, CRW),
+  tpl(R.BOX, S_AERIAL, SP.cornerX2[0].a, SP.cornerX2[0].z, CRW), tpl(R.FAR_POST, S_AERIAL, SP.cornerX2[1].a, SP.cornerX2[1].z, CRW), tpl(R.EDGE, S_SHOOTER, SP.cornerX2[2].a, SP.cornerX2[2].z, SP.cornerX2[2].wd),
+  tpl(R.SCREEN_KEEPER, S_AERIAL, SP.cornerX2[3].a, SP.cornerX2[3].z, CRW), tpl(R.NEAR_POST, S_AERIAL, SP.cornerX2[4].a, SP.cornerX2[4].z, CRW),
 ];
 // Corner defence (own goal line = the attacked one).
-const CD_POST = tpl(R.POST_GUARD, S_ANY, 0.7, 3.0, 0.4);
-const CD_Z1 = tpl(R.ZONAL, S_AERIAL, 5.8, 1.0, 0.1);
-const CD_Z2 = tpl(R.ZONAL, S_AERIAL, 6.0, -3.5, 0.1);
-const CD_EDGE = tpl(R.EDGE_GUARD, S_ANY, 15.5, -1.0, 0.3);
-const CD_COUNTER = tpl(R.COUNTER, S_FORWARD, 50, 0, 0.2);
-const CD_Z3 = tpl(R.ZONAL, S_ANY, 10, 4, 0.2);
-const CD_BLOCK = tpl(R.SHORT_BLOCK, S_ANY, 9.5, 24, 0.4);
-const CD_Z4 = tpl(R.ZONAL, S_ANY, 12, -6, 0.2);
+const CD_POST = tpl(R.POST_GUARD, S_ANY, SP.cornerDefPost.a, SP.cornerDefPost.z, SP.cornerDefPost.wd);
+const CD_Z1 = tpl(R.ZONAL, S_AERIAL, SP.cornerDefZonal1.a, SP.cornerDefZonal1.z, SP.cornerDefZonal1.wd);
+const CD_Z2 = tpl(R.ZONAL, S_AERIAL, SP.cornerDefZonal2.a, SP.cornerDefZonal2.z, SP.cornerDefZonal2.wd);
+const CD_EDGE = tpl(R.EDGE_GUARD, S_ANY, SP.cornerDefEdge.a, SP.cornerDefEdge.z, SP.cornerDefEdge.wd);
+const CD_COUNTER = tpl(R.COUNTER, S_FORWARD, SP.cornerDefCounter.a, SP.cornerDefCounter.z, SP.cornerDefCounter.wd);
+const CD_Z3 = tpl(R.ZONAL, S_ANY, SP.cornerDefZonal3.a, SP.cornerDefZonal3.z, SP.cornerDefZonal3.wd);
+const CD_BLOCK = tpl(R.SHORT_BLOCK, S_ANY, SP.cornerDefBlock.a, SP.cornerDefBlock.z, SP.cornerDefBlock.wd);
+const CD_Z4 = tpl(R.ZONAL, S_ANY, SP.cornerDefZonal4.a, SP.cornerDefZonal4.z, SP.cornerDefZonal4.wd);
 // Goal kicks (kicking team's own goal line; z mirrored to the ball's side).
-const GK_SPLIT1 = tpl(R.SPLIT_CB, S_CB, 14, 17, 0.6);
-const GK_SPLIT2 = tpl(R.SPLIT_CB, S_CB, 14, -17, 0.6);
-const GK_PIVOT = tpl(R.PIVOT, S_PIVOT, 27, 0, 0.6);
-const GK_WIDE1 = tpl(R.WIDE, S_FULLBACK, 32, 29, 0.6);
-const GK_WIDE2 = tpl(R.WIDE, S_FULLBACK, 32, -29, 0.6);
-const GK_TARGET = tpl(R.TARGET, S_FORWARD, 55, 6, 0.3);
-const GK_TARGET2 = tpl(R.TARGET, S_FORWARD, 51, -9, 0.4);
-const GK_PRESS1 = tpl(R.PRESS, S_FORWARD, 18.5, 10, 0.5);
-const GK_PRESS2 = tpl(R.PRESS, S_FORWARD, 18.5, -10, 0.5);
+const GK_SPLIT1 = tpl(R.SPLIT_CB, S_CB, SP.goalKickSplit1.a, SP.goalKickSplit1.z, SP.goalKickSplit1.wd);
+const GK_SPLIT2 = tpl(R.SPLIT_CB, S_CB, SP.goalKickSplit2.a, SP.goalKickSplit2.z, SP.goalKickSplit2.wd);
+const GK_PIVOT = tpl(R.PIVOT, S_PIVOT, SP.goalKickPivot.a, SP.goalKickPivot.z, SP.goalKickPivot.wd);
+const GK_WIDE1 = tpl(R.WIDE, S_FULLBACK, SP.goalKickWide1.a, SP.goalKickWide1.z, SP.goalKickWide1.wd);
+const GK_WIDE2 = tpl(R.WIDE, S_FULLBACK, SP.goalKickWide2.a, SP.goalKickWide2.z, SP.goalKickWide2.wd);
+const GK_TARGET = tpl(R.TARGET, S_FORWARD, SP.goalKickTarget.a, SP.goalKickTarget.z, SP.goalKickTarget.wd);
+const GK_TARGET2 = tpl(R.TARGET, S_FORWARD, SP.goalKickTarget2.a, SP.goalKickTarget2.z, SP.goalKickTarget2.wd);
+const GK_PRESS1 = tpl(R.PRESS, S_FORWARD, SP.goalKickPress1.a, SP.goalKickPress1.z, SP.goalKickPress1.wd);
+const GK_PRESS2 = tpl(R.PRESS, S_FORWARD, SP.goalKickPress2.a, SP.goalKickPress2.z, SP.goalKickPress2.wd);
 // Penalties (attacked goal line; z not mirrored).
 const PEN_ATT: readonly Tpl[] = [
-  tpl(R.ARC, S_FORWARD, 17.3, 8.2, 0.3), tpl(R.ARC, S_FORWARD, 17.3, -10, 0.3), tpl(R.ARC, S_ANY, 17.3, 11.8, 0.3),
-  tpl(R.ARC, S_ANY, 17.3, -13.6, 0.3), tpl(R.STAY_BACK, S_STAY, 56, -8, 0.2), tpl(R.STAY_BACK, S_STAY, 58, 8, 0.2),
+  tpl(R.ARC, S_FORWARD, SP.penAttack[0].a, SP.penAttack[0].z, SP.penAttack[0].wd), tpl(R.ARC, S_FORWARD, SP.penAttack[1].a, SP.penAttack[1].z, SP.penAttack[1].wd), tpl(R.ARC, S_ANY, SP.penAttack[2].a, SP.penAttack[2].z, SP.penAttack[2].wd),
+  tpl(R.ARC, S_ANY, SP.penAttack[3].a, SP.penAttack[3].z, SP.penAttack[3].wd), tpl(R.STAY_BACK, S_STAY, SP.penAttack[4].a, SP.penAttack[4].z, SP.penAttack[4].wd), tpl(R.STAY_BACK, S_STAY, SP.penAttack[5].a, SP.penAttack[5].z, SP.penAttack[5].wd),
 ];
 const PEN_DEF: readonly Tpl[] = [
-  tpl(R.ARC, S_MARKER, 17.3, -8.2, 0.3), tpl(R.ARC, S_MARKER, 17.3, 10, 0.3), tpl(R.ARC, S_MARKER, 17.3, -11.8, 0.3),
-  tpl(R.ARC, S_MARKER, 17.3, 13.6, 0.3), tpl(R.COUNTER, S_FORWARD, 50, 0, 0.2),
+  tpl(R.ARC, S_MARKER, SP.penDefend[0].a, SP.penDefend[0].z, SP.penDefend[0].wd), tpl(R.ARC, S_MARKER, SP.penDefend[1].a, SP.penDefend[1].z, SP.penDefend[1].wd), tpl(R.ARC, S_MARKER, SP.penDefend[2].a, SP.penDefend[2].z, SP.penDefend[2].wd),
+  tpl(R.ARC, S_MARKER, SP.penDefend[3].a, SP.penDefend[3].z, SP.penDefend[3].wd), tpl(R.COUNTER, S_FORWARD, SP.penDefend[4].a, SP.penDefend[4].z, SP.penDefend[4].wd),
 ];
 // Free kicks: z offsets mirrored to the ball's side; depths are set at run time.
-const FK_LINE_SHOOT_Z: readonly number[] = [7, -3, -9];
-const FK_LINE_WIDE_Z: readonly number[] = [3, 0, -4, -8];
-const T_FK_DUMMY = tpl(R.DUMMY, S_SHOOTER, 0, 0, 0.3);
-const T_FK_REBOUND = tpl(R.REBOUND, S_ANY, 0, 0, 0.5);
-const T_FK_LINE = tpl(R.LINE, S_AERIAL, 0, 0, 0.3);
-const T_FK_EDGE = tpl(R.EDGE, S_SHOOTER, 0, 0, 0.3);
-const T_FK_SHORT = tpl(R.SHORT, S_SHORT, 0, 0, 0.5);
-const T_FK_STAY1 = tpl(R.STAY_BACK, S_STAY, 56, -8, 0.2);
-const T_FK_STAY2 = tpl(R.STAY_BACK, S_STAY, 58, 8, 0.2);
-const T_FK_ZONAL = tpl(R.ZONAL, S_ANY, 0, 0, 0.3);
-const T_FK_POST = tpl(R.POST_GUARD, S_ANY, 0.7, 3, 0.4);
-const T_FK_COUNTER = tpl(R.COUNTER, S_FORWARD, 50, 0, 0.2);
-const T_DEEP_SHORT = tpl(R.SHORT, S_ANY, 0, 0, 1.0);
-const T_THROW = tpl(R.THROW_OPTION, S_ANY, 0, 0, 1.0);
+const FK_LINE_SHOOT_Z: readonly number[] = SP.fkLine.shootZ;
+const FK_LINE_WIDE_Z: readonly number[] = SP.fkLine.wideZ;
+const T_FK_DUMMY = tpl(R.DUMMY, S_SHOOTER, 0, 0, SP.fkDummy.wd);
+const T_FK_REBOUND = tpl(R.REBOUND, S_ANY, 0, 0, SP.fkRebound.wd);
+const T_FK_LINE = tpl(R.LINE, S_AERIAL, 0, 0, SP.fkLine.wd);
+const T_FK_EDGE = tpl(R.EDGE, S_SHOOTER, 0, 0, SP.fkEdge.wd);
+const T_FK_SHORT = tpl(R.SHORT, S_SHORT, 0, 0, SP.fkShort.wd);
+const T_FK_STAY1 = tpl(R.STAY_BACK, S_STAY, SP.fkStay1.a, SP.fkStay1.z, SP.fkStay1.wd);
+const T_FK_STAY2 = tpl(R.STAY_BACK, S_STAY, SP.fkStay2.a, SP.fkStay2.z, SP.fkStay2.wd);
+const T_FK_ZONAL = tpl(R.ZONAL, S_ANY, 0, 0, SP.fkZonal.wd);
+const T_FK_POST = tpl(R.POST_GUARD, S_ANY, SP.fkPost.a, SP.fkPost.z, SP.fkPost.wd);
+const T_FK_COUNTER = tpl(R.COUNTER, S_FORWARD, SP.fkCounter.a, SP.fkCounter.z, SP.fkCounter.wd);
+const T_DEEP_SHORT = tpl(R.SHORT, S_ANY, 0, 0, SP.fkDeepShort.wd);
+const T_THROW = tpl(R.THROW_OPTION, S_ANY, 0, 0, SP.throwOption.wd);
 
 // ---------------------------------------------------------------- module scratch (no allocation per tick)
 
@@ -519,21 +521,21 @@ function prepare(s: SimState): void {
     BASE_Z[slot] = WORLD.z;
     const a = s.attrs[slot]!;
     const role = p.role;
-    const aerial = a.heading + 0.5 * (a.height - 180);
+    const aerial = a.heading + LT.suitHeightW * (a.height - 180);
     const def = isDefenderRole(role);
     SUIT[S_ANY * NUM_SLOTS + slot] = 0;
-    SUIT[S_AERIAL * NUM_SLOTS + slot] = aerial + (role === Role.CB || role === Role.ST || role === Role.CF ? 10 : 0);
-    SUIT[S_SHORT * NUM_SLOTS + slot] = 0.5 * (a.shortPassing + a.dribbling) + (isWideRole(role) ? 8 : 0);
-    SUIT[S_SHOOTER * NUM_SLOTS + slot] = 0.4 * (a.longShots + a.shotPower) + 0.2 * a.curve;
-    SUIT[S_STAY * NUM_SLOTS + slot] = (def ? 25 : role === Role.CDM ? 15 : 0) + 0.3 * a.sprintSpeed - 0.4 * aerial;
-    SUIT[S_MARKER * NUM_SLOTS + slot] = (def ? 20 : role === Role.CDM ? 10 : 0) + 0.4 * a.heading +
-      0.3 * a.standingTackle + 0.3 * (a.height - 180);
-    SUIT[S_CB * NUM_SLOTS + slot] = role === Role.CB ? 40 : def ? 20 : role === Role.CDM ? 12 : 0;
-    SUIT[S_PIVOT * NUM_SLOTS + slot] = (role === Role.CDM ? 30 : role === Role.CM ? 22 : role === Role.CAM ? 10 : 0) +
-      0.1 * a.shortPassing;
-    SUIT[S_FULLBACK * NUM_SLOTS + slot] = isFullbackRole(role) ? 40 : isWideRole(role) ? 20 : 0;
-    SUIT[S_FORWARD * NUM_SLOTS + slot] = (role === Role.ST || role === Role.CF ? 35
-      : role === Role.RW || role === Role.LW || role === Role.CAM ? 18 : 0) + 0.2 * a.heading;
+    SUIT[S_AERIAL * NUM_SLOTS + slot] = aerial + (role === Role.CB || role === Role.ST || role === Role.CF ? LT.suitAerialRoleBonus : 0);
+    SUIT[S_SHORT * NUM_SLOTS + slot] = 0.5 * (a.shortPassing + a.dribbling) + (isWideRole(role) ? LT.suitShortWideBonus : 0);
+    SUIT[S_SHOOTER * NUM_SLOTS + slot] = LT.suitShooterShotW * (a.longShots + a.shotPower) + LT.suitShooterCurveW * a.curve;
+    SUIT[S_STAY * NUM_SLOTS + slot] = (def ? LT.suitStayDef : role === Role.CDM ? LT.suitStayCdm : 0) + LT.suitStaySpeedW * a.sprintSpeed - LT.suitStayAerialW * aerial;
+    SUIT[S_MARKER * NUM_SLOTS + slot] = (def ? LT.suitMarkerDef : role === Role.CDM ? LT.suitMarkerCdm : 0) + LT.suitMarkerHeadingW * a.heading +
+      LT.suitMarkerTackleW * a.standingTackle + LT.suitMarkerHeightW * (a.height - 180);
+    SUIT[S_CB * NUM_SLOTS + slot] = role === Role.CB ? LT.suitCbCb : def ? LT.suitCbDef : role === Role.CDM ? LT.suitCbCdm : 0;
+    SUIT[S_PIVOT * NUM_SLOTS + slot] = (role === Role.CDM ? LT.suitPivotCdm : role === Role.CM ? LT.suitPivotCm : role === Role.CAM ? LT.suitPivotCam : 0) +
+      LT.suitPivotPassW * a.shortPassing;
+    SUIT[S_FULLBACK * NUM_SLOTS + slot] = isFullbackRole(role) ? LT.suitFullbackFb : isWideRole(role) ? LT.suitFullbackWide : 0;
+    SUIT[S_FORWARD * NUM_SLOTS + slot] = (role === Role.ST || role === Role.CF ? LT.suitForwardStriker
+      : role === Role.RW || role === Role.LW || role === Role.CAM ? LT.suitForwardWide : 0) + LT.suitForwardHeadingW * a.heading;
   }
 }
 
@@ -684,7 +686,7 @@ function layoutCorner(s: SimState): void {
   MK.depth = LT.markZoneDepth;
   MK.halfW = LT.markZoneHalfWidth;
   MK.dist = LT.markDist;
-  MK.wd = 0.1;
+  MK.wd = SP.markerWd;
   assignMarkers(s, LT.maxMarkers, 0);
   pushAtt(CD_COUNTER, 1);
   pushAtt(CD_Z1, 1);
@@ -707,17 +709,17 @@ function pushThrow(): void {
 function layoutThrowIn(s: SimState): void {
   const d = C.dirA;
   const sz = C.sb;
-  PT.x = C.bx + d * 11;
-  PT.z = sz * (HALF_WIDTH - 4);
+  PT.x = C.bx + d * SP.throwFar.ahead;
+  PT.z = sz * (HALF_WIDTH - SP.throwFar.inField);
   pushThrow();
-  PT.x = C.bx + d * 1.5;
-  PT.z = sz * (HALF_WIDTH - 9);
+  PT.x = C.bx + d * SP.throwShort.ahead;
+  PT.z = sz * (HALF_WIDTH - SP.throwShort.inField);
   pushThrow();
-  PT.x = C.bx - d * 8;
-  PT.z = sz * (HALF_WIDTH - 6);
+  PT.x = C.bx - d * SP.throwBack.behind;
+  PT.z = sz * (HALF_WIDTH - SP.throwBack.inField);
   pushThrow();
-  PT.x = C.bx + d * 5;
-  PT.z = sz * (HALF_WIDTH - 13);
+  PT.x = C.bx + d * SP.throwInside.ahead;
+  PT.z = sz * (HALF_WIDTH - SP.throwInside.inField);
   pushThrow();
   assignList(C.att);
   MK.depth = 0;
@@ -765,13 +767,13 @@ function layoutFreeKick(s: SimState): void {
   const d = C.dirA;
   const sb = C.sb;
   if (C.fkZone === FkZone.DEEP) {
-    PT.x = C.bx + d * 1;
-    PT.z = C.bz + (C.bz >= 0 ? -11 : 11);
+    PT.x = C.bx + d * SP.fkDeepShort.ahead;
+    PT.z = C.bz + (C.bz >= 0 ? -SP.fkDeepShort.across : SP.fkDeepShort.across);
     pushAt(T_DEEP_SHORT);
     // Back option, or (deep in the own half) a forward one: never back toward the own goal.
     const own = HALF_LENGTH + d * C.bx; // distance from the own goal line
-    PT.x = C.bx + d * (own < LT.deepBackMinOwn ? 10 : -10);
-    PT.z = C.bz * 0.8;
+    PT.x = C.bx + d * (own < LT.deepBackMinOwn ? SP.fkDeepShort.back : -SP.fkDeepShort.back);
+    PT.z = C.bz * SP.fkDeepShort.backLateral;
     pushAt(T_DEEP_SHORT);
     assignList(C.att);
     return;
@@ -784,13 +786,13 @@ function layoutFreeKick(s: SimState): void {
   let nx = -kz, nz = kx;
   if (nz * sb < 0) { nx = -nx; nz = -nz; }
   if (C.fkZone === FkZone.SHOOT) {
-    PT.x = C.bx - kx * 0.9 + nx * 1.4;
-    PT.z = C.bz - kz * 0.9 + nz * 1.4;
+    PT.x = C.bx - kx * SP.fkDummy.back + nx * SP.fkDummy.side;
+    PT.z = C.bz - kz * SP.fkDummy.back + nz * SP.fkDummy.side;
     pushAt(T_FK_DUMMY);
     // Rebounders beyond the ends of the wall (or of where it would stand).
     let wx = C.bx + kx * RESTART_DISTANCE, wz = C.bz + kz * RESTART_DISTANCE;
     let n = r.kind === RestartKind.FREE_KICK ? r.wallCount : 0;
-    if (n > 0) { wx = r.wallX; wz = r.wallZ; } else n = 3;
+    if (n > 0) { wx = r.wallX; wz = r.wallZ; } else n = SP.fkRebound.assumedWall;
     const hw = (n - 1) * 0.5 * LT.wallSpacing + LT.fkReboundOut;
     PT.x = wx + nx * hw;
     PT.z = wz + nz * hw;
@@ -809,31 +811,31 @@ function layoutFreeKick(s: SimState): void {
       PT.z = sb * FK_LINE_WIDE_Z[i]!;
       pushDepth(T_FK_LINE);
     }
-    PT.x = runA + 6 > 18 ? runA + 6 : 18;
-    PT.z = -sb * 1;
+    PT.x = runA + SP.fkEdge.beyondLine > SP.fkEdge.minDist ? runA + SP.fkEdge.beyondLine : SP.fkEdge.minDist;
+    PT.z = -sb * SP.fkEdge.across;
     pushDepth(T_FK_EDGE);
-    PT.x = C.bx - d * 3;
-    PT.z = C.bz - sb * 7;
+    PT.x = C.bx - d * SP.fkShort.back;
+    PT.z = C.bz - sb * SP.fkShort.across;
     pushAt(T_FK_SHORT);
   }
   pushAtt(T_FK_STAY1, 1);
   pushAtt(T_FK_STAY2, 1);
   assignList(C.att);
-  if (C.fkZone === FkZone.WIDE && C.aB <= 28) {
+  if (C.fkZone === FkZone.WIDE && C.aB <= SP.fkPost.maxBallDist) {
     pushAtt(T_FK_POST, 1);
     assignList(C.def);
   }
   MK.depth = C.aLine + LT.fkMarkExtra;
   MK.halfW = LT.markZoneHalfWidth;
   MK.dist = LT.markDist;
-  MK.wd = 0.1;
+  MK.wd = SP.markerWd;
   assignMarkers(s, LT.maxMarkers, 0);
-  PT.x = C.aLine - 0.5;
-  PT.z = C.fkZone === FkZone.SHOOT ? 0 : sb * 1;
+  PT.x = C.aLine - SP.fkZonal.behindLine;
+  PT.z = C.fkZone === FkZone.SHOOT ? 0 : sb * SP.fkZonal.wideAcross;
   pushDepth(T_FK_ZONAL);
   if (C.fkZone === FkZone.SHOOT) {
-    PT.x = C.aLine - 0.5;
-    PT.z = -sb * 6;
+    PT.x = C.aLine - SP.fkZonal.behindLine;
+    PT.z = -sb * SP.fkZonal.shootAcross;
     pushDepth(T_FK_ZONAL);
   }
   pushAtt(T_FK_COUNTER, 1);
@@ -888,8 +890,8 @@ function layoutShootout(s: SimState): void {
     const idx = slot - teamFirstSlot(p.team);
     const row = idx & 1;
     const j = idx >> 1;
-    PT.x = row === 0 ? -1.1 : 1.1;
-    PT.z = (p.team === 0 ? -1 : 1) * (1.0 + 1.3 * j);
+    PT.x = row === 0 ? -SP.kickOffCircle.x : SP.kickOffCircle.x;
+    PT.z = (p.team === 0 ? -1 : 1) * (SP.kickOffCircle.z0 + SP.kickOffCircle.dz * j);
     setSpot(slot, R.CIRCLE, -1);
     SPOT_FIXED[slot] = 1;
   }
@@ -1298,7 +1300,7 @@ function emitAim(s: SimState, b: CpuBrainState, out: InputFrame): void {
     const r = s.match.restart;
     const ex = b.planX - r.aimX, ez = b.planZ - r.aimZ;
     const e = Math.sqrt(ex * ex + ez * ez);
-    if (e <= LT.reticleTol * 0.5) return;
+    if (e <= LT.reticleTol * LT.reticleStopFrac) return;
     const m = e / LT.reticleSlow;
     const mag = (m < LT.stickMinMag ? LT.stickMinMag : m > 1 ? 1 : m) * LT.aimStick;
     out.mx = Math.round((ex / e) * mag);
@@ -1459,7 +1461,7 @@ function bestTargetMan(s: SimState, team: number, from: number, x0: number, z0: 
     if (d < LT.gkLongMin || d > LT.gkLongMax || !laneOk(s, team, x0, z0, dx, dz, strict)) continue;
     const a = s.attrs[i]!;
     const open = openness(s, team, q.x, q.z);
-    const sc = 1000 * targetTier(q.role) + a.heading + 0.5 * (a.height - 180) + (open < 15 ? open : 15);
+    const sc = 1000 * targetTier(q.role) + a.heading + LT.targetHeightW * (a.height - 180) + (open < LT.targetOpenCap ? open : LT.targetOpenCap);
     if (sc > bestScore) { bestScore = sc; best = i; }
   }
   return best;
@@ -1482,7 +1484,7 @@ function openDefender(s: SimState, team: number, from: number, x0: number, z0: n
     const open = openness(s, team, q.x, q.z);
     const lane = laneClearance(s, team, x0, z0, q.x, q.z);
     if (open < LT.gkOpenDist || lane < LT.gkLaneClear) continue;
-    const sc = (open < 15 ? open : 15) + 0.5 * (lane < 8 ? lane : 8) - 0.1 * d + rngGauss(s.rng) * noise * LT.noiseScale;
+    const sc = (open < LT.shortOpenCap ? open : LT.shortOpenCap) + LT.shortLaneW * (lane < LT.shortLaneCap ? lane : LT.shortLaneCap) - LT.shortDistW * d + rngGauss(s.rng) * noise * LT.noiseScale;
     if (sc > bestScore) { bestScore = sc; best = i; }
   }
   return best;
@@ -1541,10 +1543,10 @@ function crossTarget(s: SimState, team: number, taker: number, prefer: number, n
     const wide = q.z < -PENALTY_AREA_HALF_WIDTH || q.z > PENALTY_AREA_HALF_WIDTH;
     const inBox = dg >= 0 && dg <= LT.boxDepth && !wide;
     // The tactic's runner also counts just outside the box (edge of the box), never one still on his way up.
-    if (!inBox && !(pref && dg >= 0 && dg <= LT.boxDepth + 4 && !wide)) continue;
+    if (!inBox && !(pref && dg >= 0 && dg <= LT.boxDepth + LT.crossPrefEdgeExtra && !wide)) continue;
     const a = s.attrs[i]!;
     const open = openness(s, team, q.x, q.z);
-    let sc = a.heading + 0.5 * (a.height - 180) + LT.crossOpenWeight * (open < LT.crossOpenCap ? open : LT.crossOpenCap);
+    let sc = a.heading + LT.crossHeightW * (a.height - 180) + LT.crossOpenWeight * (open < LT.crossOpenCap ? open : LT.crossOpenCap);
     if (pref) sc += LT.tacticBonus;
     sc += rngGauss(s.rng) * noise * LT.crossNoise;
     if (sc > bestScore) { bestScore = sc; best = i; }
@@ -1636,8 +1638,8 @@ function planPassTo(s: SimState, b: CpuBrainState, slot: number, fill: number, f
 function planLongAhead(s: SimState, team: number, b: CpuBrainState, fill: number): void {
   const r = s.match.restart;
   const dir = s.teams[team]!.dir;
-  const x = clamp(r.x + dir * LT.longAheadDist, -(HALF_LENGTH - 2), HALF_LENGTH - 2);
-  planKick(b, CpuPlan.CLEAR, Btn.LOB, holdFor(longPower(LT.longAheadDist), fill), x, r.z * 0.5, -1, 0, false);
+  const x = clamp(r.x + dir * LT.longAheadDist, -(HALF_LENGTH - LT.longAheadPitchMargin), HALF_LENGTH - LT.longAheadPitchMargin);
+  planKick(b, CpuPlan.CLEAR, Btn.LOB, holdFor(longPower(LT.longAheadDist), fill), x, r.z * LT.longAheadLateral, -1, 0, false);
 }
 
 function decideThrowIn(s: SimState, team: number, b: CpuBrainState, fill: number): void {
@@ -1710,7 +1712,7 @@ function planFreeKickShot(s: SimState, team: number, b: CpuBrainState, fill: num
   const dir = s.teams[team]!.dir;
   const gx = dir * HALF_LENGTH;
   let near = r.z < 0 ? -1 : 1;
-  if (r.z > -1.5 && r.z < 1.5) near = rngFloat(s.rng) < 0.5 ? -1 : 1;
+  if (r.z > -LT.fkCentralBand && r.z < LT.fkCentralBand) near = rngFloat(s.rng) < 0.5 ? -1 : 1;
   const wallSide = rngFloat(s.rng) < LT.fkWallSideChance;
   const side = wallSide ? near : -near;
   const tz = side * (GOAL_HALF_WIDTH - LT.fkPostInset) + rngGauss(s.rng) * LT.fkAimErr * T_LEVEL.executionError[lvl]!;
@@ -1722,8 +1724,8 @@ function planFreeKickShot(s: SimState, team: number, b: CpuBrainState, fill: num
   let sign = nz * bendZ >= 0 ? 1 : -1;
   if (bendZ === 0) sign = 1;
   const curveAttr = s.attrs[r.taker]!.curve;
-  const curl = clamp(LT.fkCurlBase + LT.fkCurlAttr * (curveAttr - 60) / 40, LT.fkCurlMin, LT.fkCurlMax);
-  const power = clamp(LT.fkPowerBase + (C.dGoal - 18) * LT.fkPowerPerM, LT.fkPowerMin, LT.fkPowerMax);
+  const curl = clamp(LT.fkCurlBase + LT.fkCurlAttr * (curveAttr - LT.fkCurlAttrRef) / LT.fkCurlAttrSpan, LT.fkCurlMin, LT.fkCurlMax);
+  const power = clamp(LT.fkPowerBase + (C.dGoal - LT.fkPowerRefDist) * LT.fkPowerPerM, LT.fkPowerMin, LT.fkPowerMax);
   planKick(b, CpuPlan.SHOOT, Btn.SHOOT, holdFor(power, fill), gx, tz, -1, sign * curl, true);
 }
 
@@ -1734,11 +1736,11 @@ function decideFreeKick(s: SimState, team: number, b: CpuBrainState, fill: numbe
   const zone = C.fkZone;
   if (zone === FkZone.SHOOT) {
     const dg = C.dGoal;
-    let p = dg <= 20 ? LT.fkShootChance[0]! : dg <= 26 ? LT.fkShootChance[1]! : LT.fkShootChance[2]!;
+    let p = dg <= LT.fkShootBandNear ? LT.fkShootChance[0]! : dg <= LT.fkShootBandMid ? LT.fkShootChance[1]! : LT.fkShootChance[2]!;
     const aB = C.aB > 0.01 ? C.aB : 0.01;
     const angle = datan2(GOAL_HALF_WIDTH - C.bz, aB) - datan2(-GOAL_HALF_WIDTH - C.bz, aB);
     p *= clamp(angle / LT.fkAngleFull, LT.fkAngleFloor, 1);
-    p += (fkQuality(s, r.taker) - 65) / 100;
+    p += (fkQuality(s, r.taker) - LT.fkQualityRef) / LT.fkQualityScale;
     if (rngFloat(s.rng) < p) {
       planFreeKickShot(s, team, b, fill);
       return;

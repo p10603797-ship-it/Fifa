@@ -33,6 +33,7 @@
 import type { AppContext, DeviceInfo, HumanBinding, MatchSetup, MatchSummary } from '../contracts/app';
 import type { Club } from '../contracts/data';
 import { Difficulty, ModeId } from '../contracts/enums';
+import { T_CUP_QUICK } from '../contracts/tuning';
 import { ANY_DEVICE } from '../app/localInput';
 import { newMatchSeed } from '../app/session';
 import { recordCupWon, recordMatch } from './records';
@@ -41,27 +42,8 @@ import { buildSetup, clampDifficulty, clampHalfMinutes, type HumanChoice } from 
 export const CUP_PROGRESS_KEY = 'cup';
 export const CUP_SCHEMA = 1;
 
-/** Quick-result model constants. // TUNING-CR (MOD-02) */
-export const QUICK = {
-  /** Expected goals of a side against an equal side in 90 minutes. */
-  baseGoals: 1.3,
-  /** Exponent per rating point of difference (ratings 62..88). */
-  ratingSlope: 0.05,
-  /** Expected-goal bounds per 90 minutes. */
-  minGoals: 0.15,
-  maxGoals: 4.5,
-  /** Largest goal count sampled per period. */
-  maxSampledGoals: 9,
-  /** Extra time is a third of a match. */
-  extraTimeShare: 1 / 3,
-  /** Penalty conversion: base at rating 75, per rating point, clamp. */
-  penBase: 0.74,
-  penSlope: 0.004,
-  penMin: 0.55,
-  penMax: 0.9,
-  /** Sudden-death rounds before a coin toss (never reached in practice). */
-  maxSuddenDeath: 30,
-} as const;
+/** Quick-result model constants: contracts/tuning.ts T_CUP_QUICK ([TUN-2]; the old name is kept). */
+export const QUICK = T_CUP_QUICK;
 
 export interface CupTie {
   home: number;
@@ -228,7 +210,7 @@ export function expectedGoals(own: number, other: number): number {
 
 /** Per-kick penalty conversion for a side rated `r`. */
 export function penaltyConversion(r: number): number {
-  const p = QUICK.penBase + (r - 75) * QUICK.penSlope;
+  const p = QUICK.penBase + (r - QUICK.penRefRating) * QUICK.penSlope;
   return p < QUICK.penMin ? QUICK.penMin : p > QUICK.penMax ? QUICK.penMax : p;
 }
 

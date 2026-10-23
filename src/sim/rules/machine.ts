@@ -902,7 +902,7 @@ function forceKickOff(s: SimState, ev: EventSink): void {
   const b = s.ball;
   const recv = nearestTeammate(s, taker);
   const dir = s.teams[p.team]!.dir;
-  let ux = dir, uz = 0, tx = b.x + dir * 5, tz = b.z;
+  let ux = dir, uz = 0, tx = b.x + dir * T_MATCH_FLOW.forcedKickAhead, tz = b.z;
   if (recv >= 0) {
     const q = s.players[recv]!;
     const dx = q.x - b.x, dz = q.z - b.z;

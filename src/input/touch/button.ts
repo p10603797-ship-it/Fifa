@@ -31,15 +31,10 @@
 import {
   ClusterMode, pushButtonEvent, SwipeDir, TouchEdge, type TouchButtonId, type TouchControl, type TouchIntentState,
 } from '../../contracts/touch';
-import { T_INPUT, T_TOUCHUI } from '../../contracts/tuning';
+import { T_INPUT, T_TOUCH_BUTTON, T_TOUCHUI } from '../../contracts/tuning';
 
-/** Button recogniser constants (TUNING-CR: candidates for T_TOUCHUI). */
-export const LOCAL_TUNING = {
-  /** A button swipe must cover buttonSwipePt within this window, ms (slower drift of a held thumb is no swipe). */
-  swipeWindowMs: 300,
-  /** Recent finger positions kept per button (ring buffer, samples >= swipeWindowMs / (pathSamples - 4) apart). */
-  pathSamples: 64,
-} as const; // TUNING-CR
+/** Button recogniser constants: contracts/tuning.ts T_TOUCH_BUTTON ([TUN-2]; the old name is kept for importers). */
+export const LOCAL_TUNING = T_TOUCH_BUTTON;
 
 /** Button circle in CSS px. */
 export interface ButtonGeom {

@@ -35,7 +35,7 @@ import { MenuAction, UiSound } from '../../contracts/app';
 import { AutoSwitch, SkillMove } from '../../contracts/enums';
 import { createDefaultSettings, type ControlPlacement, type TouchSettings } from '../../contracts/settings';
 import { ClusterSlot, TouchButtonId } from '../../contracts/touch';
-import { T_TOUCHUI } from '../../contracts/tuning';
+import { T_TOUCH_EDITOR, T_TOUCHUI } from '../../contracts/tuning';
 import {
   createBackButton, createButton, createSegmented, createSelector, createSlider, createTabs, createToggle, h, injectStyle,
 } from '../../ui/components';
@@ -46,27 +46,9 @@ import { GESTURE_RULE_LABEL, GESTURE_RULES } from './gestures';
 import { circleClearOfRect, hudRegions, type Rect } from './overlay';
 import { computeStickConfig, createStickConfig, LOCAL_TUNING as STICK_TUNING, STICK_LAYOUT_KEY } from './stick';
 
-const LOCAL_TUNING = {
-  /** D-pad nudge per press, pt. */
-  nudgePt: 8,
-  /** L1 / R1 size step while a control is picked up. */
-  scaleStep: 0.05,
-  /** Nearest-valid-spot search: ring step and the smallest arc between candidates, pt. */
-  searchStepPt: 4,
-  searchArcPt: 6,
-  /** A press that moves less than this is a tap (select), not a drag, pt. */
-  dragSlopPt: 6,
-  /** Spacing slider range (SETTINGS_LIMITS spacingMin / spacingMax) and step. */
-  spacingMin: 1,
-  spacingMax: 2,
-  spacingStep: 0.05,
-  /** Opacity slider range and step. */
-  opacityMin: 0.2,
-  opacityMax: 1,
-  opacityStep: 0.05,
-} as const; // TUNING-CR (menu feel, not gameplay): T_TOUCHUI.editor = { ... }
+const LOCAL_TUNING = T_TOUCH_EDITOR; // [TUN-2] controls editor (menu feel): contracts/tuning.ts T_TOUCH_EDITOR
 
-/** The LOCAL_TUNING block (read-only; tests and the lead's TUNING-CR review). */
+/** The LOCAL_TUNING block (read-only; tests). */
 export const EDITOR_TUNING = LOCAL_TUNING;
 
 // ============================================================ model (pure)

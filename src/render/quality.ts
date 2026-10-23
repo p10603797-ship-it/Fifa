@@ -53,7 +53,7 @@ import { QualityTier } from '../contracts/enums';
 import { T_PERF } from '../contracts/tuning';
 import type { RenderContext, RenderFrame, RenderModule } from './types';
 
-const LOCAL_TUNING = { // TUNING-CR
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: render quality tiers)
   /** Time constant of the frame-interval / frame-work EMAs, ms. */
   smoothTauMs: 250,
   /** Interval and work samples are clamped to this before smoothing (one hitch moves the signal only a little), ms. */

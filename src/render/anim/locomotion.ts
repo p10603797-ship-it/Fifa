@@ -32,7 +32,7 @@ import { clamp, HEEL_X, lerp, PELVIS_Y, placeSwingFootS, plantToeS, PSA, PTA, TA
 
 const P = PoseIdx;
 
-const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: render-only animation constants)
   /** Run cadence (steps per second) = cadenceBase + cadencePerMs * speed (m/s). */
   cadenceBase: 1.75,
   cadencePerMs: 0.34,

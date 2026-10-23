@@ -577,7 +577,7 @@ function forceKick(s: SimState, ev: EventSink): void {
   placePlayer(p, PT.x, PT.z, end, 0);
   const b = s.ball;
   const tx = end * HALF_LENGTH;
-  const lim = GOAL_HALF_WIDTH + 1.5;
+  const lim = GOAL_HALF_WIDTH + LT.forcedAimOutside;
   const tz = clamp(r.aimZ + rngGauss(s.rng) * LT.forcedAimErr, -lim, lim);
   const dx = tx - b.x, dz = tz - b.z;
   const d = Math.sqrt(dx * dx + dz * dz);

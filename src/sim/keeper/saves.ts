@@ -76,7 +76,7 @@ import { EventType, type EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type BallState, type PlayerAttrs, type SimState } from '../../contracts/state';
 import { createKickLaunch, MAX_PREDICT_TICKS } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_GK, T_LEVEL, T_PLAYER, T_GK_SAVE } from '../../contracts/tuning';
+import { T_BALL, T_GK, T_KICK, T_LEVEL, T_PLAYER, T_GK_SAVE } from '../../contracts/tuning';
 import { ballStepTick } from '../ball/contact';
 import { attr, clamp, clamp01, datan2, dcos, dsin, lerp, PI } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
@@ -382,7 +382,7 @@ function screenTicks(s: SimState, k: number): number {
     const q = s.players[i]!;
     if (q.active !== 1) continue;
     const t = ((q.x - ox) * sx + (q.z - oz) * sz) / l2;
-    if (t < 0.15 || t > 0.9) continue;
+    if (t < L.screenSegMin || t > L.screenSegMax) continue;
     const cx = ox + sx * t - q.x, cz = oz + sz * t - q.z;
     if (cx * cx + cz * cz <= r2) n++;
   }
@@ -527,7 +527,7 @@ function setCatch(
     p.actDur = p.actT + arrive + L.catchPostTicks;
   }
   let tx = x;
-  if (depthOf(dir, tx) < L.minDepth + 0.15) tx = xOfDepth(dir, L.minDepth + 0.15);
+  if (depthOf(dir, tx) < L.minDepth + L.catchDepthMargin) tx = xOfDepth(dir, L.minDepth + L.catchDepthMargin);
   p.actX = tx;
   p.actZ = z;
   p.actCurve = y;
@@ -676,7 +676,7 @@ function reflexEligible(s: SimState, team: number): boolean {
   const t = (u > 0 ? u : 0) / vg;
   if (t > L.reflexHorizon) return false;
   // A rolling ball that stops short of the goal is gathered (first touch / collect), not blocked.
-  const rolling = b.y <= BALL_RADIUS + 0.02 && b.vy < 0.5 && b.vy > -0.5;
+  const rolling = b.y <= BALL_RADIUS + 0.02 && b.vy < L.rollingMaxVy && b.vy > -L.rollingMaxVy;
   if (rolling && (b.vx * b.vx + b.vz * b.vz) < 2 * T_BALL.rollDecel * u) return false;
   const zl = b.z + b.vz * t;
   if (zl > GOAL_HALF_WIDTH + L.reflexMouthMargin || zl < -GOAL_HALF_WIDTH - L.reflexMouthMargin) return false;
@@ -695,7 +695,7 @@ function buildVolume(s: SimState, team: number, k: number): void {
     const ty = p.actCurve;
     const hip = clamp(lerp(L.hipStand, ty, L.hipBlend), L.hipMin, L.hipMax);
     const ext = diveHandOffset(a, diveTargetDist(a, p.actPower)) * armExt(p.actT);
-    const feetY = hip - 0.5 > 0.15 ? hip - 0.5 : 0.15;
+    const feetY = hip - L.diveFeetBelowHip > L.diveFeetMinY ? hip - L.diveFeetBelowHip : L.diveFeetMinY;
     VOL.kind = VOL_DIVE;
     VOL.ax = p.x - p.actDirX * L.legLength; VOL.ay = feetY; VOL.az = p.z - p.actDirZ * L.legLength;
     VOL.bx = p.x + p.actDirX * ext; VOL.by = ty; VOL.bz = p.z + p.actDirZ * ext;
@@ -706,8 +706,8 @@ function buildVolume(s: SimState, team: number, k: number): void {
     if (p.actDone === 1) return;
     const h = heightM(a);
     VOL.kind = VOL_BODY;
-    VOL.ax = p.x; VOL.ay = 0.3; VOL.az = p.z;
-    VOL.bx = p.x; VOL.by = h - 0.3; VOL.bz = p.z;
+    VOL.ax = p.x; VOL.ay = L.bodyVolFootY; VOL.az = p.z;
+    VOL.bx = p.x; VOL.by = h - L.bodyVolHeadInset; VOL.bz = p.z;
     VOL.r = L.bodyRadius;
     return;
   }
@@ -755,8 +755,8 @@ function bodyVolume(s: SimState, k: number): void {
   const p = s.players[k]!;
   const h = heightM(s.attrs[k]!);
   VOL.kind = VOL_BODY;
-  VOL.ax = p.x; VOL.ay = 0.3; VOL.az = p.z;
-  VOL.bx = p.x; VOL.by = h - 0.3; VOL.bz = p.z;
+  VOL.ax = p.x; VOL.ay = L.bodyVolFootY; VOL.az = p.z;
+  VOL.bx = p.x; VOL.by = h - L.bodyVolHeadInset; VOL.bz = p.z;
   VOL.r = L.bodyRadius;
 }
 
@@ -838,7 +838,7 @@ function launch(s: SimState, k: number, vx: number, vy: number, vz: number, kind
   LAUNCH.tx = b.x + vx; LAUNCH.tz = b.z + vz;
   LAUNCH.onTarget = 0;
   applyKick(s, k, LAUNCH, 0, ev);
-  b.grounded = b.y > BALL_RADIUS + 1e-6 || vy > 0.5 ? 0 : b.grounded;
+  b.grounded = b.y > BALL_RADIUS + 1e-6 || vy > T_KICK.liftVy ? 0 : b.grounded;
 }
 
 /** Parry quality 0..1 (handling + reflexes, worse at full stretch) with a little deterministic noise. */
@@ -850,7 +850,7 @@ function parry(s: SimState, team: number, k: number, stretch: number, sp: number
   const skill = clamp01(((a.gkHandling + a.gkReflexes) * 0.5 - 1) / 98);
   const q = clamp01(skill * (1 - L.parryStretchPenalty * stretch));
   let ang = lerp(L.parryAnglePoor, L.parryAngleGood, q) + rngRange(s.rng, -L.parryNoise, L.parryNoise);
-  if (ang < 0.05) ang = 0.05; else if (ang > 1.35) ang = 1.35;
+  if (ang < L.parryAngleMin) ang = L.parryAngleMin; else if (ang > L.parryAngleMax) ang = L.parryAngleMax;
   let side: number;
   if (cz > L.parryCentreBand) side = 1;
   else if (cz < -L.parryCentreBand) side = -1;
@@ -862,11 +862,11 @@ function parry(s: SimState, team: number, k: number, stretch: number, sp: number
   const az = cz < 0 ? -cz : cz;
   if (az > T_GK.parryPostBand) {
     const near = clamp01((az - T_GK.parryPostBand) / (GOAL_HALF_WIDTH - T_GK.parryPostBand));
-    if (rngFloat(s.rng) < T_GK.parryPostChance * near * (0.5 + 0.5 * q)) {
+    if (rngFloat(s.rng) < T_GK.parryPostChance * near * (L.parryPostQualityBase + L.parryPostQualityGain * q)) {
       // Back past square by delta, crossing the goal line parryPostClear outside the post: tan(delta) <= u / lateral.
       const u = depthOf(dir, b.x);
       const lat = GOAL_HALF_WIDTH + T_GK.parryPostClear - az;
-      let back = lat > 0 ? 0.75 * datan2(u > 0 ? u : 0, lat) : T_GK.parryPostBackMax;
+      let back = lat > 0 ? L.parryPostBackFrac * datan2(u > 0 ? u : 0, lat) : T_GK.parryPostBackMax;
       if (back > T_GK.parryPostBackMax) back = T_GK.parryPostBackMax;
       if (back >= T_GK.parryPostBackMin) {
         side = cz > 0 ? 1 : -1;
@@ -887,10 +887,10 @@ function tipOver(s: SimState, team: number, k: number, ev: EventSink): void {
   let g = vg * L.tipGoalwardFrac;
   if (g < L.tipGoalwardMin) g = L.tipGoalwardMin;
   const u = depthOf(dir, b.x);
-  const t = ((u > 0 ? u : 0) + 0.3) / g;
+  const t = ((u > 0 ? u : 0) + L.tipBeyondLine) / g;
   let vy = (L.tipClearHeight - b.y + 0.5 * T_BALL.gravity * t * t) / t;
-  if (vy > L.tipMaxLift) vy = L.tipMaxLift; else if (vy < 1) vy = 1;
-  launch(s, k, -dir * g, vy, b.vz * 0.5, KickKind.GK_TIP, ev);
+  if (vy > L.tipMaxLift) vy = L.tipMaxLift; else if (vy < L.tipMinLift) vy = L.tipMinLift;
+  launch(s, k, -dir * g, vy, b.vz * L.tipLateralKeep, KickKind.GK_TIP, ev);
 }
 
 function block(

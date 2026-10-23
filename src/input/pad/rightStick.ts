@@ -52,29 +52,12 @@
 import { MatchPhase, SkillMove } from '../../contracts/enums';
 import { Btn, type InputFrame, type InputSampleContext } from '../../contracts/input';
 import { T_INPUT } from '../../contracts/tuning';
-import { T_PAD } from '../../contracts/tuning';
+import { T_PAD, T_PAD_RIGHT_STICK } from '../../contracts/tuning';
 import { quantStick } from '../axes';
 
-const LOCAL_TUNING = {
-  /** A stroke ends when the stick falls below this fraction of T_INPUT.flickThreshold (0..1, release hysteresis). */
-  releaseFrac: 0.6,
-  /** Angular hysteresis past a 45-degree sector boundary before the sector changes, degrees. */
-  sectorHysteresisDeg: 15,
-  /** Minimum roll from the stroke start for a step-over (forward -> side), degrees. */
-  stepOverMinRollDeg: 45,
-  /** Minimum roll from the stroke start for a roulette (back -> side -> forward), degrees. */
-  rouletteMinRollDeg: 100,
-  /** Consecutive out-of-centre samples further apart than this passed through the centre (new stroke), degrees. */
-  throughCentreDeg: 120,
-  /** A side flick / hold must stay within this angle of where it started (radial, not a sweep), degrees. */
-  sideMaxDriftDeg: 30,
-  /** Drag-back: the left-stick flick must be within this angle of straight back, degrees. */
-  dragBackHalfDeg: 55,
-  /** A latched flick or skill not reported within this time is dropped (sampling stopped, e.g. paused), ms. */
-  latchMaxMs: 250,
-} as const; // TUNING-CR
+const LOCAL_TUNING = T_PAD_RIGHT_STICK; // [TUN-2] flick / skill-stroke recogniser: contracts/tuning.ts T_PAD_RIGHT_STICK
 
-/** The LOCAL_TUNING block (read-only; tests and the lead's TUNING-CR review). */
+/** The LOCAL_TUNING block (read-only; tests). */
 export const RIGHT_STICK_TUNING = LOCAL_TUNING;
 
 /** Stick sectors relative to the player's facing. */

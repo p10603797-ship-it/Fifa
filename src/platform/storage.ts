@@ -22,7 +22,7 @@
  *    connection (not for quota); if it still fails the value is kept in memory and the call resolves false.
  */
 
-const LOCAL_TUNING = { // TUNING-CR (platform timing, not gameplay)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: platform storage timing)
   /** An IndexedDB open that has neither succeeded nor failed after this long falls back to memory, ms. */
   idbOpenTimeoutMs: 4000,
   /** A transaction that has neither completed nor aborted after this long is abandoned (WebKit hangs), ms. */

@@ -1,8 +1,8 @@
 # DotKick tuning log
 
 Owner: INT-A (Wave 2 gameplay integration). Every gameplay constant change made against soak evidence, with the
-reason. Values live in `src/contracts/tuning.ts` (since TUN-1 every sim / AI value; module blocks are named in the
-TUN-1 table below; older entries name the module's former `LOCAL_TUNING` block). Measurement tool: `npx tsx tools/soak.ts --matches 24 --difficulty 3
+reason. Values live in `src/contracts/tuning.ts` (since TUN-1 every sim / AI value, since TUN-2 also the input, modes and
+formerly inline values; module blocks are named in the TUN-1 and TUN-2 tables below; older entries name the module's former `LOCAL_TUNING` block). Measurement tool: `npx tsx tools/soak.ts --matches 24 --difficulty 3
 --enforce all --halfMinutes 4` (equal teams at Professional, as BRIEF §7 defines the bands).
 
 ## TUN-1: module tuning moved into `src/contracts/tuning.ts` (BRIEF §4 rule 6)
@@ -86,6 +86,418 @@ pre-check margins (`bodies.ts` `NEAR_MARGIN`, `contact.ts` `BOARD_NEAR` / `NEAR_
 (`AIM_MIN_DIST` 0.25 m in pass / lob / through: below it a target gives no aim direction; `contact.ts`
 `MIN_HORIZONTAL_NORMAL`), display constants (`machine.ts` `HALF_DISPLAY_SEC` / `ET_DISPLAY_SEC`), replay format
 constants, and constants derived from tuning values (`CR2`, `REACH2`, `CHARGE_WAIT`, `JUMP_TICKS`, `HOLD_INV`...).
+
+## TUN-2: last tuning-in-data pass (BRIEF §4 rule 6)
+
+TUN-2 moved the gameplay numbers TUN-1 left behind into `src/contracts/tuning.ts`, with their units and comments,
+without changing any value or any behaviour:
+
+1. **Set-piece spot templates and other inline sim / AI literals.** 356 literal sites (353 single literals and 3 array
+   literals) in 26 `src/sim` / `src/ai` files (distances, speeds, times, probabilities, weights) now read tuning.ts. The spot templates and the run-time spot
+   offsets of `src/ai/setpieces.ts` form the new block `T_SETPIECE_SPOTS`; `src/sim/core/query.ts` got `T_QUERY`;
+   every other literal became a key of its module's TUN-1 block, marked `[TUN-2]` (T_SETPIECE_AI +45, T_GK_SAVE +18,
+   T_AERIAL_PLAY +14, T_PRACTICE +12 (the free-kick practice spots), T_FREE_KICK +10, T_CARRIER +5, T_PASSING +5,
+   T_GK_SETPIECE +4, T_GK_SWEEP +4, T_MATCH_FLOW +4, T_RESTART +4, T_DEFENDING +2, T_DEF_SHAPE +2, T_GK_POSITION +2,
+   T_PENALTY +2, and one each in T_FIRST_TOUCH, T_KICK, T_PRESS, T_RESOLVE, T_SHOOTING, T_SHOOTOUT, T_SKILL_MOVES,
+   T_STEER): 322 new tuning.ts leaves (array elements counted).
+2. **Input feel and modes.** Every TUNING-CR block of `src/input/**`, the gameplay blocks of `src/modes/**` and the
+   formation-remap cost model of `src/data/formations.ts` (used by `ai/tactics` SET_FORMATION, so gameplay, although
+   the charter listed `src/data` as non-gameplay) moved whole, one block per module (table below). The module keeps
+   its old name as an alias of the tuning.ts object (`export const LOCAL_TUNING = T_TOUCH_STICK;`), so importers and
+   tests are unchanged. `T_TOUCH_OVERLAY`, `T_TOUCH_EDITOR`, `T_PAD_RUMBLE` and `T_MENU_INPUT` are menu / device feel
+   rather than gameplay; they moved with the input layer because the charter names every `src/input` block.
+3. **Non-gameplay markers.** The remaining TUNING-CR markers (render, audio, ui, net, platform, data generation, app,
+   modes/stats) keep their values local and now read `// LOCAL_TUNING (non-gameplay: <reason>)` (table below).
+   `grep -r TUNING-CR src` is empty (tests/unit/tun-2-tuning-in-data.test.ts keeps it so).
+
+**Proof of identity.** (a) `npx tsx tools/hash-table.ts` (28 runs: every difficulty, cup rules, every practice kind,
+shoot-out, human-scripted and hostile-input matches, rule toggles, the first soak and fuzz jobs; end-of-run hashState
+plus a rolling digest every 500 ticks) recorded before the first edit and compared after each step (markers, input /
+modes blocks, set pieces, the other sim / AI literals) and at the end: IDENTICAL 28 / 28 every time. (b) A deep value
+comparison against a pristine `git archive HEAD` copy: every changed `src` file is regenerated from the pristine file
+plus a list of edits and must equal the working tree byte for byte; each moved literal is a single token replaced by
+an expression whose value is `Object.is`-equal to the literal (aliases bound to the new tuning.ts objects); every
+pristine tuning.ts leaf (3262) is `Object.is`-unchanged; every moved block's exported object / value of the pristine
+module is `Object.is`-equal leaf by leaf to the new one and to the tuning.ts block, and the block bodies are
+text-identical to their pristine source; the 51 marker-only files are token-identical (comments only). Result: PROOF
+OK (444 new tuning.ts leaves: 322 from sim / AI literals, `T_CUP_QUICK.penRefRating`, 121 from moved blocks). (c) tsc, eslint and the area tests
+(below) are green.
+
+### Moved blocks (input, modes, formation remap)
+
+| Old location | New name | Constants |
+|---|---|---|
+| `src/input/touch/stick.ts` `LOCAL_TUNING` (TCH-02) | `T_TOUCH_STICK` | 8 |
+| `src/input/touch/button.ts` `LOCAL_TUNING` (TCH-03) | `T_TOUCH_BUTTON` | 2 |
+| `src/input/touch/attack.ts` `LOCAL_TUNING` (TCH-03) | `T_TOUCH_ATTACK` | 3 |
+| `src/input/touch/gestures.ts` `LOCAL_TUNING` (TCH-05) | `T_TOUCH_GESTURES` | 14 |
+| `src/input/touch/mapper.ts` `LOCAL_TUNING` (TCH-06) | `T_TOUCH_MAPPER` | 15 |
+| `src/input/touch/setpiece.ts` `LOCAL_TUNING` (TCH-07) | `T_TOUCH_SETPIECE` | 5 |
+| `src/input/touch/overlay.ts` `LOCAL_TUNING` / `OVERLAY_TUNING` (TCH-08) | `T_TOUCH_OVERLAY` | 16 |
+| `src/input/touch/editor.ts` `LOCAL_TUNING` / `EDITOR_TUNING` (TCH-09) | `T_TOUCH_EDITOR` | 11 |
+| `src/input/pad/mapper.ts` `LOCAL_TUNING` / `MAPPER_TUNING` (PAD-02) | `T_PAD_MAPPER` | 1 |
+| `src/input/pad/rightStick.ts` `LOCAL_TUNING` / `RIGHT_STICK_TUNING` (PAD-03) | `T_PAD_RIGHT_STICK` | 8 |
+| `src/input/pad/manager.ts` `LOCAL_TUNING` (`PAD_TRIGGER_RELEASE`) (PAD-01) | `T_PAD_TRIGGER` | 1 |
+| `src/input/pad/sequences.ts` `LOCAL_TUNING` / `PAD_SEQUENCE_TUNING` (PAD-04) | `T_PAD_SEQUENCES` | 2 |
+| `src/input/pad/rumble.ts` `LOCAL_TUNING` / `RUMBLE_TUNING` (PAD-06) | `T_PAD_RUMBLE` | 10 |
+| `src/input/keyboard.ts` `LOCAL_TUNING` / `KEYBOARD_TUNING` (PAD-08) | `T_KEYBOARD` | 2 |
+| `src/input/menuInput.ts` `LOCAL_TUNING` / `MENU_TUNING` | `T_MENU_INPUT` | 6 |
+| `src/modes/practice.ts` `LOCAL_TUNING` (MOD-04) | `T_PRACTICE_MODE` | 4 |
+| `src/modes/cup.ts` `QUICK` (MOD-02), plus the inline rating reference 75 of `penaltyConversion` -> `penRefRating` | `T_CUP_QUICK` | 12 |
+| `src/data/formations.ts` `LOCAL_TUNING` (DAT-02 remap cost model) | `T_FORMATION_REMAP` | 2 |
+
+### Formerly inline sim / AI literals (old line numbers are those of HEAD 36361eb)
+
+`src/ai/setpieces.ts` (233 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 140 | `10.5`, `0.5` | `T_SETPIECE_SPOTS.cornerPen.{a, z}` |
+| 141 | `5.0`, `-4.5` | `T_SETPIECE_SPOTS.cornerFarPost.{a, z}` |
+| 142 | `4.5`, `2.8` | `T_SETPIECE_SPOTS.cornerNearPost.{a, z}` |
+| 143 | `54`, `-8`, `0.2` | `T_SETPIECE_SPOTS.cornerStay1.{a, z, wd}` |
+| 144 | `18.5`, `-2.5`, `0.2` | `T_SETPIECE_SPOTS.cornerEdge.{a, z, wd}` |
+| 145 | `4.5`, `27`, `0.2` | `T_SETPIECE_SPOTS.cornerShort.{a, z, wd}` |
+| 146 | `56`, `9`, `0.2` | `T_SETPIECE_SPOTS.cornerStay2.{a, z, wd}` |
+| 150 | `5.5`, `0.8`, `6.5`, `-6.5`, `17.5`, `0.2` | `T_SETPIECE_SPOTS.cornerX1[0].{a, z}`, `T_SETPIECE_SPOTS.cornerX1[1].{a, z}`, `T_SETPIECE_SPOTS.cornerX1[2].{a, z, wd}` |
+| 151 | `1.6`, `-0.6`, `6.0`, `4.5` | `T_SETPIECE_SPOTS.cornerX1[3].{a, z}`, `T_SETPIECE_SPOTS.cornerX1[4].{a, z}` |
+| 154 | `8.5`, `-7.5`, `9.5`, `-9`, `20.5`, `0.2` | `T_SETPIECE_SPOTS.cornerX2[0].{a, z}`, `T_SETPIECE_SPOTS.cornerX2[1].{a, z}`, `T_SETPIECE_SPOTS.cornerX2[2].{a, z, wd}` |
+| 155 | `2.0`, `1.6`, `8.0`, `1.5` | `T_SETPIECE_SPOTS.cornerX2[3].{a, z}`, `T_SETPIECE_SPOTS.cornerX2[4].{a, z}` |
+| 158 | `0.7`, `3.0`, `0.4` | `T_SETPIECE_SPOTS.cornerDefPost.{a, z, wd}` |
+| 159 | `5.8`, `1.0`, `0.1` | `T_SETPIECE_SPOTS.cornerDefZonal1.{a, z, wd}` |
+| 160 | `6.0`, `-3.5`, `0.1` | `T_SETPIECE_SPOTS.cornerDefZonal2.{a, z, wd}` |
+| 161 | `15.5`, `-1.0`, `0.3` | `T_SETPIECE_SPOTS.cornerDefEdge.{a, z, wd}` |
+| 162 | `50`, `0`, `0.2` | `T_SETPIECE_SPOTS.cornerDefCounter.{a, z, wd}` |
+| 163 | `10`, `4`, `0.2` | `T_SETPIECE_SPOTS.cornerDefZonal3.{a, z, wd}` |
+| 164 | `9.5`, `24`, `0.4` | `T_SETPIECE_SPOTS.cornerDefBlock.{a, z, wd}` |
+| 165 | `12`, `-6`, `0.2` | `T_SETPIECE_SPOTS.cornerDefZonal4.{a, z, wd}` |
+| 167 | `14`, `17`, `0.6` | `T_SETPIECE_SPOTS.goalKickSplit1.{a, z, wd}` |
+| 168 | `14`, `-17`, `0.6` | `T_SETPIECE_SPOTS.goalKickSplit2.{a, z, wd}` |
+| 169 | `27`, `0`, `0.6` | `T_SETPIECE_SPOTS.goalKickPivot.{a, z, wd}` |
+| 170 | `32`, `29`, `0.6` | `T_SETPIECE_SPOTS.goalKickWide1.{a, z, wd}` |
+| 171 | `32`, `-29`, `0.6` | `T_SETPIECE_SPOTS.goalKickWide2.{a, z, wd}` |
+| 172 | `55`, `6`, `0.3` | `T_SETPIECE_SPOTS.goalKickTarget.{a, z, wd}` |
+| 173 | `51`, `-9`, `0.4` | `T_SETPIECE_SPOTS.goalKickTarget2.{a, z, wd}` |
+| 174 | `18.5`, `10`, `0.5` | `T_SETPIECE_SPOTS.goalKickPress1.{a, z, wd}` |
+| 175 | `18.5`, `-10`, `0.5` | `T_SETPIECE_SPOTS.goalKickPress2.{a, z, wd}` |
+| 178 | `17.3`, `8.2`, `0.3`, `-10`, `11.8` | `T_SETPIECE_SPOTS.penAttack[0].{a, z, wd}`, `T_SETPIECE_SPOTS.penAttack[1].{a, z, wd}`, `T_SETPIECE_SPOTS.penAttack[2].{a, z, wd}` |
+| 179 | `17.3`, `-13.6`, `0.3`, `56`, `-8`, `0.2`, `58`, `8` | `T_SETPIECE_SPOTS.penAttack[3].{a, z, wd}`, `T_SETPIECE_SPOTS.penAttack[4].{a, z, wd}`, `T_SETPIECE_SPOTS.penAttack[5].{a, z, wd}` |
+| 182 | `17.3`, `-8.2`, `0.3`, `10`, `-11.8` | `T_SETPIECE_SPOTS.penDefend[0].{a, z, wd}`, `T_SETPIECE_SPOTS.penDefend[1].{a, z, wd}`, `T_SETPIECE_SPOTS.penDefend[2].{a, z, wd}` |
+| 183 | `17.3`, `13.6`, `0.3`, `50`, `0`, `0.2` | `T_SETPIECE_SPOTS.penDefend[3].{a, z, wd}`, `T_SETPIECE_SPOTS.penDefend[4].{a, z, wd}` |
+| 186 | `[7, -3, -9]` | `T_SETPIECE_SPOTS.fkLine.shootZ` |
+| 187 | `[3, 0, -4, -8]` | `T_SETPIECE_SPOTS.fkLine.wideZ` |
+| 188 | `0.3` | `T_SETPIECE_SPOTS.fkDummy.wd` |
+| 189 | `0.5` | `T_SETPIECE_SPOTS.fkRebound.wd` |
+| 190 | `0.3` | `T_SETPIECE_SPOTS.fkLine.wd` |
+| 191 | `0.3` | `T_SETPIECE_SPOTS.fkEdge.wd` |
+| 192 | `0.5` | `T_SETPIECE_SPOTS.fkShort.wd` |
+| 193 | `56`, `-8`, `0.2` | `T_SETPIECE_SPOTS.fkStay1.{a, z, wd}` |
+| 194 | `58`, `8`, `0.2` | `T_SETPIECE_SPOTS.fkStay2.{a, z, wd}` |
+| 195 | `0.3` | `T_SETPIECE_SPOTS.fkZonal.wd` |
+| 196 | `0.7`, `3`, `0.4` | `T_SETPIECE_SPOTS.fkPost.{a, z, wd}` |
+| 197 | `50`, `0`, `0.2` | `T_SETPIECE_SPOTS.fkCounter.{a, z, wd}` |
+| 198 | `1.0` | `T_SETPIECE_SPOTS.fkDeepShort.wd` |
+| 199 | `1.0` | `T_SETPIECE_SPOTS.throwOption.wd` |
+| 522 | `0.5` | `T_SETPIECE_AI.suitHeightW` |
+| 525 | `10` | `T_SETPIECE_AI.suitAerialRoleBonus` |
+| 526 | `8` | `T_SETPIECE_AI.suitShortWideBonus` |
+| 527 | `0.4`, `0.2` | `T_SETPIECE_AI.{suitShooterShotW, suitShooterCurveW}` |
+| 528 | `25`, `15`, `0.3`, `0.4` | `T_SETPIECE_AI.{suitStayDef, suitStayCdm, suitStaySpeedW, suitStayAerialW}` |
+| 529 | `20`, `10`, `0.4` | `T_SETPIECE_AI.{suitMarkerDef, suitMarkerCdm, suitMarkerHeadingW}` |
+| 530 | `0.3` | `T_SETPIECE_AI.{suitMarkerTackleW, suitMarkerHeightW}` |
+| 531 | `40`, `20`, `12` | `T_SETPIECE_AI.{suitCbCb, suitCbDef, suitCbCdm}` |
+| 532 | `30`, `22`, `10` | `T_SETPIECE_AI.{suitPivotCdm, suitPivotCm, suitPivotCam}` |
+| 533 | `0.1` | `T_SETPIECE_AI.suitPivotPassW` |
+| 534 | `40`, `20` | `T_SETPIECE_AI.{suitFullbackFb, suitFullbackWide}` |
+| 535 | `35` | `T_SETPIECE_AI.suitForwardStriker` |
+| 536 | `18`, `0.2` | `T_SETPIECE_AI.{suitForwardWide, suitForwardHeadingW}` |
+| 687 | `0.1` | `T_SETPIECE_SPOTS.markerWd` |
+| 710 | `11` | `T_SETPIECE_SPOTS.throwFar.ahead` |
+| 711 | `4` | `T_SETPIECE_SPOTS.throwFar.inField` |
+| 713 | `1.5` | `T_SETPIECE_SPOTS.throwShort.ahead` |
+| 714 | `9` | `T_SETPIECE_SPOTS.throwShort.inField` |
+| 716 | `8` | `T_SETPIECE_SPOTS.throwBack.behind` |
+| 717 | `6` | `T_SETPIECE_SPOTS.throwBack.inField` |
+| 719 | `5` | `T_SETPIECE_SPOTS.throwInside.ahead` |
+| 720 | `13` | `T_SETPIECE_SPOTS.throwInside.inField` |
+| 768 | `1` | `T_SETPIECE_SPOTS.fkDeepShort.ahead` |
+| 769 | `-11`, `11` | `-T_SETPIECE_SPOTS.fkDeepShort.across`, `T_SETPIECE_SPOTS.fkDeepShort.across` |
+| 773 | `10`, `-10` | `T_SETPIECE_SPOTS.fkDeepShort.back`, `-T_SETPIECE_SPOTS.fkDeepShort.back` |
+| 774 | `0.8` | `T_SETPIECE_SPOTS.fkDeepShort.backLateral` |
+| 787 | `0.9`, `1.4` | `T_SETPIECE_SPOTS.fkDummy.{back, side}` |
+| 788 | `0.9`, `1.4` | `T_SETPIECE_SPOTS.fkDummy.{back, side}` |
+| 793 | `3` | `T_SETPIECE_SPOTS.fkRebound.assumedWall` |
+| 812 | `6`, `18` | `T_SETPIECE_SPOTS.fkEdge.{beyondLine, minDist}` |
+| 813 | `1` | `T_SETPIECE_SPOTS.fkEdge.across` |
+| 815 | `3` | `T_SETPIECE_SPOTS.fkShort.back` |
+| 816 | `7` | `T_SETPIECE_SPOTS.fkShort.across` |
+| 822 | `28` | `T_SETPIECE_SPOTS.fkPost.maxBallDist` |
+| 829 | `0.1` | `T_SETPIECE_SPOTS.markerWd` |
+| 831 | `0.5` | `T_SETPIECE_SPOTS.fkZonal.behindLine` |
+| 832 | `1` | `T_SETPIECE_SPOTS.fkZonal.wideAcross` |
+| 835 | `0.5` | `T_SETPIECE_SPOTS.fkZonal.behindLine` |
+| 836 | `6` | `T_SETPIECE_SPOTS.fkZonal.shootAcross` |
+| 891 | `-1.1`, `1.1` | `-T_SETPIECE_SPOTS.kickOffCircle.x`, `T_SETPIECE_SPOTS.kickOffCircle.x` |
+| 892 | `1.0`, `1.3` | `T_SETPIECE_SPOTS.kickOffCircle.{z0, dz}` |
+| 1301 | `0.5` | `T_SETPIECE_AI.reticleStopFrac` |
+| 1462 | `0.5`, `15` | `T_SETPIECE_AI.{targetHeightW, targetOpenCap}` |
+| 1485 | `15`, `0.5`, `8`, `0.1` | `T_SETPIECE_AI.{shortOpenCap, shortLaneW, shortLaneCap, shortDistW}` |
+| 1544 | `4` | `T_SETPIECE_AI.crossPrefEdgeExtra` |
+| 1547 | `0.5` | `T_SETPIECE_AI.crossHeightW` |
+| 1639 | `2` | `T_SETPIECE_AI.longAheadPitchMargin` |
+| 1640 | `0.5` | `T_SETPIECE_AI.longAheadLateral` |
+| 1713 | `-1.5`, `1.5` | `-T_SETPIECE_AI.fkCentralBand`, `T_SETPIECE_AI.fkCentralBand` |
+| 1725 | `60`, `40` | `T_SETPIECE_AI.{fkCurlAttrRef, fkCurlAttrSpan}` |
+| 1726 | `18` | `T_SETPIECE_AI.fkPowerRefDist` |
+| 1737 | `20`, `26` | `T_SETPIECE_AI.{fkShootBandNear, fkShootBandMid}` |
+| 1741 | `65`, `100` | `T_SETPIECE_AI.{fkQualityRef, fkQualityScale}` |
+
+`src/sim/control/resolveMove.ts` (1 literal):
+
+| Line | Was | Now |
+|---|---|---|
+| 134 | `1.05` | `T_RESOLVE.containPaceMul` |
+
+`src/sim/core/query.ts` (4 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 69 | `1` | `T_QUERY.pressureFullDist` |
+| 70 | `6` | `T_QUERY.pressureZeroDist` |
+| 71 | `1`, `5` | `T_QUERY.pressureFullDist`, `(T_QUERY.pressureZeroDist - T_QUERY.pressureFullDist)` |
+
+`src/sim/init.ts` (4 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 75 | `0.95` | `T_MATCH_FLOW.initDepthScale` |
+| 76 | `-1`, `1` | `-T_MATCH_FLOW.initOwnHalfMargin`, `T_MATCH_FLOW.initOwnHalfMargin` |
+| 78 | `0.9` | `T_MATCH_FLOW.initWidthScale` |
+
+`src/sim/keeper/positioning.ts` (2 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 189 | `3` | `T_GK_POSITION.receiveMaxBallYMul` |
+| 193 | `0.3` | `T_GK_POSITION.receiveMovingSpeed` |
+
+`src/sim/keeper/saveKinematics.ts` (4 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 40 | `1.85` | `T_GK_SAVE.refHeightM` |
+| 60 | `1.85` | `T_GK_SAVE.refHeightM` |
+| 71 | `0.5` | `T_GK_SAVE.armExtStart`, `(1 - T_GK_SAVE.armExtStart)` |
+
+`src/sim/keeper/saves.ts` (26 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 385 | `0.15`, `0.9` | `T_GK_SAVE.{screenSegMin, screenSegMax}` |
+| 530 | `0.15` | `T_GK_SAVE.catchDepthMargin` |
+| 679 | `0.5`, `-0.5` | `T_GK_SAVE.rollingMaxVy`, `-T_GK_SAVE.rollingMaxVy` |
+| 698 | `0.5`, `0.15` | `T_GK_SAVE.{diveFeetBelowHip, diveFeetMinY}` |
+| 709 | `0.3` | `T_GK_SAVE.bodyVolFootY` |
+| 710 | `0.3` | `T_GK_SAVE.bodyVolHeadInset` |
+| 758 | `0.3` | `T_GK_SAVE.bodyVolFootY` |
+| 759 | `0.3` | `T_GK_SAVE.bodyVolHeadInset` |
+| 841 | `0.5` | `T_KICK.liftVy` |
+| 853 | `0.05`, `1.35` | `T_GK_SAVE.{parryAngleMin, parryAngleMax}` |
+| 865 | `0.5` | `T_GK_SAVE.{parryPostQualityBase, parryPostQualityGain}` |
+| 869 | `0.75` | `T_GK_SAVE.parryPostBackFrac` |
+| 890 | `0.3` | `T_GK_SAVE.tipBeyondLine` |
+| 892 | `1` | `T_GK_SAVE.tipMinLift` |
+| 893 | `0.5` | `T_GK_SAVE.tipLateralKeep` |
+
+`src/sim/keeper/setpieces.ts` (4 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 385 | `0.05`, `0.95` | `T_GK_SETPIECE.{aiNaturalMin, aiNaturalMax}` |
+| 422 | `1.5`, `0.5` | `T_GK_SETPIECE.{aimHighFrom, aimMidFrom}` |
+
+`src/sim/keeper/sweeper.ts` (7 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 710 | `0.5` | `T_KICK.liftVy` |
+| 737 | `0.5`, `0.7` | `T_GK_SWEEP.{blockAwayPushW, blockAwaySideW}` |
+| 738 | `0.3` | `T_GK_SWEEP.blockAwayMinFwd` |
+| 790 | `0.9` | `T_GK_SWEEP.feetPickUpReachFrac` |
+
+`src/sim/kicks/aerial.ts` (20 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 926 | `0.5` | `T_AERIAL_PLAY.volleyReachQ` |
+| 1096 | `0.36` | `T_AERIAL_PLAY.aiClearSideRatio * T_AERIAL_PLAY.aiClearSideRatio` |
+| 1098 | `0.6` | `T_AERIAL_PLAY.aiClearSideRatio` |
+| 1228 | `0.75`, `1.1` | `T_AERIAL_PLAY.{receiverMinDistFrac, receiverMaxDistFrac}` |
+| 1267 | `0.5` | `T_AERIAL_PLAY.awkFastBallW` |
+| 1271 | `0.5`, `0.4` | `T_AERIAL_PLAY.{awkLowBallSpan, awkLowBallW}` |
+| 1273 | `0.5` | `T_AERIAL_PLAY.awkHighVolleyW` |
+| 1369 | `0.5` | `T_KICK.liftVy` |
+| 1559 | `0.3` | `T_AERIAL_PLAY.clearMinForward` |
+| 1560 | `0.3` | `T_AERIAL_PLAY.clearMinForward` |
+| 1565 | `0.5` | `T_AERIAL_PLAY.{clearPowerMix, clearSkillMix}` |
+| 1574 | `1.6` | `T_AERIAL_PLAY.clearAimAheadS` |
+| 1575 | `1.6` | `T_AERIAL_PLAY.clearAimAheadS` |
+| 1652 | `5`, `20` | `T_AERIAL_PLAY.{headerPassAngleNearD, headerPassAngleSpanD}` |
+| 1679 | `5`, `20` | `T_AERIAL_PLAY.{headerPassAngleNearD, headerPassAngleSpanD}` |
+
+`src/sim/kicks/skills.ts` (1 literal):
+
+| Line | Was | Now |
+|---|---|---|
+| 752 | `0.5` | `T_SKILL_MOVES.knockRelBase` |
+
+`src/sim/rules/freekick.ts` (15 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 370 | `1.1` | `T_FREE_KICK.wallBodyMul` |
+| 657 | `1.1` | `T_FREE_KICK.wallBodyMul` |
+| 692 | `1.1` | `T_FREE_KICK.wallBodyMul` |
+| 1037 | `0.5`, `1` | `T_FREE_KICK.{boxRayInset, boxRayGoalLineInset}` |
+| 1039 | `0.5` | `T_FREE_KICK.boxRayInset` |
+| 1524 | `0.5` | `T_KICK.liftVy` |
+| 1676 | `60`, `40`, `0.3`, `0.85` | `T_FREE_KICK.{defaultCurlAttrRef, defaultCurlAttrSpan, defaultCurlMin, defaultCurlMax}` |
+| 1682 | `18` | `T_FREE_KICK.defaultPowerRefDist` |
+| 1991 | `0.5` | `T_FREE_KICK.previewDipBackspinMul` |
+| 1997 | `0.5` | `T_FREE_KICK.previewLobCurlMul` |
+| 2067 | `0.5` | `T_KICK.liftVy` |
+
+`src/sim/rules/machine.ts` (1 literal):
+
+| Line | Was | Now |
+|---|---|---|
+| 905 | `5` | `T_MATCH_FLOW.forcedKickAhead` |
+
+`src/sim/rules/penalty.ts` (2 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 202 | `1.5`, `0.5` | `T_PENALTY.{aimHighFrom, aimMidFrom}` |
+
+`src/sim/rules/practice.ts` (1 literal):
+
+| Line | Was | Now |
+|---|---|---|
+| 42 | `[22, 0, 21, -9, 21, 9, 30, 4, 14, -26, 14, 26]` | `T_PRACTICE.freeKickSpots` |
+
+`src/sim/rules/restart.ts` (4 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 1092 | `4`, `0.4` | `T_RESTART.{forcedThrowBase, forcedThrowPerM}` |
+| 1095 | `1`, `9` | `T_RESTART.{forcedThrowVyMin, forcedThrowVyMax}` |
+
+`src/sim/rules/shootout.ts` (1 literal):
+
+| Line | Was | Now |
+|---|---|---|
+| 580 | `1.5` | `T_SHOOTOUT.forcedAimOutside` |
+
+`src/ai/cpu/carrier.ts` (5 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 509 | `0.5` | `T_CARRIER.fallbackCentreK` |
+| 541 | `0.3`, `0.7` | `T_CARRIER.{dribbleStepMinFrac, dribbleStepScoreFrac}` |
+| 549 | `1.2`, `0.4` | `T_CARRIER.{dribbleLossBase, dribbleLossAttrW}` |
+
+`src/ai/cpu/defending.ts` (3 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 1087 | `0.5` | `T_DEFENDING.looseCoverFrac` |
+| 1114 | `0.5` | `T_DEFENDING.keeperLaneMargin` |
+
+`src/ai/cpu/passing.ts` (10 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 633 | `0.005` | `T_PASSING.blockerMinXg` |
+| 821 | `14` | `T_PASSING.throughSeedSpeed` |
+| 992 | `0.6`, `0.4` | `T_PASSING.{headerDangerBase, headerDangerHeadW}` |
+| 1041 | `0.5` | `T_PASSING.styleWeightBase` |
+| 1043 | `0.5` | `T_PASSING.styleWeightBase` |
+| 1044 | `0.5` | `T_PASSING.styleWeightBase` |
+| 1046 | `0.5` | `T_PASSING.styleWeightBase` |
+| 1047 | `0.5` | `T_PASSING.styleWeightBase` |
+| 1049 | `0.5` | `T_PASSING.styleWeightBase` |
+
+`src/ai/cpu/shooting.ts` (1 literal):
+
+| Line | Was | Now |
+|---|---|---|
+| 335 | `0.3` | `T_SHOOTING.keeperAheadMin` |
+
+`src/ai/defshape.ts` (2 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 704 | `0.15`, `0.9` | `T_DEF_SHAPE.{laneBlockFracMin, laneBlockFracMax}` |
+
+`src/ai/press.ts` (1 literal):
+
+| Line | Was | Now |
+|---|---|---|
+| 229 | `1.05` | `T_PRESS.lbSpeedMul` |
+
+`src/ai/steer.ts` (1 literal):
+
+| Line | Was | Now |
+|---|---|---|
+| 575 | `0.5` | `T_STEER.sprintKeepFrac` |
+
+`src/sim/core/kick.ts` (1 literal):
+
+| Line | Was | Now |
+|---|---|---|
+| 61 | `0.5` | `T_KICK.liftVy` |
+
+`src/sim/players/firstTouch.ts` (2 literals):
+
+| Line | Was | Now |
+|---|---|---|
+| 574 | `0.5` | `T_FIRST_TOUCH.heavyTouchRandMin`, `(1 - T_FIRST_TOUCH.heavyTouchRandMin)` |
+
+### Kept local: not gameplay (`// LOCAL_TUNING (non-gameplay: <reason>)`)
+
+| Module | Reason |
+|---|---|
+| `src/render/goals.ts`, `src/render/kit/crest.ts`, `src/render/players/model.ts`, `src/render/players/fk.ts`, `src/render/crowd.ts`, `src/render/stadium.ts`, `src/render/warmScript.ts`, `src/render/quality.ts`, `src/render/markers.ts`, `src/render/replay.ts`, `src/render/ball.ts`, `src/render/anim/locomotion.ts`, `src/render/anim/mapper.ts`, `src/render/anim/reach.ts`, `src/render/effects.ts`, `src/render/pitch.ts`, `src/render/camera/broadcast.ts`, `src/render/camera/cinematic.ts`, `src/render/kits.ts` | Render only (looks, cameras, animation, quality tiers, replay presentation). |
+| `src/audio/bank.ts`, `src/audio/eventMap.ts`, `src/audio/crowd.ts`, `src/audio/ui.ts`, `src/audio/whistles.ts`, `src/audio/sfx.ts`, `src/audio/engine.ts`, `src/audio/voices.ts` | Audio mix and timing. |
+| `src/ui/screens/remap.ts`, `src/ui/screens/diagnostics.ts`, `src/ui/screens/pause.ts` (and the HUD constants of `src/ui/hud/*` / `tutorialSteps.ts`, which never had a block marker) | Menu / HUD presentation and timing. |
+| `src/net/lobby.ts`, `src/net/lockstep.ts`, `src/net/session.ts`, `src/net/adaptive.ts` | Transport / session timing (the sim itself is lockstep-identical). |
+| `src/platform/replayRecorder.ts`, `src/platform/storage.ts`, `src/platform/pwa.ts`, `src/platform/recovery.ts`, `src/platform/settingsStore.ts` | Platform plumbing. |
+| `src/data/names.ts`, `src/data/playerGen.ts`, `src/data/kits.ts` | Data generation only (re-run `npm run gen:data`). |
+| `src/data/tactics.ts` | Shape limits of `tacticalHome`, which no sim / AI path calls. |
+| `src/app/session.ts` | App timing. |
+| `src/modes/stats.ts` (`RATING`) | Post-match player ratings (presentation). |
+
+### Stays inline on purpose in `src/sim` and `src/ai`
+
+The TUN-1 rule still holds (enum indices and flags, scratch / ring / list sizes and offsets, solver iteration counts,
+tolerances and seeds-of-a-bisection, sentinels, maths constants and series, input quantisation, cost-only pre-checks,
+degenerate-geometry guards, display constants, derived constants). Also left inline, by category:
+
+- attribute normalisation and references: `(attr - 1) / 98`, `/ 99`, weak foot 1..5 with `/ 4`, `(st - 50) / 50`,
+  the 180 cm height reference of every `(height - 180)` term (its weight is tuning; a constant shift does not change
+  a ranking), per-30 / per-29 rating-point unit scales (`levels.ts`, `shooting.ts`, part of the slope's unit);
+- averages and centring: `(a + b) * 0.5`, `(1 - cos) * 0.5`, `0.5 - q`, `(n - 1) * 0.5` wall centring, coin flips
+  `rngFloat < 0.5`, duel centre `0.5 + diff / span`;
+- fallbacks for invalid data and unreachable branches (default heights 1.8 / 1.85 m where a reference is not meant,
+  default weak foot 3, default composure 50, `HALF_LENGTH * 0.5` dead-branch spots, 1 m pitch-inside guards,
+  `+ 5` off-pitch guards), sign dead zones (|component| <= 0.05 / 0.1), epsilons (0.01, 0.02, 0.05 m margins);
+- `src/ai/cpu/passing.ts` through-ball power samples 0.2 / 0.4 / 0.6 / 0.8 and cross powers 0.3 / 0.6 / 0.9: the
+  code passes them as literal arguments on purpose (a computed or loaded double argument would be boxed per call);
+- laws of the game and fixed formats: the awarded 3-0 of an abandoned match, `PERIOD_BASE_MIN`, 60 s / 60 ticks
+  conversions, the practice corner / penalty spots (built from pitch constants), `machine.ts` joiner unit offsets;
+- presentation inside the sim: `throwin.ts` look-at point (10 m), `init.ts` ball start height (= ball radius).
+- `src/modes/practice.ts` `PRACTICE_SPOTS` (menu entries with labels; the sim reads its own copy, now
+  `T_PRACTICE.freeKickSpots`), `src/modes/setup.ts` half-length options (settings range, not tuning).
 
 ## Shared tables (`src/contracts/tuning.ts`)
 

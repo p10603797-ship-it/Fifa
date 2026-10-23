@@ -43,7 +43,7 @@ const LOCAL_TUNING = {
   whistleGain: 0.9,
   stingGain: 0.55,
   pitchSpread: 0.015,
-} as const; // TUNING-CR
+} as const; // LOCAL_TUNING (non-gameplay: whistle audio)
 
 export const WHISTLE_TUNING = LOCAL_TUNING;
 

@@ -39,7 +39,7 @@ import { createInterpState, type InterpState, type RenderContext, type RenderFra
 /** Seconds of render history kept for replays. */
 export const REPLAY_SECONDS = 8;
 
-export const LOCAL_TUNING = { // TUNING-CR (GFX-16 replay)
+export const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: GFX-16 replay presentation)
   /** Slow motion: playback rate (content s per real s) over the final slowWindow seconds before the goal. */
   slowRate: 0.6,
   /** Slow-motion window before the goal, s. */

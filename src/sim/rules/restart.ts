@@ -1089,10 +1089,10 @@ export function forceRestartKick(s: SimState, ev: EventSink): number {
     if (d < 1e-6) { restartForward(s, FWD); dx = FWD.x; dz = FWD.z; d = 1; }
     const ux = dx / d, uz = dz / d;
     if (r.kind === RestartKind.THROW_IN) {
-      const vh = clamp(4 + 0.4 * d, T_RESTART.forcedThrowMin, T_RESTART.forcedThrowMax);
+      const vh = clamp(T_RESTART.forcedThrowBase + T_RESTART.forcedThrowPerM * d, T_RESTART.forcedThrowMin, T_RESTART.forcedThrowMax);
       L.vx = ux * vh;
       L.vz = uz * vh;
-      L.vy = clamp(0.5 * g * (d / vh), 1, 9);
+      L.vy = clamp(0.5 * g * (d / vh), T_RESTART.forcedThrowVyMin, T_RESTART.forcedThrowVyMax);
     } else {
       const a = T_RESTART.forcedPassArrive;
       const v0 = clamp(Math.sqrt(a * a + 2 * T_BALL.rollDecel * d), T_PASS.groundMin, T_PASS.groundMax);

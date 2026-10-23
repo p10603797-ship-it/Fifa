@@ -37,7 +37,7 @@ export const NEVER = 1e9;
 /** Keeper height in metres (falls back to 1.85 for bad data). */
 export function heightM(a: Readonly<PlayerAttrs>): number {
   const h = a.height;
-  return h > 100 && h < 250 ? h / 100 : 1.85;
+  return h > 100 && h < 250 ? h / 100 : L.refHeightM;
 }
 
 /** Base reaction delay (ticks) from gkReflexes (T_GK.reactWorst .. reactBest). */
@@ -57,7 +57,7 @@ export function keeperMaxReach(a: Readonly<PlayerAttrs>): number {
 
 /** Hip-to-hand-point distance of a stretched dive, m (scaled by height). */
 export function armReach(a: Readonly<PlayerAttrs>): number {
-  return (L.armReach * heightM(a)) / 1.85;
+  return (L.armReach * heightM(a)) / L.refHeightM;
 }
 
 /** Max hip travel of a dive, m. */
@@ -68,7 +68,7 @@ export function maxTravel(a: Readonly<PlayerAttrs>): number {
 
 /** Arm extension 0.5..1 at dive tick t (actT). */
 export function armExt(t: number): number {
-  return t >= L.diveWindupTicks ? 1 : 0.5 + (0.5 * t) / L.diveWindupTicks;
+  return t >= L.diveWindupTicks ? 1 : L.armExtStart + ((1 - L.armExtStart) * t) / L.diveWindupTicks;
 }
 
 /** Hip travel (m) after `fly` ticks of flight (accelerating over diveAccelTicks, then at the dive speed). */

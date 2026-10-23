@@ -124,7 +124,7 @@ import {
   ReqFlag, createActionRequest, createKickLaunch, type ActionRequest, type BallPrediction, type KickLaunch,
 } from '../../contracts/systems';
 import {
-  T_BALL, T_INPUT, T_PASS, T_PLAYER, T_RULES, T_SHOT, T_FREE_KICK, T_LOCOMOTION, T_RESTART_COMMON, T_RESTART,
+  T_BALL, T_INPUT, T_PASS, T_PLAYER, T_RULES, T_SHOT, T_FREE_KICK, T_KICK, T_LOCOMOTION, T_RESTART_COMMON, T_RESTART,
 } from '../../contracts/tuning';
 import { beginAction, endAction } from '../actions/dispatch';
 import { KICK_SOLVERS } from '../actions/registry';
@@ -367,7 +367,7 @@ export function wallDefaultCentre(s: SimState, out: { x: number; z: number }): n
   const az = bz < 0 ? -bz : bz;
   const sn = bz < 0 ? -1 : 1;
   if (isLineWall(s)) {
-    const half = (n - 1) * 0.5 * (2 * T_PLAYER.bodyRadius * 1.1 + LT.wallGap);
+    const half = (n - 1) * 0.5 * (2 * T_PLAYER.bodyRadius * LT.wallBodyMul + LT.wallGap);
     const maxC = GOAL_HALF_WIDTH - LT.wallPostInside - half;
     out.x = dir * (HALF_LENGTH - LT.wallGoalLineInset);
     out.z = az < LT.wallCentralZ || maxC <= 0 ? 0 : sn * maxC;
@@ -654,7 +654,7 @@ function placeWall(s: SimState, snap: boolean): void {
   const r = s.match.restart;
   const n = computeSlots(s);
   if (n === 0) return;
-  const half = (n - 1) * 0.5 * (2 * T_PLAYER.bodyRadius * 1.1 + LT.wallGap);
+  const half = (n - 1) * 0.5 * (2 * T_PLAYER.bodyRadius * LT.wallBodyMul + LT.wallGap);
   const hold = half + LT.wallHoldExtra;
   for (let i = 0; i < n; i++) {
     const w = r.wall[i]!;
@@ -689,7 +689,7 @@ function moveWall(s: SimState, sgn: number): void {
   const step = LT.wallMoveSpeed * DT;
   if (isLineWall(s)) {
     const n = r.wallCount;
-    const half = (n - 1) * 0.5 * (2 * T_PLAYER.bodyRadius * 1.1 + LT.wallGap);
+    const half = (n - 1) * 0.5 * (2 * T_PLAYER.bodyRadius * LT.wallBodyMul + LT.wallGap);
     const lim = GOAL_HALF_WIDTH - LT.wallPostInside - half;
     const lo = lim > 0 ? -lim : 0, hi = lim > 0 ? lim : 0;
     r.wallX = PT.x;
@@ -1034,9 +1034,9 @@ function startKick(s: SimState, slot: number, kind: KickKind, req: ActionRequest
 function boxRayLanding(s: SimState, ux: number, uz: number): number {
   const r = s.match.restart;
   const e = attackDir(s, r.team);
-  const xa = e * (HALF_LENGTH - (PENALTY_AREA_DEPTH - 0.5)), xb = e * (HALF_LENGTH - 1);
+  const xa = e * (HALF_LENGTH - (PENALTY_AREA_DEPTH - LT.boxRayInset)), xb = e * (HALF_LENGTH - LT.boxRayGoalLineInset);
   const xlo = xa < xb ? xa : xb, xhi = xa < xb ? xb : xa;
-  const wl = PENALTY_AREA_HALF_WIDTH - 0.5;
+  const wl = PENALTY_AREA_HALF_WIDTH - LT.boxRayInset;
   let t0 = 0, t1 = 1e9;
   if (ux > 1e-9 || ux < -1e-9) {
     let ta = (xlo - r.x) / ux, tb = (xhi - r.x) / ux;
@@ -1521,7 +1521,7 @@ function deflect(s: SimState, w: number, t: number, ev: EventSink): number {
   L.onTarget = 0;
   const vin = Math.sqrt(vx * vx + vy * vy + vz * vz);
   applyKick(s, w, L, clamp(vin / T_SHOT.powerShotMax, 0, 1), ev);
-  if (oy > 0.5) b.grounded = 0;
+  if (oy > T_KICK.liftVy) b.grounded = 0;
   return 1;
 }
 
@@ -1673,13 +1673,13 @@ function defaultShot(s: SimState, t: number, ev: EventSink): number {
   const nzComp = d > 1e-6 ? dx / d : dir;
   const bend = -tz; // the goal centre is toward -tz from the aim
   const sgn = nzComp * bend >= 0 ? 1 : -1;
-  const curl = clamp(LT.defaultCurlBase + LT.defaultCurlAttr * (s.attrs[t]!.curve - 60) / 40, 0.3, 0.85);
+  const curl = clamp(LT.defaultCurlBase + LT.defaultCurlAttr * (s.attrs[t]!.curve - LT.defaultCurlAttrRef) / LT.defaultCurlAttrSpan, LT.defaultCurlMin, LT.defaultCurlMax);
   r.aimX = gx;
   r.aimZ = tz;
   r.aimCurve = sgn * curl;
   const dg = Math.sqrt((gx - r.x) * (gx - r.x) + r.z * r.z);
   const kind = fillShot(s, REQ, false, false, AssistLevel.ASSISTED, 0);
-  REQ.power = clamp(LT.defaultPowerBase + (dg - 18) * LT.defaultPowerPerM, LT.defaultPowerMin, LT.defaultPowerMax);
+  REQ.power = clamp(LT.defaultPowerBase + (dg - LT.defaultPowerRefDist) * LT.defaultPowerPerM, LT.defaultPowerMin, LT.defaultPowerMax);
   REQ.charging = 0;
   return startKick(s, t, kind, REQ, ev);
 }
@@ -1988,13 +1988,13 @@ function estimateLaunch(s: SimState, kind: KickKind, req: Readonly<ActionRequest
     const th = LT.previewShotAngle + (kind === KickKind.SHOT_CHIP ? LT.previewChipAngle : 0);
     const ch = dcos(th), sh = dsin(th);
     out.vx = ux * v * ch; out.vz = uz * v * ch; out.vy = v * sh;
-    const back = kind === KickKind.SHOT_CHIP ? T_SHOT.chipBackspin : -freeKickDip(s) * T_SHOT.chipBackspin * 0.5;
+    const back = kind === KickKind.SHOT_CHIP ? T_SHOT.chipBackspin : -freeKickDip(s) * T_SHOT.chipBackspin * LT.previewDipBackspinMul;
     launchSpin(ux, uz, curlSpinY(curve * T_SHOT.finesseSpin), back, SPIN);
     out.sx = SPIN.x; out.sy = SPIN.y; out.sz = SPIN.z;
     return;
   }
   if (isLobKind(kind) && kind !== KickKind.GROUND_CROSS) {
-    solveLaunchSpin(out.tx - b.x, out.tz - b.z, T_PASS.lobAngle, b.y, curlSpinY(curve * T_SHOT.finesseSpin * 0.5), 0, SOL);
+    solveLaunchSpin(out.tx - b.x, out.tz - b.z, T_PASS.lobAngle, b.y, curlSpinY(curve * T_SHOT.finesseSpin * LT.previewLobCurlMul), 0, SOL);
     out.vx = SOL.vx; out.vy = SOL.vy; out.vz = SOL.vz; out.sx = SOL.sx; out.sy = SOL.sy; out.sz = SOL.sz;
     return;
   }
@@ -2064,7 +2064,7 @@ export function previewFlight(s: SimState, out: BallPrediction, f?: Readonly<Inp
   PB.heldBy = -1;
   PB.vx = L.vx; PB.vy = L.vy; PB.vz = L.vz;
   PB.sx = L.sx; PB.sy = L.sy; PB.sz = L.sz;
-  PB.grounded = L.vy > 0.5 ? 0 : PB.grounded;
+  PB.grounded = L.vy > T_KICK.liftVy ? 0 : PB.grounded;
   PB.bounces = 0;
   PB.inNet = 0;
   predictBall(PB, LT.previewTicks, out);

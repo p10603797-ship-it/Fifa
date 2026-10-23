@@ -116,7 +116,7 @@ const LOCAL_TUNING = {
   /** Finished side: answers to 'session:final-req' sent at most this many times per match (a garbled peer cannot make
    *  it send its whole state again and again), count. */
   finalStateReplies: 4,
-} as const; // TUNING-CR
+} as const; // LOCAL_TUNING (non-gameplay: online session timing)
 
 export const SESSION_PAUSE = 'session:pause';
 export const SESSION_RESUME = 'session:resume';

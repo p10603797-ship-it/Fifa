@@ -35,7 +35,7 @@
 
 import { POSE_SIZE, PoseIdx } from '../../contracts/render';
 
-const LOCAL_TUNING = { // TUNING-CR (render-only)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: render only)
   /** A grounded pose (ROOT_Y <= 0) whose lowest point floats less than this is planted on the grass (m, model). */
   groundSnapMax: 0.06,
 } as const;

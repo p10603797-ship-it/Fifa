@@ -28,20 +28,12 @@ import { ChallengeKind } from '../../contracts/enums';
 import { EventType, type EventBuffer, type SimEvent } from '../../contracts/events';
 import type { Settings } from '../../contracts/settings';
 import type { ReadonlySimState } from '../../contracts/state';
+import { T_PAD_RUMBLE } from '../../contracts/tuning';
 import { getPadManager, type PadManager } from './manager';
 
-const LOCAL_TUNING = {
-  /** Goal: strong (low-frequency motor) and weak (high-frequency) magnitudes 0..1, duration ms. */
-  goal: { strong: 1, weak: 0.7, ms: 450 },
-  /** Ball hits a post or the crossbar: a short, sharp knock. */
-  post: { strong: 0.35, weak: 0.9, ms: 140 },
-  /** Hard tackle (R1 + Circle / RB + B) on or by a human's player. */
-  hardTackle: { strong: 0.8, weak: 0.45, ms: 200 },
-  /** Longest effect ever played, ms (clamp for damaged input). */
-  maxMs: 2000,
-} as const; // TUNING-CR (device feel, not gameplay): T_PAD.rumble = { goal, post, hardTackle, maxMs }
+const LOCAL_TUNING = T_PAD_RUMBLE; // [TUN-2] device feel: contracts/tuning.ts T_PAD_RUMBLE
 
-/** The LOCAL_TUNING block (read-only; tests and the lead's TUNING-CR review). */
+/** The LOCAL_TUNING block (read-only; tests). */
 export const RUMBLE_TUNING = LOCAL_TUNING;
 
 /** What made a pad rumble. Higher value = higher priority. */

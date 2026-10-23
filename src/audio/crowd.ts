@@ -80,7 +80,7 @@ const LOCAL_TUNING = {
   fadeOut: 1.2,
   /** The same reaction again within this time only plays when louder, s. */
   reactionCooldown: 0.8,
-} as const; // TUNING-CR
+} as const; // LOCAL_TUNING (non-gameplay: crowd audio)
 
 export const CROWD_TUNING = LOCAL_TUNING;
 

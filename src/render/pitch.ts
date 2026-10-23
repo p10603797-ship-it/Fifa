@@ -39,10 +39,10 @@ import { QualityTier } from '../contracts/enums';
 import type { RenderContext, RenderFrame, RenderModule } from './types';
 
 /**
- * Visual knobs of the pitch (render only, no gameplay effect). TUNING-CR: candidates for a T_PITCH block in
- * contracts/tuning.ts if the lead wants them there.
+ * Visual knobs of the pitch (render only, no gameplay effect). Kept local by TUN-2 (not gameplay; could become
+ * a T_PITCH block in contracts/tuning.ts if the lead wants them there).
  */
-const LOCAL_TUNING = { // TUNING-CR
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: pitch look, render only)
   /** Minimum on-screen width of every line marking, render-target pixels (section 13: no sub-pixel shimmer). */
   lineMinPx: 2,
   /** Opacity of a line widened to lineMinPx whose true width tends to 0 px; lerps to 1 at its true width (0..1). */

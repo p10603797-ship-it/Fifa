@@ -17,14 +17,9 @@
 import { HALF_LENGTH, HALF_WIDTH, PLAYERS_PER_TEAM } from '../contracts/constants';
 import type { Formation, FormationSlot } from '../contracts/data';
 import { FormationId, Role } from '../contracts/enums';
+import { T_FORMATION_REMAP } from '../contracts/tuning';
 
-const LOCAL_TUNING = { // TUNING-CR (formation switch / remap cost model; used only by the mapping helpers)
-  /** Cost per familiarity point lost when a player takes a new slot, centimetres-equivalent (100 pts = 20 m). */
-  remapRolePenaltyCm: 20,
-  /** Cost per ROLE_FILL_PRIORITY point for leaving a new slot empty (team playing short), cm: large, so the most
-   *  important slots are always filled first (CB 95 vs W 45 = 150 m outweighs any reshuffle). */
-  remapEmptySlotCm: 300,
-} as const;
+const LOCAL_TUNING = T_FORMATION_REMAP; // [TUN-2] remap cost model (gameplay: ai/tactics SET_FORMATION): contracts/tuning.ts
 
 // ---------------------------------------------------------------- lines and roles
 

@@ -701,7 +701,7 @@ function laneBlocked(): boolean {
   const cu = LANE[0]!, cv = LANE[1]!, lu = LANE[2]!, lv = LANE[3]!, pu = LANE[4]!, pv = LANE[5]!;
   const l2 = lu * lu + lv * lv;
   let f = l2 > 1e-9 ? ((pu - cu) * lu + (pv - cv) * lv) / l2 : 0;
-  f = clamp(f, 0.15, 0.9);
+  f = clamp(f, LT.laneBlockFracMin, LT.laneBlockFracMax);
   const du = cu + lu * f - pu, dv = cv + lv * f - pv;
   return du * du + dv * dv < LT.laneBlock * LT.laneBlock;
 }

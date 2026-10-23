@@ -54,17 +54,14 @@ import {
   AXIS_SCALE, Btn, clearInputFrame, type CameraProjector, type InputFrame, type InputSampleContext, type InputSource,
 } from '../../contracts/input';
 import type { Settings } from '../../contracts/settings';
-import { T_PAD } from '../../contracts/tuning';
+import { T_PAD, T_PAD_MAPPER } from '../../contracts/tuning';
 import { getPadManager, PAD_BUTTON_COUNT, PAD_TRIGGER_RELEASE, PadButton, type PadManager, type PadSlot } from './manager';
 import { createRightStick, type PadSticks, type RightStickTracker } from './rightStick';
 import { createPadSequences, type PadSequences } from './sequences';
 
-const LOCAL_TUNING = {
-  /** sample() polls the pads itself when nobody polled them for longer than this (pollFrame not called), ms. */
-  fallbackPollMs: 12,
-} as const; // TUNING-CR (device timing, not gameplay): T_PAD.fallbackPollMs
+const LOCAL_TUNING = T_PAD_MAPPER; // [TUN-2] device timing: contracts/tuning.ts T_PAD_MAPPER
 
-/** The LOCAL_TUNING block (read-only; tests and the lead's TUNING-CR review). */
+/** The LOCAL_TUNING block (read-only; tests). */
 export const MAPPER_TUNING = LOCAL_TUNING;
 
 /** Logical pad actions: bit i of the mapper's logical mask, and the slot order of a custom remap array. */

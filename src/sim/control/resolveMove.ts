@@ -20,7 +20,7 @@ import { BOARD_X, BOARD_Z, HALF_LENGTH } from '../../contracts/constants';
 import { ActionKind } from '../../contracts/enums';
 import { Btn } from '../../contracts/input';
 import { MoveMode, type ControllerState, type PlayerState, type SimState } from '../../contracts/state';
-import { T_IDLE_CHASE, T_PLAYER, T_TOUCH } from '../../contracts/tuning';
+import { T_IDLE_CHASE, T_PLAYER, T_RESOLVE, T_TOUCH } from '../../contracts/tuning';
 import { canManualSwitch } from './switching';
 import { Ctx, LT, MEET, SeqFlag, ballEta, clampMeetTarget, meetPoint, oppCarrier, validSlot } from './resolveShared';
 
@@ -131,7 +131,7 @@ export function moveTick(s: SimState, c: number, ctl: ControllerState, p: Player
       const gpress = (ctl.seqA & SeqFlag.GPRESS) !== 0 && s.tick <= ctl.seqB;
       if ((btn & Btn.PASS) !== 0) {
         // Contain: shadow the carrier goal-side at containDist, facing him, at least at his pace.
-        const qs = Math.sqrt(q.vx * q.vx + q.vz * q.vz) * 1.05;
+        const qs = Math.sqrt(q.vx * q.vx + q.vz * q.vz) * T_RESOLVE.containPaceMul;
         let sp = sprint ? top : qs > jog ? qs : jog;
         if (sp > top) sp = top;
         arrive = true;

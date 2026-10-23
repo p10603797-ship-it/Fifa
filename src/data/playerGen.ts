@@ -24,7 +24,7 @@ import { rngFloat } from '../sim/core/rng';
 import { getFormation } from './formations';
 import { nameKey, screenName } from './screen';
 
-const LOCAL_TUNING = { // TUNING-CR (squad generation; generation-time only — re-run `npm run gen:data` after a change)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: squad generation; generation-time only — re-run `npm run gen:data` after a change)
   /** Height limits for everybody, cm (BRIEF: 165-200). */
   heightMinCm: 165,
   heightMaxCm: 200,

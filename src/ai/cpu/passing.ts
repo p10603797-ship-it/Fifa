@@ -630,7 +630,7 @@ function spotDanger(behindOk: number): void {
   let xg = LT.xgK * ang * ang;
   if (xg > LT.xgCap) xg = LT.xgCap;
   const g = Math.sqrt(ax * ax + z * z);
-  if (xg > 0.005 && g > 0.5) {
+  if (xg > LT.blockerMinXg && g > 0.5) {
     // Outfield blockers in the shooting triangle (spot -> posts).
     const ux = ax / g, uz = -z / g;
     let nb = 0;
@@ -818,7 +818,7 @@ function ownLead(s: SimState, q: Readonly<PlayerState>, lofted: number): number 
   const tAcc = (top - v0) / acc;
   const xm = HALF_LENGTH - LT.pitchMargin, zm = HALF_WIDTH - LT.pitchMargin;
   const dx0 = q.x - bx, dz0 = q.z - bz;
-  let t = Math.sqrt(dx0 * dx0 + dz0 * dz0) / 14;
+  let t = Math.sqrt(dx0 * dx0 + dz0 * dz0) / LT.throughSeedSpeed;
   let lx = q.x, lz = q.z, v = 0;
   let arrive: number = LT.throughArrive;
   for (let it = 0; it < LT.throughIters; it++) {
@@ -989,7 +989,7 @@ function crosses(s: SimState, out: PassOption[], slot: number, team: number, dir
     let head = (s.attrs[best]!.heading - 1) / 98;
     head = head > 0 ? (head < 1 ? head : 1) : 0;
     F[E_X] = tx; F[E_Z] = tz; F[E_C] = F[O_C]!; F[E_PROG] = dir * dx;
-    F[E_DANGER] = F[P_OUT]! * LT.headerXgMul * (0.6 + 0.4 * head);
+    F[E_DANGER] = F[P_OUT]! * LT.headerXgMul * (LT.headerDangerBase + LT.headerDangerHeadW * head);
     F[E_WP] = F[C_WP]!; F[E_WD] = F[C_WDW]!;
     emit(out, best, KickKind.CROSS);
   }
@@ -1038,15 +1038,15 @@ export function scorePassOptions(s: SimState, slot: number, out: PassOption[]): 
   // Style weights (TAI-12).
   const sw = styleWeights(t.style);
   let w = sw.safety; w = w > 0 ? (w < 1 ? w : 1) : 0;
-  F[C_WC] = LT.wCompletion * (0.5 + w);
+  F[C_WC] = LT.wCompletion * (LT.styleWeightBase + w);
   w = sw.progress; w = w > 0 ? (w < 1 ? w : 1) : 0;
-  F[C_WP] = LT.wProgress * (0.5 + w);
-  F[C_WD] = LT.wDanger * (0.5 + w);
+  F[C_WP] = LT.wProgress * (LT.styleWeightBase + w);
+  F[C_WD] = LT.wDanger * (LT.styleWeightBase + w);
   w = sw.directness; w = w > 0 ? (w < 1 ? w : 1) : 0;
-  F[C_WPD] = LT.wProgress * (0.5 + w);
-  F[C_WDD] = LT.wDanger * (0.5 + w);
+  F[C_WPD] = LT.wProgress * (LT.styleWeightBase + w);
+  F[C_WDD] = LT.wDanger * (LT.styleWeightBase + w);
   w = sw.width; w = w > 0 ? (w < 1 ? w : 1) : 0;
-  F[C_WDW] = LT.wDanger * (0.5 + w);
+  F[C_WDW] = LT.wDanger * (LT.styleWeightBase + w);
   const inZone = p.isKeeper === 0 && dir * bx >= HALF_LENGTH - CROSS_ZONE_DEPTH && (bz >= CROSS_ZONE_MIN_Z || bz <= -CROSS_ZONE_MIN_Z);
   const start = team === 0 ? 0 : PLAYERS_PER_TEAM;
   for (let i = start; i < start + PLAYERS_PER_TEAM; i++) {

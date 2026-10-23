@@ -32,7 +32,7 @@ const LOCAL_TUNING = {
   netFullSpeed: 25,
   /** Pass kicks above this power use the brighter strike sample. */
   brightPassPower: 0.8,
-} as const; // TUNING-CR
+} as const; // LOCAL_TUNING (non-gameplay: sound effects)
 
 export const SFX_TUNING = LOCAL_TUNING;
 

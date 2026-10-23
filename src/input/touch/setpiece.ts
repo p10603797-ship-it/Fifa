@@ -66,28 +66,14 @@ import {
 import type { ReadonlySimState, SimState } from '../../contracts/state';
 import { createBallPrediction, type BallPrediction } from '../../contracts/systems';
 import { ClusterMode, type TouchControl, type TouchGestureEvent, type TouchIntentState } from '../../contracts/touch';
-import { T_TOUCHUI } from '../../contracts/tuning';
+import { T_TOUCH_SETPIECE, T_TOUCHUI } from '../../contracts/tuning';
 import { previewFlight as rulPreviewFlight } from '../../sim/rules/freekick';
 import { quantStick, writeAimAxes } from '../axes';
 import { classifyPath, createPathClass, LOCAL_TUNING as GESTURE_TUNING, queueGesture, type PathClass } from './gestures';
 import { LOCAL_TUNING as MAPPER_TUNING } from './mapper';
 
-/** Set-piece swipe constants (TUNING-CR: candidates for T_TOUCHUI). Distances in CSS pt (= px), times ms. */
-export const LOCAL_TUNING = {
-  /** A touch-down within this distance of the ball's screen position starts a set-piece swipe, pt (TCH-05 fromBallPt). */
-  ballPt: GESTURE_TUNING.fromBallPt,
-  /**
-   * The preview is recomputed at most this often while the finger is down, ms: every 2nd frame at 60 Hz (a little
-   * under 2 x 16.7 ms so the jitter of event times never stretches it to three frames).
-   */
-  previewEveryMs: 30,
-  /** Flight shown by the preview: the first second, ticks (1/60 s). */
-  previewTicks: 60,
-  /** One preview dot every this many ticks of flight. */
-  previewStepTicks: 3,
-  /** Finger-trail dot spacing (when there is no flight to show), pt. */
-  trailSpacingPt: 16,
-} as const; // TUNING-CR
+/** Set-piece swipe constants: contracts/tuning.ts T_TOUCH_SETPIECE ([TUN-2]; the old name is kept for importers). */
+export const LOCAL_TUNING = T_TOUCH_SETPIECE;
 
 /** What TouchIntentState.preview* holds. */
 export const PreviewKind = {

@@ -572,7 +572,7 @@ function steerJob(s: SimState, slot: number): void {
 
   const urgent = URGENT[job] === 1;
   const sd = urgent ? LT.sprintDistUrgent : LT.sprintDistCalm;
-  const sprint = req > jog * 1.0001 && (d > sd || (p.wantSprint === 1 && d > sd * 0.5));
+  const sprint = req > jog * 1.0001 && (d > sd || (p.wantSprint === 1 && d > sd * LT.sprintKeepFrac));
   p.moveMode = MoveMode.ARRIVE;
   p.tgtSpeed = req;
   p.wantSprint = sprint ? 1 : 0;

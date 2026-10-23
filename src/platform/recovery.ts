@@ -28,7 +28,7 @@ import {
   appReplayRecorder, attachReplayRecorder, createLiveReplayRecorder, setAppReplayRecorder, type LiveReplayRecorder,
 } from './replayRecorder';
 
-const LOCAL_TUNING = { // TUNING-CR (platform, not gameplay)
+const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: platform, crash recovery)
   /** Shortest time between two navigations to the recovery screen, ms. */
   navIntervalMs: 1000,
   /** Recovery shown this many times ... */

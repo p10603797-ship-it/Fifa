@@ -88,7 +88,7 @@ const LOCAL_TUNING = {
   zombieAutoTries: 3,
   /** [QF-5] ...each this long after the stall was detected with no tap to restart it, s. */
   zombieAutoDelaySec: 1.5,
-} as const; // TUNING-CR
+} as const; // LOCAL_TUNING (non-gameplay: audio engine mix / timing)
 
 export const AUDIO_ENGINE_TUNING = LOCAL_TUNING;
 

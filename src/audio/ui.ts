@@ -20,7 +20,7 @@ const LOCAL_TUNING = {
   debounce: [0.04, 0.08, 0.08, 0.15, 0.06, 0.3, 0.25],
   /** Playback gain of menu sounds (the menus bus volume applies on top). */
   gain: 1,
-} as const; // TUNING-CR
+} as const; // LOCAL_TUNING (non-gameplay: UI sounds)
 
 export const UI_TUNING = LOCAL_TUNING;
 

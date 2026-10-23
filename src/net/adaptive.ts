@@ -79,7 +79,7 @@ const LOCAL_TUNING = {
   holdCooldownMs: 2000,
   /** Longest single hold, ticks shed. */
   maxHoldTicks: 6,
-} as const; // TUNING-CR
+} as const; // LOCAL_TUNING (non-gameplay: adaptive input-delay / network control)
 
 export const NET_DELAY_MIN: number = T_NET.delayMin;
 export const NET_DELAY_MAX: number = T_NET.delayMax;

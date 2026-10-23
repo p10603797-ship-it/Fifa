@@ -226,7 +226,7 @@ function arrivalCost(s: SimState, slot: number, x: number, z: number, pen: numbe
   const d = Math.sqrt(dx * dx + dz * dz);
   const sp = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
   const top = topOf(s, slot);
-  const vmax = (sp > top ? sp : top) * 1.05;
+  const vmax = (sp > top ? sp : top) * LT.lbSpeedMul;
   const lb = d > LT.lbSlack ? ((d - LT.lbSlack) / vmax) * TICK_HZ : 0;
   if (lb * pen - bonus >= limit) return BIG;
   const stun = p.stunT > 0 ? p.stunT : 0;

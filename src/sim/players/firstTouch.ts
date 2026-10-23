@@ -571,7 +571,7 @@ function heavyTouch(s: SimState, slot: number, mate: number, ev: EventSink): voi
   const dirX = hx * ca - hz * sa;
   const dirZ = hx * sa + hz * ca;
   const bad = clamp01(1 - q / L.qCleanHi);
-  const dist = 1 + (T_TOUCH.heavyTouchMax - 1) * bad * (0.5 + 0.5 * F[F_R2]!);
+  const dist = 1 + (T_TOUCH.heavyTouchMax - 1) * bad * (L.heavyTouchRandMin + (1 - L.heavyTouchRandMin) * F[F_R2]!);
   const vk = Math.sqrt(2 * T_BALL.rollDecel * dist);
   LAUNCH.vx = p.vx + dirX * vk;
   LAUNCH.vy = F[F_QH]! > CTRL_H ? L.heavyPopVy : 0;

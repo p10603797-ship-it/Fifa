@@ -52,7 +52,7 @@ import { ReplayAngle, replayPlaybackOf } from '../replay';
 import { createInterpState, type CameraModule, type EulerFields, type RenderContext, type RenderFrame } from '../types';
 import { projectPitchToScreen, projectScreenToPitch } from './project';
 
-export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
+export const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: GFX-15 cinematic cameras)
   // ---- director
   /** Free kicks at most this far (m) from the attacked goal's centre get the behind-the-taker camera. */
   fkNearGoal: 35,
