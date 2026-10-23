@@ -177,9 +177,9 @@ Total assignments: 201.
 | QA-33 | 3 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
 | QA-34 | 3 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
 | QA-35 | 3 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
-| QA-36 | 3 | queued |  |  |
-| QA-37 | 3 | queued |  |  |
-| QA-38 | 3 | queued |  |  |
+| QA-36 | 3 | running | QF-7R (render/app), TUN-7S (sim/AI), FIN-P (proxy gate) | |
+| QA-37 | 3 | running | QF-7R (render/app), TUN-7S (sim/AI), FIN-P (proxy gate) | |
+| QA-38 | 3 | running | QF-7R (render/app), TUN-7S (sim/AI), FIN-P (proxy gate) | |
 | QA-39 | 3 | done | QF-5: 18 defects fixed (14 + 4); sw.js shell/quota/redirect, build-id update flow, no toast in play, licence notices in dist, audio warm-up + background resume, pause lockout; 797 KB gzip; splash 2.0 s | 3 cosmetic KNOWN_ISSUES |
 | QA-40 | 3 | done | QF-5: 18 defects fixed (14 + 4); sw.js shell/quota/redirect, build-id update flow, no toast in play, licence notices in dist, audio warm-up + background resume, pause lockout; 797 KB gzip; splash 2.0 s | 3 cosmetic KNOWN_ISSUES |
 | QA-41 | 3 | done | QF-5: 18 defects fixed (14 + 4); sw.js shell/quota/redirect, build-id update flow, no toast in play, licence notices in dist, audio warm-up + background resume, pause lockout; 797 KB gzip; splash 2.0 s | 3 cosmetic KNOWN_ISSUES |
@@ -198,14 +198,14 @@ Total assignments: 201.
 | FIX-10 | 4 | done | QF-4: 23 defects fixed (15 + 8): set-piece/shoot-out cameras, high-ball hold release, teleport snapping, kick/touch reach, pop guard, texture accounting; 20-23 draw calls, 46.8k tris, 6.03 MB; kits all pairs | sim-side CRs (charged strike timing, throw-in set-up teleports, CPU corner box) -> follow-up |
 | FIX-11 | 4 | done | QF-5: 18 defects fixed (14 + 4); sw.js shell/quota/redirect, build-id update flow, no toast in play, licence notices in dist, audio warm-up + background resume, pause lockout; 797 KB gzip; splash 2.0 s | 3 cosmetic KNOWN_ISSUES |
 | FIX-12 | 4 | done | QF-6: 33 defects fixed (18 + 15); netsim matrix 24/24, DoD seeds 3-9/2026 0 desyncs; real WebRTC e2e; protocol net2 | 4 cosmetic KNOWN_ISSUES |
-| FIX-13 | 4 | queued |  |  |
+| FIX-13 | 4 | running | QF-7R (render/app), TUN-7S (sim/AI), FIN-P (proxy gate) | |
 | FIX-14 | 4 | done | QF-2: 32 defects fixed (24 + 8); §7 bands PASS over 3x100 Professional matches (goals 2.39-2.57, shots 15.0-15.8, possession, passes 74.8%, fouls, offsides, blow-outs 1%); saves 65.5-69.2% | |
 | SGN-01 | 5 | queued | after SGN-02/03/04/06 | |
-| SGN-02 | 5 | running |  | |
+| SGN-02 | 5 | done | every §9/§10 row mapped to real-pipeline tests (docs/CONTROLS_AUDIT.md), 0 FAIL; 28 new sgn-02 tests; 1,934 input tests + 13 e2e pass | real iPad touch feel / gamepad ids: device checklist |
 | SGN-03 | 5 | queued | (after SGN-04) | |
-| SGN-04 | 5 | queued | (after audits) | |
+| SGN-04 | 5 | running | first run: bundle 823 KB gzip, menu 2.4 s, draw calls <= 33, triangles <= 96k, textures <= 14 MB, heap flat over 19 min; proxy gate FAIL on sim time (avg 2.97 ms, p99 11.9 ms at 4x) -> FIN-P; re-run after the fix round | |
 | SGN-05 | 5 | done | originality and licence audit with an independent second auditor; 6 renames (names only); network and licence e2e | repository name "Fifa": user decision before any public deploy |
-| SGN-06 | 5 | running |  | |
+| SGN-06 | 5 | done | README (Play a friend), ARCHITECTURE, OWNERSHIP, TUNING index, DEPLOY, DEVICE_CHECKLIST, KEYBOARD refreshed; docs/CONTRACTS.md written; README commands run | lint scope fixed by lead; KNOWN_ISSUES items -> FIN-K / D-024 |
 
 ## Wave 4 round 2 (D-020 follow-up charters)
 | Charter | State | Scope |
@@ -224,5 +224,6 @@ Total assignments: 201.
 | QF-7 | queued (after TUN-1) | performance |
 | SGN-05 | done | originality and licence audit: names screened against ~1,700 famous names + Wikidata (98k footballers, 37k clubs); 6 player names renamed (names only, attributes identical); visuals, audio, dependencies, licence notices in dist, runtime network (proxy + NetLog logs: no request outside online 1v1) all PASS |
 | TUN-2 | done (444 new tuning leaves: set-piece spots, inline sim/AI literals, input and modes blocks; 28-run hash table IDENTICAL; byte-level value proof; TUNING-CR markers 0; whole suite 515 files / 7,325 tests pass) | |
-| QF-8 + SGN-03 | queued | determinism, soak 2000, fuzz 500 on the final tree |
+| FIN-K / FIN-A / FIN-P | running | final fixes from the sign-off audits: KNOWN_ISSUES sim items, app/render/tools items, proxy benchmark gate |
+| QF-8 + SGN-03 | queued (after FIN) | determinism, soak 2000, fuzz 500, full e2e on the final tree |
 
