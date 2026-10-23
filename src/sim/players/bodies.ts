@@ -11,6 +11,8 @@
  *  2. Shielding (isShielding: the ball owner in the SHIELD action): the body swings round the ball onto the
  *     ball-opponent line (never pushed out toward the opponent: the standoff is the strength duel), lookAt the nearest
  *     opponent, a speed backstop (SIM-04 caps the SHIELD speed itself), and the challenger is held off (shieldBlocks).
+ *     [QF-16] Held off, not walked back: a shielder backing into the challenger (faster than shieldDriveSpeed along the
+ *     contact normal) is the one held off for that pair.
  *  The slide-around: a player whose intent pushes into a body that blocks his way (ARRIVE target well beyond it; stick
  *  pushers only round teammates or an opponent pushing back) is nudged sideways, both of a head-on pair to their own
  *  right unless their intents/velocities prefer a side, so nobody runs in place and same-target players do not orbit.
@@ -115,6 +117,10 @@ export const LOCAL_TUNING = { // TUNING-CR
   shieldSpeedBackstop: 1.05,
   /** Mass multiplier for an active shielder. */
   shieldMassMul: 1.6,
+  /** [QF-16] A shielder backing into a held-off challenger faster than this (along the contact normal) loses the hold
+   *  priority for that pair: the challenger stands his ground and the shielder is held off. Before, a human shielding
+   *  with his back to goal walked a defender back 11 m in 10 s at every level. m/s. */
+  shieldDriveSpeed: 0.3,
   /** Strength points added to the shielder in the shield duel. */
   shieldStrengthBonus: 10,
   /** Strength-difference span (points) mapping the duel onto shieldFactor 0..1 (0.5 at a tie). */
@@ -536,8 +542,10 @@ function resolvePairs(s: SimState, first: boolean, ev: EventSink): void {
       // strength alone.
       let lvA = sDown[i] === 1 ? 3 : sAnc[i] === 1 ? 2 : sPin[i]!;
       let lvB = sDown[j] === 1 ? 3 : sAnc[j] === 1 ? 2 : sPin[j]!;
-      if (sShielder === i && sHold[j] === 1) lvA = 2;
-      else if (sShielder === j && sHold[i] === 1) lvB = 2;
+      // [QF-16] The shield hold keeps a challenger off the ball; it does not let the shielder walk him back: backing
+      // into the challenger (faster than shieldDriveSpeed along the normal) he is the one held off.
+      if (sShielder === i && sHold[j] === 1) { if (a.vx * nx + a.vz * nz > L.shieldDriveSpeed) lvB = 2; else lvA = 2; }
+      else if (sShielder === j && sHold[i] === 1) { if (-(b.vx * nx + b.vz * nz) > L.shieldDriveSpeed) lvA = 2; else lvB = 2; }
       let wA: number;
       if (lvA > lvB) wA = 0;
       else if (lvB > lvA) wA = 1;

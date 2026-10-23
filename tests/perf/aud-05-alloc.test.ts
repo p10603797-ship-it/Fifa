@@ -9,7 +9,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ALLOC_FLAGS } from './qf-7r-alloc-flags';
+import { ALLOC_FLAGS, EXACT_INTERVAL } from './qf-7r-alloc-flags';
 
 describe('AUD-05 zero allocation on the audio hot path', () => {
   it('frames allocate nothing; events allocate only boxed numbers (no objects/closures); a tick costs microseconds', () => {
@@ -122,7 +122,7 @@ describe('AUD-05 zero allocation on the audio hot path', () => {
         fn(12000);
         globalThis.gc();
         await session.post('HeapProfiler.startSampling', {
-          samplingInterval: 64, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
+          samplingInterval: ${EXACT_INTERVAL}, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
         });
         fn(n);
         const { profile } = await session.post('HeapProfiler.stopSampling');
@@ -131,9 +131,9 @@ describe('AUD-05 zero allocation on the audio hot path', () => {
       const N = 30000;
       const perFrame = await sample(frames, N);
       const mine = await sample(run, N);
-      const t0 = process.hrtime.bigint();
+      const t0 = process.cpuUsage(); // [QF-7R] CPU time, not wall time: a busy machine does not inflate it
       run(12000);
-      const us = Number(process.hrtime.bigint() - t0) / 12000 / 1000;
+      const us = ((c) => c.user + c.system)(process.cpuUsage(t0)) / 12000;
       const eventsPerTick = E.reduce((a, t) => a + t.length, 0) / E.length;
       console.log(JSON.stringify({ perFrame, mine, perEvent: mine / eventsPerTick, usPerTick: us, bed: registry.crowd.bedRunning, sfx: Array.from(registry.sfx.stats.played).reduce((a, b) => a + b, 0), whistles: Array.from(registry.whistles.stats.whistles).reduce((a, b) => a + b, 0) }));
     `;

@@ -13,7 +13,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ALLOC_FLAGS } from './qf-7r-alloc-flags';
+import { ALLOC_FLAGS, EXACT_INTERVAL } from './qf-7r-alloc-flags';
 
 describe('GFX-16 zero allocation per frame', () => {
   it('replay record / playback and effects allocate nothing per frame', () => {
@@ -106,7 +106,7 @@ describe('GFX-16 zero allocation per frame', () => {
       session.connect();
       st[2] = 1;
       run(700);
-      await session.post('HeapProfiler.startSampling', { samplingInterval: 64, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
+      await session.post('HeapProfiler.startSampling', { samplingInterval: ${EXACT_INTERVAL}, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
       run(CYCLE - 700);
       const { profile } = await session.post('HeapProfiler.stopSampling');
       let firstGoal = 0;
@@ -128,9 +128,9 @@ describe('GFX-16 zero allocation per frame', () => {
       st[2] = 1;
       run(CYCLE * 5);
       st[3] = 0;
-      const t0 = process.hrtime.bigint();
+      const t0 = process.cpuUsage(); // [QF-7R] CPU time, not wall time: a busy machine does not inflate it
       const full = measure(CYCLE * 40);
-      const us = Number(process.hrtime.bigint() - t0) / (CYCLE * 40) / 1000;
+      const us = ((c) => c.user + c.system)(process.cpuUsage(t0)) / (CYCLE * 40);
       console.log(JSON.stringify({ steady, full, firstGoal, usPerFrame: us, playbackFrames: st[3], steadyPlayback, recorded: rep.ring.count }));
     `;
     const r = spawnSync(process.execPath, [

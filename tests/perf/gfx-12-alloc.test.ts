@@ -10,7 +10,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ALLOC_FLAGS } from './qf-7r-alloc-flags';
+import { ALLOC_FLAGS, EXACT_INTERVAL } from './qf-7r-alloc-flags';
 
 describe('[GFX-12] animation driver: zero allocation per frame, cost', () => {
   it('createAnimator().update and the stub API allocate nothing per frame and stay cheap', () => {
@@ -80,7 +80,7 @@ describe('[GFX-12] animation driver: zero allocation per frame, cost', () => {
         fn(30000); // every path (cold action starts included) optimised before measuring
         globalThis.gc();
         await session.post('HeapProfiler.startSampling', {
-          samplingInterval: 64, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
+          samplingInterval: ${EXACT_INTERVAL}, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
         });
         fn(12000);
         const { profile } = await session.post('HeapProfiler.stopSampling');
@@ -89,9 +89,9 @@ describe('[GFX-12] animation driver: zero allocation per frame, cost', () => {
       const res = {};
       res.fullBytes = await measure(runFull);
       res.stubBytes = await measure(runStub);
-      let t0 = process.hrtime.bigint();
+      let t0 = process.cpuUsage(); // [QF-7R] CPU time, not wall time: a busy machine does not inflate it
       runFull(4000);
-      res.usPerFrame = Number(process.hrtime.bigint() - t0) / 4000 / 1000;
+      res.usPerFrame = ((c) => c.user + c.system)(process.cpuUsage(t0)) / 4000;
       res.finite = anim.poses.every((p) => Array.from(p).every(Number.isFinite));
       console.log(JSON.stringify(res));
     `;

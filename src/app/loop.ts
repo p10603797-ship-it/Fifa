@@ -51,8 +51,12 @@ export interface LoopDeps {
   onError(err: unknown, where: string): void;
   /** Start of every frame (coalesced resize etc.). */
   beforeFrame?(frame: FrameInfo): void;
-  /** End of every frame: debug overlay, Low Power Mode detector. busyMs = sim + render time this frame. */
-  afterFrame?(frame: FrameInfo, busyMs: number): void;
+  /**
+   * End of every frame: debug overlay, Low Power Mode detector. stats.busyMs = sim + render time this frame. [QF-7R]
+   * The frame's numbers are read from `stats`, never passed as a number: a double argument to a call V8 does not
+   * inline is boxed (a 16-byte heap allocation every frame).
+   */
+  afterFrame?(frame: FrameInfo, stats: Readonly<FrameStats>): void;
   /** Injected for tests; default src/sim/step.ts and src/sim/core/clone.ts. */
   step?: StepFn;
   copyState?: CopyStateFn;
@@ -85,19 +89,21 @@ export interface FrameStatsRecorder {
   addRender(ms: number): void;
 }
 
-/** FrameStats plus its (allocation-free) recorders. */
+/**
+ * FrameStats plus its (allocation-free) recorders. [QF-7R] The running sums live in a Float64Array, not in closure
+ * variables: a double stored in a closure variable is a new heap number every time (V8 boxes context slots).
+ */
 export function createFrameStats(): FrameStatsRecorder {
-  let simSum = 0;
-  let renderSum = 0;
+  const sums = new Float64Array(2); // [sim ms, render ms] since reset()
   const stats: FrameStats = {
-    frame: 0, fps: 0, frameMs: 0, ticks: 0, totalTicks: 0,
+    frame: 0, fps: 0, frameMs: 0, busyMs: 0, ticks: 0, totalTicks: 0,
     simMsLast: 0, simMsEma: 0, simMsAvg: 0, simMsMax: 0,
     renderMsLast: 0, renderMsEma: 0, renderMsAvg: 0, renderMsMax: 0,
     sampleTicks: 0, sampleFrames: 0, stalled: false,
     frameTimes: new Float32Array(FRAME_TIME_SAMPLES), head: 0,
     reset() {
-      simSum = 0;
-      renderSum = 0;
+      sums[0] = 0;
+      sums[1] = 0;
       stats.simMsAvg = 0; stats.simMsMax = 0; stats.renderMsAvg = 0; stats.renderMsMax = 0;
       stats.sampleTicks = 0; stats.sampleFrames = 0;
     },
@@ -107,17 +113,17 @@ export function createFrameStats(): FrameStatsRecorder {
     addSim(ms) {
       stats.simMsLast = ms;
       stats.simMsEma = stats.simMsEma === 0 ? ms : stats.simMsEma + (ms - stats.simMsEma) * EMA;
-      simSum += ms;
+      sums[0] = sums[0]! + ms;
       stats.sampleTicks++;
-      stats.simMsAvg = simSum / stats.sampleTicks;
+      stats.simMsAvg = sums[0]! / stats.sampleTicks;
       if (ms > stats.simMsMax) stats.simMsMax = ms;
     },
     addRender(ms) {
       stats.renderMsLast = ms;
       stats.renderMsEma = stats.renderMsEma === 0 ? ms : stats.renderMsEma + (ms - stats.renderMsEma) * EMA;
-      renderSum += ms;
+      sums[1] = sums[1]! + ms;
       stats.sampleFrames++;
-      stats.renderMsAvg = renderSum / stats.sampleFrames;
+      stats.renderMsAvg = sums[1]! / stats.sampleFrames;
       if (ms > stats.renderMsMax) stats.renderMsMax = ms;
     },
   };
@@ -137,13 +143,17 @@ export function createLoop(deps: LoopDeps): GameLoop {
   const info: FrameInfo = { nowMs: 0, dtMs: 0, frame: 0, ticks: 0, paused: false };
   let running = false;
   let rafId = 0;
-  let lastNow = 0;
   let hasLast = false;
   let wasTicking = false;
   let dirty = true;
-  let alpha = 1;
-  let frameEma = 0;
   let lastRuntime: unknown = null;
+  // [QF-7R] The loop's doubles that outlive a frame (timestamp of the previous frame, render alpha, smoothed frame
+  // interval) live in a Float64Array: a double written to a closure variable is a new heap number on every write.
+  const F = new Float64Array(3);
+  const F_LAST_NOW = 0;
+  const F_ALPHA = 1;
+  const F_FRAME_EMA = 2;
+  F[F_ALPHA] = 1;
 
   const onRaf = (t: number): void => {
     rafId = 0;
@@ -154,12 +164,14 @@ export function createLoop(deps: LoopDeps): GameLoop {
 
   function frame(nowMs: number): void {
     // Real frame interval for menus, audio and stats (independent of the sim accumulator).
-    let raw = hasLast ? nowMs - lastNow : 0;
+    let raw = hasLast ? nowMs - F[F_LAST_NOW]! : 0;
     if (!(raw > 0)) raw = 0;
-    lastNow = nowMs;
+    F[F_LAST_NOW] = nowMs;
     hasLast = true;
     info.nowMs = nowMs;
-    info.dtMs = raw > MAX_FRAME_MS ? MAX_FRAME_MS : raw;
+    // [QF-7R] `+`: an imported binding is untyped to V8; as one arm of the conditional it would box the other arm, a
+    // heap number every frame (loopMath.ts beginFrame).
+    info.dtMs = raw > MAX_FRAME_MS ? +MAX_FRAME_MS : raw;
     info.frame++;
     info.ticks = 0;
     info.paused = session.paused;
@@ -238,7 +250,7 @@ export function createLoop(deps: LoopDeps): GameLoop {
         deps.onError(err, 'loop.tick');
       }
       endFrame(timing, ran, stalled);
-      alpha = alphaOf(timing);
+      F[F_ALPHA] = alphaOf(timing);
       dirty = true;
     } else {
       wasTicking = false;
@@ -253,13 +265,13 @@ export function createLoop(deps: LoopDeps): GameLoop {
       // A new match (or none): draw it at least once, even when it starts paused.
       lastRuntime = live;
       dirty = true;
-      alpha = 1;
+      F[F_ALPHA] = 1;
     }
     if (live && dirty) {
       dirty = false;
       const t0 = clock();
       try {
-        renderer.render(live.prev, live.curr, alpha, info);
+        renderer.render(live.prev, live.curr, F[F_ALPHA]!, info);
       } catch (err) {
         deps.onError(err, 'loop.render');
       }
@@ -291,9 +303,10 @@ export function createLoop(deps: LoopDeps): GameLoop {
     } catch (err) {
       deps.onError(err, 'loop.screen');
     }
+    stats.busyMs = busy;
     if (deps.afterFrame) {
       try {
-        deps.afterFrame(info, busy);
+        deps.afterFrame(info, stats);
       } catch (err) {
         deps.onError(err, 'loop.afterFrame');
       }
@@ -301,8 +314,10 @@ export function createLoop(deps: LoopDeps): GameLoop {
     stats.frame = info.frame;
     stats.frameMs = raw;
     if (raw > 0) {
-      frameEma = frameEma === 0 ? raw : frameEma + (raw - frameEma) * EMA;
-      stats.fps = 1000 / frameEma;
+      const ema = F[F_FRAME_EMA]!;
+      const next = ema === 0 ? raw : ema + (raw - ema) * EMA;
+      F[F_FRAME_EMA] = next;
+      stats.fps = 1000 / next;
       stats.frameTimes[stats.head] = raw;
       stats.head = (stats.head + 1) % FRAME_TIME_SAMPLES;
     }

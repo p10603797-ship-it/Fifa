@@ -42,7 +42,7 @@
 
 import {
   BufferAttribute, BufferGeometry, Color, CylinderGeometry, DoubleSide, InstancedMesh, Matrix4, Mesh,
-  MeshLambertMaterial, ShaderMaterial, Vector2, Vector3, Vector4,
+  MeshDepthMaterial, MeshLambertMaterial, ShaderMaterial, Vector2, Vector3, Vector4,
 } from 'three';
 import {
   BALL_RADIUS, GOAL_DEPTH, GOAL_HALF_WIDTH, GOAL_HEIGHT, HALF_LENGTH, POST_RADIUS,
@@ -51,7 +51,7 @@ import { QualityTier } from '../contracts/enums';
 import { EventType, type EventBuffer } from '../contracts/events';
 import type { ReadonlySimState } from '../contracts/state';
 import { getTierParams } from './quality';
-import type { RenderContext, RenderFrame, RenderModule } from './types';
+import { createInterpState, type RenderContext, type RenderFrame, type RenderModule } from './types';
 
 const LOCAL_TUNING = { // TUNING-CR (render only; no gameplay effect)
   // ---- net look
@@ -110,6 +110,8 @@ const LOCAL_TUNING = { // TUNING-CR (render only; no gameplay effect)
   entryWindow: 0.6,
   /** Apparent ball speeds above this are teleports (restarts, replay start): no contacts or entries, m/s. */
   teleportSpeed: 45,
+  /** [QF-7R] warmUp(): frames of shots into each net (plus a post hit each) run off screen while loading. */
+  warmUpFrames: 1200,
   // ---- frame
   /** Back support tube radius, m. */
   supportRadius: 0.025,
@@ -751,6 +753,10 @@ export function createGoals(ctx: RenderContext): GoalsModule {
   frame.computeBoundingSphere();
   frame.frustumCulled = false; // both goals, a few cm of sway
   frame.name = 'goal-frames';
+  // [QF-7R] Its own shadow depth material (instanced with per-instance colour): sharing three.js's default with the
+  // players (instanced, no colour) and the ball (not instanced) re-derived the depth program three times per frame.
+  const frameDepth = new MeshDepthMaterial();
+  frame.customDepthMaterial = frameDepth;
   frame.visible = false;
 
   // ---- net
@@ -1015,7 +1021,7 @@ export function createGoals(ctx: RenderContext): GoalsModule {
   resetState();
   applyLook();
 
-  return {
+  const mod: GoalsModule = {
     frame,
     net,
     uniforms,
@@ -1047,7 +1053,16 @@ export function createGoals(ctx: RenderContext): GoalsModule {
           const age = wobAge[k]! + dt;
           if (age >= T.wobbleDuration) { wobAge[k] = 0; wobAmp[k] = 0; sway[k] = 0; } else {
             wobAge[k] = age;
-            swayCore(wobAge, wobAmp, sway, k);
+            // swayCore(wobAge, wobAmp, sway, k) written out [QF-7R]: a wobble is rare, so a helper never leaves V8's
+            // baseline tier and boxes every double it computes (garbage every wobbling frame).
+            const amp = wobAmp[k]!;
+            if (!(age > 0) || amp === 0) sway[k] = 0;
+            else {
+              let c = (age - 0.7 * T.wobbleDuration) / (0.3 * T.wobbleDuration);
+              c = c < 0 ? 0 : c > 1 ? 1 : c;
+              const cut = 1 - c * c * (3 - 2 * c);
+              sway[k] = amp * Math.sin(WOBBLE_W * age) * Math.exp(-age / T.wobbleDecay) * cut;
+            }
           }
           frameDirty = true;
         }
@@ -1096,6 +1111,52 @@ export function createGoals(ctx: RenderContext): GoalsModule {
 
     warmUp() {
       // Programs compile with the scene (index.ts); nothing to upload (the net pattern is procedural).
+      // [QF-7R] The event-time paths (a ball entering a net: impact prediction, ripple; a post or bar hit: wobble, the
+      // frame matrices; contacts with every sheet) run a few times a match, so V8 would leave them unoptimised: the first
+      // goal or post hit then hitches and boxes every double it computes (measured: kilobytes of garbage per goal).
+      // Run them through the real update() and the event handlers here, off screen while loading (a few ms), then
+      // clear: shots into both nets from a spread of heights and angles, each with a post / bar hit.
+      const wasFrame = frame.visible, wasNet = net.visible;
+      const it = createInterpState();
+      const fr: RenderFrame = {
+        prev: null as unknown as ReadonlySimState, curr: null as unknown as ReadonlySimState, alpha: 1,
+        frame: { nowMs: 0, dtMs: 1000 / 60, frame: 0, ticks: 1, paused: false }, interp: it,
+      };
+      for (let i = 0; i < T.warmUpFrames; i++) {
+        const k = i % 60;
+        const shot = (i / 60) | 0;
+        const end = (shot & 1) === 0 ? 1 : -1;
+        // 40 frames of flight from 20 m out into the net (back, roof or a side sheet), then 20 still frames.
+        const u = k < 40 ? k / 40 : 1;
+        it.ballX = end * (GL - 20 + (20 + GOAL_DEPTH * 0.9) * u);
+        it.ballY = R + (0.2 + (shot % 5) * 0.45) * u;
+        it.ballZ = (((shot % 7) - 3) * 0.9) * u;
+        if (k === 0) hasLast = false; // a new shot: a teleport, no contact from the last one
+        if (k === 20) {
+          H[0] = 12.5 + (shot % 4); H[1] = end * GL; H[2] = (shot & 2) === 0 ? GH : 1.25; H[3] = (shot & 2) === 0 ? 0.5 : GW;
+          postHit(end, (shot & 2) === 0 ? 1 : 0);
+        }
+        fr.frame.frame = i;
+        mod.update(fr);
+      }
+      // NET events (entry from the event) and post / bar hits directly, as often as a JIT tier-up needs.
+      for (let i = 0; i < T.warmUpFrames; i++) {
+        const end = (i & 1) === 0 ? 1 : -1;
+        const k = end < 0 ? 0 : 1;
+        lastEntry[k] = -INF;
+        // Every branch of the impact prediction: moving into the back / roof / either side or into none, already past
+        // a sheet, below the ball radius, clamped at each edge (a branch first met in play would deoptimise it).
+        E[0] = end * (GL + (i % 13) * 0.21); E[1] = 0.05 + (i % 6) * 0.5; E[2] = ((i % 9) - 4) * 0.95;
+        E[3] = end * ((i % 4) === 3 ? -2.5 : (i % 4) === 2 ? 0 : 12.5 + (i % 11));
+        E[4] = ((i % 5) - 2) * 1.5; E[5] = (i % 7) - 3; E[6] = 14.5 + (i % 11);
+        entry(end);
+        H[0] = 8.5 + (i % 13); H[1] = end * GL; H[2] = (i & 2) === 0 ? GH : 0.75 + (i % 4) * 0.4; H[3] = (i & 2) === 0 ? 1.5 : GW;
+        postHit(end, (i & 2) === 0 ? 1 : 0);
+        V[V_TIME] = V[V_TIME]! + 1 / 60;
+      }
+      resetState();
+      frame.visible = wasFrame;
+      net.visible = wasNet;
     },
 
     setQuality(tier: QualityTier) {
@@ -1119,9 +1180,10 @@ export function createGoals(ctx: RenderContext): GoalsModule {
     dispose() {
       ctx.scene.remove(frame);
       ctx.scene.remove(net);
-      cyl.dispose(); frameMat.dispose(); frame.dispose();
+      cyl.dispose(); frameMat.dispose(); frame.dispose(); frameDepth.dispose();
       netGeo.dispose(); netMat.dispose();
       if (typeof window !== 'undefined' && window.__dotkickGoals === debug) delete window.__dotkickGoals;
     },
   };
+  return mod;
 }

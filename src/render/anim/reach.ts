@@ -278,6 +278,46 @@ export function nearerLeg(out: Pose): number {
   return lx * lx + ly * ly + lz * lz < qx * qx + qy * qy + qz * qz ? -1 : 1;
 }
 
+/** [QF-7R] touchStepS register: in want (0..1), weight, side (-1 / +1, 0 = pick the nearer leg), max weight step per
+ *  frame; out weight, side. */
+export const TST = new Float64Array(4);
+
+/**
+ * [QF-7R] The animator's per-frame touch-reach planning for the ball in RCH[0..2], in one function (the per-frame form
+ * of nearerLeg + touchNeed): a side of 0 becomes the leg whose toe is nearer the ball (nearerLeg); a weight below the
+ * wanted one rises by at most maxStep / touchNeed per frame, capped at want. One FK solve for both. Written out rather
+ * than calling nearerLeg / touchNeed: those run once per reach, so V8 never optimises them and every double they
+ * compute is boxed (garbage each reach); this runs every frame of a reach and is optimised with the animator.
+ */
+export function touchStepS(out: Pose): void {
+  const want = TST[0]!, maxStep = TST[3]!;
+  let tw = TST[1]!, side = TST[2]!;
+  if (side !== 0 && !(want > tw)) return;
+  solvePoseFK(out, SK);
+  if (side === 0) {
+    solePointS(Joint.ANKLE_L, 0);
+    const lx = RCH[0]! - OUT3[0]!, ly = RCH[1]! - OUT3[1]!, lz = RCH[2]! - OUT3[2]!;
+    solePointS(Joint.ANKLE_R, 0);
+    const qx = RCH[0]! - OUT3[0]!, qy = RCH[1]! - OUT3[1]!, qz = RCH[2]! - OUT3[2]!;
+    side = lx * lx + ly * ly + lz * lz < qx * qx + qy * qy + qz * qz ? -1 : 1;
+  }
+  if (want > tw) {
+    solePointS(side < 0 ? Joint.ANKLE_L : Joint.ANKLE_R, 0);
+    const dx = RCH[0]! - OUT3[0]!, dy = RCH[1]! - OUT3[1]!, dz = RCH[2]! - OUT3[2]!;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    let need = 0;
+    if (d > LOCAL_TUNING.toeToBall && d < LOCAL_TUNING.touchGiveUp) {
+      const m = d - LOCAL_TUNING.toeToBall;
+      const cap = LOCAL_TUNING.touchMax + LOCAL_TUNING.touchRootMax;
+      need = m < cap ? m : cap;
+    }
+    const step = need > maxStep ? maxStep / need : 1;
+    tw = Math.min(want, tw + step);
+  }
+  TST[1] = tw;
+  TST[2] = side;
+}
+
 /** Copy helper for tests: a pose's channels into another. */
 export function copyPoseInto(src: ArrayLike<number>, dst: Pose): void {
   for (let k = 0; k < POSE_SIZE; k++) dst[k] = src[k]!;

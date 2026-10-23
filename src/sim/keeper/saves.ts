@@ -392,20 +392,29 @@ function screenTicks(s: SimState, k: number): number {
 }
 
 /**
- * [QF-2] Level part of keeper k's reaction delay (T_LEVEL.keeperReactTicks of his team's CPU level; 0 for a side
- * without an active CPU brain and for a bad level), ticks.
+ * [QF-2] Level of keeper k's team for the reaction tables (T_LEVEL.keeperReact*): its CPU level, -1 for a side without
+ * an active CPU brain (a human side keeps the attribute delay) and for a bad level.
  */
-function levelReactTicks(s: SimState, k: number): number {
+function keeperLevel(s: SimState, k: number): number {
   const t = s.teams[s.players[k]!.team];
-  if (!t || t.cpu.active !== 1) return 0;
+  if (!t || t.cpu.active !== 1) return -1;
   const lv = t.cpu.level;
-  const v = lv >= 0 && lv < T_LEVEL.keeperReactTicks.length && (lv | 0) === lv ? T_LEVEL.keeperReactTicks[lv]! : 0;
-  return v === v ? v : 0;
+  return lv >= 0 && lv < T_LEVEL.keeperReactTicks.length && (lv | 0) === lv ? lv : -1;
 }
 
-/** [QF-2] Keeper k's save reaction delay: gkReflexes (keeperReactTicks) + his team's CPU level part, >= 0, ticks. */
+/**
+ * [QF-2] Keeper k's save reaction delay: gkReflexes (keeperReactTicks) + his team's CPU level part, >= 0, ticks.
+ * [QF-16] The attribute part is scaled by the level's T_LEVEL.keeperReactScale before the level's ticks are added:
+ * Legend's -12 ticks floored every keeper with gkReflexes 62 or more at 0, so reflexes above 62 made no difference at
+ * Legend; Legend now scales the attribute delay instead (every reflex point still counts).
+ */
 export function keeperReactionTicks(s: SimState, k: number): number {
-  const t = keeperReactTicks(s.attrs[k]!) + levelReactTicks(s, k);
+  const base = keeperReactTicks(s.attrs[k]!);
+  const lv = keeperLevel(s, k);
+  if (lv < 0) return base > 0 ? base : 0;
+  const sc = T_LEVEL.keeperReactScale[lv]!;
+  const add = T_LEVEL.keeperReactTicks[lv]!;
+  const t = Math.round(base * (sc === sc ? sc : 1)) + (add === add ? add : 0);
   return t > 0 ? t : 0;
 }
 

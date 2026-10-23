@@ -64,7 +64,9 @@ export function beginFrame(t: LoopTiming, nowMs: number): number {
   t.started = true;
   if (!(dt > 0)) dt = 0; // negative, NaN (clock jumps)
   t.rawDtMs = dt;
-  if (dt > MAX_FRAME_MS) dt = MAX_FRAME_MS;
+  // [QF-7R] `+`: an imported binding is an untyped value to V8; assigned as is, it would make `dt` a tagged variable and
+  // box every interval computed into it (two heap numbers per frame). As a number, `dt` stays an unboxed double.
+  if (dt > MAX_FRAME_MS) dt = +MAX_FRAME_MS;
   dt = snapFrameMs(dt);
   t.dtMs = dt;
   t.acc += dt;

@@ -167,47 +167,68 @@ export const PP = new Float64Array(5);
 /** A pose function reading its parameters from PP (allocation-free form of PoseFn). */
 export type PoseImpl = (out: Pose) => void;
 
-/** x mapped through smoothstep between edges a and b (written out so it inlines; no call boundary). */
-function ss(a: number, b: number, x: number): number {
-  let t = (x - a) / (b - a);
-  t = t < 0 ? 0 : t > 1 ? 1 : t;
-  return t * t * (3 - 2 * t);
+/**
+ * [QF-7R] Smoothsteps in the per-frame pose path are written out (`q = (x - a) / (b - a)`, clamp, `q * q * (3 - 2 * q)`)
+ * rather than called through a helper: V8 inlines a call only while the caller's inlining budget lasts, and a call it
+ * does not inline boxes its double arguments and result (16 B each, every player, every frame: measured in the strafe
+ * and shuffle poses). The same goes for the finite-number guard (fin).
+ *
+ * Gait speed smoothsteps (ss(a, b, v) = smoothstep of v between edges a and b) for gaitParams: in GC[0]
+ * the speed v, out GC[1..9] = ss(0, 1.2, v), ss(0.5, 4, v), ss(4, 8, v), ss(6.5, 10, v), ss(1.6, 5, v),
+ * ss(0.2, 1.2, v), ss(0.5, 3, v), ss(0.3, 1.5, v), ss(2, 4.5, v).
+ */
+const GC = new Float64Array(10);
+const GC_V = 0, GC_0_12 = 1, GC_05_4 = 2, GC_4_8 = 3, GC_65_10 = 4, GC_16_5 = 5, GC_02_12 = 6, GC_05_3 = 7, GC_03_15 = 8,
+  GC_2_45 = 9;
+function gaitCurvesS(): void {
+  const v = GC[GC_V]!;
+  let q = (v - 0) / (1.2 - 0); q = q < 0 ? 0 : q > 1 ? 1 : q; GC[GC_0_12] = q * q * (3 - 2 * q);
+  q = (v - 0.5) / (4 - 0.5); q = q < 0 ? 0 : q > 1 ? 1 : q; GC[GC_05_4] = q * q * (3 - 2 * q);
+  q = (v - 4) / (8 - 4); q = q < 0 ? 0 : q > 1 ? 1 : q; GC[GC_4_8] = q * q * (3 - 2 * q);
+  q = (v - 6.5) / (10 - 6.5); q = q < 0 ? 0 : q > 1 ? 1 : q; GC[GC_65_10] = q * q * (3 - 2 * q);
+  q = (v - 1.6) / (5 - 1.6); q = q < 0 ? 0 : q > 1 ? 1 : q; GC[GC_16_5] = q * q * (3 - 2 * q);
+  q = (v - 0.2) / (1.2 - 0.2); q = q < 0 ? 0 : q > 1 ? 1 : q; GC[GC_02_12] = q * q * (3 - 2 * q);
+  q = (v - 0.5) / (3 - 0.5); q = q < 0 ? 0 : q > 1 ? 1 : q; GC[GC_05_3] = q * q * (3 - 2 * q);
+  q = (v - 0.3) / (1.5 - 0.3); q = q < 0 ? 0 : q > 1 ? 1 : q; GC[GC_03_15] = q * q * (3 - 2 * q);
+  q = (v - 2) / (4.5 - 2); q = q < 0 ? 0 : q > 1 ? 1 : q; GC[GC_2_45] = q * q * (3 - 2 * q);
 }
 
 function gaitParams(st: GaitStyle): void {
   const speed = GPA[0]!, forward = GPA[1]!, sideways = GPA[2]!, sprintStyle = GPA[3]!;
   const v = speed > 0 ? (speed < 12 ? speed : 12) : 0;
-  const move = ss(0, 1.2, v);
+  GC[GC_V] = v;
+  gaitCurvesS();
+  const move = GC[GC_0_12]!;
   if (st.shuffle === 1) {
     G[G_DUTY] = 0.6;
     const sl = (2 * v) / (LOCAL_TUNING.shuffleCadenceBase + LOCAL_TUNING.shuffleCadencePerMs * v);
     G[G_STRIDE] = sl > LOCAL_TUNING.shuffleMinStride ? sl : LOCAL_TUNING.shuffleMinStride;
     G[G_OFFSET] = 0.5 - 0.27 * sideways; // gallop-like side shuffle: the leading foot lands first, feet never cross
-    G[G_DROP] = st.crouchRest + st.crouchRun * ss(0.5, 4, v);
+    G[G_DROP] = st.crouchRest + st.crouchRun * GC[GC_05_4]!;
     G[G_SWING] = st.swingH * move * (0.6 + 0.1 * v);
   } else {
     G[G_DUTY] = v <= 1.6 ? 0.56 : v <= 4 ? 0.56 + (0.34 - 0.56) * ((v - 1.6) / 2.4) : Math.max(0.27, 0.34 - 0.012 * (v - 4));
     const sl = (2 * v) / (LOCAL_TUNING.cadenceBase + LOCAL_TUNING.cadencePerMs * v);
     G[G_STRIDE] = sl > LOCAL_TUNING.minStride ? sl : LOCAL_TUNING.minStride;
     G[G_OFFSET] = 0.5;
-    G[G_DROP] = st.crouchRest + (st.crouchRun - st.crouchRest) * ss(0, 1.2, v) - 0.04 * ss(4, 8, v) - 0.03 * ss(6.5, 10, v);
-    const h = v < 1.6 ? 0.1 * (v / 1.6) : 0.1 + (st.swingH - 0.1) * ss(1.6, 5, v) + 0.012 * (v > 5 ? v - 5 : 0);
+    G[G_DROP] = st.crouchRest + (st.crouchRun - st.crouchRest) * GC[GC_0_12]! - 0.04 * GC[GC_4_8]! - 0.03 * GC[GC_65_10]!;
+    const h = v < 1.6 ? 0.1 * (v / 1.6) : 0.1 + (st.swingH - 0.1) * GC[GC_16_5]! + 0.012 * (v > 5 ? v - 5 : 0);
     G[G_SWING] = h * (1 + 0.15 * sprintStyle) * move;
   }
   // Stance travel = duty * stride exactly: the planted toe moves back at the body speed (no sliding).
   G[G_TRAVEL] = G[G_DUTY]! * G[G_STRIDE]!;
   G[G_BASE] = st.baseRest + (st.baseMove - st.baseRest) * move;
-  G[G_HEEL] = st.heelLift * ss(0.2, 1.2, v);
+  G[G_HEEL] = st.heelLift * GC[GC_02_12]!;
   // A crouched pelvis puts the feet further forward so the shins stay near vertical (ankles in range).
   const deep = -G[G_DROP]! - 0.06;
   // Walking steps sit under the hips; running ones land a little further ahead (centreMove).
   const centre = st.shuffle === 1
-    ? st.centreRest + (st.centreMove - st.centreRest) * ss(0.5, 3, v)
-    : st.centreRest * (1 - ss(0.3, 1.5, v)) + st.centreMove * ss(2, 4.5, v);
+    ? st.centreRest + (st.centreMove - st.centreRest) * GC[GC_05_3]!
+    : st.centreRest * (1 - GC[GC_03_15]!) + st.centreMove * GC[GC_2_45]!;
   G[G_CENTRE] = centre + (deep > 0 ? deep * 1.1 : 0);
   G[G_BALL] = st.ballLift;
   // Swing end tangents (fraction of the stance velocity): a smaller pull-back at speed keeps the feet in reach.
-  G[G_TANGENT] = 0.55 - 0.3 * ss(4, 8, v);
+  G[G_TANGENT] = 0.55 - 0.3 * GC[GC_4_8]!;
   // The heel rolls up only when stepping forward (a backward or side step leaves the foot flat / on its ball).
   if (forward < 1) G[G_HEEL] = G[G_HEEL]! * (forward > 0 ? forward : 0);
   if (G[G_HEEL]! < st.ballLift) G[G_HEEL] = st.ballLift;
@@ -227,7 +248,9 @@ function footAt(): void {
     const s = u / duty; // stance progress
     F[0] = travel * (0.5 - s);
     F[2] = 0;
-    const roll = ss(0.55, 1, s);
+    let roll = (s - 0.55) / (1 - 0.55); // ss(0.55, 1, s) written out (no double crosses a call)
+    roll = roll < 0 ? 0 : roll > 1 ? 1 : roll;
+    roll = roll * roll * (3 - 2 * roll);
     const ball = G[G_BALL]!;
     F[3] = -(ball + (heel - ball) * roll * roll);
     F[4] = 1;
@@ -361,7 +384,8 @@ export const neutralPose: PoseFn = (out: Pose) => {
 /** Idle: feet planted shoulder-width, soft knees, breathing sway (PP[0] = breathing phase 0..1). */
 function idleI(out: Pose): void {
   out.fill(0);
-  const t = fin(PP[0]!, 0);
+  const t0 = PP[0]!;
+  const t = t0 === t0 && t0 < 1e6 && t0 > -1e6 ? t0 : 0; // fin(PP[0], 0) written out (no double crosses a call)
   const b = Math.sin(TAU * t);
   out[P.ROOT_Y] = -0.02 + 0.004 * b;
   out[P.ROOT_SIDE] = LOCAL_TUNING.breathSway * b;
@@ -384,22 +408,29 @@ function idleI(out: Pose): void {
 /** Run gait + upper body (RPA: cycle, speed, sprint 0..1 blending the jog / sprint upper body and knee lift). */
 function runPose(out: Pose): void {
   clearUpper(out);
-  const cycle = fin(RPA[0]!, 0);
-  const sp = fin(RPA[1]!, 0);
+  // fin() and ss() written out (no double crosses a call: see ss).
+  const c0 = RPA[0]!, s0 = RPA[1]!;
+  const cycle = c0 === c0 && c0 < 1e6 && c0 > -1e6 ? c0 : 0;
+  const sp = s0 === s0 && s0 < 1e6 && s0 > -1e6 ? s0 : 0;
   const v = sp > 0 ? sp : 0;
   const sprint = RPA[2]!;
   GPA[0] = v; GPA[1] = 1; GPA[2] = 0; GPA[3] = sprint;
   gaitParams(RUN);
-  GLA[0] = cycle; GLA[1] = 1; GLA[2] = 0; GLA[3] = 0.05 * ss(2, 5, v);
+  let q = (v - 2) / (5 - 2); q = q < 0 ? 0 : q > 1 ? 1 : q;
+  GLA[0] = cycle; GLA[1] = 1; GLA[2] = 0; GLA[3] = 0.05 * (q * q * (3 - 2 * q));
   gaitLegs(out);
-  const run = ss(1.5, 4, v);
+  q = (v - 1.5) / (4 - 1.5); q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const run = q * q * (3 - 2 * q);
   // Pelvis twist with the stride, shoulders counter-rotate.
-  const twist = (0.05 + 0.04 * run) * Math.sin(cycle) * ss(0.2, 1.5, v);
+  q = (v - 0.2) / (1.5 - 0.2); q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const twist = (0.05 + 0.04 * run) * Math.sin(cycle) * (q * q * (3 - 2 * q));
   out[P.SPINE_YAW] = -twist * 1.6;
-  const lean = 0.04 + 0.1 * run + 0.012 * v + 0.1 * sprint * ss(4, 8, v);
+  q = (v - 4) / (8 - 4); q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const lean = 0.04 + 0.1 * run + 0.012 * v + 0.1 * sprint * (q * q * (3 - 2 * q));
   out[P.SPINE_PITCH] = lean;
   out[P.HEAD_PITCH] = -lean * 0.75;
-  let amp = (0.25 + 0.45 * run + 0.03 * v) * (1 + 0.3 * sprint) * ss(0.1, 1.2, v);
+  q = (v - 0.1) / (1.2 - 0.1); q = q < 0 ? 0 : q > 1 ? 1 : q;
+  let amp = (0.25 + 0.45 * run + 0.03 * v) * (1 + 0.3 * sprint) * (q * q * (3 - 2 * q));
   if (amp > 1.1) amp = 1.1;
   ARA[0] = cycle; ARA[1] = amp; ARA[2] = 0.25 + (1.1 + 0.15 * sprint) * run; ARA[3] = 0.25 * run;
   ARA[4] = 0.1 + 0.04 * run; ARA[5] = -0.05 * run;
@@ -437,7 +468,8 @@ export function applyTurnLeanS(out: Pose): void {
 }
 
 function turnLeanI(out: Pose): void {
-  const speed = fin(PP[2]!, 0), yaw = fin(PP[3]!, 0);
+  const s0 = PP[2]!, y0 = PP[3]!; // fin() written out (no double crosses a call)
+  const speed = s0 === s0 && s0 < 1e6 && s0 > -1e6 ? s0 : 0, yaw = y0 === y0 && y0 < 1e6 && y0 > -1e6 ? y0 : 0;
   RPA[0] = PP[1]!; RPA[1] = speed; RPA[2] = PP[4] === 1 ? 1 : 0;
   runPose(out);
   let lean = Math.atan((speed * yaw) / LOCAL_TUNING.gravity);
@@ -459,14 +491,20 @@ function shuffleLegs(out: Pose, st: GaitStyle): void {
 /** Lean slightly toward the motion (LIA: t, speed, k): forward pitch / side roll, scaled by speed. */
 function leanInto(out: Pose): void {
   const a = TAU * LIA[0]!;
-  const m = ss(0.3, 3, LIA[1]!) * LIA[2]!;
+  // ss(0.3, 3, speed) written out: [QF-7R] a non-inlined call boxes its double argument and result (V8).
+  let q = (LIA[1]! - 0.3) / (3 - 0.3);
+  q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const m = q * q * (3 - 2 * q) * LIA[2]!;
   out[P.SPINE_PITCH] = out[P.SPINE_PITCH]! + 0.12 * m * Math.cos(a);
   out[P.SPINE_ROLL] = out[P.SPINE_ROLL]! + 0.12 * m * Math.sin(a);
 }
 
 /** Read and sanitise PP for the directional clips: SLA = t, cycle, speed; LIA = t, speed. */
 function shuffleArgs(k: number): void {
-  const t = fin(PP[0]!, 0), cycle = fin(PP[1]!, 0), speed = fin(PP[2]!, 0);
+  const t0 = PP[0]!, c0 = PP[1]!, s0 = PP[2]!; // fin() written out (no double crosses a call)
+  const t = t0 === t0 && t0 < 1e6 && t0 > -1e6 ? t0 : 0;
+  const cycle = c0 === c0 && c0 < 1e6 && c0 > -1e6 ? c0 : 0;
+  const speed = s0 === s0 && s0 < 1e6 && s0 > -1e6 ? s0 : 0;
   SLA[0] = t; SLA[1] = cycle; SLA[2] = speed;
   LIA[0] = t; LIA[1] = speed; LIA[2] = k;
 }
@@ -479,7 +517,9 @@ function strafeI(out: Pose): void {
   out[P.SPINE_PITCH] = 0.08;
   out[P.HEAD_PITCH] = -0.06;
   leanInto(out);
-  const m = ss(0.2, 2, SLA[2]!);
+  let q = (SLA[2]! - 0.2) / (2 - 0.2); // ss(0.2, 2, speed) written out (no double crosses a call)
+  q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const m = q * q * (3 - 2 * q);
   ARA[0] = SLA[1]!; ARA[1] = 0.25 * m; ARA[2] = 0.4 + 0.6 * m; ARA[3] = 0.1; ARA[4] = 0.18; ARA[5] = 0;
   arms(out);
 }
@@ -494,7 +534,9 @@ function jockeyI(out: Pose): void {
   out[P.HEAD_PITCH] = -0.3;
   out[P.HEAD_YAW] = 0.15;
   leanInto(out);
-  const s = 0.06 * Math.sin(SLA[1]!) * ss(0.2, 1.5, SLA[2]!);
+  let q = (SLA[2]! - 0.2) / (1.5 - 0.2); // ss(0.2, 1.5, speed) written out (no double crosses a call)
+  q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const s = 0.06 * Math.sin(SLA[1]!) * (q * q * (3 - 2 * q));
   out[P.SHOULDER_L_PITCH] = 0.25 + s;
   out[P.SHOULDER_R_PITCH] = 0.25 - s;
   out[P.SHOULDER_L_ROLL] = 0.5;
@@ -522,7 +564,9 @@ function shieldI(out: Pose): void {
   const in1 = sd > 0 ? P.SHOULDER_L_ROLL : P.SHOULDER_R_ROLL;
   const in1p = sd > 0 ? P.SHOULDER_L_PITCH : P.SHOULDER_R_PITCH;
   const in1e = sd > 0 ? P.ELBOW_L : P.ELBOW_R;
-  const wob = 0.06 * Math.sin(SLA[1]! * 2) * ss(0.2, 1.5, SLA[2]!);
+  let q = (SLA[2]! - 0.2) / (1.5 - 0.2); // ss(0.2, 1.5, speed) written out (no double crosses a call)
+  q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const wob = 0.06 * Math.sin(SLA[1]! * 2) * (q * q * (3 - 2 * q));
   out[out1] = 1.15 + wob;
   out[out1p] = -0.25;
   out[out1e] = 0.55;
@@ -539,7 +583,9 @@ function keeperI(out: Pose): void {
   out[P.SPINE_PITCH] = 0.34;
   out[P.HEAD_PITCH] = -0.32;
   leanInto(out);
-  const s = 0.05 * Math.sin(SLA[1]!) * ss(0.2, 1.5, SLA[2]!);
+  let q = (SLA[2]! - 0.2) / (1.5 - 0.2); // ss(0.2, 1.5, speed) written out (no double crosses a call)
+  q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const s = 0.05 * Math.sin(SLA[1]!) * (q * q * (3 - 2 * q));
   out[P.SHOULDER_L_PITCH] = 0.85 + s;
   out[P.SHOULDER_R_PITCH] = 0.85 - s;
   out[P.SHOULDER_L_ROLL] = 0.42;

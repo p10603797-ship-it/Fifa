@@ -1212,3 +1212,100 @@ at the kick: under 0.01 -> 1.5% scored, 0.04-0.07 -> 8.9%, 0.1-0.15 -> 42.8%, 0.
 
 `tools/fuzz.ts --matches 60 --enforce all --workers 3`: PASS (60 runs + 15 rematches, 59 finished, 0 exceptions /
 invariant failures / watchdogs, determinism PASS, hash 8001b817).
+
+## QF-16 (Wave 4 round 5: CPU defending against a human dribbler, low-level shooting, keeper reflexes at Legend)
+
+Measured with scripted human carriers (`tests/scenario/qf-16-helpers.ts`: the QF-14 escort / still / held scenes, a
+human carrier with the ball at his feet 3 m in front of one CPU defender, everybody else behind the play, 10 s, seeds
+1-8) and a scratch screen runner over `tools/headless.ts` (the soak / ladder / balance configs match for match; "npSave"
+= saves / (saves + goals) of non-penalty shots on target). The restart reviewed the first attempt's partial edits
+(b26cdba, `defending.ts` / `tuning.ts`): its patient block (a guard point in the ball's path, reached round the
+carrier's body, the ground held) was the right idea and is kept in reworked form; its blend of the hold direction
+(diagonal walkers still kept the ball 6 of 8 at Legend at stick (45, 30)), its poke prediction (the tackler's sideways
+speed carried through a wind-up that plants him) and its block of every carrier up to 6 m/s (escorts 0.50 -> 0.03 a
+match but fouls 12.3 -> 15.6, penalties 0.42 -> 0.83, and later Legend v World Class 67 -> 51%) were not.
+
+### Scripted carriers, kept / gained / won / fouls (8 scenes of 10 s each; L0 Beginner ... L5 Legend)
+
+| Script (stick) | Before (QF-14 tree) L3 / L4 / L5 | After L3 / L4 / L5 | After L0 (Beginner) |
+|---|---|---|---|
+| straight (35, 0) | 0/3.3/8/2, 0/3.3/7/3, 0/3.7/6/6 | 0/3.3/8/2, 0/3.3/6/6, 0/3.0/8/2 | 0/5.9/8/3 |
+| straight (65, 0) | 0/8.1/6/7, 0/7.6/7/5, 1/9.0/7/1 | 0/6.4/5/8, 0/6.2/7/4, 0/6.4/7/4 | 0/11.1/6/7 |
+| jog (100, 0) | 0/10.5/7/2, 0/11.1/7/4, 0/10.8/8/2 | 0/10.5/8/1, 0/11.3/6/7, 0/10.3/7/4 | 0/17.6/7/3 |
+| diagonal (30, 15) | 6/11.7/2/7, 7/11.8/1/5, 6/11.7/2/0 | 0/4.4/7/5, 0/3.9/6/7, 0/3.5/8/5 | 1/8.6/7/0 |
+| diagonal (30, -15) | 7/11.5/0/8, 6/11.4/1/5, 6/10.8/2/1 | 0/4.4/7/4, 0/3.8/7/5, 0/3.4/8/4 | 1/8.2/6/2 |
+| diagonal (45, 30) | 7/18.0/0/9, 7/18.0/0/8, 8/19.2/0/0 | 0/7.2/8/2, 0/6.5/6/6, 0/5.2/8/1 | 1/15.1/7/4 |
+| across (15, 35) | 8/6.6/0/8, 8/6.6/0/6, 8/6.6/0/0 | 0/2.5/8/1, 1/2.7/7/4, 0/1.8/8/3 | 2/5.5/5/4 |
+| strafe (0, +-50 each 1 s) | 4/0.4/1/10, 6/0.3/1/7, 6/0.5/0/1 | 8/0.2/0/0, 3/0.2/3/5, 2/0.2/6/3 | 8/0.3/0/3 |
+| zig-zag (30, +-50 each 0.75 s) | 0/5.5/6/8, 0/5.2/7/5, 0/4.9/7/3 | 1/7.3/7/4, 0/4.8/8/2, 0/4.5/7/2 | 5/13.3/0/9 |
+| back to goal, SHIELD + (30, 0) | 8/10.8/0/6, 8/10.8/0/5, 8/10.8/0/0 | 8/4.1/0/0, 8/4.0/0/0, 8/3.7/0/0 | 8/11.3/0/0 |
+| SHIELD + strafe | 8/0.2/0/5, 8/0.2/0/4, 8/0.3/0/0 | 8/0.2/0/0, 8/0.2/0/0, 8/0.2/0/0 | 8/0.3/0/0 |
+| circle / nudge | 0/0.7, 0/0.6 (all) | 0-1/0.7, 0/0.6 | 3/0.7, 0/0.7 |
+
+A human can no longer walk past a Professional / World Class / Legend defender: walking diagonally or across him, he
+keeps the ball in 0-1 of 8 scenes and gains 2-7 m (before 6-8 of 8 and 11-19 m); a shielding carrier backing in gains
+4 m instead of 11; nobody shielding is fouled (before 4-7 fouls in 8 scenes at Semi-Pro to World Class, no ball won);
+the strafer in front of Professional is no longer fouled 10 times in 80 s. The lower levels are walked past more often
+(Beginner: diagonal 8-15 m, zig-zag kept 5 of 8, backing in 11 m). Remaining (open, pre-existing, measured): inside our
+own penalty area the top levels' box care (QF-13 `boxBodyClear`, the poke's `boxClear`) holds back every challenge on a
+walker in body contact, and SIM-05 splits the contact by mass, so a human walking at a World Class / Legend defender
+from 12-18 m keeps the ball 6-8 of 8 and walks him back 10-12 m (the QF-14 tree: 6 of 8, 11-14 m). Tried and not kept:
+a last-ditch poke within 12-16 m of goal (a penalty in 3-4 of 8 scenes: a new exploit), a gap kept in the box (the
+poke still never box-clear), a SIM-05 brace for a defender standing his ground (the carrier slid round him).
+
+### Defects fixed (each with a regression test)
+
+| Defect | Measured before | Fix | After / test |
+|---|---|---|---|
+| Human walks diagonally / across a CPU defender and keeps the ball (TAI-11; QF-14 'Escorts: what remains') | table above: 6-8 of 8 kept, 11-19 m, Professional to Legend | the block (`blockPlan`, `T_CPU.defendBlock*`): once a walking carrier (slower than `defendBlockWalkSpeed` 3 m/s) has had the ball `T_LEVEL.blockTicks` (300 / 260 / 220 / 180 / 150 / 120), the controlled defender's guard point is `defendBlockDist` 0.9 m beyond the ball on the carrier -> ball line (at most acos(`defendBlockPathCos` 0.7) off the goal direction), reached round the carrier's body (`defendBlockRound*`), tracked with the carrier's velocity plus `defendBlockGain`; in the ball's or the carrier's line he holds his ground (gives up only `T_LEVEL.blockRetreat` 1 / 0.8 / 0.6 / 0.3 / 0.15 / 0 of the carrier's speed toward goal); he pokes at a ball within `defendBlockPokeDist` presented ball-first from where SIM-14's wind-up and lunge take him (`lungePresented`), the carrier dribbling steadily (`steadyDribble`) | 0-1 of 8, 2-7 m; `qf-16-escort-block` |
+| Ball-first check for a challenge ignored the tackle's own motion (TAI-11) | `ballPresented` moved the tackler on his velocity through the wind-up, but SIM-14 plants him (`windupSpeedKeep` along the ball line only) and then lunges: a defender running across the carrier's front "presented" balls his lunge met body-first | `lungePresented`: the wind-up and lunge along the ball line, checks now / at the first contact tick / at mid-contact, the carrier stopped at body contact (bodies never pass through each other) | the block's pokes and its careful tackles (fouls <= balls won in `qf-16-escort-block`) |
+| Rash lunge hacks a shielding / strafing carrier (TAI-11) | a carrier shielding in front of a defender for 10 s was fouled 2-7 times in 8 scenes at Beginner to World Class with no ball won; a strafer 10 / 7 times at Professional / World Class | no rash lunge at a shielding carrier, nor at a ball the carrier's body hides from the defender (not ball-first now); the low levels keep their rash lunges at a presented ball | 0 fouls on a shielder at every level; `qf-16-shield-level` |
+| Held challenge fouls a strafer turning back (TAI-11, QF-14's held carrier) | the linear prediction of a carrier reversing his strafe met his body | the held challenge (and the poke) want a steady dribble (`defendSteady*`: moving the way he faces, the ball ahead of his run and rolling with him); a blocked carrier gets the poke instead | `qf-14-held-carrier` strafer (Legend: 7 balls won, 3 fouls in 8; was 0 / 1 standing off) |
+| A shielder walks a standing defender back (SIM-05) | the shield hold gave the shielder the priority in the body contact even when he backed into the challenger: a standing defender was pushed 2.6 m in 2 s; every CPU level was walked back about 11 m in 10 s | `shieldDriveSpeed` 0.3 m/s: a shielder backing into a held-off challenger faster than that is the one held off (standing, he still holds the challenger off the ball); the CPU defender holds his ground in front of a shielder (`defendBlockShieldCos0`) | 0.1-0.2 m in 2 s; `qf-16-shield-push`; 4 m in 10 s from Professional up (`qf-16-shield-level`) |
+| Low levels hardly shoot (TAI-08 rushed-shot gate) | Beginner v Beginner 5.2 shots a match (40 matches; the brief's 4.6), save rate 24%: the gate refused most of their shots | `T_LEVEL.shotRushedGateMul` 0 / 0.3 / 0.6 / 1 / 1 / 1 on `carrierShotMinPowerShare`: the low levels shoot, badly | Beginner v Beginner 8.5 shots (same 40), goals 2.25 -> 1.57, save rate 57%; Professional unchanged; `qf-16-shot-gate` |
+| gkReflexes makes no difference at Legend (GKP-02 / BRIEF section 15) | `keeperReactTicks` Legend -12 floored the delay at 0 for gkReflexes 62+ (all but a handful of club keepers) | `T_LEVEL.keeperReactScale` (new, 1 / 1 / 1 / 1 / 1 / 0.25) scales the attribute delay before the level's ticks (Legend 0): 4-25 ticks -> 1-6 at Legend, every reflex step counts | `qf-16-keeper-reflexes` (62 > 80 > 99 > 0 ticks at Legend; monotone at every level) |
+
+Tests refreshed for the behaviour change: `qf-2-keeper-level` (the formula with the scale), `qf-14-held-carrier`'s
+strafer (now challenged fairly: fouls <= balls won, <= 4), `qf-13-sk-box-tackle`'s Legend sample floor (78 shots in
+its 8 matches, 2 penalties; floor 80 -> 70).
+
+### Bot matches: what the block must not do
+
+Every block of a bot carrier changed the bot game, measured on the first 60 soak configs (Professional; the QF-14
+tree: goals 2.85, shots 14.4, npSave 68.8%, fouls 12.3, penalties 0.42, escorts of 5 s+ 0.50 a match):
+
+| Variant | Goals | Shots | npSave | Fouls | Pens | Escorts | Legend v WC (100) | WC v Pro (100) |
+|---|---|---|---|---|---|---|---|---|
+| first attempt's block (all carriers to 6 m/s from 1.5 s) | 2.68 | 14.9 | - | 15.6 | 0.83 | 0.03 | - | - |
+| block every carrier to 6 m/s, level times (180 at Professional) | 2.47-2.82 | 14.6-15.0 | 64-68 | 9.9 | 0.40-0.45 | 0.30 | 51 | - |
+| ... walking carriers from the level time, dribblers after 5 s | 3.27 | 14.4 | - | 9.8 | 0.62 | 0.45 | 66 | - |
+| ... dribblers only in our last 35 m (Professional 7 s) | 3.25 | 14.7 | 64.6 | 10.3 | 0.57 | 0.65 | 70 | 67 |
+| ... dribblers there outside the box only | 3.00 | 15.4 | 67.9 | 9.4 | 0.35 | 1.07 | - | 66 |
+| walking carriers only (kept) | 2.87 | 15.2 | 68.5 | 9.1 | 0.30 | 1.12 | 74 | 77 (no block) |
+| the same with the old rash lunges | 2.82 | 14.9 | 69.1 | 14.0 | 0.50 | 0.35 | - | 59 (with dribblers) |
+
+Blocking bot dribblers ended escorts but gave goals away (the defender in the path is beaten by the cut inside; in the
+box his careful tackles give penalties at Professional, 8 of 18 in 30 matches) and took the top levels' attacking edge
+(their patient carries). Kept: the walking block only. Bot escorts rise from 0.50 to about 1.1 a match because the rash
+lunges that ended them were fouls (fouls 12.3 -> 9.1, inside the 6-16 band); a CPU defender against a human walker is
+what the brief asks for, and against a bot dribbler the QF-14 patience guard stays.
+
+The low levels keep their rash lunges at a presented ball; keeping them at a hidden ball too at Beginner / Amateur
+(Semi-Pro half) measured worse on the ladder (seed 2, 200 a pair: Amateur v Beginner 66.0 v 71.5%, Semi-Pro v Amateur
+70.5 v 73.5%, Professional v Semi-Pro 67.0 v 72.5% without them) and is not kept.
+
+### Constants (`src/contracts/tuning.ts` unless named)
+
+| Constant | Was | Now |
+|---|---|---|
+| `T_CPU.defendBlockWalkSpeed` / `defendBlockDist` / `defendBlockGain` (new, TAI-11 block; m/s, m, 1/s) | - | 3.0 / 0.9 / 2.5 |
+| `T_CPU.defendBlockPathMinOffset` / `defendBlockPathCos` (new) | - | 0.25 m / 0.7 |
+| `T_CPU.defendBlockRoundAhead` / `RoundSpan` / `RoundGap` (new, m) | - | 0.6 / 0.4 / 0.15 |
+| `T_CPU.defendBlockAlign` / `HoldSpan` / `AlignBody` / `ShieldCos0` (new) | - | 0.6 m / 0.3 m / 0.9 m / 0.5 |
+| `T_CPU.defendBlockPokeDist` / `PokeMaxRound` (new) | - | 0.8 m / 0.25 |
+| `T_CPU.defendSteadyMinSpeed` / `FaceCos` / `BallCos` / `RelSpeed` (new) | - | 0.5 m/s / 0.9 / 0.6 / 1.5 m/s |
+| `T_LEVEL.blockTicks` / `blockRetreat` (new) | - | 300 / 260 / 220 / 180 / 150 / 120; 1 / 0.8 / 0.6 / 0.3 / 0.15 / 0 |
+| `T_LEVEL.shotRushedGateMul` (new, TAI-08) | (1) | 0 / 0.3 / 0.6 / 1 / 1 / 1 |
+| `T_LEVEL.keeperReactTicks` / `keeperReactScale` (new) | 45 / 30 / 10 / 0 / -3 / -12; (1) | 45 / 30 / 10 / 0 / -3 / 0; 1 / 1 / 1 / 1 / 1 / 0.25 |
+| `sim/players/bodies` `shieldDriveSpeed` (new, SIM-05, m/s) | - | 0.3 |
+| removed from the first attempt: `T_CPU.defendBlockOn`, `defendBlockMaxSpeed`, `defendBlockPathCos0`, `defendBlockPokeMargin` | | |

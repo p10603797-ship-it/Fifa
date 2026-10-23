@@ -661,11 +661,15 @@ function shotOptionInto(s: SimState, p: Readonly<PlayerState>, lv: Readonly<Leve
   // [QF-14] Priced as commitShot will strike it: under pressure the power hold is cut to the time before a man ahead
   // can step onto the line (quickShotTicks). Beyond quickShotDist a shot cut below shotMinPowerShare of its planned
   // hold is no shot (a 17-20 m/s tap lofted at up to 35 degrees that the keeper gathers or the man blocks).
-  if (dist > LT.quickShotDist && LT.shotMinPowerShare > 0) {
+  // [QF-16] Per level (T_LEVEL.shotRushedGateMul): the low levels still shoot, badly (Beginner v Beginner took 4.6 shots
+  // a match with the gate at full strength: their long reaction delay lets the defence close in, so the cut always
+  // applied).
+  const minShare = LT.shotMinPowerShare * levelValue(s, C.team, T_LEVEL.shotRushedGateMul);
+  if (dist > LT.quickShotDist && minShare > 0) {
     const fd = clamp01((dist - LT.shotNearDist) / (LT.shotFarDist - LT.shotNearDist));
     const h0 = holdFor(LT.shotPowerNear + (LT.shotPowerFar - LT.shotPowerNear) * fd, powerFill(s, C.team));
     const q = quickShotTicks(s, p, SHOT.side * (GOAL_HALF_WIDTH - LT.shotInset));
-    if (q < h0 * LT.shotMinPowerShare) { CARRIER_DEBUG.shotWhy = SHOT_RUSHED; return; }
+    if (q < h0 * minShare) { CARRIER_DEBUG.shotWhy = SHOT_RUSHED; return; }
   }
   const blocked = 1 - clear;
   const miss = 1 - xg - blocked;

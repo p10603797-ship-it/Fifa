@@ -47,7 +47,7 @@ import {
   neutralPose, PP, SLEN, strideLengthForS, TLA, type PoseImpl,
 } from './locomotion';
 import { TAU } from './poseMath';
-import { kickApply, kickOffset, KOF, nearerLeg, RCH, REACH_SWITCH, reachClip, touchNeed, touchReach } from './reach';
+import { kickApply, kickOffset, KOF, RCH, REACH_SWITCH, reachClip, touchReach, touchStepS, TST } from './reach';
 
 const LOCAL_TUNING = { // TUNING-CR (render-only animation constants)
   /** Idle below / locomotion above these speeds (m/s, hysteresis). */
@@ -442,19 +442,6 @@ function preferredFoot(s: ReadonlySimState, slot: number): number {
   return s.attrs[slot]!.foot === 1 ? 1 : 0;
 }
 
-/** Foot for a kick that starts now: the preferred foot unless the ball sits clearly on the other side. */
-function chooseFoot(s: ReadonlySimState, slot: number): number {
-  const p = s.players[slot]!;
-  const pref = preferredFoot(s, slot);
-  const b = s.ball;
-  const dx = b.x - p.x, dz = b.z - p.z;
-  // Lateral offset of the ball toward the player's right ((-fz, fx) is the right in world xz).
-  const lat = dx * -p.fz + dz * p.fx;
-  if (pref === 0 && lat < -LOCAL_TUNING.weakFootSide) return 1;
-  if (pref === 1 && lat > LOCAL_TUNING.weakFootSide) return 0;
-  return pref;
-}
-
 /** Locomotion clip from speed, flags and movement direction (writes OUTF[OF_DIR]). */
 function chooseLocomotion(s: ReadonlySimState, slot: number, mem: SlotMemory | null): AnimId {
   const p = s.players[slot]!;
@@ -561,7 +548,16 @@ function chooseClip(s: ReadonlySimState, slot: number, out: AnimSample, mem: Slo
   if (kick === 1 || anim === AnimId.FIRST_TOUCH || anim === AnimId.SKILL || anim === AnimId.GK_KICK) {
     let foot: number;
     if (mem) {
-      if (mem.foot[slot] === 255) mem.foot[slot] = chooseFoot(s, slot);
+      if (mem.foot[slot] === 255) {
+        // Foot for a kick that starts now: the preferred foot unless the ball sits clearly on the other side.
+        // [QF-7R] Written out here, not a helper: called once per kick, a helper never leaves V8's baseline tier and
+        // boxes every double it computes.
+        const pref = preferredFoot(s, slot);
+        const dx = s.ball.x - p.x, dz = s.ball.z - p.z;
+        // Lateral offset of the ball toward the player's right ((-fz, fx) is the right in world xz).
+        const lat = dx * -p.fz + dz * p.fx;
+        mem.foot[slot] = pref === 0 && lat < -LOCAL_TUNING.weakFootSide ? 1 : pref === 1 && lat > LOCAL_TUNING.weakFootSide ? 0 : pref;
+      }
       foot = mem.foot[slot]!;
     } else {
       foot = preferredFoot(s, slot);
@@ -1159,13 +1155,12 @@ export function createAnimator(): Animator {
         RCH[0] = (rx * fx + rz * fz) / hs;
         RCH[1] = touchWY[i]! / hs;
         RCH[2] = (rx * -fz + rz * fx) / hs;
-        // The leg is chosen when the reach starts (the nearer toe) and kept: a switch mid-reach would pop.
-        if (touchSide[i] === 0) touchSide[i] = nearerLeg(out);
-        if (want > tw) {
-          const need = touchNeed(out, touchSide[i]!);
-          const step = need > LOCAL_TUNING.touchStepMax ? LOCAL_TUNING.touchStepMax / need : 1;
-          tw = Math.min(want, tw + step);
-        }
+        // The leg is chosen when the reach starts (the nearer toe) and kept: a switch mid-reach would pop. A rising
+        // weight moves the foot at most touchStepMax per frame (touchStepS: nearerLeg + touchNeed in one call).
+        TST[0] = want; TST[1] = tw; TST[2] = touchSide[i]!; TST[3] = LOCAL_TUNING.touchStepMax;
+        touchStepS(out);
+        tw = TST[1]!;
+        touchSide[i] = TST[2]!;
         touchW[i] = tw;
         if (tw > 0 && REACH_SWITCH.touch === 1) {
           RCH[3] = tw;

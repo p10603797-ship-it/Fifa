@@ -11,6 +11,7 @@
  *    that V8 keeps it in the interpreter, where double arithmetic is boxed: a few hundred bytes per event.
  */
 import { Session } from 'node:inspector';
+import { EXACT_INTERVAL } from '../perf/qf-7r-alloc-flags';
 import { PerspectiveCamera, Scene, type WebGLRenderer } from 'three';
 import { GOAL_HALF_WIDTH, HALF_LENGTH } from '../../src/contracts/constants';
 import { QualityTier } from '../../src/contracts/enums';
@@ -42,7 +43,7 @@ interface SampleNode { callFrame: { url: string; functionName: string }; selfSiz
 async function sample(f: (i: number) => void, file: RegExp, fns: readonly string[], warm = 20000): Promise<Record<string, number>> {
   for (let i = 0; i < warm; i++) f(i);
   await post('HeapProfiler.startSampling', {
-    samplingInterval: 32, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
+    samplingInterval: EXACT_INTERVAL, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
   });
   for (let i = 0; i < n; i++) f(i);
   const { profile } = await post<{ profile: { head: SampleNode } }>('HeapProfiler.stopSampling');

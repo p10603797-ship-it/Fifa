@@ -10,7 +10,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ALLOC_FLAGS } from './qf-7r-alloc-flags';
+import { ALLOC_FLAGS, EXACT_INTERVAL } from './qf-7r-alloc-flags';
 
 describe('GFX-02 zero allocation per frame', () => {
   it('update() and the end-of-render mark allocate nothing; a few microseconds per frame', () => {
@@ -77,7 +77,7 @@ describe('GFX-02 zero allocation per frame', () => {
         globalThis.gc();
         const h0 = process.memoryUsage().heapUsed;
         await session.post('HeapProfiler.startSampling', {
-          samplingInterval: 64, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
+          samplingInterval: ${EXACT_INTERVAL}, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
         });
         const c0 = counts[0], t0 = counts[1];
         run(n);
@@ -85,9 +85,9 @@ describe('GFX-02 zero allocation per frame', () => {
         return { bytes: mine(profile, n), heap: (process.memoryUsage().heapUsed - h0) / n, scaleChanges: counts[0] - c0, tierChanges: counts[1] - t0 };
       };
       const m = await measure(100000);
-      const t0 = process.hrtime.bigint();
+      const t0 = process.cpuUsage(); // [QF-7R] CPU time, not wall time: a busy machine does not inflate it
       run(50000);
-      const usPerFrame = Number(process.hrtime.bigint() - t0) / 50000 / 1000;
+      const usPerFrame = ((c) => c.user + c.system)(process.cpuUsage(t0)) / 50000;
       console.log(JSON.stringify({ ...m, usPerFrame, scale: q.scale, tier: q.tier }));
     `;
     // --no-concurrent-recompilation: hot functions are optimised on the main thread as soon as they are hot, so the

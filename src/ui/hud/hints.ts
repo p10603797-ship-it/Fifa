@@ -298,9 +298,11 @@ export function createHints(): HudPart {
     }
     parts.push(h('div', { class: 'hh-foot', text: foot }));
     card.replaceChildren(...parts);
-    card.dataset.kind = kind;
-    card.dataset.device = dev.kind;
-    card.setAttribute('aria-label', `${eyebrow} ${title}`.trim());
+    // [QF-7R] Attributes only when they change (each write is a style recalculation of the card).
+    if (card.dataset.kind !== kind) card.dataset.kind = kind;
+    if (card.dataset.device !== dev.kind) card.dataset.device = dev.kind;
+    const label = `${eyebrow} ${title}`.trim();
+    if (card.getAttribute('aria-label') !== label) card.setAttribute('aria-label', label);
   }
 
   function dismissSetPiece(): void {

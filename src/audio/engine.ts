@@ -290,8 +290,12 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
   let modules: AudioModule[] = [];
   let ui: UiAudioModule | null = null;
   let sfxMod: SfxModule | null = null;
-  /** Latest camera x from the app (NaN = none). */
-  let cameraX = Number.NaN;
+  /**
+   * Latest camera x from the app (NaN = none). [QF-7R] In a Float64Array, not a closure variable: the camera moves
+   * almost every frame, and a double computed into a closure variable is a new heap number on every write.
+   */
+  const cam = new Float64Array(1);
+  cam[0] = Number.NaN;
   let unlocked = false;
   let paused = false;
   /** False after suspend() until resume(): the app wants silence (hidden page). */
@@ -299,10 +303,17 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
   let gestureArmed = false;
   let outUp = false;
   let stalled = false;
-  let stallSec = 0;
-  let lastAudioTime = -1;
-  /** Time since the last no-gesture resume attempt of a suspended, unlocked context, s. */
-  let retrySec = 0;
+  /**
+   * [QF-7R] The clock watch's numbers, read and written every frame, live in a Float64Array: a double written to a
+   * closure variable is a new heap number on every write. CLK_STALL: seconds the audio clock has not moved;
+   * CLK_LAST: the audio clock at the last frame (-1 = none yet); CLK_RETRY: seconds since the last no-gesture resume
+   * attempt of a suspended, unlocked context.
+   */
+  const clk = new Float64Array(3);
+  const CLK_STALL = 0;
+  const CLK_LAST = 1;
+  const CLK_RETRY = 2;
+  clk[CLK_LAST] = -1;
   /** No-gesture restarts of a stalled context since its clock last moved. */
   let zombieTries = 0;
   let unsubscribe: (() => void) | null = null;
@@ -350,8 +361,8 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
     }
     unlocked = true;
     stalled = false;
-    stallSec = 0;
-    lastAudioTime = -1;
+    clk[CLK_STALL] = 0;
+    clk[CLK_LAST] = -1;
     disarmGesture();
     if (!outUp) {
       outUp = true;
@@ -535,9 +546,9 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
     const sfx = create(1, createSfx, c);
     sfxMod = sfx && typeof sfx.setCameraX === 'function' ? sfx : null;
     // NaN is the module's own default (estimate from the ball): only a reported camera x needs handing over.
-    if (sfxMod && cameraX === cameraX) {
+    if (sfxMod && cam[0] === cam[0]) {
       try {
-        sfxMod.setCameraX(cameraX);
+        sfxMod.setCameraX(cam[0]!);
       } catch (err) {
         moduleFailed(1, err, 'setCameraX');
       }
@@ -574,18 +585,19 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
   /** Watch for a 'running' context whose clock stopped (iOS after an interruption): needs a gesture restart. */
   function watchClock(ctx: AudioContext, dt: number): void {
     const t = ctx.currentTime;
-    if (lastAudioTime < 0) {
-      lastAudioTime = t;
-      stallSec = 0;
+    if (clk[CLK_LAST]! < 0) {
+      clk[CLK_LAST] = t;
+      clk[CLK_STALL] = 0;
       return;
     }
-    if (t > lastAudioTime) {
-      lastAudioTime = t;
-      stallSec = 0;
+    if (t > clk[CLK_LAST]!) {
+      clk[CLK_LAST] = t;
+      clk[CLK_STALL] = 0;
       zombieTries = 0; // the clock really moves: a later stall gets fresh tries
       return;
     }
-    stallSec += dt;
+    const stallSec = clk[CLK_STALL]! + dt;
+    clk[CLK_STALL] = stallSec;
     if (!stalled && stallSec >= LOCAL_TUNING.stallSec) {
       stalled = true;
       armGesture();
@@ -602,8 +614,8 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
   /** Restart a zombie context (suspend + resume); the clock watch starts over. */
   function restartZombie(ctx: AudioContext): void {
     stalled = false;
-    stallSec = 0;
-    lastAudioTime = -1;
+    clk[CLK_STALL] = 0;
+    clk[CLK_LAST] = -1;
     outputDown();
     try {
       void ctx.suspend().catch(noop);
@@ -666,18 +678,18 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
       const dt = Number.isFinite(dtSec) && dtSec > 0 ? (dtSec > LOCAL_TUNING.maxDt ? LOCAL_TUNING.maxDt : dtSec) : 0;
       if (services && services.bank.pending > 0) services.bank.pump(state ? LOCAL_TUNING.bankBudgetMs : LOCAL_TUNING.bankMenuBudgetMs);
       if (ctx.state !== 'running') {
-        stallSec = 0;
-        lastAudioTime = -1;
+        clk[CLK_STALL] = 0;
+        clk[CLK_LAST] = -1;
         if (wanted && unlocked && ctx.state === 'suspended') {
-          retrySec += dt;
-          if (retrySec >= LOCAL_TUNING.resumeRetrySec) {
-            retrySec = 0;
+          clk[CLK_RETRY] = clk[CLK_RETRY]! + dt;
+          if (clk[CLK_RETRY]! >= LOCAL_TUNING.resumeRetrySec) {
+            clk[CLK_RETRY] = 0;
             void requestResume(ctx);
           }
         }
         return;
       }
-      retrySec = 0;
+      clk[CLK_RETRY] = 0;
       if (!wanted) return;
       if (!outUp) markRunning(ctx); // a missed statechange must never leave the output silent
       watchClock(ctx, dt);
@@ -737,7 +749,7 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
       pendingUi = -1;
       disarmGesture();
       stalled = false;
-      stallSec = 0;
+      clk[CLK_STALL] = 0;
       if (ac && ac.state === 'running') {
         stopVoices(0.005);
         outputDown();
@@ -772,8 +784,9 @@ export function createAudioEngine(settings: SettingsStore, opts: AudioEngineOpti
     },
     setCameraX(x) {
       const v = typeof x === 'number' && Number.isFinite(x) ? x : Number.NaN;
-      if (v === cameraX || (v !== v && cameraX !== cameraX)) return;
-      cameraX = v;
+      const was = cam[0]!;
+      if (v === was || (v !== v && was !== was)) return;
+      cam[0] = v;
       if (!sfxMod) return;
       try {
         sfxMod.setCameraX(v);

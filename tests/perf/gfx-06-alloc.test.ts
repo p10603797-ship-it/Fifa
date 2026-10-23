@@ -7,7 +7,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ALLOC_FLAGS } from './qf-7r-alloc-flags';
+import { ALLOC_FLAGS, EXACT_INTERVAL } from './qf-7r-alloc-flags';
 
 describe('GFX-06 zero allocation per frame', () => {
   it('update() and onEvents() allocate nothing per frame', () => {
@@ -60,13 +60,13 @@ describe('GFX-06 zero allocation per frame', () => {
       run(30000);
       globalThis.gc();
       await session.post('HeapProfiler.startSampling', {
-        samplingInterval: 64, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
+        samplingInterval: ${EXACT_INTERVAL}, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
       });
       run(100000);
       const { profile } = await session.post('HeapProfiler.stopSampling');
-      const t0 = process.hrtime.bigint();
+      const t0 = process.cpuUsage(); // [QF-7R] CPU time, not wall time: a busy machine does not inflate it
       run(20000);
-      console.log(JSON.stringify({ bytes: mine(profile, 100000), usPerFrame: Number(process.hrtime.bigint() - t0) / 20000 / 1000,
+      console.log(JSON.stringify({ bytes: mine(profile, 100000), usPerFrame: ((c) => c.user + c.system)(process.cpuUsage(t0)) / 20000,
         excitement: crowd.excitement }));
     `;
     const r = spawnSync(process.execPath, [

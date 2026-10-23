@@ -275,20 +275,25 @@ const GK_KICK = createClip([
 
 // ============================================================ table
 
+/**
+ * evalClipS at the phase in PP[0], mirrored for foot 1 when `side`. [QF-7R] One module-level function for every
+ * action clip: it is hot (optimised within seconds), while each clip's closure below runs only during its action and
+ * can stay in V8's interpreter for minutes, where every number it loads is boxed (a heap allocation per frame). So
+ * the closures hold no number work at all.
+ */
+function evalSided(clip: Clip, out: Pose, side: boolean): void {
+  EVA[0] = PP[0]!;
+  evalClipS(clip, out);
+  if (side && PP[4] === 1) mirrorPose(out);
+}
+
 /** Right-foot clip mirrored for foot 1 (parameters in PP: allocation-free). */
 function sided(clip: Clip): PoseImpl {
-  return (out: Pose): void => {
-    EVA[0] = PP[0]!;
-    evalClipS(clip, out);
-    if (PP[4] === 1) mirrorPose(out);
-  };
+  return (out: Pose): void => evalSided(clip, out, true);
 }
 
 /** Keeper throw: overarm for foot 0, underarm roll for foot 1. */
-const gkThrow: PoseImpl = (out) => {
-  EVA[0] = PP[0]!;
-  evalClipS(PP[4] === 1 ? GK_ROLL : GK_THROW_OVER, out);
-};
+const gkThrow: PoseImpl = (out) => evalSided(PP[4] === 1 ? GK_ROLL : GK_THROW_OVER, out, false);
 
 /** Clips by AnimId (exposed for tests and the debug pose viewer). */
 export const ACTION_CLIPS: Partial<Record<AnimId, Clip>> = {

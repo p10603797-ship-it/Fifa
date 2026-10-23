@@ -10,7 +10,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ALLOC_FLAGS } from './qf-7r-alloc-flags';
+import { ALLOC_FLAGS, EXACT_INTERVAL } from './qf-7r-alloc-flags';
 
 describe('GFX-14 zero allocation per frame', () => {
   it('update() and the projector allocate nothing per frame for every camera type', () => {
@@ -88,7 +88,7 @@ describe('GFX-14 zero allocation per frame', () => {
           globalThis.gc();
           const h0 = process.memoryUsage().heapUsed;
           await session.post('HeapProfiler.startSampling', {
-            samplingInterval: 64, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
+            samplingInterval: ${EXACT_INTERVAL}, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
           });
           fn(100000);
           const { profile } = await session.post('HeapProfiler.stopSampling');
@@ -97,11 +97,11 @@ describe('GFX-14 zero allocation per frame', () => {
         const cuts0 = cam.cuts;
         const c = await measure(runCam);
         const p = await measure(runProj);
-        const t0 = process.hrtime.bigint();
+        const t0 = process.cpuUsage(); // [QF-7R] CPU time, not wall time: a busy machine does not inflate it
         runCam(20000);
         res['pass' + pass++ + '-type' + type] = {
           camBytes: c.mine, camHeap: c.heap, projBytes: p.mine, projHeap: p.heap,
-          usPerFrame: Number(process.hrtime.bigint() - t0) / 20000 / 1000, finite: Number.isFinite(acc[0]), cuts: cam.cuts - cuts0,
+          usPerFrame: ((c) => c.user + c.system)(process.cpuUsage(t0)) / 20000, finite: Number.isFinite(acc[0]), cuts: cam.cuts - cuts0,
         };
       }
       console.log(JSON.stringify(res));

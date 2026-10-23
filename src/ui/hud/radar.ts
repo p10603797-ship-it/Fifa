@@ -9,6 +9,11 @@
  * only when the sim advanced; canvas drawing is not a DOM write, and the DOM is written only when the radar is shown
  * or hidden (radar preference from hudShared.ts: settings / pause menus toggle it; the touch layer sits above the
  * HUD so a tap cannot reach it) or resized for the larger-HUD setting. No allocation per redraw.
+ *
+ * [QF-7R] The marks (dots, squares, rings, ball) are pre-rendered sprites (rebuilt when the size, the colours or the
+ * markers change) stamped at whole device pixels: every number a redraw passes to the canvas is a small integer. A
+ * fractional number passed to a canvas method is a heap allocation in the browser (the binding boxes it), and the
+ * arc() / fillRect() per player redraw cost ~70 of them (~1 KB) twenty times a second.
  */
 import type { AppContext, FrameInfo, HudPart } from '../../contracts/app';
 import type { Club } from '../../contracts/data';
@@ -131,6 +136,14 @@ interface RadarCanvasDebug {
   __radarDraws?: number;
 }
 
+/** Mark sprites: home dot, away dot, away square (colour-blind markers), P1 / P2 rings, ball. */
+const SPR_HOME = 0;
+const SPR_AWAY = 1;
+const SPR_AWAY_SQUARE = 2;
+const SPR_RING_P1 = 3;
+const SPR_RING_P2 = 4;
+const SPR_BALL = 5;
+
 function cssVar(name: string, fallback: string): string {
   try {
     const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -162,8 +175,13 @@ export function createRadar(): HudPart {
   let enabled = true;
   let visible = false;
   let shownHidden: boolean | null = null;
-  let acc = 0;
+  /** Unpaused frame time since the last redraw, ms ([QF-7R] a typed array, not a closure variable: written every frame). */
+  const acc = new Float64Array(1);
   let lastTick = -1;
+  // [QF-7R] Mark sprites (SPR_*), each a square canvas `sprSize[k]` device px wide, centred on its middle pixel corner.
+  const sprites: (HTMLCanvasElement | null)[] = [null, null, null, null, null, null];
+  const sprSize = new Int32Array(6);
+  let spritesDirty = true;
   let dirty = true;
   const fill: [string, string] = ['#f7f0ee', '#fbc547'];
   const stroke: [string, string] = ['rgba(7,7,13,.9)', 'rgba(7,7,13,.9)'];
@@ -195,6 +213,7 @@ export function createRadar(): HudPart {
     shownH = hgt;
     dpr = d;
     markScale = w / RADAR_TUNING.width;
+    spritesDirty = true;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(hgt * dpr);
     canvas.style.width = `${w}px`;
@@ -256,55 +275,91 @@ export function createRadar(): HudPart {
         stroke[t] = luminance(shirt) < 0.09 ? 'rgba(247,240,238,.85)' : 'rgba(7,7,13,.9)';
       }
     }
+    spritesDirty = true;
     dirty = true;
+  }
+
+  /**
+   * Draw one mark sprite: a circle (or a square when `square`) of radius `r` CSS px, filled with `fillStyle` (null =
+   * ring only) and outlined `lineW` CSS px wide, on a canvas of whole device pixels centred on its middle.
+   */
+  function buildSprite(k: number, r: number, lineW: number, fillStyle: string | null, strokeStyle: string, square: boolean): void {
+    const c = sprites[k] ?? document.createElement('canvas');
+    sprites[k] = c;
+    const half = Math.ceil((r + lineW) * dpr) + 1;
+    sprSize[k] = 2 * half;
+    c.width = 2 * half;
+    c.height = 2 * half;
+    const q = c.getContext('2d');
+    if (!q) {
+      sprites[k] = null;
+      return;
+    }
+    q.setTransform(dpr, 0, 0, dpr, 0, 0);
+    q.clearRect(0, 0, (2 * half) / dpr, (2 * half) / dpr);
+    const m = half / dpr;
+    q.lineWidth = lineW;
+    q.strokeStyle = strokeStyle;
+    if (square) {
+      q.fillStyle = fillStyle ?? 'transparent';
+      q.fillRect(m - r, m - r, r * 2, r * 2);
+      q.strokeRect(m - r, m - r, r * 2, r * 2);
+      return;
+    }
+    q.beginPath();
+    q.arc(m, m, r, 0, Math.PI * 2);
+    if (fillStyle !== null) {
+      q.fillStyle = fillStyle;
+      q.fill();
+    }
+    q.stroke();
+  }
+
+  function buildSprites(): void {
+    spritesDirty = false;
+    if (typeof document === 'undefined') return;
+    const dotR = RADAR_TUNING.dotR * markScale;
+    buildSprite(SPR_HOME, dotR, 1, fill[0], stroke[0], false);
+    buildSprite(SPR_AWAY, dotR, 1, fill[1], stroke[1], false);
+    buildSprite(SPR_AWAY_SQUARE, dotR, 1, fill[1], stroke[1], true);
+    buildSprite(SPR_RING_P1, RADAR_TUNING.ringR * markScale, 2 * markScale, null, p1, false);
+    buildSprite(SPR_RING_P2, RADAR_TUNING.ringR * markScale, 2 * markScale, null, p2, false);
+    buildSprite(SPR_BALL, RADAR_TUNING.ballR * markScale, 1, '#ffffff', 'rgba(7,7,13,.95)', false);
+  }
+
+  /** Stamp sprite k centred at radar point pt (CSS px), snapped to whole device pixels: integers only. */
+  function stamp(gc: CanvasRenderingContext2D, k: number): void {
+    const s = sprites[k];
+    if (!s) return;
+    const half = sprSize[k]! >> 1;
+    gc.drawImage(s, ((pt.x * dpr + 0.5) | 0) - half, ((pt.y * dpr + 0.5) | 0) - half);
   }
 
   function draw(state: ReadonlySimState): void {
     if (!g || !canvas) return;
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, L.w, L.h);
-    if (pitchLayer) g.drawImage(pitchLayer, 0, 0, L.w, L.h);
-    const dotR = RADAR_TUNING.dotR * markScale;
+    if (spritesDirty) buildSprites();
+    // Device pixels, identity transform: the backing store and the pitch layer are whole device pixels.
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, canvas.width, canvas.height);
+    if (pitchLayer) g.drawImage(pitchLayer, 0, 0);
     const players = state.players;
-    g.lineWidth = 1;
     for (let i = 0; i < players.length; i++) {
       const p = players[i]!;
       if (p.active !== 1) continue;
-      const t = p.team === 1 ? 1 : 0;
       pitchToRadar(L, p.x, p.z, pt);
-      g.fillStyle = fill[t];
-      g.strokeStyle = stroke[t];
-      if (t === 1 && squaresAway) {
-        g.fillRect(pt.x - dotR, pt.y - dotR, dotR * 2, dotR * 2);
-        g.strokeRect(pt.x - dotR, pt.y - dotR, dotR * 2, dotR * 2);
-      } else {
-        g.beginPath();
-        g.arc(pt.x, pt.y, dotR, 0, Math.PI * 2);
-        g.fill();
-        g.stroke();
-      }
+      stamp(g, p.team !== 1 ? SPR_HOME : squaresAway ? SPR_AWAY_SQUARE : SPR_AWAY);
     }
     // Controlled players (humans only): a ring in the player colour.
-    g.lineWidth = 2 * markScale;
     for (let c = 0; c < 2; c++) {
       const ctrl = state.ctrl[c];
       if (!ctrl || ctrl.kind !== ControllerKind.HUMAN || ctrl.slot < 0 || ctrl.slot >= players.length) continue;
       const p = players[ctrl.slot]!;
       pitchToRadar(L, p.x, p.z, pt);
-      g.strokeStyle = c === 0 ? p1 : p2;
-      g.beginPath();
-      g.arc(pt.x, pt.y, RADAR_TUNING.ringR * markScale, 0, Math.PI * 2);
-      g.stroke();
+      stamp(g, c === 0 ? SPR_RING_P1 : SPR_RING_P2);
     }
     const b = state.ball;
     pitchToRadar(L, b.x, b.z, pt);
-    g.lineWidth = 1;
-    g.fillStyle = '#ffffff';
-    g.strokeStyle = 'rgba(7,7,13,.95)';
-    g.beginPath();
-    g.arc(pt.x, pt.y, RADAR_TUNING.ballR * markScale, 0, Math.PI * 2);
-    g.fill();
-    g.stroke();
+    stamp(g, SPR_BALL);
     canvas.__radarDraws = (canvas.__radarDraws ?? 0) + 1;
   }
 
@@ -325,6 +380,7 @@ export function createRadar(): HudPart {
       parent.append(root);
       p1 = cssVar('--p1', p1);
       p2 = cssVar('--p2', p2);
+      spritesDirty = true;
       enabled = radarEnabled(ctx.settings);
       unbindLarge = bindLargerHud(ctx, root, (large) => {
         hs = large ? HUD_LARGE_SCALE : 1;
@@ -351,7 +407,7 @@ export function createRadar(): HudPart {
       wornCache = null;
       lastState = state;
       lastTick = -1;
-      acc = RADAR_TUNING.redrawMs;
+      acc[0] = RADAR_TUNING.redrawMs;
       if (ctxRef) enabled = radarEnabled(ctxRef.settings);
       setColours(state);
       syncHidden();
@@ -359,10 +415,11 @@ export function createRadar(): HudPart {
     update(state: ReadonlySimState, frame: FrameInfo, projector: CameraProjector | null) {
       void projector;
       if (!enabled || !visible || !g) return;
-      if (!frame.paused) acc += frame.dtMs > 0 ? frame.dtMs : 0;
-      if (acc < RADAR_TUNING.redrawMs && !dirty) return;
+      if (!frame.paused) acc[0] = acc[0]! + (frame.dtMs > 0 ? frame.dtMs : 0);
+      const a = acc[0]!;
+      if (a < RADAR_TUNING.redrawMs && !dirty) return;
       if (state.tick === lastTick && !dirty) return;
-      acc = acc >= 2 * RADAR_TUNING.redrawMs ? 0 : acc % RADAR_TUNING.redrawMs;
+      acc[0] = a >= 2 * RADAR_TUNING.redrawMs ? 0 : a % RADAR_TUNING.redrawMs;
       lastTick = state.tick;
       lastState = state;
       dirty = false;
@@ -388,6 +445,8 @@ export function createRadar(): HudPart {
       root = canvas = null;
       g = null;
       pitchLayer = null;
+      sprites.fill(null);
+      spritesDirty = true;
       ctxRef = null;
       lastState = null;
     },

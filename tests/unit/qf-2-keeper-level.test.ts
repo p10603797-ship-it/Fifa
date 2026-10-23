@@ -11,17 +11,23 @@ import { makeScenario } from '../harness/scenario';
 
 describe('QF-2 keeper reaction by CPU level', () => {
   it('is monotonic over the levels, zero at Professional, never negative', () => {
-    const v = T_LEVEL.keeperReactTicks;
+    // [QF-16] Legend scales the attribute delay (T_LEVEL.keeperReactScale) instead of adding -12 ticks, which floored
+    // every keeper with gkReflexes 62+ at 0 (qf-16-keeper-reflexes): the effective delay falls level by level.
+    const v = T_LEVEL.keeperReactTicks, sc = T_LEVEL.keeperReactScale;
     expect(v.length).toBe(6);
     expect(v[Difficulty.PROFESSIONAL]).toBe(0);
-    for (let i = 1; i < v.length; i++) expect(v[i]!).toBeLessThan(v[i - 1]!);
+    expect(sc[Difficulty.PROFESSIONAL]).toBe(1);
     const s = makeScenario({ phase: MatchPhase.IN_PLAY, humans: 0 });
     const k = s.teams[1]!.keeperSlot;
     const base = keeperReactTicks(s.attrs[k]!);
     s.teams[1]!.cpu.active = 1;
+    let prev = Infinity;
     for (let lv = 0; lv < 6; lv++) {
       s.teams[1]!.cpu.level = lv as Difficulty;
-      expect(keeperReactionTicks(s, k), `level ${lv}`).toBe(Math.max(0, base + v[lv]!));
+      const t = keeperReactionTicks(s, k);
+      expect(t, `level ${lv}`).toBe(Math.max(0, Math.round(base * sc[lv]!) + v[lv]!));
+      expect(t, `level ${lv}`).toBeLessThan(prev);
+      prev = t;
     }
     s.attrs[k]!.gkReflexes = 99;
     s.teams[1]!.cpu.level = Difficulty.LEGEND;

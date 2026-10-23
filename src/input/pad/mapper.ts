@@ -56,7 +56,7 @@ import {
 import type { Settings } from '../../contracts/settings';
 import { T_PAD } from '../../contracts/tuning';
 import { getPadManager, PAD_BUTTON_COUNT, PAD_TRIGGER_RELEASE, PadButton, type PadManager, type PadSlot } from './manager';
-import { createRightStick, type RightStickTracker } from './rightStick';
+import { createRightStick, type PadSticks, type RightStickTracker } from './rightStick';
 import { createPadSequences, type PadSequences } from './sequences';
 
 const LOCAL_TUNING = {
@@ -234,7 +234,7 @@ function quantScratch(): void {
  * the same numbers as axes.ts writeMoveAxes / writeAimAxes, computed inline (no double crosses a call boundary, so
  * V8 allocates nothing either).
  */
-export function writePadSticks(out: InputFrame, s: Readonly<PadSlot>, projector: CameraProjector | null): void {
+export function writePadSticks(out: InputFrame, s: Readonly<PadSticks>, projector: CameraProjector | null): void {
   const rot = projector ? projector.stickRotation() : 0;
   if (rot === 0) {
     SC.x = s.lx; SC.y = s.ly;

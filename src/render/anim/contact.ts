@@ -315,21 +315,25 @@ const DEJECTION = createClip([
 
 // ============================================================ table
 
+/**
+ * evalClipS at the phase in PP[0], mirrored when `mirror`. [QF-7R] One hot module-level function for every contact
+ * clip; the per-clip closures below (run only during their action, possibly still interpreted, where every number
+ * loaded is boxed) hold no number work (actions.ts evalSided).
+ */
+function evalAt(clip: Clip, out: Pose, mirror: boolean): void {
+  EVA[0] = PP[0]!;
+  evalClipS(clip, out);
+  if (mirror) mirrorPose(out);
+}
+
 /** Clip as an allocation-free entry point (phase in PP[0]). */
 function plain(clip: Clip): PoseImpl {
-  return (out: Pose): void => {
-    EVA[0] = PP[0]!;
-    evalClipS(clip, out);
-  };
+  return (out: Pose): void => evalAt(clip, out, false);
 }
 
 /** Right-side clip mirrored (left dives). */
 function mirrored(clip: Clip): PoseImpl {
-  return (out: Pose): void => {
-    EVA[0] = PP[0]!;
-    evalClipS(clip, out);
-    mirrorPose(out);
-  };
+  return (out: Pose): void => evalAt(clip, out, true);
 }
 
 /** Clips by AnimId (right-side versions for the dives; exposed for tests and the pose viewer). */

@@ -8,6 +8,7 @@
  * keeps the ball off screen.
  */
 import { Session } from 'node:inspector';
+import { EXACT_INTERVAL } from '../perf/qf-7r-alloc-flags';
 import { PerspectiveCamera, Scene, type WebGLRenderer } from 'three';
 import { BALL_RADIUS, NUM_SLOTS } from '../../src/contracts/constants';
 import { ControllerKind, MatchPhase, QualityTier } from '../../src/contracts/enums';
@@ -38,7 +39,7 @@ interface SampleNode { callFrame: { url: string; functionName: string }; selfSiz
 async function bytesUnder(f: (i: number) => void, file: RegExp, fn: string, warm = 20000): Promise<number> {
   for (let i = 0; i < warm; i++) f(i);
   await post('HeapProfiler.startSampling', {
-    samplingInterval: 32, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
+    samplingInterval: EXACT_INTERVAL, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
   });
   for (let i = 0; i < n; i++) f(i);
   const { profile } = await post<{ profile: { head: SampleNode } }>('HeapProfiler.stopSampling');

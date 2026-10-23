@@ -179,6 +179,8 @@ export interface GameRendererOptions {
   createModules?: (ctx: RenderContext) => RenderModule[];
   /** GFX-02 environment (clock, frame wait, page visibility); default the browser's. */
   quality?: QualityOptions;
+  /** [QF-7R] Run the JIT warm-up script (render/warmScript.ts) in warmUp(). Default true; tests compare without it. */
+  warmScript?: boolean;
 }
 
 /** The GFX scene modules after quality, in MODULE ORDER. */
@@ -473,7 +475,7 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
    * every module, so nothing of the script remains. Returns the frames run (0 when skipped).
    */
   function runScriptOnce(): number {
-    if (scriptDone || !matchActive || !matchState || !replay) return 0;
+    if (scriptDone || opts.warmScript === false || !matchActive || !matchState || !replay) return 0;
     scriptDone = true;
     const live = matchState, clubs = matchClubs;
     let n = 0;
@@ -503,7 +505,8 @@ export function createGameRenderer(opts: GameRendererOptions = {}): DotkickRende
     cameraX() {
       const x = ctx.camera.position.x;
       if (!Number.isFinite(x)) return 0;
-      return x < WORLD_MIN_X ? WORLD_MIN_X : x > WORLD_MAX_X ? WORLD_MAX_X : x;
+      // [QF-7R] `+`: imported bindings are untyped to V8; as arms of the conditional they would box `x` every frame.
+      return x < WORLD_MIN_X ? +WORLD_MIN_X : x > WORLD_MAX_X ? +WORLD_MAX_X : x;
     },
 
     init(canvas: HTMLCanvasElement, settings: Readonly<Settings>) {

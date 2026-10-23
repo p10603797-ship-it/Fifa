@@ -83,6 +83,8 @@ export interface FrameStats {
   fps: number;
   /** Raw interval of the latest frame, ms. */
   frameMs: number;
+  /** Sim + render (renderer and HUD) ms of the latest frame. [QF-7R] */
+  busyMs: number;
   /** Ticks run in the latest frame and in total. */
   ticks: number;
   totalTicks: number;

@@ -567,19 +567,38 @@ export const T_CPU = {
    *  defendHeldTicks (a bot carrier rarely keeps it that long). m/s, ticks. */
   defendHeldSpeed: 2.5,
   defendHeldTicks: 180,
-  /** [QF-16] TAI-11 patient block (experimental switches; documented when settled). */
-  defendBlockOn: 1,
+  /** [QF-16] TAI-11 block against a carrier who walks the ball at (or past) a defender (docs/TUNING.md QF-16): once he
+   *  has had the ball T_LEVEL.blockTicks and walks (slower than defendBlockWalkSpeed), the controlled defender puts
+   *  himself in the ball's path: defendBlockDist beyond the ball on the carrier -> ball line, at most acos(defendBlockPathCos)
+   *  off the goal direction (defendBlockPathMinOffset: a ball closer to the carrier's centre has no line), tracked with
+   *  the carrier's velocity plus defendBlockGain per second toward it; round the carrier's body until
+   *  defendBlockRoundAhead ahead of his centre (over defendBlockRoundSpan, two body radii + defendBlockRoundGap to the
+   *  side); there he holds his ground (T_LEVEL.blockRetreat) when in the ball's line (defendBlockAlign, ahead of the ball
+   *  over defendBlockHoldSpan) or in front of the carrier's body (defendBlockAlignBody); against a shielding carrier from
+   *  a cosine of defendBlockShieldCos0 to the goal side. He pokes at a ball within defendBlockPokeDist (rounding at most
+   *  defendBlockPokeMaxRound) presented ball-first from where the wind-up and lunge take him, the carrier dribbling
+   *  steadily (defendSteady*). m/s, m, 1/s, m, cos, m, m, m, m, m, m, cos, m, 0..1. */
+  defendBlockWalkSpeed: 3.0,
   defendBlockDist: 0.9,
   defendBlockGain: 2.5,
-  defendBlockMaxSpeed: 6.0,
-  defendBlockPokeDist: 0.8,
   defendBlockPathMinOffset: 0.25,
-  defendBlockRoundAhead: 0.9,
-  defendBlockRoundSpan: 0.5,
+  defendBlockPathCos: 0.7,
+  defendBlockRoundAhead: 0.6,
+  defendBlockRoundSpan: 0.4,
   defendBlockRoundGap: 0.15,
-  defendBlockAlign: 0.5,
-  defendBlockPathCos0: 0.3,
-  defendBlockPokeMargin: 0.1,
+  defendBlockAlign: 0.6,
+  defendBlockHoldSpan: 0.3,
+  defendBlockAlignBody: 0.9,
+  defendBlockShieldCos0: 0.5,
+  defendBlockPokeDist: 0.8,
+  defendBlockPokeMaxRound: 0.25,
+  /** [QF-16] steadyDribble (block poke, held challenge): the carrier moving faster than defendSteadyMinSpeed the way he
+   *  faces (defendSteadyFaceCos), the ball ahead along his run (defendSteadyBallCos) and rolling with him (relative speed
+   *  at most defendSteadyRelSpeed); slower, only the last. m/s, cos, cos, m/s. */
+  defendSteadyMinSpeed: 0.5,
+  defendSteadyFaceCos: 0.9,
+  defendSteadyBallCos: 0.6,
+  defendSteadyRelSpeed: 1.5,
 } as const;
 
 /** Per-difficulty AI parameters, indexed by Difficulty (0 Beginner .. 5 Legend). Never physics. */
@@ -614,8 +633,16 @@ export const T_LEVEL = {
    *  Amateur 30 / 21 -> 45 / 30: the reaction-delay chain fix (T_AI.reactRearmGapFrac) gave the low levels' defenders
    *  back most of their reactions (Amateur v Beginner 71 -> ~61%, Semi-Pro v Amateur 76 -> ~59%). [QF-14 resume]
    *  Legend -8 -> -12 (with shotThresholdXg, above: Legend v World Class 63.0 -> 71.0% over 400; -12 alone 67.3%;
-   *  World Class 0 instead gave 70.5% but World Class v Professional 71.75 -> 69.3% and equal keepers). */
-  keeperReactTicks: [45, 30, 10, 0, -3, -12] as readonly number[],
+   *  World Class 0 instead gave 70.5% but World Class v Professional 71.75 -> 69.3% and equal keepers). [QF-16] Legend
+   *  -12 -> 0 with keeperReactScale 0.25: -12 floored every keeper with gkReflexes 62+ at 0 ticks. */
+  keeperReactTicks: [45, 30, 10, 0, -3, 0] as readonly number[],
+  /** [QF-16] Scale on the keeper's attribute delay (gkReflexes: T_GK.reactWorst .. reactBest) before keeperReactTicks is
+   *  added (sim/keeper/saves keeperReactionTicks). Legend's -12 ticks floored the delay at 0 for gkReflexes 62+, so the
+   *  attribute made no difference there (BRIEF section 15); Legend scales it instead (docs/TUNING.md QF-16). */
+  keeperReactScale: [1, 1, 1, 1, 1, 0.25] as readonly number[],
+  /** [QF-16] Multiplier on T_CPU.carrierShotMinPowerShare (TAI-08 rushed-shot gate) by level: the low levels take more,
+   *  worse shots (Beginner v Beginner 4.6 shots a match with the full gate, 10.5 before QF-14); Professional and up 1. */
+  shotRushedGateMul: [0, 0.3, 0.6, 1, 1, 1] as readonly number[],
   /** [QF-11] Extra AI tables (read through ai/cpu/levels levelValue: a human side's AI always uses the Professional
    *  entry, which is the pre-QF-11 behaviour). CPU carrier re-decision period, ticks (TAI-08; T_AI.carrierEvalInterval
    *  for every level before): a top level is patient and carries the ball to the better option (re-deciding every few
@@ -650,8 +677,11 @@ export const T_LEVEL = {
    *  / 0.2 a match, the longest 13 s, still under Professional's 0.42); closer than 0.9 is no better (at 0.6 a Legend
    *  defender let the jogging carrier of qf-14-escort through). */
   patienceStandoff: [1.5, 1.3, 1.1, 0.9, 0.9, 0.9] as readonly number[],
-  /** [QF-16] (experimental) patient block: share of the carrier's speed toward goal the defender gives up. */
+  /** [QF-16] TAI-11 block (T_CPU.defendBlock*): the share of the carrier's speed toward our goal the blocking defender
+   *  still gives up when holding his ground (1 = backs off as before), and how long a walking carrier must have had the
+   *  ball before the block (ticks). A lower level is walked past more often (qf-16-shield-level). */
   blockRetreat: [1, 0.8, 0.6, 0.3, 0.15, 0] as readonly number[],
+  blockTicks: [300, 260, 220, 180, 150, 120] as readonly number[],
   boxSlideMul: [1, 1, 0.5, 0, 0, 0] as readonly number[],
   /** [QF-13 skeptic] TAI-11 boxClear (1 = on): in the own area a careful tackle also needs the ball clear of the
    *  carrier's body. On where the quick careful tackles conceded the penalties (World Class 0.75, Legend 1.6-2.0 a match);

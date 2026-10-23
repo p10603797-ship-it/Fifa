@@ -49,7 +49,7 @@ import type { ReadonlySimState } from '../../contracts/state';
 import { T_BALL, T_CAMERA } from '../../contracts/tuning';
 import { ShootoutSub } from '../../sim/rules/shootout';
 import { ReplayAngle, replayPlaybackOf } from '../replay';
-import { createInterpState, type CameraModule, type RenderContext, type RenderFrame } from '../types';
+import { createInterpState, type CameraModule, type EulerFields, type RenderContext, type RenderFrame } from '../types';
 import { projectPitchToScreen, projectScreenToPitch } from './project';
 
 export const LOCAL_TUNING = { // TUNING-CR (GFX-15 cinematic cameras)
@@ -691,21 +691,6 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     return f.curr.attrs[t]!.foot === 1 ? -1 : 1;
   }
 
-  /** Horizontal distance (m) from (x, z) to the nearest active player of the frame being drawn (Infinity: none). */
-  function nearestPlayer(x: number, z: number): number {
-    const f = curFrame;
-    if (!f) return Infinity;
-    const it = f.interp, pl = f.curr.players;
-    let best = Infinity;
-    for (let i = 0; i < NUM_SLOTS; i++) {
-      if (pl[i]!.active !== 1) continue;
-      const dx = it.x[i]! - x, dz = it.z[i]! - z;
-      const d = dx * dx + dz * dz;
-      if (d < best) best = d;
-    }
-    return Math.sqrt(best);
-  }
-
   /**
    * [QF-4] The struck free kick / penalty would leave the held behind view: the ball (interpolated) or, while it rises,
    * its predicted apex (drag-corrected height as GFX-14 predicts it, reached after vy / g; the horizontal travel to it
@@ -757,8 +742,11 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
   }
 
   function writeCamera(p: Readonly<CinePose>): void {
-    cam.position.set(p.x, p.y, p.z);
-    euler.set(-p.pitch, p.yaw, 0, 'YXZ');
+    // [QF-7R] Field writes, not position.set / euler.set (see EulerFields: no double crosses a call).
+    const cp = cam.position;
+    cp.x = p.x; cp.y = p.y; cp.z = p.z;
+    const e = euler as unknown as EulerFields;
+    e._x = -p.pitch; e._y = p.yaw; e._z = 0;
     cam.quaternion.setFromEuler(euler);
     applyProjection(p);
     cam.updateMatrixWorld(true);
@@ -843,12 +831,38 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
         PIN[6] = phiDeg;
         takerPoseIn(goalKick, target);
         // [QF-4] A player standing where the camera would be fills the frame: take the other side when it is clearer.
-        const near = nearestPlayer(target.x, target.z);
+        // [QF-7R] nearestPlayer written out (twice): solved once per shot, a helper never leaves V8's baseline tier and
+        // boxes every double of its loop.
+        const fr = curFrame;
+        let near = Infinity;
+        if (fr) {
+          const it = fr.interp, pl = fr.curr.players;
+          let best = Infinity;
+          for (let i = 0; i < NUM_SLOTS; i++) {
+            if (pl[i]!.active !== 1) continue;
+            const dx = it.x[i]! - target.x, dz = it.z[i]! - target.z;
+            const d = dx * dx + dz * dz;
+            if (d < best) best = d;
+          }
+          near = Math.sqrt(best);
+        }
         if (near < LT.nearClear) {
           PIN[0] = S[S_SPOT_X]!; PIN[1] = S[S_SPOT_Z]!; PIN[2] = S[S_AIM_X]!; PIN[3] = S[S_AIM_Z]!; PIN[4] = -1; PIN[5] = foot;
           PIN[6] = phiDeg;
           takerPoseIn(goalKick, alt);
-          if (nearestPlayer(alt.x, alt.z) > near) copyPose(alt, target);
+          let altNear = Infinity;
+          if (fr) {
+            const it = fr.interp, pl = fr.curr.players;
+            let best = Infinity;
+            for (let i = 0; i < NUM_SLOTS; i++) {
+              if (pl[i]!.active !== 1) continue;
+              const dx = it.x[i]! - alt.x, dz = it.z[i]! - alt.z;
+              const d = dx * dx + dz * dz;
+              if (d < best) best = d;
+            }
+            altNear = Math.sqrt(best);
+          }
+          if (altNear > near) copyPose(alt, target);
         }
         break;
       }

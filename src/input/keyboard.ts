@@ -58,8 +58,9 @@
 
 import { MatchPhase, SkillMove } from '../contracts/enums';
 import { Btn, clearInputFrame, type InputFrame, type InputSampleContext, type InputSource } from '../contracts/input';
-import { quantStick, writeAimAxes, writeMoveAxes } from './axes';
-import { createRightStick, type RightStickTracker } from './pad/rightStick';
+import { quantStick } from './axes';
+import { writePadSticks } from './pad/mapper';
+import { createRightStick, type PadSticks, type RightStickTracker } from './pad/rightStick';
 import { createPadSequences, createPressLatch, type PadSequences } from './pad/sequences';
 
 const LOCAL_TUNING = {
@@ -341,6 +342,8 @@ export function createKeyboardSource(opts: KeyboardSourceOptions): KeyboardInput
   let disposed = false;
   const stick = { x: 0, y: 0 };
   const rstick = { x: 0, y: 0 };
+  /** [QF-7R] Both sticks as one object for the recogniser and the axes (no double crosses a call: V8 boxes one). */
+  const ks: PadSticks = { lx: 0, ly: 0, rx: 0, ry: 0 };
   const sdir: SkillDir = { x: 0, z: 0 };
   const q = { qx: 0, qy: 0 };
 
@@ -499,8 +502,8 @@ export function createKeyboardSource(opts: KeyboardSourceOptions): KeyboardInput
     rsTaps = 0;
     dirsToStick(rsNow, rstick);
     dirsToStick(dirs, stick);
-    rs.setLeft(stick.x, stick.y, heldBits & ~suppress);
-    rs.update(rstick.x, rstick.y, nowMs);
+    ks.lx = stick.x; ks.ly = stick.y; ks.rx = rstick.x; ks.ry = rstick.y;
+    rs.updatePad(ks, heldBits & ~suppress, nowMs); // = setLeft(left, held) + update(right, nowMs)
     lastRs = rsNow;
     for (let i = 0; i < dpadQLen; i++) {
       const p = dpadQueue[i]!;
@@ -544,9 +547,9 @@ export function createKeyboardSource(opts: KeyboardSourceOptions): KeyboardInput
       const t = now();
       if (lastPollMs < 0 || t - lastPollMs > LOCAL_TUNING.fallbackPollMs || t < lastPollMs - LOCAL_TUNING.fallbackPollMs) poll(t);
       dirsToStick(dirs, stick);
-      writeMoveAxes(out, stick.x, stick.y, ctx.projector);
       dirsToStick(orValues(rsKeys, RS_VALUES), rstick);
-      writeAimAxes(out, rstick.x, rstick.y, ctx.projector);
+      ks.lx = stick.x; ks.ly = stick.y; ks.rx = rstick.x; ks.ry = rstick.y;
+      writePadSticks(out, ks, ctx.projector); // = writeMoveAxes(left) + writeAimAxes(right), no boxed doubles
       out.buttons = latch.sample();
       rs.setContext(ctx);
       rs.applyTo(out);

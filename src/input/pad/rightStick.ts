@@ -174,6 +174,29 @@ export interface PadSticks {
 
 const qTmp = { qx: 0, qy: 0 };
 
+/** [QF-7R] Slots of a tracker's double state (createRightStick: one Float64Array, no boxed closure doubles). */
+const FAC_X = 0, FAC_Z = 1, ROT_COS = 2, ROT_SIN = 3, LEFT_X = 4, LEFT_Y = 5, LAST_NOW = 6, OUT_SINCE = 7, LAST_OUT_MS = 8,
+  REF_X = 9, REF_Z = 10, ROLL = 11, PREV_THETA = 12, PREV_UX = 13, PREV_UZ = 14, HEEL_START = 15, HEEL_X = 16, HEEL_Z = 17,
+  L_UX = 18, L_UZ = 19, FLICK_X = 20, FLICK_Z = 21, FLICK_AT = 22, SKILL_X = 23, SKILL_Z = 24, SKILL_AT = 25,
+  LAST_SKILL_X = 26, LAST_SKILL_Z = 27,
+  /** Call registers: the update's time (ms), unit stick direction, pitch-space stick, relative angle. */
+  NOW = 28, UX = 29, UZ = 30, PX = 31, PZ = 32, TH = 33, RX_IN = 34, RY_IN = 35, N_SIZE = 36;
+
+/** sectorOf(n[TH], prev) for the tracker's registers (no double crosses a call). */
+function sectorIn(n: Float64Array, prev: number): number {
+  const theta = n[TH]!;
+  if (prev >= 0 && prev <= 3) {
+    let d = theta - SECTOR_CENTRE[prev]!; // wrapPi
+    while (d > PI) d -= 2 * PI;
+    while (d <= -PI) d += 2 * PI;
+    if (Math.abs(d) <= QUARTER + HYST) return prev;
+  }
+  const a = Math.abs(theta);
+  if (a <= QUARTER) return RsSector.FORWARD;
+  if (a >= 3 * QUARTER) return RsSector.BACK;
+  return theta > 0 ? RsSector.RIGHT : RsSector.LEFT;
+}
+
 export function createRightStick(): RightStickTracker {
   const flickMag = T_INPUT.flickThreshold;
   const releaseMag = T_INPUT.flickThreshold * LOCAL_TUNING.releaseFrac;
@@ -181,107 +204,124 @@ export function createRightStick(): RightStickTracker {
   const seqMs = T_PAD.rsSequenceMs;
   const latchMs = LOCAL_TUNING.latchMaxMs;
 
+  // [QF-7R] Every double of the tracker lives in N (named slots below), not in closure variables: V8 boxes a non-integer
+  // double into a new heap number on every store to a closure variable, and the facing (setContext, every sample), the
+  // clock (every update) and analogue stick values are always fractional in play (~5 boxes per frame per pad).
+  // Doubles also never cross the internal calls (in N: NOW, UX / UZ); integers and booleans stay in variables.
+  const N = new Float64Array(N_SIZE);
+  N[FAC_X] = 1; N[ROT_COS] = 1; N[REF_X] = 1; N[HEEL_X] = 1;
+
   // Context.
-  let facX = 1, facZ = 0;
-  let rotCos = 1, rotSin = 0;
   let skillsOn = true;
   let heldBits = 0;
-  let leftX = 0, leftY = 0;
-  let lastNow = 0;
 
   // Right-stick stroke.
   let armed = true;
   let out = false;
-  let outSince = 0;
-  let lastOutMs = 0;
   let holding = false;
-  let refX = 1, refZ = 0;
   let sector: number = RsSector.NONE;
   let first: number = RsSector.NONE;
   let second: number = RsSector.NONE;
   let transitions = 0;
-  let roll = 0;
-  let prevTheta = 0;
-  let prevUx = 0, prevUz = 0;
   let spent = false;
   let strokeSprint = false;
 
   // Heel flick: a forward flick waiting for the back flick.
   let heelPending = false;
-  let heelStart = 0;
-  let heelX = 1, heelZ = 0;
 
   // Left stick (drag-back).
   let lArmed = true;
   let lOut = false;
-  let lUx = 0, lUz = 0;
 
   // Latches.
   let flickLatched = false;
-  let flickX = 0, flickZ = 0;
-  let flickAt = 0;
   let flickReportedLast = false;
   let skill: SkillMove = SkillMove.NONE;
-  let skillX = 0, skillZ = 0;
-  let skillAt = 0;
-  let lastSkillX = 0, lastSkillZ = 0;
 
-  function emit(kind: SkillMove, dx: number, dz: number, now: number, fromRightStick: boolean): void {
+  /** update(): the right stick in N[RX_IN], N[RY_IN] (screen space), the left one in N[LEFT_X], N[LEFT_Y]. */
+  function step(nowMs: number): void {
+    let now = Number.isFinite(nowMs) ? nowMs : N[LAST_NOW]!;
+    if (now < N[LAST_NOW]!) now = N[LAST_NOW]!;
+    N[LAST_NOW] = now;
+    N[NOW] = now;
+    const rx = N[RX_IN]!, ry = N[RY_IN]!;
+    const sx = Number.isFinite(rx) ? rx : 0, sy = Number.isFinite(ry) ? ry : 0;
+    const c = N[ROT_COS]!, sn = N[ROT_SIN]!;
+    N[PX] = c * sx - sn * sy; N[PZ] = sn * sx + c * sy;
+    rightStep();
+    const lx = N[LEFT_X]!, ly = N[LEFT_Y]!;
+    N[PX] = c * lx - sn * ly; N[PZ] = sn * lx + c * ly;
+    leftStep();
+  }
+
+  /** Skill direction codes for emit (doubles never cross a call: the vector is built from N inside). */
+  const DIR_RIGHT = 0, DIR_LEFT = 1, DIR_REF = 2, DIR_BACK = 3;
+
+  /**
+   * Latch a skill: direction `dir` (DIR_RIGHT / DIR_LEFT: the side of the stroke's reference facing; DIR_REF: along
+   * it; DIR_BACK: straight back from the facing), at N[NOW] or, `atLastOut`, at the stroke's last out sample.
+   */
+  function emit(kind: SkillMove, dir: number, fromRightStick: boolean, atLastOut: boolean): void {
     if (!skillsOn) return;
     if (fromRightStick && (strokeSprint || (heldBits & Btn.SPRINT) !== 0)) return;
+    let dx: number, dz: number;
+    if (dir === DIR_RIGHT) { dx = -N[REF_Z]!; dz = N[REF_X]!; } else if (dir === DIR_LEFT) { dx = N[REF_Z]!; dz = -N[REF_X]!; } else if (dir === DIR_REF) { dx = N[REF_X]!; dz = N[REF_Z]!; } else { dx = -N[FAC_X]!; dz = -N[FAC_Z]!; }
     skill = kind;
-    skillX = dx;
-    skillZ = dz;
-    skillAt = now;
-    lastSkillX = dx;
-    lastSkillZ = dz;
+    N[SKILL_X] = dx;
+    N[SKILL_Z] = dz;
+    N[SKILL_AT] = atLastOut ? N[LAST_OUT_MS]! : N[NOW]!;
+    N[LAST_SKILL_X] = dx;
+    N[LAST_SKILL_Z] = dz;
   }
 
-  /** Side unit vector of the stroke's reference facing (RIGHT = facing rotated toward +z when facing +x). */
-  function emitSide(kind: SkillMove, side: number, now: number): void {
-    if (side === RsSector.RIGHT) emit(kind, -refZ, refX, now, true);
-    else emit(kind, refZ, -refX, now, true);
+  /** Side of the stroke's reference facing (RIGHT = facing rotated toward +z when facing +x). */
+  function emitSide(kind: SkillMove, side: number, atLastOut: boolean): void {
+    emit(kind, side === RsSector.RIGHT ? DIR_RIGHT : DIR_LEFT, true, atLastOut);
   }
 
-  function startStroke(ux: number, uz: number, now: number): void {
+  /** A new stroke toward the unit direction N[UX], N[UZ] at N[NOW]. */
+  function startStroke(): void {
+    const ux = N[UX]!, uz = N[UZ]!, now = N[NOW]!;
     out = true;
-    outSince = now;
-    lastOutMs = now;
+    N[OUT_SINCE] = now;
+    N[LAST_OUT_MS] = now;
     holding = holdMs <= 0;
     flickLatched = true;
-    flickX = ux;
-    flickZ = uz;
-    flickAt = now;
-    const heel = heelPending && now - heelStart <= seqMs;
+    N[FLICK_X] = ux;
+    N[FLICK_Z] = uz;
+    N[FLICK_AT] = now;
+    const heel = heelPending && now - N[HEEL_START]! <= seqMs;
     heelPending = false;
-    if (heel) { refX = heelX; refZ = heelZ; } else { refX = facX; refZ = facZ; }
-    const th = relativeAngle(ux, uz, refX, refZ);
-    sector = sectorOf(th, RsSector.NONE);
+    if (heel) { N[REF_X] = N[HEEL_X]!; N[REF_Z] = N[HEEL_Z]!; } else { N[REF_X] = N[FAC_X]!; N[REF_Z] = N[FAC_Z]!; }
+    const rx = N[REF_X]!, rz = N[REF_Z]!;
+    const th = Math.atan2(-ux * rz + uz * rx, ux * rx + uz * rz); // relativeAngle(ux, uz, refX, refZ)
+    N[TH] = th;
+    sector = sectorIn(N, RsSector.NONE);
     first = sector;
     second = RsSector.NONE;
     transitions = 0;
-    roll = 0;
-    prevTheta = th;
-    prevUx = ux;
-    prevUz = uz;
+    N[ROLL] = 0;
+    N[PREV_THETA] = th;
+    N[PREV_UX] = ux;
+    N[PREV_UZ] = uz;
     spent = false;
     strokeSprint = (heldBits & Btn.SPRINT) !== 0;
     if (heel && sector === RsSector.BACK) {
-      emit(SkillMove.HEEL_FLICK, refX, refZ, now, true);
+      emit(SkillMove.HEEL_FLICK, DIR_REF, true, false);
       spent = true;
     }
-    evaluate(now);
+    evaluate();
   }
 
   function endStroke(): void {
-    const flick = lastOutMs - outSince < holdMs;
+    const flick = N[LAST_OUT_MS]! - N[OUT_SINCE]! < holdMs;
     if (!spent && transitions === 0 && flick) {
-      if (isSide(first)) emitSide(SkillMove.BODY_FEINT, first, lastOutMs);
+      if (isSide(first)) emitSide(SkillMove.BODY_FEINT, first, true);
       else if (first === RsSector.FORWARD) {
         heelPending = true;
-        heelStart = outSince;
-        heelX = refX;
-        heelZ = refZ;
+        N[HEEL_START] = N[OUT_SINCE]!;
+        N[HEEL_X] = N[REF_X]!;
+        N[HEEL_Z] = N[REF_Z]!;
       }
     }
     out = false;
@@ -290,32 +330,40 @@ export function createRightStick(): RightStickTracker {
     spent = true;
   }
 
-  function continueStroke(ux: number, uz: number, now: number): void {
-    prevUx = ux;
-    prevUz = uz;
-    lastOutMs = now;
-    const th = relativeAngle(ux, uz, refX, refZ);
-    roll += wrapPi(th - prevTheta);
-    prevTheta = th;
-    const ns = sectorOf(th, sector);
+  /** The stroke goes on toward N[UX], N[UZ] at N[NOW]. */
+  function continueStroke(): void {
+    const ux = N[UX]!, uz = N[UZ]!, now = N[NOW]!;
+    N[PREV_UX] = ux;
+    N[PREV_UZ] = uz;
+    N[LAST_OUT_MS] = now;
+    const rx = N[REF_X]!, rz = N[REF_Z]!;
+    const th = Math.atan2(-ux * rz + uz * rx, ux * rx + uz * rz); // relativeAngle(ux, uz, refX, refZ)
+    let d = th - N[PREV_THETA]!; // wrapPi(th - prevTheta)
+    while (d > PI) d -= 2 * PI;
+    while (d <= -PI) d += 2 * PI;
+    N[ROLL] = N[ROLL]! + d;
+    N[PREV_THETA] = th;
+    N[TH] = th;
+    const ns = sectorIn(N, sector);
     if (ns !== sector) {
       transitions++;
       if (transitions === 1) second = ns;
       sector = ns;
     }
-    holding = now - outSince >= holdMs;
-    evaluate(now);
+    holding = now - N[OUT_SINCE]! >= holdMs;
+    evaluate();
   }
 
-  /** Pattern state machine for the current stroke (called on every out sample). */
-  function evaluate(now: number): void {
+  /** Pattern state machine for the current stroke (called on every out sample, at N[NOW]). */
+  function evaluate(): void {
     if (spent) return;
-    const dt = now - outSince;
+    const dt = N[NOW]! - N[OUT_SINCE]!;
+    const roll = N[ROLL]!;
     if (first === RsSector.FORWARD) {
       if (transitions === 0) return;
       if (transitions === 1 && isSide(sector) && dt <= seqMs) {
         if (sector === RsSector.RIGHT ? roll >= STEP_OVER_MIN : roll <= -STEP_OVER_MIN) {
-          emitSide(SkillMove.STEP_OVER, sector, now);
+          emitSide(SkillMove.STEP_OVER, sector, false);
           spent = true;
         }
         return;
@@ -328,7 +376,7 @@ export function createRightStick(): RightStickTracker {
       if (transitions === 2 && sector === RsSector.FORWARD && isSide(second)) {
         // Back -> right -> forward turns the relative angle down from +-PI to 0; back -> left -> forward turns it up.
         if (second === RsSector.RIGHT ? roll <= -ROULETTE_MIN : roll >= ROULETTE_MIN) {
-          emitSide(SkillMove.ROULETTE, second, now);
+          emitSide(SkillMove.ROULETTE, second, false);
           spent = true;
         }
         return;
@@ -337,13 +385,15 @@ export function createRightStick(): RightStickTracker {
     } else if (isSide(first)) {
       if (transitions > 0 || Math.abs(roll) > SIDE_DRIFT) { spent = true; return; }
       if (holding) {
-        emitSide(SkillMove.BALL_ROLL, first, now);
+        emitSide(SkillMove.BALL_ROLL, first, false);
         spent = true;
       }
     }
   }
 
-  function rightStep(px: number, pz: number, now: number): void {
+  /** Right stick in pitch space N[PX], N[PZ] at N[NOW]. */
+  function rightStep(): void {
+    const px = N[PX]!, pz = N[PZ]!;
     let m = Math.sqrt(px * px + pz * pz);
     if (!Number.isFinite(m)) m = 0;
     if (!armed) {
@@ -353,18 +403,22 @@ export function createRightStick(): RightStickTracker {
     if (out) {
       if (m < releaseMag) { endStroke(); return; }
       const ux = px / m, uz = pz / m;
-      if (ux * prevUx + uz * prevUz < THROUGH_COS) {
+      N[UX] = ux; N[UZ] = uz;
+      if (ux * N[PREV_UX]! + uz * N[PREV_UZ]! < THROUGH_COS) {
         endStroke();
-        startStroke(ux, uz, now);
+        startStroke();
         return;
       }
-      continueStroke(ux, uz, now);
+      continueStroke();
     } else if (m >= flickMag) {
-      startStroke(px / m, pz / m, now);
+      N[UX] = px / m; N[UZ] = pz / m;
+      startStroke();
     }
   }
 
-  function leftStep(px: number, pz: number, now: number): void {
+  /** Left stick in pitch space N[PX], N[PZ] at N[NOW]. */
+  function leftStep(): void {
+    const px = N[PX]!, pz = N[PZ]!;
     let m = Math.sqrt(px * px + pz * pz);
     if (!Number.isFinite(m)) m = 0;
     if (!lArmed) {
@@ -375,18 +429,19 @@ export function createRightStick(): RightStickTracker {
     if (lOut) {
       if (m < releaseMag) { lOut = false; return; }
       const ux = px / m, uz = pz / m;
-      fresh = ux * lUx + uz * lUz < THROUGH_COS;
-      lUx = ux;
-      lUz = uz;
+      fresh = ux * N[L_UX]! + uz * N[L_UZ]! < THROUGH_COS;
+      N[L_UX] = ux;
+      N[L_UZ] = uz;
     } else if (m >= flickMag) {
       lOut = true;
       fresh = true;
-      lUx = px / m;
-      lUz = pz / m;
+      N[L_UX] = px / m;
+      N[L_UZ] = pz / m;
     }
     if (!fresh || (heldBits & BOTH_MODS) !== BOTH_MODS) return;
-    const th = relativeAngle(lUx, lUz, facX, facZ);
-    if (PI - Math.abs(th) <= DRAG_BACK_HALF) emit(SkillMove.DRAG_BACK, -facX, -facZ, now, false);
+    const ux = N[L_UX]!, uz = N[L_UZ]!, fx = N[FAC_X]!, fz = N[FAC_Z]!;
+    const th = Math.atan2(-ux * fz + uz * fx, ux * fx + uz * fz); // relativeAngle(lUx, lUz, facX, facZ)
+    if (PI - Math.abs(th) <= DRAG_BACK_HALF) emit(SkillMove.DRAG_BACK, DIR_BACK, false, false);
   }
 
   function writeDir(f: InputFrame, x: number, z: number): void {
@@ -396,24 +451,19 @@ export function createRightStick(): RightStickTracker {
   }
 
   const api: RightStickTracker = {
-    get skillDirX() { return lastSkillX; },
-    get skillDirZ() { return lastSkillZ; },
+    get skillDirX() { return N[LAST_SKILL_X]!; },
+    get skillDirZ() { return N[LAST_SKILL_Z]!; },
     get sector() { return sector; },
 
     update(rx, ry, nowMs) {
-      let now = Number.isFinite(nowMs) ? nowMs : lastNow;
-      if (now < lastNow) now = lastNow;
-      lastNow = now;
-      const sx = Number.isFinite(rx) ? rx : 0, sy = Number.isFinite(ry) ? ry : 0;
-      rightStep(rotCos * sx - rotSin * sy, rotSin * sx + rotCos * sy, now);
-      const lx = leftX, ly = leftY;
-      leftStep(rotCos * lx - rotSin * ly, rotSin * lx + rotCos * ly, now);
+      N[RX_IN] = rx; N[RY_IN] = ry;
+      step(nowMs);
     },
 
     consume() {
       let bits = 0;
       if (flickLatched) {
-        if (lastNow - flickAt > latchMs) flickLatched = false;
+        if (N[LAST_NOW]! - N[FLICK_AT]! > latchMs) flickLatched = false;
         else if (!flickReportedLast) {
           bits |= Btn.RS_FLICK;
           flickLatched = false;
@@ -440,32 +490,37 @@ export function createRightStick(): RightStickTracker {
       flickReportedLast = false;
       skill = SkillMove.NONE;
       heldBits = 0;
-      leftX = 0;
-      leftY = 0;
+      N[LEFT_X] = 0;
+      N[LEFT_Y] = 0;
     },
 
     setLeft(lx, ly, buttons) {
-      leftX = Number.isFinite(lx) ? lx : 0;
-      leftY = Number.isFinite(ly) ? ly : 0;
+      N[LEFT_X] = Number.isFinite(lx) ? lx : 0;
+      N[LEFT_Y] = Number.isFinite(ly) ? ly : 0;
       heldBits = buttons | 0;
     },
 
     updatePad(s, buttons, nowMs) {
-      api.setLeft(s.lx, s.ly, buttons);
-      api.update(s.rx, s.ry, nowMs);
+      // setLeft(s.lx, s.ly, buttons) + update(s.rx, s.ry, nowMs) without passing the doubles through calls.
+      const lx = s.lx, ly = s.ly;
+      N[LEFT_X] = Number.isFinite(lx) ? lx : 0;
+      N[LEFT_Y] = Number.isFinite(ly) ? ly : 0;
+      heldBits = buttons | 0;
+      N[RX_IN] = s.rx; N[RY_IN] = s.ry;
+      step(nowMs);
     },
 
     setFacing(fx, fz) {
       const m = Math.sqrt(fx * fx + fz * fz);
       if (!(m > 1e-6) || !Number.isFinite(m)) return;
-      facX = fx / m;
-      facZ = fz / m;
+      N[FAC_X] = fx / m;
+      N[FAC_Z] = fz / m;
     },
 
     setStickRotation(rot) {
       const r = Number.isFinite(rot) ? rot : 0;
-      rotCos = r === 0 ? 1 : Math.cos(r);
-      rotSin = r === 0 ? 0 : Math.sin(r);
+      N[ROT_COS] = r === 0 ? 1 : Math.cos(r);
+      N[ROT_SIN] = r === 0 ? 0 : Math.sin(r);
     },
 
     setSkillsEnabled(on) {
@@ -473,7 +528,11 @@ export function createRightStick(): RightStickTracker {
     },
 
     setContext(ctx) {
-      api.setStickRotation(ctx.projector ? ctx.projector.stickRotation() : 0);
+      // setStickRotation / setFacing written out (no double crosses a call).
+      const rot = ctx.projector ? ctx.projector.stickRotation() : 0;
+      const r = Number.isFinite(rot) ? rot : 0;
+      N[ROT_COS] = r === 0 ? 1 : Math.cos(r);
+      N[ROT_SIN] = r === 0 ? 0 : Math.sin(r);
       const st = ctx.state;
       const ctl = st.ctrl[ctx.human];
       const slot = ctl ? ctl.slot : -1;
@@ -485,7 +544,8 @@ export function createRightStick(): RightStickTracker {
         fx = team && team.dir < 0 ? -1 : 1;
         fz = 0;
       }
-      api.setFacing(fx, fz);
+      const fm = Math.sqrt(fx * fx + fz * fz);
+      if (fm > 1e-6 && Number.isFinite(fm)) { N[FAC_X] = fx / fm; N[FAC_Z] = fz / fm; }
       let on = !!p && p.active === 1 && st.match.phase === MatchPhase.IN_PLAY;
       if (on && p) {
         const b = st.ball;
@@ -502,7 +562,7 @@ export function createRightStick(): RightStickTracker {
     consumeSkill() {
       const k = skill;
       skill = SkillMove.NONE;
-      if (k === SkillMove.NONE || lastNow - skillAt > latchMs) return SkillMove.NONE;
+      if (k === SkillMove.NONE || N[LAST_NOW]! - N[SKILL_AT]! > latchMs) return SkillMove.NONE;
       return k;
     },
 
@@ -510,14 +570,14 @@ export function createRightStick(): RightStickTracker {
       const bits = api.consume();
       f.buttons |= bits;
       if ((bits & Btn.RS_FLICK) !== 0) {
-        writeDir(f, flickX, flickZ);
+        writeDir(f, N[FLICK_X]!, N[FLICK_Z]!);
         return;
       }
       if (skill === SkillMove.NONE) return;
       const k = api.consumeSkill();
       if (k !== SkillMove.NONE && f.skill === SkillMove.NONE) {
         f.skill = k;
-        writeDir(f, skillX, skillZ);
+        writeDir(f, N[SKILL_X]!, N[SKILL_Z]!);
       }
     },
   };

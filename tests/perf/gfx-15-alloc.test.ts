@@ -11,7 +11,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ALLOC_FLAGS } from './qf-7r-alloc-flags';
+import { ALLOC_FLAGS, EXACT_INTERVAL } from './qf-7r-alloc-flags';
 
 describe('GFX-15 zero allocation per frame', () => {
   it('director, shots, blends, replay angles and the projector allocate nothing per frame', () => {
@@ -125,10 +125,10 @@ describe('GFX-15 zero allocation per frame', () => {
       const { Session } = await import('node:inspector/promises');
       const session = new Session();
       session.connect();
-      await session.post('HeapProfiler.startSampling', { samplingInterval: 64, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
-      const t0 = process.hrtime.bigint();
+      await session.post('HeapProfiler.startSampling', { samplingInterval: ${EXACT_INTERVAL}, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
+      const t0 = process.cpuUsage(); // [QF-7R] CPU time, not wall time: a busy machine does not inflate it
       const total = (bytes(N) - probe) / N;
-      const us = Number(process.hrtime.bigint() - t0) / N / 1000;
+      const us = ((c) => c.user + c.system)(process.cpuUsage(t0)) / N;
       const { profile } = await session.post('HeapProfiler.stopSampling');
       session.disconnect();
       const EVENT = new Set(['transition', 'onEvents', 'start', 'stop', 'startForPhase', 'syncLive', 'cutToBall', 'snapTo', 'send']);

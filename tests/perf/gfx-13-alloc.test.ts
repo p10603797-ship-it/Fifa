@@ -10,7 +10,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ALLOC_FLAGS } from './qf-7r-alloc-flags';
+import { ALLOC_FLAGS, EXACT_INTERVAL } from './qf-7r-alloc-flags';
 
 describe('GFX-13 zero allocation per frame', () => {
   it('ball + markers update() allocate nothing per frame and cost a few microseconds', () => {
@@ -101,7 +101,7 @@ describe('GFX-13 zero allocation per frame', () => {
         run(20000);
         globalThis.gc();
         await session.post('HeapProfiler.startSampling', {
-          samplingInterval: 64, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
+          samplingInterval: ${EXACT_INTERVAL}, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
         });
         run(n);
         const { profile } = await session.post('HeapProfiler.stopSampling');
@@ -111,9 +111,9 @@ describe('GFX-13 zero allocation per frame', () => {
         };
       };
       const m = await measure(60000);
-      const t0 = process.hrtime.bigint();
+      const t0 = process.cpuUsage(); // [QF-7R] CPU time, not wall time: a busy machine does not inflate it
       run(20000);
-      const us = Number(process.hrtime.bigint() - t0) / 20000 / 1000;
+      const us = ((c) => c.user + c.system)(process.cpuUsage(t0)) / 20000;
       console.log(JSON.stringify({ ...m, usPerFrame: us, overlay: markers.overlay.geometry.drawRange.count, landings: markers.landing.predictions }));
     `;
     const r = spawnSync(process.execPath, [

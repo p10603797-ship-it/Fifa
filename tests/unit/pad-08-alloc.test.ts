@@ -19,10 +19,9 @@ describe('PAD-08 allocation', () => {
     expect(r.status, r.stderr).toBe(0);
     const bytes = JSON.parse(r.stdout.trim().split('\n').pop()!) as Record<string, number>;
     expect(Object.keys(bytes).sort()).toEqual(['keyboardDiagonal', 'keyboardHeld', 'keyboardIdle', 'menuIdle', 'menuRepeat']);
-    for (const name of ['keyboardHeld', 'keyboardIdle', 'menuIdle', 'menuRepeat']) expect(bytes[name], name).toBeLessThan(8);
-    // Diagonal movement feeds non-integer values to the PAD-05 right-stick tracker, which boxes doubles in closure
-    // variables (64 bytes per update, the same for any analogue pad stick): reported to the lead as a CR to PAD-05.
-    // Bounded here so it cannot grow; tighten to < 8 once rightStick.ts stores its doubles unboxed.
-    expect(bytes.keyboardDiagonal, 'keyboardDiagonal').toBeLessThanOrEqual(160);
+    // [QF-7R] Exact (ALLOC_FLAGS): the smallest allocation is 16 B, so < 2 means nothing per call. Diagonal movement
+    // included: the PAD-05 tracker keeps its doubles in a Float64Array now (it boxed 64 B per update in closure
+    // variables) and the keyboard hands both sticks over as one object.
+    for (const name of ['keyboardDiagonal', 'keyboardHeld', 'keyboardIdle', 'menuIdle', 'menuRepeat']) expect(bytes[name], name).toBeLessThan(2);
   }, 150_000);
 });

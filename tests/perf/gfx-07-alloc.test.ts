@@ -9,7 +9,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ALLOC_FLAGS } from './qf-7r-alloc-flags';
+import { ALLOC_FLAGS, EXACT_INTERVAL } from './qf-7r-alloc-flags';
 
 describe('GFX-07 zero allocation per frame', () => {
   it('update() (FK, ground, placement, instance matrices) allocates nothing per frame', () => {
@@ -74,7 +74,7 @@ describe('GFX-07 zero allocation per frame', () => {
         fn(3000);
         globalThis.gc();
         await session.post('HeapProfiler.startSampling', {
-          samplingInterval: 64, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
+          samplingInterval: ${EXACT_INTERVAL}, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
         });
         fn(20000);
         const { profile } = await session.post('HeapProfiler.stopSampling');
@@ -83,9 +83,9 @@ describe('GFX-07 zero allocation per frame', () => {
       const res = {};
       model.setPoseDriver(driver);
       res.setPoseBytes = await measure(runFrames);
-      let t0 = process.hrtime.bigint();
+      let t0 = process.cpuUsage(); // [QF-7R] CPU time, not wall time: a busy machine does not inflate it
       runFrames(5000);
-      res.usPerFrame = Number(process.hrtime.bigint() - t0) / 5000 / 1000;
+      res.usPerFrame = ((c) => c.user + c.system)(process.cpuUsage(t0)) / 5000;
       model.setPoseDriver(null);
       res.defaultDriverBytes = await measure(runFrames);
       const m = model.meshes[1].instanceMatrix.array;

@@ -37,7 +37,7 @@ import { CameraType, ControllerKind, MatchPhase } from '../../contracts/enums';
 import type { CameraSettings, Settings } from '../../contracts/settings';
 import type { ReadonlySimState } from '../../contracts/state';
 import { T_BALL, T_CAMERA, T_TOUCHUI } from '../../contracts/tuning';
-import type { CameraModule, RenderContext, RenderFrame } from '../types';
+import type { CameraModule, EulerFields, RenderContext, RenderFrame } from '../types';
 
 export const LOCAL_TUNING = { // TUNING-CR (GFX-14 broadcast camera)
   // ---- settings sliders (0..20, 10 = the T_CAMERA baseline)
@@ -651,8 +651,11 @@ export function createBroadcastCamera(ctx: RenderContext): BroadcastCameraModule
 
   /** Write the pose into ctx.camera. */
   function writeCamera(): void {
-    cam.position.set(S[S_CX]!, S[S_CY]!, S[S_CZ]!);
-    euler.set(-S[S_PITCH]!, S[S_YAW]!, 0, 'YXZ');
+    // [QF-7R] Field writes, not position.set / euler.set (see EulerFields: no double crosses a call).
+    const cp = cam.position;
+    cp.x = S[S_CX]!; cp.y = S[S_CY]!; cp.z = S[S_CZ]!;
+    const e = euler as unknown as EulerFields;
+    e._x = -S[S_PITCH]!; e._y = S[S_YAW]!; e._z = 0;
     cam.quaternion.setFromEuler(euler);
     cam.updateMatrixWorld(true);
   }

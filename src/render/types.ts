@@ -93,6 +93,19 @@ export function createInterpState(): InterpState {
   };
 }
 
+/**
+ * [QF-7R] three.js Euler storage fields. Per-frame camera code writes them directly (then
+ * quaternion.setFromEuler(euler)) instead of euler.set(x, y, z, order): a call V8 does not inline boxes its double
+ * arguments (16 B each, every frame), and whether it inlines depends on the caller's inlining budget. Only for a
+ * stand-alone Euler (no owner: its change callback is a no-op, so skipping it changes nothing). Vector3 x / y / z are
+ * plain fields and are written the same way instead of position.set(...).
+ */
+export interface EulerFields {
+  _x: number;
+  _y: number;
+  _z: number;
+}
+
 /** One animation frame as seen by modules. The object is reused every frame (never retain it). */
 export interface RenderFrame {
   prev: ReadonlySimState;

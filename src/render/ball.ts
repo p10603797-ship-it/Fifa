@@ -19,7 +19,7 @@
 
 import {
   DataTexture, DynamicDrawUsage, InstancedMesh, LinearFilter, LinearMipmapLinearFilter, Mesh, MeshBasicMaterial,
-  MeshLambertMaterial, PlaneGeometry, Quaternion, RGBAFormat, SphereGeometry, SRGBColorSpace,
+  MeshDepthMaterial, MeshLambertMaterial, PlaneGeometry, Quaternion, RGBAFormat, SphereGeometry, SRGBColorSpace,
 } from 'three';
 import { BALL_RADIUS, NUM_SLOTS } from '../contracts/constants';
 import { QualityTier } from '../contracts/enums';
@@ -306,6 +306,11 @@ export function createBall(ctx: RenderContext): BallModule {
   ball.visible = false;
   ball.renderOrder = 1;
   ball.castShadow = getTierParams(ctx.tier).shadowMap;
+  // [QF-7R] Its own shadow depth material: three.js's shared default is also used by the instanced casters (players,
+  // goal frames), and every switch between an instanced and a plain mesh re-derives the program (getParameters +
+  // cache key: ~0.2 ms and a few KB of garbage per frame with three casters at the QUALITY tier).
+  const ballDepth = new MeshDepthMaterial();
+  ball.customDepthMaterial = ballDepth;
 
   const blobTex = createBlobTexture();
   const quad = new PlaneGeometry(1, 1);
@@ -361,7 +366,9 @@ export function createBall(ctx: RenderContext): BallModule {
     update(f: RenderFrame) {
       const it = f.interp;
       const b = f.curr.ball;
-      ball.position.set(it.ballX, it.ballY, it.ballZ);
+      // [QF-7R] Field writes, not position.set (no double crosses a call; see render/types.ts EulerFields).
+      const bp = ball.position;
+      bp.x = it.ballX; bp.y = it.ballY; bp.z = it.ballZ;
       const fr = f.frame;
       let dt = fr.paused ? 0 : fr.dtMs / 1000;
       if (!(dt > 0)) dt = 0;
@@ -376,8 +383,9 @@ export function createBall(ctx: RenderContext): BallModule {
       blob.h = it.ballY - BALL_RADIUS;
       blobFromHeight(blob);
       shadow.visible = active && it.ballY > -BALL_RADIUS;
-      shadow.position.set(it.ballX, SHADOW_Y + 0.002, it.ballZ);
-      shadow.scale.set(blob.size, 1, blob.size);
+      const sp = shadow.position, sc = shadow.scale;
+      sp.x = it.ballX; sp.y = SHADOW_Y + 0.002; sp.z = it.ballZ;
+      sc.x = blob.size; sc.y = 1; sc.z = blob.size;
       shadowMat.opacity = blob.opacity;
 
       const s = f.curr;
@@ -405,7 +413,7 @@ export function createBall(ctx: RenderContext): BallModule {
     dispose() {
       ctx.scene.remove(ball, shadow, playerShadows);
       for (let i = 0; i < geos.length; i++) geos[i]?.dispose();
-      ballMat.dispose(); ballTex.dispose();
+      ballMat.dispose(); ballTex.dispose(); ballDepth.dispose();
       quad.dispose(); shadowMat.dispose(); playerShadowMat.dispose(); blobTex.dispose();
       playerShadows.dispose();
     },
