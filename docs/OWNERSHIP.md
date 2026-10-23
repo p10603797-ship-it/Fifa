@@ -14,9 +14,9 @@ in the report; the lead moves them into `contracts/tuning.ts` between waves.
 ## Lead (orchestrator)
 `src/contracts/**`, `src/sim/step.ts`, `src/sim/init.ts`, `src/sim/contacts.ts`, `src/sim/actions/dispatch.ts`,
 `src/sim/actions/registry.ts`, `src/sim/core/kick.ts`, `src/sim/core/query.ts`, `src/sim/core/events.ts`,
-`src/ai/index.ts`, `src/ai/jobs.ts`, `src/ai/cpu/index.ts`, `src/sim/keeper/index.ts`, `package.json`,
-`tsconfig.json`, `vite.config.ts`, `vitest.config.ts`, `playwright.config.ts`, `eslint.config.js`, `docs/*.md`
-except where listed below.
+`src/ai/index.ts`, `src/ai/jobs.ts`, `src/ai/cpu/index.ts`, `src/sim/keeper/index.ts`, `src/sim/control/handoff.ts`
+(D-019), `package.json`, `tsconfig.json`, `vite.config.ts`, `vitest.config.ts`, `playwright.config.ts`,
+`eslint.config.js`, `docs/*.md` except where listed below.
 
 ## Wave 0 — Foundations
 
@@ -209,4 +209,54 @@ Frozen after Wave 0 (lead-owned): `src/render/types.ts`, `src/render/index.ts` (
 | PLT-05 | `src/platform/recovery.ts`, `src/ui/screens/diagnostics.ts`, `src/ui/screens/recovery.ts`, `src/platform/diagnostics.ts`, `src/ui/debugOverlay.ts`, `src/platform/replayRecorder.ts` |
 | PLT-06 | `README.md`, `docs/ASSETS.md`, `docs/DEVICE_CHECKLIST.md`, `docs/DEPLOY.md`, `.github/workflows/pages.yml` |
 
-Waves 2-5 (INT, QA, FIX, SGN) own the files named in their briefs; fixes go to the owner area's FIX agent.
+Waves 2-5 (INT, QA, FIX, SGN) own the files named in their briefs; fixes go to the owner area's FIX agent. From
+Wave 3 the merged QA+fix agents QF-1..QF-17 (D-020) fix defects in the files of their charter area, so a file's last
+editor may be its area's QF agent; the Wave 1 owner above stays the reference for who answers for it.
+
+## Helper files added after Wave 0
+
+Allowed helper files (named in their authors' reports), with the assignment that owns each. Glob entries above already
+cover `src/app/**` (FND-04, then the INT wave; the entry point `src/main.ts` goes with it), `src/sim/core/*` (FND-03), `src/sim/control/resolve*.ts` (SIM-15) and
+`tools/**` (FND-06 unless named).
+
+| File | Owner | What it is |
+|---|---|---|
+| `src/sim/kicks/passHooks.ts`, `lobHooks.ts`, `throughHooks.ts`, `shotHooks.ts`, `aerialHooks.ts`, `skillsHooks.ts` | SIM-08, -09, -10, -11, -12, -13 | import-cycle-safe shells of the module's action handlers and kick solvers (read by `sim/actions/registry.ts`) |
+| `src/sim/defend/tackleHooks.ts`, `src/sim/players/firstTouchHooks.ts`, `src/sim/players/bodiesShield.ts` | SIM-14, SIM-07, SIM-05 | the same for tackles / clearances and the first touch; shield starters |
+| `src/sim/keeper/saveKinematics.ts`, `sweeperHooks.ts`, `handlingHooks.ts` | GKP-02, GKP-03, GKP-05 | save kinematics and the dive / catch handlers; rush / punch and handling shells |
+| `src/sim/rules/restartCommon.ts`, `throwinHooks.ts`, `freekickHooks.ts` | RUL-11, RUL-02, RUL-05 | shared restart helpers and the SET_PIECE handler; throw-in and wall-jump handler shells |
+| `src/sim/kicks/kickCommon.ts` | QF-10 | foot-kick contact rules shared by the KICK and SHOT handlers (charged release, reach, set-piece line-up) |
+| `src/sim/rules/practice.ts` | QF-1 (from MOD-04) | practice rules inside the sim (`practiceRulesTick`, `preparePracticeState`) |
+| `src/audio/bank.ts`, `services.ts`, `voices.ts` | AUD-01 | pre-rendered sound buffers, engine services for the sound modules, voice limiting |
+| `src/audio/dsp.ts` | AUD-02..05 | synthesis toolkit for the sound modules |
+| `src/net/packet.ts` | NET-02 | wire codecs and `NET_PROTOCOL_VERSION` |
+| `src/platform/info.ts` | PLT-02 | platform detection (iPad, standalone, fullscreen, safe areas) |
+| `src/platform/licences.ts` | QF-5 | credits and licence notice at run time (reads the comment `tools/postbuild.mjs` writes) |
+| `src/render/anim/poseMath.ts` | GFX-09..12 | pose maths shared by the animation modules |
+| `src/render/anim/reach.ts`, `src/render/players/drawn.ts` | QF-4 | ball-contact reach for the animator; drawn-position offsets of each player |
+| `src/render/kit/colour.ts`, `crest.ts`, `glyphs.ts`, `raster.ts` | GFX-08 | kit colour maths, crests, shirt-number digits, the kit atlas rasteriser |
+| `src/render/players/fk.ts`, `parts.ts` | GFX-07 | skeleton / forward kinematics and body-part geometry |
+| `src/render/uniformCache.ts`, `src/render/warmScript.ts` | QF-7R | allocation-free uniform uploads; render JIT warm-up script |
+| `src/app/blockers.ts` | QF-5 | reasons a match may not run (one session flag) |
+| `src/app/liveState.ts` | QF-7R | the second live state the renderer interpolates from |
+| `src/ui/palette.ts` | UIX-01 | Dot palette derivation |
+| `src/ui/hud/hudShared.ts` | UIX-06 / UIX-07 / UIX-12 | helpers shared by the HUD parts |
+| `src/ui/hud/controlGlyphs.ts`, `src/ui/screens/tutorialSteps.ts` | UIX-12 | control glyphs for hints and the tutorial; tutorial steps |
+| `src/ui/screens/matchFlow.ts` | UIX-05 (with UIX-03/04) | local pre-match flow shared by the flow screens |
+| `src/ui/screens/sideAssign.ts` | UIX-04 | side assignment model behind side select |
+| `tools/hash-table.ts` | TUN-7S | behaviour-identity hash table for refactors |
+
+## Documents
+
+| File | Owner |
+|---|---|
+| `docs/BRIEF.md`, `docs/DECISIONS.md`, `docs/STATUS.md`, `docs/ARCHITECTURE.md`, this file | lead (SGN-06 updated ARCHITECTURE and OWNERSHIP to the final tree) |
+| `docs/CONTRACTS.md` | SGN-06 (written in Wave 5; the lead keeps it current with every contract change) |
+| `docs/TUNING.md` | INT-A, then each QF agent's tuning section (TUN-1, TUN-2 for the moves) |
+| `docs/KEYBOARD.md` | PAD-08 |
+| `docs/ATTRIBUTE_AUDIT.md` | DAT-05 (refreshed by QF-11) |
+| `docs/ASSETS.md`, `docs/DEVICE_CHECKLIST.md`, `docs/DEPLOY.md`, `README.md` | PLT-06 (the ASSETS originality and licence audit section SGN-05; docs audit SGN-06) |
+| `docs/KNOWN_ISSUES.md`, `docs/INTEGRATION_ISSUES.md` | lead (entries from the QF agents) |
+| `docs/TEST_REPORT.md` | SGN-01 |
+| `docs/CONTROLS_AUDIT.md` | SGN-02 |
+| `docs/PERF_REPORT.md` | QF-7 / QF-7R, final numbers SGN-04 |

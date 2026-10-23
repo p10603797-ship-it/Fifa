@@ -16,11 +16,12 @@ offline helper `sw.js` and the icons). There is no server, no account, no ads an
 4. [Put it online for free](#4-put-it-online-for-free)
 5. [Add it to the Home Screen and play offline](#5-add-it-to-the-home-screen-and-play-offline)
 6. [Pair a controller](#6-pair-a-controller)
-7. [Controls reference](#7-controls-reference)
-8. [Troubleshooting](#8-troubleshooting)
-9. [Privacy](#9-privacy)
-10. [For developers](#10-for-developers)
-11. [Credits and licences](#11-credits-and-licences)
+7. [Play a friend](#7-play-a-friend)
+8. [Controls reference](#8-controls-reference)
+9. [Troubleshooting](#9-troubleshooting)
+10. [Privacy](#10-privacy)
+11. [For developers](#11-for-developers)
+12. [Credits and licences](#12-credits-and-licences)
 
 ---
 
@@ -283,7 +284,47 @@ Notes:
 
 ---
 
-## 7. Controls reference
+## 7. Play a friend
+
+Choose **Play a Friend** on the main menu, then **Same iPad** or **Online**.
+
+### On the same iPad
+
+Two people play on one iPad with one shared camera: **controller against controller**, or **touch against
+controller** (two people cannot share one touch screen).
+
+1. Pair the controllers (section 6) and press a button on each so the game sees it.
+2. **Play a Friend > Same iPad**, then pick both teams and kits.
+3. On side select, move one input to the left (home) and the other to the right (away). Player 1 is orange, player 2
+   is cyan. The game will not start until each side has a player.
+4. Choose the match settings and play. Either player can pause; only the player who paused can resume or quit.
+
+At full time, **Rematch** plays the same teams again and **Change teams** goes back to team select.
+
+### Online with a room code
+
+Both devices need the internet. The first visit must be online over HTTPS (any published address works).
+
+1. **Host:** **Play a Friend > Online**. Type a nickname if you like, then tap **Create room**. The room screen shows a
+   6-character code and a share link with **Copy link** and **Share…** buttons. Keep this screen open.
+2. **Friend:** open the same game address, then **Play a Friend > Online > Join room** and type the code (on screen, with
+   a controller or with a keyboard); it joins by itself after the sixth character. Opening the share link goes
+   straight to joining.
+3. Both pick a club (**Your club**) and tap **Ready**. The host also chooses the match settings (half length, offside,
+   fouls and cards, cup rules, night match, goal replays); the friend sees them. The match starts a moment after both
+   are ready.
+4. During the match each player has **3 pauses** of up to **30 seconds**; only the player who paused can resume early.
+   If the game waits for the other device, a small **Waiting for...** pill shows and play continues by itself.
+5. If the friend leaves or the connection drops, the game waits **20 seconds** for them to come back (a friend whose
+   page reloaded can tap **Rejoin match**). After that you can **Finish against CPU** or **End match**.
+6. At full time, **Rematch** takes both players back to the same room to ready up again; **Quit** leaves the room.
+
+Online play uses the free public PeerJS service to introduce the two devices; read section 10 (Privacy) first. If
+something goes wrong the game shows a plain message; section 9 lists what to do.
+
+---
+
+## 8. Controls reference
 
 DotKick uses the familiar layouts of modern football games: a touch scheme like popular mobile football games, and
 the "Classic" button layout of console football games on controllers. The **Tutorial** (in **Practice**, or
@@ -531,7 +572,7 @@ use 1-4 for the D-pad there.
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 **The game runs at a jerky 30 frames per second, or shows a Low Power Mode hint.**
 Low Power Mode limits Safari to 30 fps. Turn it off in **Settings > Battery** (or in Control Center). Also close
@@ -599,7 +640,7 @@ Results** button. The on-device script is [docs/DEVICE_CHECKLIST.md](docs/DEVICE
 
 ---
 
-## 9. Privacy
+## 10. Privacy
 
 - No accounts, ads, analytics or tracking. The game makes no network requests while you play, except for online 1v1.
 - Settings, records and cup progress stay on your iPad (browser storage). **Settings > Data** erases them.
@@ -612,7 +653,7 @@ Results** button. The on-device script is [docs/DEVICE_CHECKLIST.md](docs/DEVICE
 
 ---
 
-## 10. For developers
+## 11. For developers
 
 | Command | What it does |
 |---|---|
@@ -626,7 +667,10 @@ Results** button. The on-device script is [docs/DEVICE_CHECKLIST.md](docs/DEVICE
 | `npm run soak` | 2,000 headless bot matches checking invariants |
 | `npm run fuzz` | 500 matches with random inputs |
 | `npm run bench` | Build, then the headless proxy benchmark (budgets for sim time, draw calls and triangles) |
-| `npm run e2e` | Playwright end-to-end tests (Chromium and WebKit at iPad size) |
+| `npm run e2e` | Playwright end-to-end tests at iPad size: Chromium, plus WebKit when a WebKit browser is installed. They serve `dist/`, so run `npm run build` first |
+| `npm run glitch-audit` | Checks that every glitch-list line of the brief has a named regression test |
+| `npm run gen:data` | Regenerates the invented clubs and players (`src/data/clubs.generated.ts`) |
+| `npm run icons` / `npm run icons:check` | Regenerates the app icons in `public/icons/` / checks they are up to date |
 
 - The game is TypeScript (strict) with Vite and Three.js, no game engine. The match simulation is deterministic: the
   same seed and inputs give the same match on every device, which powers replays, online lockstep and soak tests.
@@ -642,7 +686,7 @@ Results** button. The on-device script is [docs/DEVICE_CHECKLIST.md](docs/DEVICE
 
 ---
 
-## 11. Credits and licences
+## 12. Credits and licences
 
 DotKick is an original game. Its pictures and sounds are generated in code. The only outside parts are open-source
 libraries (Three.js and PeerJS, MIT licence) and two open fonts (Space Grotesk and JetBrains Mono, SIL Open Font

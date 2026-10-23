@@ -13,7 +13,7 @@
  * - the GitHub Pages workflow in docs/DEPLOY.md builds with the same commands as package.json and deploys dist/;
  * - online-service addresses quoted in the docs match src/net/config.ts.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -153,11 +153,14 @@ describe('PLT-06 README covers the BRIEF section 19 deliverables', () => {
       'way-2-github-pages-builds-itself-on-every-change',
       '5-add-it-to-the-home-screen-and-play-offline',
       '6-pair-a-controller',
+      '7-play-a-friend',
+      'on-the-same-ipad',
+      'online-with-a-room-code',
       'touch',
       'controller',
       'keyboard-computer',
-      '8-troubleshooting',
-      '9-privacy',
+      '9-troubleshooting',
+      '10-privacy',
     ]) {
       expect(anchors.has(a), a).toBe(true);
     }
@@ -170,14 +173,14 @@ describe('PLT-06 README covers the BRIEF section 19 deliverables', () => {
   });
 
   it('PLT-06 README has the section 11 privacy note about IP addresses', () => {
-    const privacy = section(README, /^## 9\. Privacy/);
+    const privacy = section(README, /^## 10\. Privacy/);
     expect(privacy).toMatch(/shows each player's IP address to the other/);
     expect(privacy).toMatch(/only with people\s+you know/);
     expect(privacy).toMatch(/No accounts, ads, analytics or tracking/);
   });
 
   it('PLT-06 troubleshooting covers low power, silent audio, controller detection and online errors', () => {
-    const t = section(README, /^## 8\. Troubleshooting/);
+    const t = section(README, /^## 9\. Troubleshooting/);
     expect(t).toMatch(/Low Power Mode/);
     expect(t).toMatch(/no sound/i);
     expect(t).toMatch(/controller is not detected/i);
@@ -357,5 +360,87 @@ describe('PLT-06 docs/DEPLOY.md GitHub Pages workflow', () => {
     expect(deploy).toContain(`\`${NET_CONFIG.host}\``);
     expect(deploy).toContain(`port ${NET_CONFIG.port}`);
     expect(read('docs/ASSETS.md')).toContain(`\`${NET_CONFIG.host}\` (port ${NET_CONFIG.port})`);
+  });
+});
+
+/**
+ * [SGN-06] Docs audit guards: the README online flow names the real online-screen buttons and the real pause / rejoin
+ * numbers; docs/CONTRACTS.md covers every contract file and cites only recorded decisions; docs/ARCHITECTURE.md lists
+ * every stage of the tick pipeline; docs/TUNING.md indexes every tuning block; docs/OWNERSHIP.md names every source
+ * file (directly, through a brace list, or through a folder or resolve*.ts glob).
+ */
+describe('SGN-06 docs match the code', () => {
+  const online = read('src/ui/screens/online.ts');
+  const friend = section(README, /^## 7\. Play a friend/);
+
+  it('SGN-06 README "Play a friend" uses the online screen labels and the T_NET pause and rejoin numbers', async () => {
+    for (const label of ['Create room', 'Join room', 'Copy link', 'Share…', 'Your club', 'Ready', 'Rejoin match',
+      'Finish against CPU', 'End match']) {
+      expect(online, `online.ts has ${label}`).toMatch(new RegExp(`['\`]${label}`));
+      expect(friend, label).toContain(label);
+    }
+    for (const label of ['Same iPad', 'Online']) expect(read('src/ui/screens/modeSetup.ts')).toContain(`'${label}'`);
+    const { T_NET } = await import('../../src/contracts/tuning');
+    const { ROOM_CODE_LENGTH } = await import('../../src/net/roomCode');
+    expect(friend).toContain(`**${T_NET.pausesPerPlayer} pauses**`);
+    expect(friend).toContain(`**${T_NET.pauseMaxMs / 1000} seconds**`);
+    expect(friend).toContain(`**${T_NET.rejoinWaitMs / 1000} seconds**`);
+    expect(friend).toContain(`${ROOM_CODE_LENGTH}-character code`);
+    expect(read('docs/DEVICE_CHECKLIST.md')).toContain('**Create room**');
+  });
+
+  it('SGN-06 docs/CONTRACTS.md describes every contract file and cites only decisions in docs/DECISIONS.md', () => {
+    const contracts = read('docs/CONTRACTS.md');
+    const files = readdirSync(join(root, 'src/contracts')).filter((f) => f.endsWith('.ts'));
+    expect(files.length).toBeGreaterThanOrEqual(14);
+    for (const f of files) expect(contracts, f).toMatch(new RegExp(`^\\| \`${f.replace('.', '\\.')}\` \\|`, 'm'));
+    const decisions = new Set([...read('docs/DECISIONS.md').matchAll(/^\| (D-\d{3}) \|/gm)].map((m) => m[1]!));
+    const cited = [...contracts.matchAll(/\bD-\d{3}\b/g)].map((m) => m[0]);
+    expect(cited.length).toBeGreaterThan(5);
+    for (const d of cited) expect(decisions.has(d), d).toBe(true);
+    // Every decision that names a contract member is cited.
+    for (const d of ['D-012', 'D-013', 'D-019', 'D-021']) expect(cited, d).toContain(d);
+  });
+
+  it('SGN-06 docs/ARCHITECTURE.md lists every stage that src/sim/step.ts calls', () => {
+    const arch = read('docs/ARCHITECTURE.md');
+    const step = read('src/sim/step.ts');
+    const body = step.slice(step.indexOf('export function step('));
+    const stages = [...body.matchAll(/^\s+([a-z][A-Za-z]+Tick|cpuThink|resolveControllers)\(s, /gm)].map((m) => m[1]!);
+    expect(stages.length).toBeGreaterThanOrEqual(11);
+    for (const st of stages) expect(arch, st).toMatch(new RegExp(`\\| \\d+ \\| \`${st}\` \\|`));
+  });
+
+  it('SGN-06 docs/TUNING.md names every block exported by src/contracts/tuning.ts', () => {
+    const tuningDoc = read('docs/TUNING.md');
+    const blocks = [...read('src/contracts/tuning.ts').matchAll(/^export const (T_[A-Z0-9_]+)\b/gm)].map((m) => m[1]!);
+    expect(blocks.length).toBeGreaterThanOrEqual(90);
+    expect(tuningDoc).toContain(`${blocks.length} exported blocks`);
+    const missing = blocks.filter((b) => !tuningDoc.includes(`\`${b}\``));
+    expect(missing).toEqual([]);
+  });
+
+  it('SGN-06 docs/OWNERSHIP.md names an owner for every source file', () => {
+    // The Wave 0 stub rows (FND-04 / FND-05 created every stub under src/ui, src/render, ...) do not count as owners.
+    const own = read('docs/OWNERSHIP.md').split('\n').filter((l) => !/^\| FND-0[45] \|/.test(l)).join('\n');
+    const listed = (rel: string): boolean => {
+      if (own.includes(`\`${rel}\``)) return true;
+      const dir = rel.slice(0, rel.lastIndexOf('/'));
+      const base = rel.slice(rel.lastIndexOf('/') + 1);
+      // Folder globs (`src/app/**`), brace lists (`src/sim/core/{rng,dmath}.ts`), prefix globs (`resolve*.ts`) and
+      // files named after their folder's first entry in a table row (`lobHooks.ts` next to `src/sim/kicks/passHooks.ts`).
+      for (let d = dir; d.includes('/'); d = d.slice(0, d.lastIndexOf('/'))) if (own.includes(`\`${d}/**\``)) return true;
+      for (const m of own.matchAll(/`([\w/.-]+)\/\{([\w,]+)\}\.(\w+)`/g)) {
+        if (m[1] === dir && m[2]!.split(',').some((n) => `${n}.${m[3]}` === base)) return true;
+      }
+      for (const m of own.matchAll(/`([\w/.-]+)\/(\w+)\*\.(\w+)`/g)) {
+        if (m[1] === dir && base.startsWith(m[2]!) && base.endsWith(`.${m[3]}`)) return true;
+      }
+      return own.split('\n').some((line) => line.includes(`\`${dir}/`) && line.includes(`\`${base}\``));
+    };
+    const walk = (rel: string): string[] => readdirSync(join(root, rel), { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk(`${rel}/${e.name}`) : [`${rel}/${e.name}`]);
+    const unlisted = walk('src').filter((f) => !f.startsWith('src/contracts/') && f !== 'src/env.d.ts' && !listed(f));
+    expect(unlisted).toEqual([]);
   });
 });

@@ -92,11 +92,12 @@ the internet.)
 
 ## 7. One online match (2 minutes, plus the match)
 
-1. On the iPad: **Play a Friend > Online**, then **Create Room**. Note the 6-character code.
-2. On the second device: open the same game address, then **Play a Friend > Online**, and enter the code (or open the
-   share link).
-3. Both pick teams and ready up. Play at least two minutes (choose the shortest half length to finish a whole match).
-4. Pause once from each side, and resume.
+1. On the iPad: **Play a Friend > Online**, then **Create room**. Note the 6-character code.
+2. On the second device: open the same game address, then **Play a Friend > Online > Join room**, and enter the code
+   (or open the share link from **Copy link** / **Share…**).
+3. Both pick a club (**Your club**) and tap **Ready**; the iPad (host) sets the half length. Play at least two minutes
+   (choose the shortest half length to finish a whole match).
+4. Pause once from each side, and resume (only the player who paused can resume early).
 
 **Pass:** the two devices connect, the match starts on both, the players move smoothly, and the score and clock agree
 on both screens. If the connection pauses, a small waiting indicator shows and play continues by itself. Any error

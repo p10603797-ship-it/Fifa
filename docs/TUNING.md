@@ -5,6 +5,43 @@ reason. Values live in `src/contracts/tuning.ts` (since TUN-1 every sim / AI val
 formerly inline values; module blocks are named in the TUN-1 and TUN-2 tables below; older entries name the module's former `LOCAL_TUNING` block). Measurement tool: `npx tsx tools/soak.ts --matches 24 --difficulty 3
 --enforce all --halfMinutes 4` (equal teams at Professional, as BRIEF §7 defines the bands).
 
+## Block index (`src/contracts/tuning.ts`, final tree)
+
+93 exported blocks. Non-gameplay modules (render, audio, ui, net, platform, app, data generation, modes/stats) keep
+their values in a local block marked `// LOCAL_TUNING (non-gameplay: <reason>)` (TUN-2 below).
+
+**Wave 0 shared tables** (written with the contracts; read by many modules):
+
+| Block | Area | Main readers |
+|---|---|---|
+| `T_BALL` | ball physics (gravity, drag, bounce, roll, spin) | `sim/ball/*`, kicks, possession, restarts, CPU passing |
+| `T_PLAYER` | player movement, sprint, turn, stamina | `sim/players/*`, AI steering and CPU, HUD stamina |
+| `T_DRIBBLE` | dribble touches, control and lose radius | `sim/players/possession.ts`, first touch, tackles, skills |
+| `T_TOUCH` | first touch and receiving | `sim/players/firstTouch*.ts`, control resolver, AI |
+| `T_PASS` | pass speeds, lob angle, assistance, charged release | kicks, restarts, control resolver, CPU passing |
+| `T_SHOT` | shot speeds, accuracy, finesse / chip / power | `sim/kicks/shot.ts`, aerial, free kicks, penalties |
+| `T_TACKLE` | tackle reach and outcomes | `sim/defend/tackle.ts`, aerial, CPU defending |
+| `T_SKILL` | skill-move duration, star gates, vulnerability windows | `sim/kicks/skills.ts`, CPU |
+| `T_GK` | keeper reactions, reach, dive speeds, catching, parries | `sim/keeper/*`, CPU xG |
+| `T_RULES` | restart set-up and timeouts, advantage, idle ball, dead pass, half end, goal and celebration timing, phase limits | `sim/rules/*`, invariants, AI set pieces |
+| `T_FOUL` | foul chances, reckless speed, advantage hold | `sim/rules/fouls.ts` |
+| `T_AI` | shape interval, chaser hysteresis, line spacing, press distance, hold and chase speeds, composure noise | `src/ai/*`, `src/data/tactics.ts`, `src/data/formations.ts` |
+| `T_AERIAL` | headers and volleys | `sim/kicks/aerial.ts` |
+| `T_CPU` | CPU value model and option scoring | `ai/cpu/defending.ts` |
+| `T_LEVEL` | per-difficulty AI parameters (never physics) | `ai/cpu/*`, keeper saves and distribution |
+| `T_INPUT` | resolver windows: buffer, double tap, tap, switch lock-out, idle stick, flick | `sim/control/*`, set-piece rules |
+| `T_PAD` | stick dead zones, trigger threshold, right-stick hold and sequence, D-pad sequence window | `src/input/pad/*` |
+| `T_TOUCHUI` | touch button sizes and gaps, system-edge margin, swipe and tap thresholds, stick radius, hint hold, minimum target | `src/input/touch/*`, broadcast camera, HUD |
+| `T_CAMERA` | broadcast camera height, distance, FOV, follow and lead, ball margin, blends | `src/render/camera/*` |
+| `T_NET` | lockstep delay, redundancy, hash interval, pauses, rejoin | `src/net/*`, `sim/core/hash.ts` |
+| `T_PERF` | dynamic resolution scale and frame-time targets | `src/render/*`, settings |
+
+**Module blocks** (one per module, the module imports it): the 52 TUN-1 blocks in the table below (sim ball, players,
+kicks, defend, control, keeper, rules, then AI, `T_FLIGHT` ... `T_DEFENDING`); `T_QUERY` (`sim/core/query.ts`) and
+`T_SETPIECE_SPOTS` (`ai/setpieces.ts` spot templates) from TUN-2; and the 18 input, modes and formation-remap blocks
+moved by TUN-2 (`T_TOUCH_STICK` ... `T_FORMATION_REMAP`). The QF sections further down log value changes against
+soak, ladder and balance evidence; each names the block it changed.
+
 ## TUN-1: module tuning moved into `src/contracts/tuning.ts` (BRIEF §4 rule 6)
 
 TUN-7S moved every `LOCAL_TUNING` / `*_TUNING` block of `src/sim/**` and `src/ai/**` (the TUNING-CR blocks) into
@@ -515,6 +552,11 @@ untouched watchdogs), `T_FOUL.baseFoulChance` (0.85 broke RUL-09's per-kind foul
 raised instead).
 
 ## Module tuning (`LOCAL_TUNING`, TUNING-CR)
+
+INT-A log, written before TUN-1. The blocks named here now live in `src/contracts/tuning.ts`: carrier `T_CARRIER`,
+passing `T_PASSING`, xG `T_SHOOTING`, defending `T_DEFENDING`, shape `T_SHAPE`, back line `T_DEF_SHAPE`, jobs `T_JOBS`,
+steering `T_STEER`, support `T_SUPPORT`, set pieces `T_SETPIECE_AI`, pass `T_PASS_KICK`, aerial `T_AERIAL_PLAY`, receivers
+`T_RESOLVE`, locomotion `T_LOCOMOTION`, lob `T_LOB`, keeper positioning `T_GK_POSITION`.
 
 ### CPU carrier (`src/ai/cpu/carrier.ts`, TAI-08)
 - Possession value `PV = pvBase + pvSpan * t^3 * (1 - t * 0.65 * width)`: `pvBase` 0.01 -> 0.004, `pvSpan` 0.07 ->

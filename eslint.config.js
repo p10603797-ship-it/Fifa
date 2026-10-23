@@ -5,7 +5,7 @@ import tseslint from 'typescript-eslint';
 const nonDeterministicMath = ['random', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'pow', 'exp', 'expm1', 'log', 'log2', 'log10', 'log1p', 'sinh', 'cosh', 'tanh', 'cbrt', 'hypot'];
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'test-results/**', 'playwright-report/**', '.claude/**', 'public/sw.js'] },
+  { ignores: ['dist/**', 'dist-e2e/**', 'tmp/**', 'reports/**', 'blob-report/**', 'node_modules/**', 'coverage/**', 'test-results/**', 'playwright-report/**', '.claude/**', 'public/sw.js'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

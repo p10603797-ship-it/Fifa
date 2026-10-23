@@ -12,9 +12,9 @@ Nothing in this repository publishes anything by itself. Every way below starts 
 
 | File | Size (approx.) | Needed for |
 |---|---|---|
-| `index.html` | 2.1 MB raw, about 0.7 MB compressed | The whole game: all code, styles and the two fonts, inlined |
+| `index.html` | 2.4 MB raw, about 0.8 MB compressed (gzip) | The whole game: all code, styles and the two fonts, inlined |
 | `manifest.webmanifest` | 1 KB | Add to Home Screen: name, colours, full screen, landscape, icons |
-| `sw.js` | 7 KB | Offline play and the "Update available" flow (service worker) |
+| `sw.js` | 8 KB | Offline play and the "Update available" flow (service worker) |
 | `icons/` (5 PNG files) | 12 KB | Home Screen and browser icons |
 
 - `index.html` runs alone. Without the other files the game still plays; only install, offline and icons are lost.
@@ -211,4 +211,4 @@ No keys are needed for the public broker, and none should be added to the code.
 
 A published address can be opened by anyone who has it. The game itself sends nothing anywhere except during online
 1v1, where the two players' IP addresses become visible to each other (see the README's
-[Privacy](../README.md#9-privacy) section).
+[Privacy](../README.md#10-privacy) section).

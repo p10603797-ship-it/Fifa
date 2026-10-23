@@ -1,7 +1,8 @@
 # DotKick keyboard scheme (desktop development)
 
-The keyboard produces the same `InputFrame` as a controller (positional buttons, EA SPORTS FC 26 Classic layout):
-every key below stands for a pad position, so the context rules (attack, defence, keeper, set pieces) are the pad's.
+The keyboard produces the same `InputFrame` as a controller (positional buttons, the Classic controller layout of
+`docs/BRIEF.md` section 10): every key below stands for a pad position, so the context rules (attack, defence, keeper,
+set pieces) are the pad's.
 Source: `src/input/keyboard.ts` (match) and `src/input/menuInput.ts` (menus). Keys are read by physical position
 (`KeyboardEvent.code`), so the letters are the US-layout positions whatever the keyboard layout.
 
