@@ -224,6 +224,6 @@ Total assignments: 201.
 | QF-7 | queued (after TUN-1) | performance |
 | SGN-05 | done | originality and licence audit: names screened against ~1,700 famous names + Wikidata (98k footballers, 37k clubs); 6 player names renamed (names only, attributes identical); visuals, audio, dependencies, licence notices in dist, runtime network (proxy + NetLog logs: no request outside online 1v1) all PASS |
 | TUN-2 | done (444 new tuning leaves: set-piece spots, inline sim/AI literals, input and modes blocks; 28-run hash table IDENTICAL; byte-level value proof; TUNING-CR markers 0; whole suite 515 files / 7,325 tests pass) | |
-| FIN-K / FIN-A / FIN-P | running | final fixes from the sign-off audits: KNOWN_ISSUES sim items, app/render/tools items, proxy benchmark gate |
+| FIN-K / FIN-A / FIN-P | FIN-K done (5 KNOWN_ISSUES sim items fixed; 150-match soak PASS, ladder top pairs 71-76%, fuzz PASS), FIN-A done (5: menu frame, shadow texture count, size budget, flaky test, weak assertions); FIN-P running | final fixes from the sign-off audits: KNOWN_ISSUES sim items, app/render/tools items, proxy benchmark gate |
 | QF-8 + SGN-03 | queued (after FIN) | determinism, soak 2000, fuzz 500, full e2e on the final tree |
 
