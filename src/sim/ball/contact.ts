@@ -469,15 +469,24 @@ function frame(b: BallState, end: number, ev: EventSink | null): void {
   let tnU = 0;
   let tnZ = 0;
   for (let side = -1; side <= 1; side += 2) {
+    // [FIN-P2] Branch stores, not a ternary: a phi of the module constant FR_Y (a tagged context load to TurboFan)
+    // with the double py is tagged, so py was boxed on every call (rul-05-perf previewFlight, ~800 B a preview).
     const py = P[1];
-    CP[0] = FR_U; CP[1] = py < 0 ? 0 : py > FR_Y ? FR_Y : py; CP[2] = side * FR_Z;
+    CP[0] = FR_U;
+    if (py < 0) CP[1] = 0;
+    else if (py > FR_Y) CP[1] = FR_Y;
+    else CP[1] = py;
+    CP[2] = side * FR_Z;
     if (capsule() === 1) {
       touch = 1; tnU = N[0]; tnZ = N[2];
       emitted = postHit(b, end, 0, ev, emitted);
     }
   }
   const pz = P[2];
-  CP[0] = FR_U; CP[1] = FR_Y; CP[2] = pz < -FR_Z ? -FR_Z : pz > FR_Z ? FR_Z : pz;
+  CP[0] = FR_U; CP[1] = FR_Y;
+  if (pz < -FR_Z) CP[2] = -FR_Z;
+  else if (pz > FR_Z) CP[2] = FR_Z;
+  else CP[2] = pz;
   if (capsule() === 1) {
     touch = 1; tnU = N[0]; tnZ = N[2];
     postHit(b, end, 1, ev, emitted);

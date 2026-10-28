@@ -39,6 +39,7 @@ interface Bundle {
   createInputFrame: () => InputFrame;
   createBallPrediction: () => BallPrediction;
   cloneState: (s: SimState) => SimState;
+  createSimState: (c: SimState['config'], q: SimState['squads']) => SimState;
   copyState: (dst: SimState, src: SimState) => void;
   predictBall: (b: SimState['ball'], ticks: number, out: BallPrediction) => void;
   createBallState: () => SimState['ball'];
@@ -63,7 +64,7 @@ beforeAll(async () => {
     `export { freeKickTick, freeKickInput, freeKickDefault, previewFlight, wallJumpHandler } from ${src('src/sim/rules/freekick')};`,
     `export { step } from ${src('src/sim/step')};`,
     `export { initMatch } from ${src('src/sim/init')};`,
-    `export { createMatchConfig, createBallState } from ${src('src/contracts/state')};`,
+    `export { createMatchConfig, createBallState, createSimState } from ${src('src/contracts/state')};`,
     `export { createInputFrame } from ${src('src/contracts/input')};`,
     `export { createBallPrediction, createActionRequest, createKickLaunch } from ${src('src/contracts/systems')};`,
     `export { createEventBuffer } from ${src('src/sim/core/events')};`,
@@ -224,7 +225,13 @@ describe('RUL-05 budgets', () => {
     const pred = m.createBallPrediction();
     const res: Record<string, number> = {};
     // The floors: copying the state into the preview's scratch copy, and predicting a shot's flight at goal.
-    const scr = m.cloneState(s);
+    // [FIN-P2] The scratch copy is built as previewFlight builds its own (rules/freekick.ts scratchOf: createSimState +
+    // copyState), not with cloneState: cloneState's nested objects are dictionary-mode, and in a production-mode bundle
+    // (__DEV_BUILD__ false) copying and kicking into them left dictionary maps in the copier's and the kick module's
+    // feedback, so previewFlight's own copy and kick then boxed every double (1.5-1.7 KB a call, never seen in the app,
+    // which builds every copy target with createSimState: app/liveState.ts).
+    const scr = m.createSimState(s.config, s.squads);
+    m.copyState(scr, s);
     res.copyState = bytesPerCall(() => { m.copyState(scr, s); }, 3000);
     const b = m.createBallState();
     const shot = (): void => {

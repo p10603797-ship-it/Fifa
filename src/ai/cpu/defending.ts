@@ -128,10 +128,10 @@ const IE = createInterceptEstimate();
 const IE2 = createInterceptEstimate();
 /** Switch scores per slot (valid for the team evaluated in the current call). */
 const SCORE = new Float64Array(NUM_SLOTS);
-/** Stick being built: unit direction and magnitude 0..1; buttons; sprint wish. */
-let stX = 0;
-let stZ = 0;
-let stM = 0;
+/** Stick being built: unit direction (ST[0], ST[1]) and magnitude 0..1 (ST[2]); buttons; sprint wish.
+ *  [FIN-P2] A typed array, not module lets: V8 boxes every double stored into a module-level variable (a new heap number
+ *  per store, in every tier), ~10 per CPU defender per tick. */
+const ST = new Float64Array(3);
 let btn = 0;
 let wantSprint = 0;
 /** Exposure of the carrier's ball (exposure()): 1/0, age in ticks, window key, 1 = skill / first-touch window. */
@@ -140,8 +140,7 @@ let expAge = 0;
 let expKey = 0;
 let expSkill = 0;
 /** Goal-side unit of the latest carrier evaluation (defendCarrier): from the carrier toward our goal centre. */
-let gX = 0;
-let gZ = 0;
+const G_UNIT = new Float64Array(2); // [FIN-P2] x, z (a typed array: see ST)
 /** [QF-16] Debug (tests / tools): the latest carrier evaluation's block (1 = blocking) and, per team, the reason of its
  *  latest challenge (CH_* below). Written only, never read by the AI. */
 export const DEFEND_DEBUG = { hold: 0, why0: 0, why1: 0 };
@@ -170,10 +169,10 @@ function steerTo(p: Readonly<PlayerState>, tx0: number, tz0: number, sprintFar: 
   const tz = tz0 < -TGT_Z ? -TGT_Z : tz0 > TGT_Z ? TGT_Z : tz0;
   const dx = tx - p.x, dz = tz - p.z;
   const d = Math.sqrt(dx * dx + dz * dz);
-  if (!(d > EPS)) { stX = 0; stZ = 0; stM = 0; return; }
-  stX = dx / d;
-  stZ = dz / d;
-  stM = d >= L.arriveDist ? 1 : d / L.arriveDist;
+  if (!(d > EPS)) { ST[0] = 0; ST[1] = 0; ST[2] = 0; return; }
+  ST[0] = dx / d;
+  ST[1] = dz / d;
+  ST[2] = d >= L.arriveDist ? 1 : d / L.arriveDist;
   if (sprintFar === 1 && d > L.sprintDist) wantSprint = 1;
 }
 
@@ -195,19 +194,19 @@ function momentum(s: SimState, p: Readonly<PlayerState>): void {
   if ((p.x > xl && dx > 0) || (p.x < -xl && dx < 0)) dx = 0;
   const dl = Math.sqrt(dx * dx + dz * dz);
   if (!(dl > L.momentumMinSpeed)) return;
-  stX = dx / dl;
-  stZ = dz / dl;
-  stM = jog > EPS && sp < jog ? sp / jog : 1;
+  ST[0] = dx / dl;
+  ST[1] = dz / dl;
+  ST[2] = jog > EPS && sp < jog ? sp / jog : 1;
   if (p.sprinting === 1) wantSprint = 1;
 }
 
 /** Write the built stick and buttons into the frame (radial magnitude <= AXIS_SCALE). */
 function flush(out: InputFrame): void {
-  let m = stM;
-  if (!(m > 0) || !(stX === stX) || !(stZ === stZ)) m = 0;
+  let m = ST[2]!;
+  if (!(m > 0) || !(ST[0]! === ST[0]!) || !(ST[1]! === ST[1]!)) m = 0;
   if (m > 1) m = 1;
-  out.mx = Math.trunc(stX * m * AXIS_SCALE);
-  out.mz = Math.trunc(stZ * m * AXIS_SCALE);
+  out.mx = Math.trunc(ST[0]! * m * AXIS_SCALE);
+  out.mz = Math.trunc(ST[1]! * m * AXIS_SCALE);
   if (wantSprint === 1 && m >= L.sprintMinStick) btn |= Btn.SPRINT;
   out.buttons |= btn;
 }
@@ -649,7 +648,7 @@ function defendCarrier(
   let gx = -dir * HALF_LENGTH - q.x, gz = -q.z;
   const gl = Math.sqrt(gx * gx + gz * gz);
   if (gl > EPS) { gx /= gl; gz /= gl; } else { gx = -dir; gz = 0; }
-  gX = gx; gZ = gz;
+  G_UNIT[0] = gx; G_UNIT[1] = gz;
   const qs = Math.sqrt(q.vx * q.vx + q.vz * q.vz);
   let standoff = L.standoffLow + (L.standoffHigh - L.standoffLow) * (lv.pressIntensity < 0 ? 0 : lv.pressIntensity > 1 ? 1 : lv.pressIntensity);
   // [QF-14] Patience: once the carrier has had the ball T_LEVEL.patienceTicks (0 = off) the engaged defender stops
@@ -750,7 +749,7 @@ function defendCarrier(
     if (ca > 0) { cx -= keep * ca * BLK.ax; cz -= keep * ca * BLK.az; }
     const vx = fx + cx, vz = fz + cz;
     holdV = Math.sqrt(vx * vx + vz * vz);
-    if (holdV > EPS) { stX = vx / holdV; stZ = vz / holdV; stM = 1; } else { stX = 0; stZ = 0; stM = 0; holdV = 0; }
+    if (holdV > EPS) { ST[0] = vx / holdV; ST[1] = vz / holdV; ST[2] = 1; } else { ST[0] = 0; ST[1] = 0; ST[2] = 0; holdV = 0; }
   }
   const wasContain = (ctl.buttons & Btn.PASS) !== 0;
   const wasJockey = (ctl.buttons & Btn.SHIELD) !== 0;
@@ -766,9 +765,9 @@ function defendCarrier(
     const capNo = jogP * T_PLAYER.jockeySpeedFraction;
     if (holdV > capNo) {
       wantSprint = 1;
-      stM = topP > EPS ? holdV / topP * T_LOCOMOTION.sprintStickFull : 1;
-      if (stM > 1) stM = 1;
-      if (stM < L.sprintMinStick) stM = L.sprintMinStick;
+      ST[2] = topP > EPS ? holdV / topP * T_LOCOMOTION.sprintStickFull : 1;
+      if (ST[2]! > 1) ST[2] = 1;
+      if (ST[2]! < L.sprintMinStick) ST[2] = L.sprintMinStick;
       // [QF-16 skeptic] Faster than even a sprint jockey goes sideways (jockeySpeedFraction of top): run, not jockey.
       // Jockeying (facing the carrier) capped him at 0.55 x top, 5.1 m/s, so a human jogging diagonally at full stick
       // (5.5 m/s) outran the block alongside him and kept the ball 3-4 of 8 at Legend, 29-36 m in 10 s. A jogging
@@ -777,7 +776,7 @@ function defendCarrier(
       if (humanQ && qs >= L.blockWalkSpeed && holdV > topP * T_PLAYER.jockeySpeedFraction) btn &= ~Btn.SHIELD;
     } else {
       wantSprint = 0;
-      stM = jogP > EPS ? holdV / jogP : 0;
+      ST[2] = jogP > EPS ? holdV / jogP : 0;
     }
   }
 
@@ -933,7 +932,7 @@ function ownPass(s: SimState, team: number, p: Readonly<PlayerState>): void {
     const bv2 = b.vx * b.vx + b.vz * b.vz;
     if (bv2 > L.trailMinSpeed * L.trailMinSpeed && (b.x - p.x) * b.vx + (b.z - p.z) * b.vz > 0) {
       steerTo(p, b.x + b.vx * L.trailLeadSec, b.z + b.vz * L.trailLeadSec, 0);
-      stM = 1;
+      ST[2] = 1;
       wantSprint = 1;
       receiveTurn(s, p);
       return;
@@ -984,9 +983,9 @@ function chaseLoose(s: SimState, p: Readonly<PlayerState>): void {
   steerTo(p, tx, tz, 0);
   const dx = tx - p.x, dz = tz - p.z;
   const d = Math.sqrt(dx * dx + dz * dz);
-  if (stM > 0) {
-    if (rush) stM = 1;
-    else if (stM < L.chaseMinStick && d > L.chaseHoldDist) stM = L.chaseMinStick;
+  if (ST[2]! > 0) {
+    if (rush) ST[2] = 1;
+    else if (ST[2]! < L.chaseMinStick && d > L.chaseHoldDist) ST[2] = L.chaseMinStick;
   }
   if (d > L.chaseSprintDist) wantSprint = 1;
   lineBrake(p);
@@ -1014,8 +1013,8 @@ function receiveTurn(s: SimState, p: Readonly<PlayerState>): void {
   if (b.lastKickBy === p.slot && s.tick - b.lastKickTick < T_FIRST_TOUCH.selfKickTicks) return;
   const bv = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
   let sx: number, sz: number;
-  const free = stM > 0 ? 0 : 1;
-  if (free === 0) { sx = stX * stM; sz = stZ * stM; } else if (bv > EPS) { sx = b.vx / bv; sz = b.vz / bv; } else return;
+  const free = ST[2]! > 0 ? 0 : 1;
+  if (free === 0) { sx = ST[0]! * ST[2]!; sz = ST[1]! * ST[2]!; } else if (bv > EPS) { sx = b.vx / bv; sz = b.vz / bv; } else return;
   // [QF-13 skeptic] Only when the trap would end at the line: SIM-07's clean settle leaves the ball trapLead ahead
   // (along the stick) of where he is when the FIRST_TOUCH window ends (his carry taken at his present velocity, an upper
   // bound: the window slows him). When that point is less than receiveSettleMargin inside a line, the stick's component
@@ -1055,7 +1054,7 @@ function receiveTurn(s: SimState, p: Readonly<PlayerState>): void {
     if (cx * cx + cz * cz <= reach * reach) ok = 1;
   }
   if (ok === 0) return;
-  stX = ux; stZ = uz; stM = 1;
+  ST[0] = ux; ST[1] = uz; ST[2] = 1;
   wantSprint = 0;
   btn &= ~Btn.SPRINT;
 }
@@ -1067,14 +1066,14 @@ function receiveTurn(s: SimState, p: Readonly<PlayerState>): void {
  * pitch, seed 33 #16).
  */
 function lineBrake(p: Readonly<PlayerState>): void {
-  if (!(stM > 0)) return;
+  if (!(ST[2]! > 0)) return;
   const brake = 0.5 / T_PLAYER.decel;
   const ez = p.vz * p.vz * brake + L.momentumBrakeSlack, ex = p.vx * p.vx * brake + L.momentumBrakeSlack;
-  let sx = stX * stM, sz = stZ * stM;
+  let sx = ST[0]! * ST[2]!, sz = ST[1]! * ST[2]!;
   if ((p.z > HALF_WIDTH - ez && p.vz > 0 && sz > 0) || (p.z < -HALF_WIDTH + ez && p.vz < 0 && sz < 0)) sz = 0;
   if ((p.x > HALF_LENGTH - ex && p.vx > 0 && sx > 0) || (p.x < -HALF_LENGTH + ex && p.vx < 0 && sx < 0)) sx = 0;
   const m = Math.sqrt(sx * sx + sz * sz);
-  if (m > EPS) { stX = sx / m; stZ = sz / m; stM = m < 1 ? m : 1; } else { stX = 0; stZ = 0; stM = 0; wantSprint = 0; }
+  if (m > EPS) { ST[0] = sx / m; ST[1] = sz / m; ST[2] = m < 1 ? m : 1; } else { ST[0] = 0; ST[1] = 0; ST[2] = 0; wantSprint = 0; }
 }
 
 /** A loose ball a teammate chases (team.chaser): cover goal-side of it instead of a second chase. */
@@ -1102,7 +1101,7 @@ function keepersBall(s: SimState, team: number): boolean {
 function clearKeeperLane(s: SimState, p: Readonly<PlayerState>): void {
   const b = s.ball;
   const v = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
-  stX = 0; stZ = 0; stM = 0;
+  ST[0] = 0; ST[1] = 0; ST[2] = 0;
   if (!(v > EPS)) return;
   const ux = b.vx / v, uz = b.vz / v;
   const rx = p.x - b.x, rz = p.z - b.z;
@@ -1112,7 +1111,7 @@ function clearKeeperLane(s: SimState, p: Readonly<PlayerState>): void {
   if (ao >= L.keeperLaneClear) return;
   const side = off < 0 ? -1 : 1;
   steerTo(p, p.x - uz * side * (L.keeperLaneClear - ao + L.keeperLaneMargin), p.z + ux * side * (L.keeperLaneClear - ao + L.keeperLaneMargin), 0);
-  stM = 1;
+  ST[2] = 1;
 }
 
 /** True when the team's loose-ball chaser (TAI-07, last tick) is another active, AI-driven teammate. */
@@ -1133,7 +1132,7 @@ export function cpuDefend(s: SimState, team: number, out: InputFrame, ev: EventS
   if (!ctl || ctl.kind !== ControllerKind.CPU || ctl.side !== team) return;
   const lv = levelParams(brain.level);
   tickBrain(s, team, brain, lv);
-  stX = 0; stZ = 0; stM = 0; btn = 0; wantSprint = 0;
+  ST[0] = 0; ST[1] = 0; ST[2] = 0; btn = 0; wantSprint = 0;
   const slot = ctl.slot;
   if (!validSlot(slot)) return;
   const p = s.players[slot]!;
@@ -1185,4 +1184,4 @@ export function debugSwitchScore(slot: number): number { return validSlot(slot) 
 /** [TUN-1] Old name of contracts/tuning.ts T_DEFENDING (read-only; tests import it). */
 export const DEFEND_TUNING = T_DEFENDING;
 /** Goal-side unit of the latest carrier evaluation (tests). */
-export function debugGoalSideUnit(o: { x: number; z: number }): void { o.x = gX; o.z = gZ; }
+export function debugGoalSideUnit(o: { x: number; z: number }): void { o.x = G_UNIT[0]!; o.z = G_UNIT[1]!; }
