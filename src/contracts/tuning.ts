@@ -818,9 +818,11 @@ export const T_PERF = {
 } as const;
 
 /**
- * [FIN-P] Sim + AI warm-up on the loading screen (src/sim/warmup.ts; initMatch runs it once per process in production
- * builds): a scratch CPU v CPU match plays openPlayTicks ticks (cut-scenes skipped), then each restart scene up to
- * sceneTicks ticks, so the engine has compiled and optimised the sim before the first match's first tick.
+ * [FIN-P] Sim + AI warm-up on the loading screen (src/sim/init.ts warmUpSim, implemented in src/sim/step.ts; initMatch
+ * runs it once per process in production builds): a scratch CPU v CPU match plays openPlayTicks ticks (cut-scenes
+ * skipped), then each restart scene up to sceneTicks ticks, then restartTicks of a second, fresh scratch match, each tick with the app loop's copyState and a
+ * hashState every hashEvery ticks, so the engine has compiled and optimised the sim, the state copier and the hasher
+ * before the first match's first tick.
  */
 export const T_WARMUP = {
   /** Open-play ticks of the scratch match. */
@@ -831,6 +833,10 @@ export const T_WARMUP = {
   /** Scratch match seed and half length (minutes; longer than the warm-up, so it never reaches half time). */
   seed: 0x5eed,
   halfMinutes: 4,
+  /** A hashState of the scratch state every this many ticks (warms the generated hasher the replay recorder runs). */
+  hashEvery: 8,
+  /** Ticks of a second, fresh scratch match at the end (a match start as the app makes it: new state and copy target). */
+  restartTicks: 600,
 } as const;
 
 /**

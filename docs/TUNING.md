@@ -7,7 +7,7 @@ formerly inline values; module blocks are named in the TUN-1 and TUN-2 tables be
 
 ## Block index (`src/contracts/tuning.ts`, final tree)
 
-93 exported blocks. Non-gameplay modules (render, audio, ui, net, platform, app, data generation, modes/stats) keep
+94 exported blocks. Non-gameplay modules (render, audio, ui, net, platform, app, data generation, modes/stats) keep
 their values in a local block marked `// LOCAL_TUNING (non-gameplay: <reason>)` (TUN-2 below).
 
 **Wave 0 shared tables** (written with the contracts; read by many modules):
@@ -2031,3 +2031,20 @@ ticks a whole match (the turn is done within the wind-up). Ladder top pairs (`to
 100`): seed 1 World Class v Professional 71.0%, Legend v World Class 76.0%; seed 2 73.0% / 72.0% (target 65%, all PASS).
 Fuzz (`tools/fuzz.ts --matches 60 --enforce all`): PASS, 60 runs + 15 rematches, 0 exceptions / invariant failures /
 watchdogs, determinism PASS.
+
+## FIN-P (final fix: the throttled proxy benchmark gate)
+
+No gameplay constant changed: every FIN-P change is behaviour-identical (`tools/hash-table.ts --compare` against the
+tree before FIN-P: IDENTICAL, 28 runs). New load-time constants, all in `T_WARMUP` (src/sim/init.ts warmUpSim, production
+builds only: the loading screen plays a scratch CPU v CPU match before the first match's state is built):
+
+| Constant | Value | Why |
+|---|---|---|
+| `T_WARMUP.openPlayTicks` | 4000 ticks | Open play of the scratch match (9000 measured no better in the gate). |
+| `T_WARMUP.sceneTicks` | 300 ticks | Per restart scene (corner, free kick, penalty, throw-in, goal kick, both teams), and at most this many to get back to open play. |
+| `T_WARMUP.seed` / `halfMinutes` | 0x5eed / 4 | Scratch match seed (xor the match's) and half length (never reaches half time). |
+| `T_WARMUP.hashEvery` | 8 ticks | A `hashState` of the scratch state every 8 ticks, beside a `copyState(prev, s)` every tick (the app loop's and the replay recorder's work), so the generated copier and hasher are optimised before the match. |
+| `T_WARMUP.restartTicks` | 600 ticks | A second, fresh scratch match at the end (new state and copy target, as the app builds the coming match), so the copier and hasher meet the maps of a match start. |
+
+`BENCH_DEFAULTS.seed` (src/platform/benchHook.ts) 0xb3ac4 -> 1: the 90 s window of seed 1 holds a crowded penalty
+area, a corner, a goal into the net and its replay (`tests/perf/fin-p-bench-coverage.test.ts`).

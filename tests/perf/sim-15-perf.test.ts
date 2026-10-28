@@ -107,11 +107,8 @@ describe('SIM-15 budget and allocation', () => {
       const b = (process.memoryUsage().heapUsed - h0) / n;
       if (b < bytes) bytes = b;
     }
-    // A real per-tick allocation is >= 16 bytes per tick; allow GC/JIT noise below that. [FIN-P] 8 -> 16: initMatch now
-    // settles every numeric field to its double representation up front (src/sim/warmup.ts settleStateShapes: no hidden
-    // class changes and deopt waves in play); Node's V8 boxes an occasional integer-valued double at a call boundary for
-    // it (9.9 B per tick here, less than one heap number per tick).
+    // A real per-tick allocation is >= 16 bytes per tick; allow GC/JIT noise below that.
     console.log(`SIM-15 resolveControllers: ${bytes.toFixed(2)} bytes per tick (best window)`);
-    expect(bytes, `${bytes.toFixed(1)} bytes/tick`).toBeLessThan(16);
+    expect(bytes, `${bytes.toFixed(1)} bytes/tick`).toBeLessThan(8);
   }, 120_000);
 });

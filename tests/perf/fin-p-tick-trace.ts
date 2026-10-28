@@ -7,7 +7,7 @@
  * they overlap; with --cpu a sampling CPU profile (100 us) whose samples inside slow ticks are summed per function.
  *
  *   npx tsx tests/perf/fin-p-tick-trace.ts --dist dist-e2e/fin-p [--throttle 4] [--seconds 40] [--seed N] [--trace]
- *                                          [--cpu] [--over 4] [--json out.json] [--nodraw]
+ *                                          [--cpu [--cpuprofile out.cpuprofile]] [--over 4] [--json out.json] [--nodraw]
  */
 import { writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -162,6 +162,8 @@ async function main(): Promise<void> {
     }
     let profile: CpuProfile | null = null;
     if (flag('cpu')) profile = ((await cdp.send('Profiler.stop')) as { profile: CpuProfile }).profile;
+    // --cpuprofile FILE: the raw profile too (open in DevTools, or sum a subtree).
+    if (profile && arg('cpuprofile', '') !== '') writeFileSync(arg('cpuprofile', ''), JSON.stringify(profile));
     if (flag('trace')) {
       const done = new Promise<void>((res) => cdp.once('Tracing.tracingComplete', () => res()));
       await cdp.send('Tracing.end');
@@ -198,7 +200,7 @@ async function main(): Promise<void> {
       out.jitList = events.filter((e) => e.tid === main && e.pid === mainPid && (e.ph === 'X' || e.ph === 'I' || e.ph === 'i') && /Deopt|Optimize|Maglev|Compile/i.test(e.name) && e.name !== 'V8.CompileCode')
         .map((e) => [r2(e.ts / 1000 - off), r2((e.dur ?? 0) / 1000), e.name, JSON.stringify(e.args ?? {}).slice(0, 400)]);
       const gcNames: Record<string, number> = {};
-      for (const [a, b, nm] of gcs) gcNames[nm] = (gcNames[nm] ?? 0) + 1;
+      for (const [, , nm] of gcs) gcNames[nm] = (gcNames[nm] ?? 0) + 1;
       const compNames: Record<string, number> = {};
       for (const [a, b, nm] of comp) compNames[nm] = r2((compNames[nm] ?? 0) + (b - a));
       for (let i = 0; i < n; i++) {

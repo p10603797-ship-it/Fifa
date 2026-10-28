@@ -45,12 +45,17 @@ const PROTO_KEY = '__proto__';
 export const HASH_SEED = 0x5f3759df;
 
 // Running hash state (module scratch; the walkers are synchronous and not re-entrant across calls).
-let h = 0;
+// [FIN-P skeptic] The running murmur state lives in an Int32Array slot, not in a module `let`: a module variable is a
+// context slot, and V8's mid tier (Maglev, where these functions run for most of a session in Chromium) stores an int32
+// outside the small-integer range there as a new heap number, so every mixed word allocated (Node with Maglev only:
+// 150 KB per hashState of a live state; Chromium bench: hashing was the largest single allocator of play,
+// tests/perf/fin-p-hash-alloc.test.ts). A typed-array slot holds the raw int32.
+const HS = new Int32Array(1);
 let words = 0;
 let withKeys = false;
 
 function begin(seed: number): void {
-  h = seed | 0;
+  HS[0] = seed | 0;
   words = 0;
 }
 
@@ -59,15 +64,15 @@ function mixWord(w: number): void {
   let k = Math.imul(w | 0, 0xcc9e2d51);
   k = (k << 15) | (k >>> 17);
   k = Math.imul(k, 0x1b873593);
-  h ^= k;
+  let h = HS[0]! ^ k;
   h = (h << 13) | (h >>> 19);
-  h = (Math.imul(h, 5) + 0xe6546b64) | 0;
+  HS[0] = (Math.imul(h, 5) + 0xe6546b64) | 0;
   words++;
 }
 
 /** murmur3 finaliser (avalanche). Returns a uint32. */
 function finish(): number {
-  let x = h ^ (words << 2);
+  let x = HS[0]! ^ (words << 2);
   x ^= x >>> 16;
   x = Math.imul(x, 0x85ebca6b);
   x ^= x >>> 13;
@@ -158,13 +163,31 @@ function isImmutableKey(k: string): boolean {
 // hash is identical; a state uses it only after it matched the shape (clone.ts stateShapeIndex: every key in order, value
 // kind and array length, checked by a generated checker or the signature), and states keep their shape for life.
 
-/** mixNumber of the value already in F64[0] (no double crosses the call). */
+/**
+ * mixNumber of the value already in F64[0] (no double crosses the call). [FIN-P skeptic] Both words are mixed here, as
+ * int32 (`| 0`, what mixWord does with them first), not passed to mixWord: a uint32 word above the small-integer range
+ * passed to a call that is not inlined is a heap number (Maglev inlines little). Same words, same order, same hash.
+ */
 function mixF64(): void {
   const v = F64[0]!;
-  if (v === 0) { mixWord(0); mixWord(0); return; }
-  if (v !== v) { mixWord(0); mixWord(CANON_NAN_HI); return; }
-  mixWord(U32[LO]!);
-  mixWord(U32[HI]!);
+  let lo = 0, hi = 0;
+  if (v !== 0) {
+    if (v !== v) hi = CANON_NAN_HI;
+    else { lo = U32[LO]! | 0; hi = U32[HI]! | 0; }
+  }
+  let k = Math.imul(lo, 0xcc9e2d51);
+  k = (k << 15) | (k >>> 17);
+  k = Math.imul(k, 0x1b873593);
+  let h = HS[0]! ^ k;
+  h = (h << 13) | (h >>> 19);
+  h = (Math.imul(h, 5) + 0xe6546b64) | 0;
+  k = Math.imul(hi, 0xcc9e2d51);
+  k = (k << 15) | (k >>> 17);
+  k = Math.imul(k, 0x1b873593);
+  h ^= k;
+  h = (h << 13) | (h >>> 19);
+  HS[0] = (Math.imul(h, 5) + 0xe6546b64) | 0;
+  words += 2;
 }
 
 type Hasher = (o: unknown) => void;

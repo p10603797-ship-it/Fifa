@@ -905,11 +905,15 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
    * Warm-up (setMatch, off screen, ~1 ms): run the pose solvers, the blend and the look smoothing on scratch data often
    * enough for the JIT to optimise them, so the first set piece, blend or replay angle never allocates (unoptimised
    * code boxes the doubles of its maths). Restores the module state afterwards.
+   * [FIN-P] `state` is the live match state (only read): holdLosesBall, which reads the interpolated ball and the
+   * state's ball velocity, is warmed on it too, so its object reads have the live objects' feedback (shapes). Before,
+   * only holdLosesBallIn was warmed and holdLosesBall itself first ran during a free kick's shot hold in play, unoptimised:
+   * a heap number per field read on every frame of the hold (tests/perf/fin-p-cine-hold-alloc.test.ts).
    */
-  function warmUpPaths(): void {
+  function warmUpPaths(state: ReadonlySimState): void {
     const a = createCinePose(), b = createCinePose(), c = createCinePose();
     const f: RenderFrame = {
-      prev: null as unknown as ReadonlySimState, curr: null as unknown as ReadonlySimState, alpha: 1,
+      prev: state, curr: state, alpha: 1,
       frame: { nowMs: 0, dtMs: 1000 / 60, frame: 0, ticks: 1, paused: false }, interp: createInterpState(),
     };
     for (let i = 0; i < LT.warmUpIterations; i++) {
@@ -939,6 +943,14 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
       HIN[10] = PIN[0]! + ((i % 7) - 1) * 4; HIN[11] = 0.11 + (i % 5) * 1.5; HIN[12] = PIN[1]!;
       HIN[13] = 10 + u * 12; HIN[14] = (i % 4) * 4 - 1; HIN[15] = u - 0.5;
       if (holdLosesBallIn()) S[0] = NDC[0]!;
+    }
+    // ... and through holdLosesBall on the live state's ball (velocity only read) and the pose drawn last, in a loop of
+    // its own: called from the big loop above it was inlined there once that loop was optimised (on-stack), so it never
+    // reached optimised code of its own (tests/perf/fin-p-cine-hold-alloc.test.ts).
+    for (let i = 0; i < LT.warmUpIterations; i++) {
+      const u = (i % 100) * 0.01;
+      f.interp.ballX = 27 + u * 14; f.interp.ballY = 0.11 + (i % 5) * 1.5; f.interp.ballZ = u * 8 - 4;
+      if (holdLosesBall(f)) S[0] = NDC[1]!;
     }
     S.fill(0);
   }
@@ -1071,7 +1083,7 @@ export function createCinematicCamera(ctx: RenderContext): CinematicCameraModule
     get blends() { return blends; },
     get pose() { return last; },
     setMatch(state: ReadonlySimState) {
-      warmUpPaths();
+      warmUpPaths(state);
       targetFresh = false;
       matchOn = true;
       shot = CineShot.NONE;

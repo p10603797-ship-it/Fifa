@@ -1,8 +1,11 @@
 /**
- * [FIN-P] The sim warm-up (src/sim/warmup.ts) and the state shape settling in initMatch: the throttled proxy gate's
+ * [FIN-P] The sim warm-up (src/sim/init.ts warmUpSim) and the state shape settling in initMatch: the throttled proxy gate's
  * first-match ticks carried compile / deopt work and ran in slow tiers (tests/perf/fin-p-tick-trace.ts), so the loading
  * screen now plays a scratch match first (production builds), and every new state gets its fields' double
- * representations up front. Both must be invisible to the simulation: same values, same hash timeline.
+ * representations up front (production builds: core/clone.ts shapeSettlingOn; the child-process probes turn it on).
+ * Both must be invisible to the simulation: same values, same hash timeline. [FIN-P final] Also: no deopt wave when the
+ * match state is built after the warm-up, and no allocation burst from the state copier / hasher in the match's first
+ * ticks.
  * Test order matters (one module instance per file): the dev-build check runs before any explicit warm-up.
  */
 import { spawnSync } from 'node:child_process';
@@ -15,10 +18,11 @@ import type { SimState } from '../../src/contracts/state';
 import { T_WARMUP } from '../../src/contracts/tuning';
 import { createEventBuffer } from '../../src/sim/core/events';
 import { hashState } from '../../src/sim/core/hash';
-import { initMatch } from '../../src/sim/init';
 import { step } from '../../src/sim/step';
-import { settleStateShapes, simWarmedPhases, simWarmedTicks, warmUpOnce, warmUpSim } from '../../src/sim/warmup';
+import { settleStateShapes } from '../../src/sim/core/clone';
+import { initMatch, simWarmedPhases, simWarmedTicks, warmUpOnce, warmUpSim } from '../../src/sim/init';
 import { benchSetup } from '../../src/platform/benchHook';
+import { ALLOC_FLAGS } from '../perf/qf-7r-alloc-flags';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -102,6 +106,39 @@ describe('fin-p: sim warm-up and state shapes', () => {
     expect(res.changed).toEqual([]);
   }, 150_000);
 
+  it('fin-p: building the match state after the warm-up deoptimises no optimised code (no deopt wave in the first seconds of the match)', () => {
+    // Fails without warmUpSim's thrown-away first state: the first state built after settleStateShapes had generalised
+    // the hidden classes migrated the object literals' boilerplates, and the match's own initMatch then marked ~90
+    // optimised sim / AI functions for deoptimisation ("code dependencies"), all re-optimised in the measured window.
+    const r = spawnSync(process.execPath, ['--trace-deopt', '--import', 'tsx', 'tests/perf/fin-p-deopt-probe.ts', '300'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 120_000, maxBuffer: 256 * 1024 * 1024 });
+    expect(r.status, r.stderr).toBe(0);
+    const lines = r.stdout.split('\n');
+    const at = (m: string): number => lines.findIndex((l) => l.startsWith(`FINP-MARK ${m}`));
+    const warmed = at('warmed'), built = at('built'), played = at('played');
+    expect(warmed).toBeGreaterThan(0);
+    expect(built).toBeGreaterThan(warmed);
+    expect(played).toBeGreaterThan(built);
+    const marks = (a: number, b: number): number => lines.slice(a, b).filter((l) => l.includes('marking dependent code')).length;
+    // The warm-up itself optimises and deoptimises freely (that is its job).
+    expect(marks(0, warmed)).toBeGreaterThan(0);
+    expect(marks(warmed, built), 'deopt wave when the match state is built').toBe(0);
+    expect(marks(built, played), 'dependent-code deopts in the first 300 ticks of the match').toBeLessThanOrEqual(2);
+  }, 150_000);
+
+  it('fin-p: the state copier and hasher box nothing in the first ticks of the match after the warm-up (no allocation burst)', () => {
+    // The loop's copyState(prev, curr) and the replay recorder's hashState, the first 120 ticks after the warm-up, exact
+    // sampling (tests/perf/fin-p-copier-probe.ts). Was 10.3 KB a tick: the copier was primed into dictionary-mode objects
+    // (cloneState) so its stores went generic, the app's fresh interpolation state had small-integer slots and arrays that
+    // changed map on the first fraction copied ("wrong map" deopts), and the warm-up never ran the copier or hasher.
+    const r = spawnSync(process.execPath, [...ALLOC_FLAGS, '--import', 'tsx', 'tests/perf/fin-p-copier-probe.ts', '120'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 120_000 });
+    expect(r.status, r.stderr).toBe(0);
+    const res = JSON.parse(r.stdout.trim().split('\n').pop()!) as { perTick: number; sites: [string, number][] };
+    console.log(`FIN-P copier + hasher after warm-up: ${res.perTick.toFixed(0)} B/tick; ${JSON.stringify(res.sites.slice(0, 4))}`);
+    expect(res.perTick, JSON.stringify(res.sites)).toBeLessThan(1500);
+  }, 150_000);
+
   it('fin-p: warmUpSim plays open play and every restart kind on its own scratch state', () => {
     const ran = warmUpSim((c) => initMatch(c), benchSetup(1).config);
     expect(ran).toBeGreaterThanOrEqual(T_WARMUP.openPlayTicks);
@@ -125,7 +162,7 @@ describe('fin-p: sim warm-up and state shapes', () => {
 
   it('fin-p: warmUpOnce never fails a match load (a throwing state builder is swallowed, and it is not retried)', async () => {
     vi.resetModules();
-    const w = await import('../../src/sim/warmup');
+    const w = await import('../../src/sim/init');
     expect(() => w.warmUpOnce(() => { throw new Error('boom'); }, benchSetup(1).config)).not.toThrow();
     expect(w.simWarmedTicks()).toBe(0);
     w.warmUpOnce((c) => initMatch(c), benchSetup(1).config);

@@ -2,7 +2,8 @@
  * [FND-06] Headless benchmark proxy gate (brief section 13): serves dist/ (build it first: `npm run bench` does),
  * opens it in Playwright Chromium at ?bench=1 with CDP CPU throttling (default 4x), waits for
  * window.__benchResult, prints it, and exits 1 if the sim, draw-call or triangle budgets fail. The fps budgets
- * are informational under throttling (only a real iPad run decides them).
+ * are informational under throttling (only a real iPad run decides them). The window is 90 s of match (benchHook
+ * benchWindowEnd): under 4x throttling the sim runs ~5x slower than real time, so a run takes about 8 minutes.
  *
  *   npx tsx tools/bench.ts [--throttle 4] [--seconds 90] [--seed N] [--json reports/bench.json] [--headed]
  *                          [--timeout S] [--dist dist]
@@ -14,7 +15,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { chromium } from '@playwright/test';
 import type { BenchResult } from '../src/platform/benchHook';
-import { formatBenchResult } from '../src/platform/benchHook';
+import { BENCH_DEFAULTS, formatBenchResult } from '../src/platform/benchHook';
 import { bool, num, parseArgs, str } from './lib/args';
 import { writeJson } from './lib/report';
 
@@ -60,7 +61,9 @@ async function main(argv: readonly string[]): Promise<number> {
   const throttle = num(flags, 'throttle', 4);
   const seconds = num(flags, 'seconds', 90);
   const dist = str(flags, 'dist', fileURLToPath(new URL('../dist/', import.meta.url)));
-  const timeoutMs = num(flags, 'timeout', seconds + 180) * 1000;
+  // [FIN-P skeptic] The window is `seconds` of match (benchHook benchWindowEnd): a throttled run plays it in slow motion
+  // (~5x at 4x throttling), so wait as long as the page itself may (maxWindowStretch) before giving up.
+  const timeoutMs = num(flags, 'timeout', seconds * BENCH_DEFAULTS.maxWindowStretch + 180) * 1000;
   if (!existsSync(join(dist, 'index.html'))) {
     console.error(`bench: ${join(dist, 'index.html')} not found - run "npm run build" first (npm run bench does)`);
     return 2;

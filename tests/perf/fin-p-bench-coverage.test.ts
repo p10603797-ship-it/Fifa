@@ -2,7 +2,9 @@
  * [FIN-P] The benchmark's fixed-seed match must run through the worst cases inside its measured window (BRIEF section 13
  * "Proving it": a crowded penalty area, a corner, a goal with net ripple, a replay). The bench is deterministic (the app
  * plays benchSetup(BENCH_DEFAULTS.seed) with no input), so the window is stepped headless here exactly as a 60 Hz device
- * plays it (tests/perf/sgn-04-bench-coverage.ts coverage()). Any sim or AI change reshapes the match: when this fails,
+ * plays it (tests/perf/sgn-04-bench-coverage.ts coverage()). [FIN-P skeptic] A slower device (the 4x-throttled proxy gate)
+ * plays the same ticks: the window is 90 s of match, ticks as well as wall clock (benchHook benchWindowEnd;
+ * tests/unit/fin-p-bench-window.test.ts). Any sim or AI change reshapes the match: when this fails,
  * pick a new seed with `npx tsx tests/perf/sgn-04-bench-coverage.ts --search 100` and set BENCH_DEFAULTS.seed.
  */
 import { describe, expect, it } from 'vitest';

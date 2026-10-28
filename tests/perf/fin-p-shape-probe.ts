@@ -10,16 +10,21 @@
  */
 import '../../tools/lib/env';
 import type { SimState } from '../../src/contracts/state';
-import { initMatch } from '../../src/sim/init';
-import { warmUpSim } from '../../src/sim/warmup';
+import { initMatch, warmUpSim } from '../../src/sim/init';
+import '../../src/sim/step'; // binds the warm-up implementation (sim/init.ts bindSimWarmUp)
+import { setShapeSettling } from '../../src/sim/core/clone';
 import { benchSetup } from '../../src/platform/benchHook';
+
+// The production behaviour (initMatch and the copier settle state shapes in production builds only).
+setShapeSettling(true);
 
 const sameMap = new Function('a', 'b', 'return %HaveSameMap(a, b);') as (a: object, b: object) => boolean;
 
 const ref = initMatch(benchSetup(2).config);
-let played: SimState | null = null;
-const ticks = warmUpSim((c) => { played = initMatch(c); return played; }, benchSetup(1).config);
-const a = played as unknown as SimState;
+// warmUpSim builds three states and plays the third (open play and every restart scene), then a fourth briefly.
+const built: SimState[] = [];
+const ticks = warmUpSim((c) => { const st = initMatch(c); built.push(st); return st; }, benchSetup(1).config);
+const a = built[2]!;
 const pairs: [string, object, object][] = [
   ['ball', a.ball, ref.ball], ['match', a.match, ref.match], ['restart', a.match.restart, ref.match.restart],
   ['advantage', a.match.advantage, ref.match.advantage], ['challenge', a.match.challenges[0]!, ref.match.challenges[0]!],

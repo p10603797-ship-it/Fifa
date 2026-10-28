@@ -72,8 +72,8 @@ frame-time targets, and whether the sim budget holds on the iPad, are decided on
 | Memory 300 MB or less in a match (3) | JS heap after a forced GC: 13-16 MB at the start of a match, **20.5 MB after 19 minutes**; textures 6-14 MB | PASS for heap and textures; whole Safari process NOT VERIFIABLE HERE | CDP `Runtime.getHeapUsage` after `HeapProfiler.collectGarbage` |
 | Draw calls 80 or fewer (13) | max per scene: Performance **22**, Balanced **24**, Quality **33**; bench runs 20-34 | PASS | sgn-04-scenes.ts; bench hook / renderer stats every frame |
 | Triangles 200,000 or fewer (13) | max per scene: Performance **46,764**, Balanced **56,502**, Quality **95,742**; bench runs up to 95,954 | PASS | same |
-| Sim + AI 2.5 ms average per tick (13), proxy gate at 4x | `tools/bench.ts --throttle 4` (as specified, raster on, DPR 2): **2.97 ms**; draw calls stubbed: **3.21-3.64 ms**; 6x: 4.73-4.90 ms. 1x: 0.49-0.74 ms. Back to back (no idle between ticks): 0.22-0.32 ms at 1x, 1.86-1.91 ms at 4x. Node, Legend, worst scenes: 67-145 us mean (0.27-0.58 ms with the x4 iPad factor) | **FAIL** in the 4x proxy gate; PASS at 1x and by the Node x4 rule; iPad decides | benchHook result (`window.__benchResult`), tests/perf/sgn-04-bench.ts `--tight`, tests/perf/tun-7s-tick-probe.ts |
-| Sim + AI 4 ms worst case (13) | proxy p99 of each frame's worst tick: **11.9-17.1 ms at 4x**, 22-29 ms at 6x; at 1x p99 **2.1-2.6 ms** but the single worst tick is **5.4-6.9 ms** (1-5 frames per 20-50 s window); Node max 0.4-4.8 ms | **FAIL** at 4x; 1x p99 PASS, 1x max FAIL | same |
+| Sim + AI 2.5 ms average per tick (13), proxy gate at 4x | `tools/bench.ts --throttle 4` (as specified, raster on, DPR 2): **2.97 ms**; draw calls stubbed: **3.21-3.64 ms**; 6x: 4.73-4.90 ms. 1x: 0.49-0.74 ms. Back to back (no idle between ticks): 0.22-0.32 ms at 1x, 1.86-1.91 ms at 4x. Node, Legend, worst scenes: 67-145 us mean (0.27-0.58 ms with the x4 iPad factor) | **FAIL** in the 4x proxy gate; PASS at 1x and by the Node x4 rule; iPad decides ([FIN-P] round: see "Proxy gate: final fix round (FIN-P)") | benchHook result (`window.__benchResult`), tests/perf/sgn-04-bench.ts `--tight`, tests/perf/tun-7s-tick-probe.ts
+| Sim + AI 4 ms worst case (13) | proxy p99 of each frame's worst tick: **11.9-17.1 ms at 4x**, 22-29 ms at 6x; at 1x p99 **2.1-2.6 ms** but the single worst tick is **5.4-6.9 ms** (1-5 frames per 20-50 s window); Node max 0.4-4.8 ms | **FAIL** at 4x; 1x p99 PASS, 1x max FAIL ([FIN-P] round: see "Proxy gate: final fix round (FIN-P)") | same
 | Average 58 fps, 1 % low 50 fps, longest frame 33 ms (13) | main thread only (draw stubbed), CPU v CPU at 1x: **59.95 fps, 1 % low 55.0, longest interval 33.3 ms**, 0 frames over 33.4 ms in 20 s; at 4x 30.9-35.1 fps; real drawing in SwiftShader 1.9-2.4 fps | NOT VERIFIABLE HERE (needs the iPad GPU); main-thread proxy at 1x PASS | sgn-04-bench.ts |
 | Heap growth: none that is steady (13) | after 19 minutes of match: **+0.03 MB in 20 s** (after forced GCs), 0 major GCs; first 30 s of a match: +1.3-2.3 MB (code and feedback warm-up, then flat) | PASS | sgn-04-bench.ts `--long 19` |
 | No garbage-collection pause over 4 ms (13) | 1x: longest **5.0 ms** (CPU v CPU) and **6.2 ms** (human; 3.6 ms in a second run): the 2 pauses over 4 ms per 20 s are the 2 major GCs of the first 30 s of a match; minor GCs average 0.5 ms. After 19 minutes: longest **1.6 ms**, no major GC. 4x: 11-15 ms; 6x: 27-36 ms | **FAIL** in Chromium (V8, early-match major GCs, and every throttled run); JavaScriptCore NOT VERIFIABLE HERE | CDP trace, MinorGC / MajorGC events of the renderer main thread |
@@ -81,7 +81,7 @@ frame-time targets, and whether the sim budget holds on the iPad, are decided on
 | Dynamic resolution 0.6-1.0 with hysteresis (13) | 6x: scale at its **0.60 floor**, tier Performance (4x and 6x runs that start unthrottled step down from Quality to Performance during the warm-up); back at 1x: 0.65, 0.70 ... **1.00** in 8 steps 2 s apart, monotonic, no oscillation; Quality steps down to Balanced when it cannot hold 50 fps | PASS | tests/perf/qf-7r-browser-bench.ts `--scale-test --nodraw --seconds 25`; sgn-04-scenes.ts |
 | No allocation in hot paths (13) | exact Node probes: renderer **0.061 B/frame** (2 allocations per 1000 frames), HUD 1.86 B/frame (event-time toasts and hints), loop 16 B/frame (the contracts' boxed dtSec), input < 0.7 B/frame; sim + AI **2,795 B/tick** steady (2nd match), 7,767 B/tick in the test window, ~95 % boxed doubles at call boundaries, no literals, closures or arrays. Live Chromium page (dev server, 1x): sim 16.2 KB + AI 8.2 KB + render 7.2 KB + three.js 3.0 KB per frame | PASS at source level; V8 boxing remains and drives the GC pauses above | tests/perf/int-c-render-alloc, tests/unit/qf-7r-{hud,loop,input}-alloc, tests/perf/tun-7s-sim-alloc (all pass), tun-7s-sim-alloc-probe.ts, qf-7r-browser-bench.ts `--dev --alloc` |
 | Proxy gate: draw calls and triangles (13) | 20 / 46,756 (4x and 6x, raster on) | PASS | tools/bench.ts |
-| Benchmark runs through the worst cases: crowded box, corner, goal with net ripple, replay (13) | shipped seed 0xb3ac4: the measured window holds a free kick and a throw-in, at most 14 players in one box, **no corner, no goal, no replay** (the first goal is at 103 s, after the window). Seed 11: free kicks at 19 s and 84 s, corner 32 s, goal 39 s, replay 44 s, 406 crowded ticks; confirmed in the browser (phases corner, goal, celebration, replay) | **FAIL** (seed change requested) | tests/perf/sgn-04-bench-coverage.ts (headless, same deterministic match), sgn-04-bench.ts `--seed 11` |
+| Benchmark runs through the worst cases: crowded box, corner, goal with net ripple, replay (13) | [FIN-P] seed 1 (was 0xb3ac4: no corner, goal or replay in the window): on a 60 Hz device the window holds free kicks, a corner (46 s), a goal into the net (51 s, NET event: the ripple), its replay (56 s) and a crowded penalty area | PASS | tests/perf/fin-p-bench-coverage.test.ts (`coverage(BENCH_DEFAULTS.seed).ok`, fails when a sim change reshapes the match) |
 | On-device benchmark built and documented (DoD 6) | `?bench=1` and Settings > Diagnostics > Run benchmark; the panel reports average fps, 1 % and 0.1 % lows, longest frame, sim avg / p99 / worst, render ms, draw calls, triangles, resolution scale, quality tier, screen and user agent, PASS / FAIL per budget, and a Copy Results button; README section 9 "Checking performance" says how to run it, DEVICE_CHECKLIST step 2 says what passes and the results sheet has a "Benchmark result: <paste here>" slot | PASS, except that DEVICE_CHECKLIST says the run includes a corner, a goal and a replay, which is not true until the seed changes | read src/platform/benchHook.ts, src/ui/screens/diagnostics.ts, README.md, docs/DEVICE_CHECKLIST.md |
 
 ### Frame time in the two matches (draw calls stubbed, 20 s window after 8 s of play)
@@ -186,6 +186,170 @@ PW_DIST=dist-e2e/sgn-04 PW_PORT=4504 npx playwright test tests/e2e/plt-04-build.
    budget in tools/size-check.ts (for example to 160 KB).
 4. `textureMemory()` (src/render/index.ts) does not count a shadow map's depth texture (4 MB at Quality). The budget
    is unaffected (14 MB of 64).
+
+## Proxy gate: final fix round (FIN-P)
+
+Measured 2026-10-24 on this container with no other agents running (the only load is the benchmark's own Chromium and
+SwiftShader threads), fresh production builds (`npx vite build --outDir dist-e2e/fin-p --emptyOutDir && node
+tools/postbuild.mjs dist-e2e/fin-p`), the gate exactly as specified: `npx tsx tools/bench.ts --dist dist-e2e/fin-p
+--throttle 4` (seed 1, 90 s window; the measurement and its thresholds are unchanged).
+
+**Verdict: the proxy gate still FAILS** on the p99 of each frame's worst tick (4.5-5.8 ms against 4 ms in every run).
+The average passes with a wide margin (0.90-1.15 ms against 2.5 ms; SGN-04 measured 2.97 ms).
+
+### Gate runs (4x, seed 1)
+
+| build | runs | sim avg ms | p99 of frame worst ms (median) | frames with a tick > 4 ms (median) |
+|---|---:|---|---|---|
+| SGN-04 tree, seed 0xb3ac4, other agents running | 1 | 2.97 | 11.9 | 110 of 218 |
+| this tree without the sim warm-up and without shape settling | 1 | 1.87 | 10.8 | 76 of ~350 |
+| warm-up only (no shape settling) | 1 | 1.50 | 8.4 | 55 |
+| start of this round (first FIN-P attempt: warm-up + settling) | 10 | 0.95-1.17 | 4.6-6.1 (5.6) | 8-22 (13) |
+| final | 18 | 0.90-1.15 | 4.5-5.8 (5.05) | 8-24 (11) |
+
+The same build varies a lot between runs and over the day: one build measured 6 and 7 frames over in the morning and
+17, 17 and 19 an hour later, so only interleaved runs compare builds (the last two rows were interleaved: in 8
+head-to-head pairs the final tree had the lower p99 six times).
+
+### What this round found and fixed
+
+All behaviour-identical: `tools/hash-table.ts --compare` against the tree before this round: IDENTICAL (28 runs).
+
+1. **Deopt wave when the match state is built.** The first state built after `settleStateShapes` had generalised the
+   hidden classes migrated the object literals' boilerplates and changed field types: the match's own `initMatch`, right
+   after the warm-up, marked ~90 optimised sim / AI functions for deoptimisation ("code dependencies"), re-optimised in the
+   first seconds of the match (Node `--trace-deopt`: 89 -> 0). Fix: `warmUpSim` builds three states and plays the third
+   (the second state built after a match has been played gets some array literals as holey doubles from the updated
+   allocation sites, so the warm-up also ends with a short fresh match). Test: `tests/unit/fin-p-warmup.test.ts` "building
+   the match state after the warm-up deoptimises no optimised code".
+2. **State copier and hasher cold, and the copier's feedback polluted.** The loop's `copyState(prev, curr)` and the
+   replay recorder's `hashState` (outside the sim timer, but their garbage triggered scavenges inside ticks) ran
+   unoptimised in the first match: `primeStateCodegen` primed the copier into a dictionary-mode `cloneState`, so its
+   stores stayed generic; the app's fresh interpolation state changed maps on the first fraction copied ("wrong map");
+   the warm-up never ran either. Fixes: prime into a `createSimState` clone; settle a new copy target's shapes
+   (core/clone.ts `copierFor`); two-store generic element copy (no boxed conditional); the warm-up runs the copier every
+   tick and the hasher every 8 ticks. First 120 ticks of a match: 10.3 KB a tick -> 0.7 KB (exact probe,
+   tests/perf/fin-p-copier-probe.ts; test "the state copier and hasher box nothing in the first ticks of the match").
+   In Chromium: heap growth between consecutive tick ends of a frame (copy, tick, events) mean 19.5 -> 13.9 KB, p50
+   15.2 -> 9.5 KB; minor GCs in the window 25 -> 21 (51 -> 39 ms in all, longest 4.0 -> 3.6 ms at 4x); no major GC.
+3. **Shape settling is now production-only** (core/clone.ts `shapeSettlingOn`): in Node's V8 it adds boxing in the
+   lower tiers, which the first attempt had absorbed by loosening three allocation limits (rul-07-budget, sim-15-perf,
+   tun-7s-skeptic-first-tick); those limits are restored and pass (resolveControllers 6.5 B a tick against 8; RUL-07
+   0.1 B a tick and 3.6 KB a kick against 2 B and 4 KB; first tick of a match 98.8 KB and 28.4 KB against 400 KB and
+   120 KB, from 201 KB and 140 KB). Values never change, so tests, tools and hashes are unaffected; the Chromium
+   benefit is the 55 -> 13 frames above.
+4. **Cinematic camera shot hold** (extra item): `holdLosesBall` was never warmed and ran unoptimised during a free-kick
+   shot hold (78 allocations per 1000 frames in tests/perf/int-c-render-alloc and qf-7r-camera-alloc). Warmed on the
+   live state in `warmUpPaths` (its own loop); both tests pass without loosening; regression
+   tests/perf/fin-p-cine-hold-alloc.test.ts (261 allocations in a 40-frame hold before, 0 after); int-c and qf-7r now
+   4.6 allocations per 1000 frames.
+5. **Bench seed** 0xb3ac4 -> 1 (first attempt, verified on the final tree): tests/perf/fin-p-bench-coverage.test.ts.
+
+### Why the gate still fails
+
+- **The frame's first tick is cold.** At 4x SwiftShader draws a frame in ~250 ms and the loop then runs 3 ticks: the
+  first tick of a frame averages 1.5-1.65 ms, the second and third 0.65-0.8 ms (tests/perf/fin-p-tick-trace.ts).
+- **The CPU carrier's decision is a deterministic burst.** Node per-tick profile of the window (tests/perf/
+  fin-p-stage-probe.ts, ticks 300-1300): mean 166 us, p99 803 us; every 6 ticks (World Class `carrierEvalTicks`) the
+  carrier scores all options, 300-500 us of a 400-800 us tick, 79% of it the TAI-09 pass scan (through balls 46%, ground
+  passes 37%). 7 of the 12 frames over 4 ms in a recorded run were such ticks; they take 4-6 ms when they land first in a
+  frame. A throwaway build without through-ball scans at all still had 4 and 9 frames over (p99 4.1 / 5.5 ms).
+- **The environment's own jitter is about 2x at p99.** A constant synthetic workload run 3 times a frame beside the game
+  (`--calib 300000`) measured p50 3.1 ms, p90 4.7, p99 6.3, max 64.7 ms; 174 of 984 calls over 4 ms. Garbage collection
+  (21 scavenges of up to 3.6 ms in the window, half of them inside a tick) and late compiler work add the rest.
+
+### Open decisions (lead)
+
+1. Spreading the carrier's pass scan over the ticks between its decisions (BRIEF section 13 "AI budgeting") needs per
+   team scratch in SimState for the partial option list (contracts/state.ts, lead-owned); a module cache would desync a
+   session that resumes from a snapshot. Even then the jitter above leaves 3 runs out of 3 unlikely on this container.
+2. Or accept the on-device benchmark as the judge (SGN-04 open item 1); the 4x proxy average passes.
+3. Render and loop garbage (render update, replay packing, three.js sort: ~5 KB a frame in the traced window) is FIN-A's
+   area; less of it means fewer scavenges inside ticks.
+
+Cost: the sim warm-up adds to the first match's loading screen (navigation to match state, tests/perf/fin-p-load-time.ts):
+6.3 s against 4.4 s without it at 1x, 17.4 s against 8.4 s at 4x.
+
+### Reproduce (this round)
+
+```sh
+npx vite build --outDir dist-e2e/fin-p --emptyOutDir && node tools/postbuild.mjs dist-e2e/fin-p
+npx tsx tools/bench.ts --dist dist-e2e/fin-p --throttle 4                       # the gate
+npx tsx tests/perf/fin-p-tick-trace.ts --dist dist-e2e/fin-p --seconds 90 --trace  # slow ticks, GC / JIT inside them
+npx tsx tests/perf/fin-p-tick-trace.ts --dist dist-e2e/fin-p --seconds 90 --calib 300000   # environment jitter
+node --import tsx tests/perf/fin-p-stage-probe.ts --seed 1 --warm 300 --ticks 1000   # Node per-stage tick cost
+node --trace-deopt --import tsx tests/perf/fin-p-deopt-probe.ts 300                 # deopt wave check
+node --single-threaded --sampling-heap-profiler-suppress-randomness --import tsx tests/perf/fin-p-copier-probe.ts 120
+npx tsx tests/perf/fin-p-load-time.ts --dist dist-e2e/fin-p --throttle 1,4 --runs 1
+```
+
+### Skeptic round (FIN-P, second agent)
+
+Same container, idle (only the benchmark's own Chromium), fresh production builds, `npx tsx tools/bench.ts --dist
+dist-e2e/fin-p --throttle 4` (seed 1).
+
+**The throttled gate did not run the worst cases.** The bench window was 90 s of wall clock. Under 4x throttling a frame
+takes ~270 ms and the loop runs at most `MAX_TICKS_PER_FRAME` (3) ticks a frame, so the match plays in slow motion: the
+window held ~1000 ticks (337-348 frames, 1011-1044 ticks; ticks ~300-1300, 17 s of match) and none of the corner (46 s),
+goal with net ripple (51 s) or replay (56 s) that `fin-p-bench-coverage` places in the 60 Hz window. Fix
+(`src/platform/benchHook.ts` `benchWindowEnd`): the window is 90 s of match, both 90 s of play and 90 x 60 sim ticks
+(wall clock only when the loop exposes no stats); a device too slow to cover it within `maxWindowStretch` (12) times the
+window ends with an error (fails). On a device that keeps up (the iPad run) both ends coincide, so the in-app benchmark
+is unchanged there. `tools/bench.ts` waits accordingly (a 4x run now takes ~8 minutes). The statistics, thresholds and
+seed are unchanged. Test: `tests/unit/fin-p-bench-window.test.ts`.
+
+Gate runs (all FAIL on the p99 of each frame's worst tick; average, draw calls (20) and triangles (46,756) pass):
+
+| build | window | runs | sim avg ms | p99 frame worst ms | frames with a tick > 4 ms |
+|---|---|---:|---|---|---|
+| first agent's final tree | 90 s wall (old) | 3 | 0.98-1.10 | 5.5, 5.9, 6.3 | 20 / 337, 12 / 348, 19 / 339 |
+| first agent's final tree | 90 s of match (5400 ticks) | 3 | 0.82-0.87 | 4.8, 5.1, 4.8 | 40, 47, 40 of 1800 |
+| this round's final tree | 90 s of match | 3 | 0.78-0.86 | 4.5, 4.8, 4.3 | 37, 38, 29 of 1800 |
+
+The first agent's numbers are confirmed within run-to-run spread (its 18 runs: p99 4.5-5.8 ms, 8-24 frames over).
+
+Behaviour identity: `tools/hash-table.ts --compare` against a reference recorded on a `git archive HEAD` copy:
+IDENTICAL (28 runs), and also in production mode (`tests/perf/fin-p-prod-hash.ts`: `__DEV_BUILD__` false, so the sim
+warm-up runs first in each process and shape settling is on): IDENTICAL (28 runs). Run on the first agent's tree and
+again on this round's final tree.
+
+Found and fixed (all behaviour-identical, same tables):
+
+1. **Bench window** (above).
+2. **The warm-up's import of the tick pipeline broke 3 tests** that the first agent attributed to FIN-K. init.ts
+   importing `step` / `rules/restart` changed the evaluation order of the sim's module graph: tai-08's module doubles
+   (vi.mock of kicks/lob, shot, through) were bypassed through the kicks <-> actions/registry cycle (3 failing tai-08
+   scenarios; they pass at f2e442b and at HEAD with only that import stubbed). The implementation now lives in
+   `src/sim/step.ts` and binds itself to init.ts (`bindSimWarmUp`); init.ts reaches neither step.ts nor the resolver.
+   Test: `tests/unit/fin-p-warmup-imports.test.ts`.
+3. **Event buffers had per-instance closures**, so code the warm-up optimised against its own buffer deoptimised
+   ("wrong call target") the first time it called the match's buffer: `step` on the first tick and each emitting function
+   at its first event in play (6 in the bench window: step, substep, interceptContacts, firstTimeCompletion,
+   updateTeamPhase, resolvePairs), each followed by unoptimised ticks. `src/sim/core/events.ts` is now one class (shared
+   methods); 0 such deopts. Test: `tests/unit/fin-p-events-target.test.ts`.
+4. **hashState allocated a heap number per mixed number in Chromium** (its running murmur state was a module `let`, and
+   each double's words were passed to mixWord): ~105 KB per hash of a live state, ~1.5 KB a tick in the bench (the
+   replay recorder hashes every 30 ticks), the largest single allocator of play in the Chromium allocation profile.
+   `src/sim/core/hash.ts` keeps the state in an Int32Array slot and mixes both words in mixF64: ~0 B. Node's V8 does not
+   show it, so the test runs the real module in headless Chromium: `tests/perf/fin-p-hash-alloc.test.ts`.
+
+Profile of the remaining slow ticks (`fin-p-tick-trace.ts --trace`, 1800 ticks): 12 frames over 4 ms, 6 of them with a
+scavenge inside the tick (29 scavenges, each 3.5-5.5 ms at 4x), 6 without GC or compile work (the cold first tick of a
+frame: mean 1.5 ms vs 0.64 for the 2nd and 3rd). Sim + AI allocation (production mode, Node, exact sampling,
+`tests/perf/fin-p-bench-alloc-probe.ts`): ~22 KB a tick at ticks 300-900 of the bench match, ~11 KB at 1200-1800, ~8 KB
+after 2000: the hot functions keep deoptimising on branches the warm-up never took ("insufficient type feedback":
+resolvePairs alone 11 times during the warm-up and again in the match) and run unoptimised meanwhile. In Chromium the
+sim + AI share of the ~10 KB growth per tick is ~6-7 KB (defendCarrier, simulateLoose, steerJob, runDribble,
+assignPressing, computeEff, resolvePairs, ...). GCs inside ticks scale with that allocation, not with the render's.
+
+Open:
+- `tests/unit/rul-05-perf.test.ts` previewFlight allocation (1542-1558 B against 1000-1016 B) still fails. Cause:
+  production mode in its esbuild bundle (`__DEV_BUILD__` false: warm-up and shape settling active); with settling off it
+  is 966 B (aim) and 1014 B (swipe, 14 B over). Not FIN-K. Most of the excess is in ball/contact `frame` (goal-frame
+  contact of the predicted flight), ~800 B per call even in Turbofan code; not found.
+- The gate still fails 3 of 3. Removing the GC share needs sim + AI allocation near 0 in the window, which in turn needs
+  the hot functions to stay optimised (warm-up coverage of their rare branches) or code that does not box when they are
+  not; the cold first tick and the 6-tick carrier burst remain.
 
 ## Render and app side (QF-7R, round 5)
 

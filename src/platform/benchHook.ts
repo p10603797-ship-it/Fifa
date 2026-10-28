@@ -21,7 +21,7 @@
  * extended by that time, so a notification or a rotation during the run never turns into a 30-second "longest frame".
  */
 import type { AppContext, MatchSetup } from '../contracts/app';
-import { GAME_VERSION } from '../contracts/constants';
+import { GAME_VERSION, TICK_HZ } from '../contracts/constants';
 import { ControllerKind, Difficulty, MatchPhase, ModeId } from '../contracts/enums';
 import type { RenderStats } from '../contracts/render';
 import { createMatchConfig, type ControllerConfig } from '../contracts/state';
@@ -58,7 +58,28 @@ export const BENCH_DEFAULTS = {
   simHitchFrames: 2,
   /** Give up if the match has not loaded after this long. */
   loadTimeoutSeconds: 60,
+  /**
+   * [FIN-P skeptic] The window is `seconds` of match, not only of wall clock: it ends once both `seconds` of play and
+   * seconds x TICK_HZ sim ticks have passed (benchWindowEnd). A device that cannot run the sim in real time (the loop
+   * runs at most MAX_TICKS_PER_FRAME ticks a frame and drops the rest) plays the match in slow motion: under the proxy
+   * gate's 4x CPU throttling a frame takes ~270 ms, 90 s of wall clock held ~1000 ticks (17 s of match, ticks 300-1300)
+   * and none of the corner, goal, net ripple or replay that tests/perf/fin-p-bench-coverage.test.ts places in the
+   * window. On a device that keeps up (the iPad run) the two ends coincide. The wall clock waits at most this many
+   * times `seconds` for the ticks (then the run ends with an error, which fails it).
+   */
+  maxWindowStretch: 12,
 } as const;
+
+/**
+ * [FIN-P skeptic] Where the measurement window stands after `playedMs` of play and `ticks` sim ticks: 'open' (keep
+ * measuring), 'done' (both `seconds` of play and seconds x TICK_HZ ticks: the whole match window), or 'cut' (the wall
+ * clock ran maxWindowStretch times over before the ticks did: too slow to cover the window). Pure.
+ */
+export function benchWindowEnd(playedMs: number, ticks: number, seconds: number): 'open' | 'done' | 'cut' {
+  if (playedMs >= seconds * 1000 && ticks >= seconds * TICK_HZ) return 'done';
+  if (playedMs >= seconds * 1000 * BENCH_DEFAULTS.maxWindowStretch) return 'cut';
+  return 'open';
+}
 
 export interface BenchCheck {
   name: string;
@@ -498,8 +519,12 @@ export function startBench(ctx: AppContext, opts: BenchOptions = {}): BenchHandl
       }
       const ended = !ctx.session.active || (state !== null && state.match.phase === MatchPhase.POST_MATCH);
       const played = now - stageStart - pausedMs;
-      if (played >= seconds * 1000 || ended) {
-        finish(ended && played < seconds * 1000 ? 'match ended before the measurement window' : undefined);
+      // [FIN-P skeptic] `seconds` of match: wall clock and sim ticks (benchWindowEnd; was wall clock only). Without the
+      // loop's stats there is no tick count (and no sim timing): wall clock only, as before.
+      const end = benchWindowEnd(played, ls ? timing.ticks : Number.POSITIVE_INFINITY, seconds);
+      if (end !== 'open' || ended) {
+        finish(end === 'done' ? undefined : ended ? 'match ended before the measurement window'
+          : `covered ${(timing.ticks / TICK_HZ).toFixed(1)} s of the ${seconds} s match window in ${(played / 1000).toFixed(0)} s (too slow)`);
         return;
       }
     }

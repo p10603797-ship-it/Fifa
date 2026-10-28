@@ -12,7 +12,7 @@
  * walker here and in hash.ts: assigning it would re-parent the copy or, through copyInto(Object.prototype, e),
  * pollute every object in the app.
  */
-import { IMMUTABLE_STATE_KEYS, type SimState } from '../../contracts/state';
+import { createSimState, IMMUTABLE_STATE_KEYS, type SimState } from '../../contracts/state';
 
 type Rec = Record<string, unknown>;
 
@@ -168,9 +168,14 @@ function isPlainExpr(v: string): string {
   return `(${v} !== null && typeof ${v} === 'object' && !Array.isArray(${v}) && !ArrayBuffer.isView(${v}))`;
 }
 
-/** Statement copying the value `x` (already read from src) into `dst` (an lvalue), with the generic walk's semantics. */
+/**
+ * Statement copying the value `x` (already read from src) into `dst` (an lvalue), with the generic walk's semantics.
+ * [FIN-P] Two stores, not one store of a conditional: `dst = cond ? ci(dst, x) : x` merged a double element with the
+ * call's result into one value, which V8 must box, a heap number per element per copy (2 KB a tick for the team and
+ * shoot-out arrays once their elements hold doubles; tests/unit/fin-p-warmup.test.ts copier probe). Same result.
+ */
 function genericStore(dst: string, x: string): string {
-  return `${dst} = typeof ${x} === 'object' && ${x} !== null ? ci(${dst}, ${x}) : ${x};`;
+  return `if (typeof ${x} !== 'object' || ${x} === null) ${dst} = ${x}; else ${dst} = ci(${dst}, ${x});`;
 }
 
 /** Name of the generated function copying objects of `v`'s shape (generated on first use). */
@@ -357,6 +362,13 @@ function copierFor(dst: SimState, src: SimState): Copier | null {
       if (c >= 0) fn = compiledFn[c]!;
     }
   }
+  // [FIN-P] A new copy target gets the hidden classes the match states have (initMatch settles them): the app's
+  // interpolation state is a fresh createSimState (app/liveState.ts cloneLiveState) whose integer slots and arrays only
+  // became doubles when the copier first wrote a fraction into each, a map / elements-kind change per object kind in
+  // the first ticks of every match, which deoptimised the optimised copier ("wrong map") and left it boxing every field
+  // it copied while it re-optimised (tests/unit/fin-p-warmup.test.ts copier probe). No value changes. Production builds
+  // (shapeSettlingOn below), like initMatch's.
+  if (fn !== null && shapeSettlingOn()) settleStateShapes(dst);
   pairDst[pairNext] = dst;
   pairSrc[pairNext] = src;
   pairFn[pairNext] = fn;
@@ -388,9 +400,13 @@ export function primeStateCodegen(s: SimState): void {
   const k = compile(s, sig);
   if (k < 0) return;
   // Run the checker and the copier once (into a throwaway clone): V8 / JSC compile a generated inner function's bytecode
-  // on its first call, which would otherwise still land on the first tick.
+  // on its first call, which would otherwise still land on the first tick. [FIN-P] The clone is built as the app builds
+  // its interpolation state (createSimState: app/liveState.ts cloneLiveState), not with cloneState: cloneState's objects
+  // are dictionary-mode (keyed stores), and the copier's first stores into them left dictionary maps in its store
+  // feedback for the whole session, so in play it stored every double through the generic path, a heap number each
+  // (10 KB a tick in the first match, tests/unit/fin-p-warmup.test.ts).
   compiledCheck[k]!(s);
-  compiledFn[k]!(cloneState(s), s, copyInto);
+  compiledFn[k]!(createSimState(s.config, s.squads), s, copyInto);
 }
 
 /** Forget validated pairs (tests that reshape a state in place after copying it). */
@@ -510,4 +526,72 @@ export function diffState(a: SimState, b: SimState): string | null {
     return `${k}: missing != present`;
   }
   return null;
+}
+
+// ---------------------------------------------------------------- [FIN-P] shape settling
+// Shared by sim/init.ts initMatch (every new match state), copierFor above (a new copy target, e.g. the app's
+// interpolation state) and the sim warm-up (sim/init.ts warmUpSim). Values are never changed. Load-time only.
+
+/**
+ * Settling is on in production builds (the shipped app: V8 / Chromium, where it removes the deopt waves of play) and off
+ * in dev builds, tests and the Node tools: there it only adds boxing in V8's lower tiers (an integer slot held as a
+ * double is a heap number whenever unoptimised code reads it), which the allocation tests (QF-7R / TUN-7S) would then
+ * measure instead of the code's own allocation. Values are identical either way, so the simulation and its hashes are
+ * too. Probes of the production behaviour turn it on with setShapeSettling(true).
+ */
+let settling = typeof __DEV_BUILD__ !== 'undefined' && !__DEV_BUILD__;
+
+/** Turn production shape settling on / off for this process (tests and probes of the production behaviour). */
+export function setShapeSettling(on: boolean): void {
+  settling = on;
+}
+
+/** True when initMatch and the state copier settle new states (production builds, or setShapeSettling(true)). */
+export function shapeSettlingOn(): boolean {
+  return settling;
+}
+
+/**
+ * [FIN-P] Settle the hidden classes of a fresh state's objects up front, so they do not change in play: every numeric
+ * field (and every all-number array) that holds an integer is written once with a fraction and then back, so V8 gives it
+ * its double representation (and a mutable, non-constant field) now instead of on its first fractional value in play.
+ * createSimState's literals start every number as a small integer (x: 0, vy: 0, ...); a field's first fraction (the
+ * ball's first spin at tick ~6000, a restart's wall position, an advantage spot) changed the map of that object kind and
+ * deoptimised every optimised function that had read it (Node: 457 "wrong map" deopts in two matches, 2 after this), so
+ * the engine kept re-optimising for some 20000 ticks and paced ticks ran in slower tiers with boxed doubles.
+ * Integer-only fields are settled too, on purpose: in Chromium (V8 14) under 4x throttling, settling only the 79 fields
+ * that ever hold fractions left twice the Maglev recompilations, deopts and allocation per tick in the first match's
+ * window (141 vs 62 recompilations, 34 vs 17 KB per tick, 39 vs 17 of 130 frames with a tick over 4 ms;
+ * tests/perf/fin-p-tick-trace.ts). Node's V8 12 boxes more doubles in its lower tiers for it, so it is production-only
+ * (shapeSettlingOn above). Values are unchanged (an integer plus 0.5 is exact, and the integer itself is
+ * written back, -0 included), so this is invisible to the sim and its hash; JavaScriptCore has no field representations
+ * and is unaffected. tests/unit/fin-p-warmup.test.ts plays matches and checks that no map changes. Load-time only.
+ */
+export function settleStateShapes(s: SimState): void {
+  const r = s as unknown as Record<string, unknown>;
+  for (const k of Object.keys(r)) {
+    if (k === 'config' || k === 'squads') continue; // shared inputs, never written by the sim
+    settleValue(r, k, 0);
+  }
+}
+
+function settleValue(o: Record<string | number, unknown>, k: string | number, depth: number): void {
+  const v = o[k];
+  if (typeof v === 'number') {
+    if (Number.isInteger(v)) {
+      o[k] = v + 0.5;
+      o[k] = v;
+    }
+  } else if (Array.isArray(v)) {
+    if (depth > 6) return;
+    let allNum = v.length > 0;
+    for (let i = 0; i < v.length; i++) if (typeof v[i] !== 'number') { allNum = false; break; }
+    const a = v as unknown as Record<number, unknown>;
+    if (allNum) settleValue(a, 0, depth + 1); // one store moves the whole array to double elements
+    else for (let i = 0; i < v.length; i++) if (v[i] !== null && typeof v[i] === 'object') settleValue(a, i, depth + 1);
+  } else if (v !== null && typeof v === 'object' && !ArrayBuffer.isView(v)) {
+    if (depth > 6) return;
+    const obj = v as Record<string, unknown>;
+    for (const key of Object.keys(obj)) settleValue(obj, key, depth + 1);
+  }
 }

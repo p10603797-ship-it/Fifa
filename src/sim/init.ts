@@ -12,14 +12,13 @@ import { createSimState, RosterStatus, type MatchConfig, type PlayerAttrs, type 
 import { T_MATCH_FLOW } from '../contracts/tuning';
 import { CLUBS } from '../data/clubs';
 import { getFormation } from '../data/formations';
-import { primeStateCodegen } from './core/clone';
+import { primeStateCodegen, settleStateShapes, shapeSettlingOn } from './core/clone';
 import { primeHashCodegen } from './core/hash';
 import { rngInt, rngSeed } from './core/rng';
 import { accelFor, topSpeedFor } from './players/locomotion';
 import { preparePracticeState } from './rules/practice';
-import { settleStateShapes, warmUpOnce } from './warmup';
 
-/** Production build (the shipped app): the loading screen warms the sim up (src/sim/warmup.ts). */
+/** Production build (the shipped app): the loading screen warms the sim up (warmUpOnce, below). */
 const PROD = typeof __DEV_BUILD__ !== 'undefined' && !__DEV_BUILD__;
 
 /** Copy a squad member's attributes into a PlayerAttrs (+ derived top speed and acceleration). */
@@ -44,7 +43,7 @@ export function periodLength(config: MatchConfig, period: Period): number {
 
 export function initMatch(config: MatchConfig, clubs: readonly Club[] = CLUBS): SimState {
   // [FIN-P] Once per process in the app: compile and optimise the sim on the loading screen, not in the first match
-  // (src/sim/warmup.ts; no effect on any state but its own scratch match).
+  // (warmUpOnce, below; no effect on any state but its own scratch match).
   if (PROD) warmUpOnce((c) => initMatch(c, clubs), config);
   const homeClub = clubs[config.homeClub] ?? clubs[0]!;
   const awayClub = clubs[config.awayClub] ?? clubs[1]!;
@@ -127,11 +126,87 @@ export function initMatch(config: MatchConfig, clubs: readonly Club[] = CLUBS): 
   s.ball.px = 0; s.ball.py = 0.11; s.ball.pz = 0;
   preparePracticeState(s);
   // [FIN-P] Every numeric field gets its double representation now, not on its first fraction in play (no value
-  // changes; see settleStateShapes).
-  settleStateShapes(s);
+  // changes; see core/clone.ts settleStateShapes). Production builds (core/clone.ts shapeSettlingOn).
+  if (shapeSettlingOn()) settleStateShapes(s);
   // [TUN-7S skeptic] Compile the state copier / hasher now (the loading screen), once per process, not in the first
   // ticks of play. No effect on the state.
   primeStateCodegen(s);
   primeHashCodegen(s);
   return s;
+}
+
+/*
+ * ---------------------------------------------------------------- [FIN-P] sim + AI warm-up
+ * Sim + AI warm-up on the loading screen (BRIEF section 13 "Warm-up": during loading ... run each animation and
+ * effect once off screen, so the first slide tackle or replay in a match does not hitch; and the throttled proxy gate,
+ * DoD 6). A JavaScript engine compiles a function the first time it runs, re-compiles it optimised once it is hot, and
+ * the sim's state objects settle their hidden classes (a field's first double generalises its map, which deoptimises
+ * every function that read it) during the first thousands of ticks of a session. Without a warm-up all of that lands
+ * inside the ticks of the first match: in Chromium under 4x CPU throttling most ticks over the 4 ms budget in the first
+ * 90 s carried compile or deopt work (tests/perf/fin-p-tick-trace.ts).
+ *
+ * warmUpSim() builds three scratch states (the first two thrown away: see the comment there), plays a scratch CPU v CPU
+ * match on the third (cut-scenes skipped) and then each restart kind for both teams on it, then a short fresh match,
+ * T_WARMUP ticks in all, each tick as the app loop runs it (copyState into an interpolation state first, a hashState
+ * every few ticks), with its own states, input frames and event buffer: nothing outside the scratch states is written,
+ * so the match that follows is bit-identical with or without it (tests/unit/fin-p-warmup.test.ts compares hash
+ * timelines; tools/hash-table.ts IDENTICAL). initMatch runs it once per process in production builds (warmUpOnce: the
+ * app's loading screen of the first match, +1.9 s in desktop Chromium and +9 s under 4x CPU throttling,
+ * tests/perf/fin-p-load-time.ts); dev builds, tests and the Node tools skip it (hundreds of test files would each pay
+ * it) unless they call warmUpSim() themselves.
+ * [FIN-P skeptic] The implementation lives in sim/step.ts (it plays the step pipeline) and binds itself here when step.ts
+ * loads (bindSimWarmUp; the app always loads step.ts before its first initMatch). init.ts itself imports nothing of the
+ * tick pipeline: importing step / rules from here (as the warm-up first did) changed the evaluation order of the sim's
+ * module graph for every importer of init.ts, and the tai-08 carrier scenarios' module doubles (vi.mock of
+ * kicks/lob, shot, through) then met the real starters through the kicks <-> actions/registry cycle: 3 tests failed
+ * (tests/unit/fin-p-warmup-imports.test.ts).
+ */
+
+/** The warm-up implementation (sim/step.ts binds it): run, ticks run so far, phases seen. */
+export interface SimWarmUp {
+  run(makeState: (c: MatchConfig) => SimState, base: MatchConfig | null): number;
+  ticks(): number;
+  phases(): number;
+}
+
+let impl: SimWarmUp | null = null;
+/** warmUpOnce has run (or tried to) in this process. */
+let attempted = false;
+
+/** sim/step.ts installs the warm-up implementation when it loads. */
+export function bindSimWarmUp(w: SimWarmUp): void {
+  impl = w;
+}
+
+/** Ticks warmUpSim ran in this process (0 = never). */
+export function simWarmedTicks(): number {
+  return impl ? impl.ticks() : 0;
+}
+
+/** Bit mask (1 << MatchPhase) of the phases the warm-up went through in this process. */
+export function simWarmedPhases(): number {
+  return impl ? impl.phases() : 0;
+}
+
+/**
+ * Play the warm-up (T_WARMUP.openPlayTicks of open play, then T_WARMUP.sceneTicks per restart scene, then a short fresh
+ * match) on scratch states made by `makeState` (initMatch). Returns the ticks run (0 when sim/step.ts is not loaded).
+ * Writes nothing but the scratch states.
+ */
+export function warmUpSim(makeState: (c: MatchConfig) => SimState, base: MatchConfig | null = null): number {
+  return impl ? impl.run(makeState, base) : 0;
+}
+
+/**
+ * The loading-screen entry (initMatch, production builds): warmUpSim once per process, before the first match's state
+ * is built. Never throws: a failing warm-up only costs the warm-up (the match itself would fail the same way anyway).
+ */
+export function warmUpOnce(makeState: (c: MatchConfig) => SimState, base: MatchConfig): void {
+  if (attempted || impl === null) return;
+  attempted = true;
+  try {
+    warmUpSim(makeState, base);
+  } catch {
+    // optional work: the match loads without it
+  }
 }
