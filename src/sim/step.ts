@@ -154,6 +154,30 @@ function warmTick(s: SimState, prev: SimState, frames: InputFrame[], ev: EventBu
   phasesSeen |= 1 << s.match.phase;
 }
 
+/**
+ * [FIN-P2] One extra CPU decision round on `scr`, a scratch copy of the warm-up state `s`: the CPU brains' decisions as
+ * the next tick would take them, with every brain's re-decision forced (evalT 0, no reaction delay, the same owner as
+ * the tick before, so cpuCarrier's decide() runs and not its once-per-owner reset). In play the carrier decides only
+ * every T_LEVEL.carrierEvalTicks (World Class: 6) and the defending brain's rarer paths seldom run, so V8 had not
+ * compiled cpuCarrier's decision (scorePassOptions, throughBall, lobPass, mateTimeAt, fillContext, runDribble, ...) or
+ * defendCarrier with TurboFan by the end of the warm-up: they ran in Maglev (slower, boxing doubles at calls) for the
+ * whole bench window (Node bundle probe: 26 KB of sim + AI garbage a tick, 11 KB with these rounds). Writes `scr` and
+ * the warm-up's event buffer only.
+ */
+function warmDecide(s: SimState, scr: SimState, ev: EventBuffer): void {
+  copyState(scr, s);
+  scr.tick++;
+  ev.begin(scr.tick);
+  for (let team = 0; team < 2; team++) {
+    const br = scr.teams[team]!.cpu;
+    br.evalT = 0;
+    br.reactT = 0;
+    br.p0 = scr.tick - 1;
+    br.seenOwner = scr.ball.owner;
+  }
+  cpuThink(scr, ev);
+}
+
 /** The phase as a plain number (TypeScript would keep a narrowing across the steps that change it). */
 function phaseOf(s: SimState): number {
   return s.match.phase;
@@ -174,6 +198,12 @@ const SCENE_Z: readonly number[] = [1, 0.1, 0, 1, 0.15, -1, -0.2, -1];
 let phasesSeen = 0;
 /** Ticks warmUpSim ran in this process (0 = never). */
 let warmedTicks = 0;
+/** [FIN-P2] Forced CPU decision rounds the warm-up ran in this process (warmDecide). */
+let warmDecisions = 0;
+/** [FIN-P2] Forced CPU decision rounds the warm-up has run in this process (tests). */
+export function warmUpDecisions(): number {
+  return warmDecisions;
+}
 /** Re-entrancy guard (warmUpSim builds its scratch state with initMatch). */
 let warming = false;
 
@@ -202,7 +232,16 @@ function warmUpSimImpl(makeState: (c: MatchConfig) => SimState, base: MatchConfi
     copyState(prev, s);
     const frames = [createInputFrame(), createInputFrame()];
     const ev = createEventBuffer();
-    for (let t = 0; t < T_WARMUP.openPlayTicks && phaseOf(s) !== MatchPhase.POST_MATCH; t++) { warmTick(s, prev, frames, ev); ran++; }
+    // [FIN-P2] The open play, with up to T_WARMUP.decisionRounds forced CPU decisions on a scratch copy (warmDecide).
+    const scr = createSimState(s.config, s.squads);
+    copyState(scr, s);
+    let decided = 0;
+    for (let t = 0; t < T_WARMUP.openPlayTicks && phaseOf(s) !== MatchPhase.POST_MATCH; t++) {
+      warmTick(s, prev, frames, ev);
+      ran++;
+      if (decided < T_WARMUP.decisionRounds && phaseOf(s) === MatchPhase.IN_PLAY) { warmDecide(s, scr, ev); decided++; }
+    }
+    warmDecisions += decided;
     for (let k = 0; k < SCENE_KIND.length; k++) {
       // Back to open play first (a restart is awarded from play), then the scene.
       for (let t = 0; t < T_WARMUP.sceneTicks && phaseOf(s) !== MatchPhase.IN_PLAY && phaseOf(s) !== MatchPhase.POST_MATCH; t++) { warmTick(s, prev, frames, ev); ran++; }

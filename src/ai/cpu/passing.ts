@@ -188,11 +188,79 @@ function lnk(): void {
   F[LN_OUT] = 2 * sum + k * 0.6931471805599453;
 }
 
+// [FIN-P2] Exact memo of the two roll-model solvers (rollTime, passSpeed): pure functions of their two inputs (the
+// tuning they read never changes at run time), each a Newton solve of ~6-11 series logarithms. One carrier decision
+// (scorePassOptions) solves rollTime ~79 times and passSpeed ~60 times, of which 13 and 21 with inputs it has already
+// solved in that decision (the driven variant's first lead step, the through ball's own lead, the final solve at the
+// lead point), so a small direct-mapped cache keyed by the inputs' exact bits returns the very doubles a solve would.
+// Misses (and NaN inputs, which never match) solve as before. Results only depend on the inputs, so a hit can never
+// change an outcome (tools/hash-table.ts IDENTICAL).
+const MEMO_N = 64;
+const MEMO_K = new Float64Array(2);
+const MEMO_KW = new Uint32Array(MEMO_K.buffer);
+const RT_IN = new Float64Array(2 * MEMO_N).fill(Number.NaN);
+const RT_OUT = new Float64Array(2 * MEMO_N);
+const PS_IN = new Float64Array(2 * MEMO_N).fill(Number.NaN);
+const PS_OUT = new Float64Array(MEMO_N);
+
+/** Slot of (MEMO_K[0], MEMO_K[1]) in a memo table: a mix of all four 32-bit words. */
+function memoSlot(): number {
+  let h = Math.imul(MEMO_KW[0]! ^ 0x9e3779b9, 0x85ebca6b) ^ MEMO_KW[1]!;
+  h = Math.imul(h ^ (h >>> 15) ^ MEMO_KW[2]!, 0xc2b2ae35) ^ MEMO_KW[3]!;
+  h ^= h >>> 13;
+  return h & (MEMO_N - 1);
+}
+
+/** The roll-model tuning the memo was filled under (rollDecel, rollDamping, maxSpeed): a tool or test that changes
+ *  T_BALL between calls empties the memo. */
+const MEMO_T = new Float64Array(3).fill(Number.NaN);
+function memoCheckTuning(): void {
+  if (sameBits(MEMO_T[0]!, T_BALL.rollDecel) && sameBits(MEMO_T[1]!, T_BALL.rollDamping) && sameBits(MEMO_T[2]!, T_BALL.maxSpeed)) return;
+  RT_IN.fill(Number.NaN);
+  PS_IN.fill(Number.NaN);
+  MEMO_T[0] = T_BALL.rollDecel; MEMO_T[1] = T_BALL.rollDamping; MEMO_T[2] = T_BALL.maxSpeed;
+}
+
+/** Same double, sign of zero included (NaN never matches: those inputs are always solved). */
+function sameBits(a: number, b: number): boolean {
+  return a === b && (a !== 0 || 1 / a === 1 / b);
+}
+
+/** rollTime through the memo (see above). */
+function rollTime(): void {
+  memoCheckTuning();
+  const v0 = F[RS_V0]!, d = F[RS_D]!;
+  MEMO_K[0] = v0; MEMO_K[1] = d;
+  const k = memoSlot();
+  if (sameBits(RT_IN[2 * k]!, v0) && sameBits(RT_IN[2 * k + 1]!, d)) {
+    F[RS_T] = RT_OUT[2 * k]!; F[RS_VEND] = RT_OUT[2 * k + 1]!;
+    return;
+  }
+  rollTimeSolve();
+  RT_IN[2 * k] = v0; RT_IN[2 * k + 1] = d;
+  RT_OUT[2 * k] = F[RS_T]!; RT_OUT[2 * k + 1] = F[RS_VEND]!;
+}
+
+/** passSpeed through the memo (see above). */
+function passSpeed(): void {
+  memoCheckTuning();
+  const va = F[RS_VA]!, d = F[RS_D]!;
+  MEMO_K[0] = va; MEMO_K[1] = d;
+  const k = memoSlot();
+  if (sameBits(PS_IN[2 * k]!, va) && sameBits(PS_IN[2 * k + 1]!, d)) {
+    F[RS_V0] = PS_OUT[k]!;
+    return;
+  }
+  passSpeedSolve();
+  PS_IN[2 * k] = va; PS_IN[2 * k + 1] = d;
+  PS_OUT[k] = F[RS_V0]!;
+}
+
 /**
  * SIM-01 groundRollTime (same roll model, inline): F[RS_T] = seconds for a ground ball launched at F[RS_V0] to roll
  * F[RS_D] m (-1 if it stops first), F[RS_VEND] = its speed there.
  */
-function rollTime(): void {
+function rollTimeSolve(): void {
   const v0 = F[RS_V0]!, d = F[RS_D]!;
   const a = T_BALL.rollDecel, c = T_BALL.rollDamping;
   if (!(d > 0)) { F[RS_T] = 0; F[RS_VEND] = v0 > 0 ? v0 : 0; return; }
@@ -232,7 +300,7 @@ function rollTime(): void {
 
 /** SIM-01 groundPassSpeed (same roll model, inline): F[RS_V0] = launch speed that arrives at F[RS_D] m with F[RS_VA]
  *  m/s, in [arrival, T_BALL.maxSpeed]. */
-function passSpeed(): void {
+function passSpeedSolve(): void {
   const a = T_BALL.rollDecel, c = T_BALL.rollDamping, vmax = T_BALL.maxSpeed;
   const va = F[RS_VA]!, d = F[RS_D]!;
   const v = va > 0 ? (va < vmax ? va : vmax) : 0;

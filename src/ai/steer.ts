@@ -81,6 +81,17 @@ const TGT_MAX_Z = BOARD_Z - T_PLAYER.bodyRadius;
 /** [QF-13] Ball-job targets (CHASE_LOOSE and its overshoot, IN_PLAY only): the pitch + T_TOUCH.meetPitchMargin. */
 const PITCH_MAX_X = HALF_LENGTH + T_TOUCH.meetPitchMargin;
 const PITCH_MAX_Z = HALF_WIDTH + T_TOUCH.meetPitchMargin;
+/**
+ * [FIN-P2] The four clamp limits as typed-array slots (LIM_TGT_X ... below), read where a clamp merges them with a
+ * computed double: the production bundle (Vite / Rolldown topLevelVar) turns every top-level const into a var, which
+ * V8 loads as an untyped tagged value, so `v > LIM ? LIM : v` made a tagged phi and boxed v on every call (steerJob runs
+ * for ~20 players a tick). A Float64Array element always loads as a double. Same values.
+ */
+const LIMS = new Float64Array([TGT_MAX_X, TGT_MAX_Z, PITCH_MAX_X, PITCH_MAX_Z]);
+const LIM_TGT_X = 0, LIM_TGT_Z = 1, LIM_PITCH_X = 2, LIM_PITCH_Z = 3;
+/** [FIN-P2] targetOccupied / pathBlocked inputs (x, z, dx, dz, d): a double argument of a call V8 does not inline is
+ *  boxed, a heap number per argument per call. */
+const STEER_IO = new Float64Array(5);
 const BIG = 1e9;
 
 // ---------------------------------------------------------------- action / job tables (built once at load)
@@ -500,15 +511,16 @@ export function assignChaser(s: SimState, team: number, ev: EventSink): void {
     const top = s.attrs[pick]!.topSpeed;
     // [QF-13] Within the pitch + T_TOUCH.meetPitchMargin (was the boards, 6 m out): the interception point of a ball
     // rolling out took chasers 2.4 m off the pitch (seed 33 #3).
-    assignJob(s, pick, AiJob.CHASE_LOOSE, clampTo(finiteOr(IX[pick]!, b.x), PITCH_MAX_X),
-      clampTo(finiteOr(IZ[pick]!, b.z), PITCH_MAX_Z), top > 0 ? top : T_PLAYER.topSpeedMin, -1);
+    assignJob(s, pick, AiJob.CHASE_LOOSE, clampTo(finiteOr(IX[pick]!, b.x), LIMS[LIM_PITCH_X]!),
+      clampTo(finiteOr(IZ[pick]!, b.z), LIMS[LIM_PITCH_Z]!), top > 0 ? top : T_PLAYER.topSpeedMin, -1);
   }
 }
 
 // ---------------------------------------------------------------- steering
 
-/** True if another active player's centre is within occupiedRadius of (x, z). */
-function targetOccupied(s: SimState, slot: number, x: number, z: number): boolean {
+/** True if another active player's centre is within occupiedRadius of (x, z) = (STEER_IO[0], STEER_IO[1]). */
+function targetOccupied(s: SimState, slot: number): boolean {
+  const x = STEER_IO[0]!, z = STEER_IO[1]!;
   const r2 = LT.occupiedRadius * LT.occupiedRadius;
   for (let i = 0; i < NUM_SLOTS; i++) {
     if (i === slot) continue;
@@ -528,8 +540,8 @@ function steerJob(s: SimState, slot: number): void {
   const b = s.ball;
   const top = a.topSpeed > 0 ? a.topSpeed : T_PLAYER.topSpeedMin;
   const jog = top * T_PLAYER.jogFraction;
-  let tx = clampTo(finiteOr(p.tgtX, p.x), TGT_MAX_X);
-  let tz = clampTo(finiteOr(p.tgtZ, p.z), TGT_MAX_Z);
+  let tx = clampTo(finiteOr(p.tgtX, p.x), LIMS[LIM_TGT_X]!);
+  let tz = clampTo(finiteOr(p.tgtZ, p.z), LIMS[LIM_TGT_Z]!);
   if (BALL_JOB[job] === 1 && b.owner < 0 && b.heldBy < 0) {
     const bv = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
     if (bv > LT.overshootMinSpeed && (b.x - p.x) * b.vx + (b.z - p.z) * b.vz > 0) {
@@ -537,8 +549,8 @@ function steerJob(s: SimState, slot: number): void {
       if (o < LT.overshootMin) o = LT.overshootMin;
       if (o > LT.overshootMax) o = LT.overshootMax;
       // [QF-13] ... but not beyond the pitch + T_TOUCH.meetPitchMargin (a ball that far out is out of play).
-      tx = clampTo(tx + (b.vx / bv) * o, PITCH_MAX_X);
-      tz = clampTo(tz + (b.vz / bv) * o, PITCH_MAX_Z);
+      tx = clampTo(tx + (b.vx / bv) * o, LIMS[LIM_PITCH_X]!);
+      tz = clampTo(tz + (b.vz / bv) * o, LIMS[LIM_PITCH_Z]!);
     }
   }
   let req = p.tgtSpeed;
@@ -558,8 +570,9 @@ function steerJob(s: SimState, slot: number): void {
     const sp = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
     const atRest = sp <= LT.restSpeed && (d > 1e-9 ? (p.vx * dx + p.vz * dz) / d : 0) <= LT.approachSpeed;
     let hold = atRest && d <= LT.deadZone;
-    if (!hold && d <= LT.occupiedStopDist + (atRest ? LT.occupiedHoldExtra : 0) && targetOccupied(s, slot, tx, tz)) {
-      hold = true;
+    if (!hold && d <= LT.occupiedStopDist + (atRest ? LT.occupiedHoldExtra : 0)) {
+      STEER_IO[0] = tx; STEER_IO[1] = tz;
+      if (targetOccupied(s, slot)) hold = true;
     }
     if (hold) {
       p.moveMode = MoveMode.STOP;
@@ -578,15 +591,19 @@ function steerJob(s: SimState, slot: number): void {
   p.wantSprint = sprint ? 1 : 0;
   // [QF-2] Not while a body blocks the way: SIM-05's slide-around ignores a player holding a facing, so a marker 2-3 m
   // from his spot pushed into the man standing on his line for ever (glitch "run in place against each other").
-  p.lookAt = ballJob ? (d <= LT.ballJobFaceDist ? 1 : 0)
-    : (face === 1 && d <= LT.faceBallDist && !pathBlocked(s, slot, dx, dz, d) ? 1 : 0);
+  if (ballJob) p.lookAt = d <= LT.ballJobFaceDist ? 1 : 0;
+  else if (face === 1 && d <= LT.faceBallDist) {
+    STEER_IO[2] = dx; STEER_IO[3] = dz; STEER_IO[4] = d;
+    p.lookAt = pathBlocked(s, slot) ? 0 : 1;
+  } else p.lookAt = 0;
 }
 
 /**
  * [QF-2] True if another active player's body touches `slot` on his way to the target (centre within blockedDist and
- * within acos(blockedCos) of the direction (dx, dz) / d).
+ * within acos(blockedCos) of the direction (dx, dz) / d = (STEER_IO[2], STEER_IO[3]) / STEER_IO[4]).
  */
-function pathBlocked(s: SimState, slot: number, dx: number, dz: number, d: number): boolean {
+function pathBlocked(s: SimState, slot: number): boolean {
+  const dx = STEER_IO[2]!, dz = STEER_IO[3]!, d = STEER_IO[4]!;
   if (!(d > 1e-6)) return false;
   const p = s.players[slot]!;
   const ux = dx / d, uz = dz / d;
@@ -628,8 +645,8 @@ export function arrive(s: SimState, slot: number, x: number, z: number, speed: n
   const a = s.attrs[slot]!;
   const top = a.topSpeed > 0 ? a.topSpeed : T_PLAYER.topSpeedMin;
   const jog = top * T_PLAYER.jogFraction;
-  const tx = clampTo(finiteOr(x, p.x), TGT_MAX_X);
-  const tz = clampTo(finiteOr(z, p.z), TGT_MAX_Z);
+  const tx = clampTo(finiteOr(x, p.x), LIMS[LIM_TGT_X]!);
+  const tz = clampTo(finiteOr(z, p.z), LIMS[LIM_TGT_Z]!);
   let sp = Number.isFinite(speed) ? speed : jog;
   if (sp < 0) sp = 0;
   if (sp > top) sp = top;

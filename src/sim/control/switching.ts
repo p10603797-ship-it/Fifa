@@ -86,7 +86,8 @@ const MANUAL_LOCK = T_INPUT.switchLockTicks + MANUAL_HOLD;
 const AUTO_WINDOW = T_SWITCH.autoWindowTicks < MANUAL_LOCK ? T_SWITCH.autoWindowTicks : MANUAL_LOCK;
 
 /** "Effectively never" arrival, ticks (finite on purpose). */
-const BIG = 1e9;
+// [FIN-P2] "BIG" below is the literal 1e9 in code: a top-level const is a var in the shipped bundle, untyped to V8,
+// and a phi of it with a double (`let best = BIG; ... best = d`) was tagged and boxed every double assigned.
 
 const MODE_BALL = 0;
 const MODE_CARRIER = 1;
@@ -97,6 +98,14 @@ const MODE_LOOSE = 2;
 const MAX_SAMPLES = 64;
 /** Ticks integrated in one step while a loose ball is far above reach (numerical detail, not gameplay tuning). */
 const AIR_LONG_STEP = 4;
+/**
+ * [FIN-P2] simulateLoose's double constants as typed-array slots, read into locals at its start. The shipped bundle
+ * turns every top-level const into a var, which V8 loads as an untyped tagged value: merged with a computed double in
+ * a phi (`if (x > bx) x = bx`, `y = R`, `adv === 1 ? dt : dtL`) it made the loop's position phis tagged and boxed
+ * x, y, z every sampled tick (simulateLoose was the second largest sim allocator in Chromium, ~650 B a tick). A
+ * Float64Array element always loads as a double. Same values.
+ */
+const SL_K = new Float64Array([BALL_R, DT_S, AIR_DRAG, AIR_MAGNUS, GRAVITY, SPIN_DECAY_AIR, BOARD_XS, BOARD_ZS]);
 /** Carrier-path samples. */
 const CX = new Float64Array(MAX_SAMPLES);
 const CY = new Float64Array(MAX_SAMPLES);
@@ -272,18 +281,19 @@ function buildLooseSamples(s: SimState): void {
 function simulateLoose(): void {
   let x = LKEY[0]!, y = LKEY[1]!, z = LKEY[2]!, vx = LKEY[3]!, vy = LKEY[4]!, vz = LKEY[5]!;
   let sx = LKEY[6]!, sy = LKEY[7]!, sz = LKEY[8]!;
-  const R = BALL_R;
-  const dt = DT_S;
-  const k = AIR_DRAG;
-  const m = AIR_MAGNUS;
-  const g = GRAVITY;
+  const R = SL_K[0]!;
+  const dt = SL_K[1]!;
+  const k = SL_K[2]!;
+  const m = SL_K[3]!;
+  const g = SL_K[4]!;
+  const spinDecay = SL_K[5]!;
   // Spin decay per step (second-order exp(-spinDecayAir * dt)) and at the half step, as SIM-01; the same for a
   // long step of AIR_LONG_STEP ticks.
-  const kd = SPIN_DECAY_AIR * dt;
+  const kd = spinDecay * dt;
   const fSpin1 = kd >= 1 ? 0 : 1 - kd + 0.5 * kd * kd;
   const fSpinH1 = kd >= 1 ? 0 : 1 - 0.5 * kd + 0.125 * kd * kd;
   const dtL = AIR_LONG_STEP * dt;
-  const kdL = SPIN_DECAY_AIR * dtL;
+  const kdL = spinDecay * dtL;
   const fSpinL = kdL >= 1 ? 0 : 1 - kdL + 0.5 * kdL * kdL;
   const fSpinHL = kdL >= 1 ? 0 : 1 - 0.5 * kdL + 0.125 * kdL * kdL;
   let rolling = y <= R + 1e-6 && vy <= 0;
@@ -293,8 +303,8 @@ function simulateLoose(): void {
   const restSpeed = T_BALL.restSpeed;
   const rollDecel = T_BALL.rollDecel;
   const rollDamp = T_BALL.rollDamping;
-  const bx = BOARD_XS;
-  const bz = BOARD_ZS;
+  const bx = SL_K[6]!;
+  const bz = SL_K[7]!;
   const reachH = T_SWITCH.reachHeight;
   const step = T_SWITCH.sampleStepTicks;
   const stepFar = T_SWITCH.sampleStepFarTicks;
@@ -416,12 +426,12 @@ function computeEff(s: SimState, side: number): number {
   EFF_END[0] = nSamples > 0 ? ST[nSamples - 1]! : 0;
   const dir = s.teams[side]!.dir;
   const carrierDepth = carrier >= 0 ? dir * s.players[carrier]!.x : 0;
-  const reachH = mode === MODE_LOOSE ? T_SWITCH.reachHeight : BIG;
+  const reachH = mode === MODE_LOOSE ? T_SWITCH.reachHeight : 1e9;
   const pf = T_SWITCH.pruneFactor;
   const topMin = T_PLAYER.topSpeedMin;
   const accMin = T_PLAYER.accelMin;
   const slack = T_PLAYER.arriveStop + T_SWITCH.pruneSlack;
-  for (let i = 0; i < NUM_SLOTS; i++) { EFF[i] = BIG; TIE[i] = BIG; AIR[i] = 0; }
+  for (let i = 0; i < NUM_SLOTS; i++) { EFF[i] = 1e9; TIE[i] = 1e9; AIR[i] = 0; }
   const first = teamFirstSlot(side);
   const end = first + PLAYERS_PER_TEAM;
   for (let i = first; i < end; i++) {
@@ -486,7 +496,7 @@ function opponentArrival(s: SimState, side: number): number {
   for (let i = 0; i < NUM_SLOTS; i++) { EFF_SAVE[i] = EFF[i]!; TIE_SAVE[i] = TIE[i]!; AIR_SAVE[i] = AIR[i]!; }
   const other = side === 0 ? 1 : 0;
   computeEff(s, other);
-  let best = BIG;
+  let best = 1e9;
   const first = teamFirstSlot(other);
   for (let i = first; i < first + PLAYERS_PER_TEAM; i++) if (EFF[i]! < best) best = EFF[i]!;
   for (let i = 0; i < NUM_SLOTS; i++) { EFF[i] = EFF_SAVE[i]!; TIE[i] = TIE_SAVE[i]!; AIR[i] = AIR_SAVE[i]!; }
@@ -501,7 +511,7 @@ function opponentArrival(s: SimState, side: number): number {
  * opponentArrival for a loose ball (the samples are the loose path).
  */
 function contestReach(s: SimState, slot: number, at: number): number {
-  if (nSamples <= 0) return BIG;
+  if (nSamples <= 0) return 1e9;
   let k = 0;
   while (k < nSamples - 1 && ST[k]! < at) k++;
   return ticksToReach(s, slot, SX[k]!, SZ[k]!) + busyTicks(s.players[slot]!);
@@ -523,8 +533,8 @@ function pickBest(s: SimState, c: number, exclude: number, allowKeeper: boolean,
   const first = teamFirstSlot(side);
   const end = first + PLAYERS_PER_TEAM;
   let best = -1;
-  let bestEff = BIG * 2;
-  let bestTie = BIG * 2;
+  let bestEff = 2e9;
+  let bestTie = 2e9;
   for (let i = first; i < end; i++) {
     if (i === exclude || !eligible(s, c, i, allowKeeper)) continue;
     const e = EFF[i]!;
@@ -553,7 +563,7 @@ function directionalTarget(s: SimState, c: number, dirX: number, dirZ: number): 
   for (let pass = 0; pass < 2; pass++) {
     const coneCos = pass === 0 ? T_SWITCH.dirConeCos : T_SWITCH.dirConeCosWide;
     let best = -1;
-    let bestScore = BIG;
+    let bestScore = 1e9;
     for (let i = first; i < end; i++) {
       if (i === cur || !eligible(s, c, i, false)) continue;
       const p = s.players[i]!;
@@ -591,11 +601,11 @@ function claimant(s: SimState, side: number, slot: number): number {
     }
   }
   let best = -1;
-  let bestD = BIG * BIG;
+  let bestD = 1e18;
   for (let k = 0; k < NUM_CONTROLLERS; k++) {
     const kc = s.ctrl[k]!;
     if (!isLive(kc) || kc.side !== side) continue;
-    let d = BIG;
+    let d = 1e9;
     if (validSlot(kc.slot)) {
       const q = s.players[kc.slot]!;
       const dx = q.x - p.x;
@@ -760,7 +770,7 @@ export function bestSwitchTarget(s: SimState, c: number, dirX: number, dirZ: num
   const ctl = s.ctrl[c];
   if (!ctl || !isLive(ctl)) return -1;
   if (dirX !== 0 || dirZ !== 0) {
-    if (!(Math.abs(dirX) < BIG && Math.abs(dirZ) < BIG)) return -1;
+    if (!(Math.abs(dirX) < 1e9 && Math.abs(dirZ) < 1e9)) return -1;
     return directionalTarget(s, c, dirX, dirZ);
   }
   if (!effReuse) effSide = -1; // a direct call always recomputes (the state may have changed since)
@@ -873,7 +883,7 @@ function receiveSoon(s: SimState, slot: number): boolean {
   let y = b.y;
   if (b.grounded !== 1) {
     y = b.y + b.vy * t - 0.5 * GRAVITY * t * t;
-    if (y < BALL_R) y = BALL_R;
+    if (y < SL_K[0]!) y = SL_K[0]!; // [FIN-P2] BALL_R as a double (see SL_K)
   }
   let r: number;
   if (slow) r = y <= T_DRIBBLE.controlHeight ? T_DRIBBLE.controlRadius : 0;

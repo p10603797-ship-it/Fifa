@@ -837,6 +837,10 @@ export const T_WARMUP = {
   hashEvery: 8,
   /** Ticks of a second, fresh scratch match at the end (a match start as the app makes it: new state and copy target). */
   restartTicks: 600,
+  /** [FIN-P2] Extra CPU decisions during the open play (one per open-play tick at most, on a scratch copy of the warm-up
+   *  state, re-decision forced): the carrier's and defender's decision functions run only every few ticks in play and
+   *  stayed in V8's mid tier (Maglev, boxing doubles) through the warm-up and the bench window without them. */
+  decisionRounds: 3000,
 } as const;
 
 /**
