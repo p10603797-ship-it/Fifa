@@ -12,16 +12,21 @@ import { T_WARMUP } from '../../src/contracts/tuning';
 import { benchSetup } from '../../src/platform/benchHook';
 import { hashState } from '../../src/sim/core/hash';
 import { initMatch, warmUpSim } from '../../src/sim/init';
-import { warmUpDecisions } from '../../src/sim/step';
+import { warmUpCarrierDecisions, warmUpDecisions } from '../../src/sim/step';
 
 describe('FIN-P2 warm-up decision rounds', () => {
   it('the warm-up runs every forced CPU decision round and leaves the next match untouched', () => {
     const cfg = benchSetup(1).config;
     const before = hashState(initMatch(cfg));
     const d0 = warmUpDecisions();
+    const c0 = warmUpCarrierDecisions();
     const ran = warmUpSim((c) => initMatch(c), cfg);
     expect(ran).toBeGreaterThan(T_WARMUP.openPlayTicks);
     expect(warmUpDecisions() - d0).toBe(T_WARMUP.decisionRounds);
+    // [FIN-P2 skeptic] The rounds must reach the carrier's decide() (the point of forcing evalT / reactT / p0), not
+    // only run: 1187 of 3000 do (the rest have a loose ball or a one-shot plan); without the forced evalT only 279 did
+    // (the brain's own 1-in-carrierEvalTicks), and the old test still passed.
+    expect(warmUpCarrierDecisions() - c0).toBeGreaterThan(T_WARMUP.decisionRounds / 4);
     const s = initMatch(cfg);
     expect(s.match.phase).not.toBe(MatchPhase.POST_MATCH);
     expect(hashState(s)).toBe(before);

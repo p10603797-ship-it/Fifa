@@ -17,7 +17,8 @@ export interface EventBufferImpl extends EventBuffer {
  * buffer deoptimised ("wrong call target") the first time it called the match's buffer, `step` itself on the match's
  * first tick (events.begin), then every function at its first emit, and ran unoptimised (boxing every double) until
  * re-optimised: the first ~1500 ticks of the bench match allocated ~22 KB a tick under step()
- * (tests/perf/fin-p-bench-alloc.test.ts). Same behaviour, same API.
+ * (diagnostic tests/perf/fin-p-bench-alloc-probe.ts; regression test tests/unit/fin-p-events-target.test.ts). Same
+ * behaviour, same API.
  */
 class SimEventBuffer implements EventBufferImpl {
   private readonly items: SimEvent[];

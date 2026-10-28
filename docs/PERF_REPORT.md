@@ -72,8 +72,8 @@ frame-time targets, and whether the sim budget holds on the iPad, are decided on
 | Memory 300 MB or less in a match (3) | JS heap after a forced GC: 13-16 MB at the start of a match, **20.5 MB after 19 minutes**; textures 6-14 MB | PASS for heap and textures; whole Safari process NOT VERIFIABLE HERE | CDP `Runtime.getHeapUsage` after `HeapProfiler.collectGarbage` |
 | Draw calls 80 or fewer (13) | max per scene: Performance **22**, Balanced **24**, Quality **33**; bench runs 20-34 | PASS | sgn-04-scenes.ts; bench hook / renderer stats every frame |
 | Triangles 200,000 or fewer (13) | max per scene: Performance **46,764**, Balanced **56,502**, Quality **95,742**; bench runs up to 95,954 | PASS | same |
-| Sim + AI 2.5 ms average per tick (13), proxy gate at 4x | `tools/bench.ts --throttle 4` (as specified, raster on, DPR 2): **2.97 ms**; draw calls stubbed: **3.21-3.64 ms**; 6x: 4.73-4.90 ms. 1x: 0.49-0.74 ms. Back to back (no idle between ticks): 0.22-0.32 ms at 1x, 1.86-1.91 ms at 4x. Node, Legend, worst scenes: 67-145 us mean (0.27-0.58 ms with the x4 iPad factor) | **FAIL** in the 4x proxy gate; PASS at 1x and by the Node x4 rule; iPad decides ([FIN-P] round: see "Proxy gate: final fix round (FIN-P)") | benchHook result (`window.__benchResult`), tests/perf/sgn-04-bench.ts `--tight`, tests/perf/tun-7s-tick-probe.ts
-| Sim + AI 4 ms worst case (13) | proxy p99 of each frame's worst tick: **11.9-17.1 ms at 4x**, 22-29 ms at 6x; at 1x p99 **2.1-2.6 ms** but the single worst tick is **5.4-6.9 ms** (1-5 frames per 20-50 s window); Node max 0.4-4.8 ms | **FAIL** at 4x; 1x p99 PASS, 1x max FAIL ([FIN-P] round: see "Proxy gate: final fix round (FIN-P)") | same
+| Sim + AI 2.5 ms average per tick (13), proxy gate at 4x | `tools/bench.ts --throttle 4` (as specified, raster on, DPR 2): **2.97 ms**; draw calls stubbed: **3.21-3.64 ms**; 6x: 4.73-4.90 ms. 1x: 0.49-0.74 ms. Back to back (no idle between ticks): 0.22-0.32 ms at 1x, 1.86-1.91 ms at 4x. Node, Legend, worst scenes: 67-145 us mean (0.27-0.58 ms with the x4 iPad factor) | **FAIL** in the 4x proxy gate; PASS at 1x and by the Node x4 rule; iPad decides ([FIN-P] round: see "Proxy gate: final fix round (FIN-P)"; [FIN-P2]: the average passes at 0.67-0.73 ms, 0.58-0.60 ms with the topLevelVar CR, see "Proxy gate: last attempt (FIN-P2)") | benchHook result (`window.__benchResult`), tests/perf/sgn-04-bench.ts `--tight`, tests/perf/tun-7s-tick-probe.ts
+| Sim + AI 4 ms worst case (13) | proxy p99 of each frame's worst tick: **11.9-17.1 ms at 4x**, 22-29 ms at 6x; at 1x p99 **2.1-2.6 ms** but the single worst tick is **5.4-6.9 ms** (1-5 frames per 20-50 s window); Node max 0.4-4.8 ms | **FAIL** at 4x; 1x p99 PASS, 1x max FAIL ([FIN-P] round: see "Proxy gate: final fix round (FIN-P)"; [FIN-P2]: shipped build config 4.0-4.7 ms, PASS in 1 of 6 runs; with the vite.config.ts topLevelVar CR 3.3-4.8 ms, PASS in 3 of 4, see "Proxy gate: last attempt (FIN-P2)") | same
 | Average 58 fps, 1 % low 50 fps, longest frame 33 ms (13) | main thread only (draw stubbed), CPU v CPU at 1x: **59.95 fps, 1 % low 55.0, longest interval 33.3 ms**, 0 frames over 33.4 ms in 20 s; at 4x 30.9-35.1 fps; real drawing in SwiftShader 1.9-2.4 fps | NOT VERIFIABLE HERE (needs the iPad GPU); main-thread proxy at 1x PASS | sgn-04-bench.ts |
 | Heap growth: none that is steady (13) | after 19 minutes of match: **+0.03 MB in 20 s** (after forced GCs), 0 major GCs; first 30 s of a match: +1.3-2.3 MB (code and feedback warm-up, then flat) | PASS | sgn-04-bench.ts `--long 19` |
 | No garbage-collection pause over 4 ms (13) | 1x: longest **5.0 ms** (CPU v CPU) and **6.2 ms** (human; 3.6 ms in a second run): the 2 pauses over 4 ms per 20 s are the 2 major GCs of the first 30 s of a match; minor GCs average 0.5 ms. After 19 minutes: longest **1.6 ms**, no major GC. 4x: 11-15 ms; 6x: 27-36 ms | **FAIL** in Chromium (V8, early-match major GCs, and every throttled run); JavaScriptCore NOT VERIFIABLE HERE | CDP trace, MinorGC / MajorGC events of the renderer main thread |
@@ -350,6 +350,148 @@ Open:
 - The gate still fails 3 of 3. Removing the GC share needs sim + AI allocation near 0 in the window, which in turn needs
   the hot functions to stay optimised (warm-up coverage of their rare branches) or code that does not box when they are
   not; the cold first tick and the 6-tick carrier burst remain.
+
+## Proxy gate: last attempt (FIN-P2)
+
+Measured 2026-10-28 on this container with nothing else running (the 1-minute load average was below 0.8 before every
+gate run; the only load is the benchmark's own Chromium and SwiftShader threads), fresh production builds
+(`npx vite build --outDir dist-e2e/<id> --emptyOutDir && node tools/postbuild.mjs dist-e2e/<id>`), the gate exactly as
+specified: `npx tsx tools/bench.ts --dist dist-e2e/<id> --throttle 4` (seed 1, window 5400 ticks). No budget, statistic,
+window or seed changed. "Before" is the FIN-P2 charter commit (e99fbda; the tree was clean when this round started).
+
+**Verdict.** With the build configuration as shipped, the gate **still fails**: the FIN-P2 tree measured p99 of each
+frame's worst tick 4.1, 4.6, 4.1, 4.7 ms in the four interleaved runs (before: 4.5, 4.6, 4.5, 4.3) and 4.3 / 4.0 in two
+probe runs, so it passed 1 run of 6 and misses by 0.1-0.7 ms (median 4.2 against 4.0). The average passes with a wide
+margin (0.67-0.74 ms against 2.5). Rolldown turns every top-level `const` of the bundle into a `var` (Vite 8 sets
+`output.topLevelVar` to true), and V8 cannot treat a module `var` as a constant: that alone boxes doubles in every hot
+sim / AI function that merges a module constant with a computed double. With that one build option turned off
+(**CR to the lead, vite.config.ts, below**) the FIN-P2 tree **passes 3 of 4 runs** (p99 3.3, 4.0, 3.7, 4.8 ms; average
+0.58-0.60 ms), the tree before FIN-P2 1 of 2 (4.1, 3.7). The environment's own jitter (2.1x at p99 on a constant
+workload, below) decides the rest; only the iPad benchmark is free of it.
+
+### Gate runs (4x, seed 1, 5400 ticks)
+
+Batch 1 alternated before / FIN-P2 four times, then FIN-P2 + CR twice; batch 2 alternated before + CR / FIN-P2 + CR
+twice. "Frames over" = frames whose worst tick took more than 4 ms (of 1800).
+
+| build | runs | sim avg ms | p99 of frame worst (ms) | frames over | gate |
+|---|---:|---|---|---|---|
+| before (e99fbda), shipped config | 4 | 0.689-0.718 | 4.5, 4.6, 4.5, 4.3 (median 4.5) | 31, 27, 21, 31 | FAIL 4 of 4 |
+| FIN-P2, shipped config | 4 | 0.673-0.731 | 4.1, 4.6, 4.1, 4.7 (median 4.35) | 20, 30, 19, 27 | FAIL 4 of 4 |
+| FIN-P2, shipped config, probe runs (traced; beside the jitter workload) | 2 | 0.74 | 4.3, 4.0 | 23, 18 | 1 of 2 PASS |
+| before + CR (topLevelVar false) | 2 | 0.582-0.603 | 4.1, 3.7 | 19, 11 | 1 of 2 PASS |
+| FIN-P2 + CR (topLevelVar false) | 4 | 0.577-0.599 | 3.3, 4.0, 4.8, 3.7 (median 3.85) | 11, 17, 31, 13 | PASS 3 of 4 |
+
+Draw calls (max 22) and triangles (46,924) pass in every run.
+
+### What this round found and fixed
+
+All behaviour-identical: `tools/hash-table.ts --compare` against a reference recorded on e99fbda: **IDENTICAL (28 runs)**;
+`tests/perf/fin-p-prod-hash.ts --compare` (production mode: the sim warm-up, now with its decision rounds, and shape
+settling on): **IDENTICAL (28 runs)**; both re-run on the final tree.
+
+1. **Module constants are `var`s in the shipped bundle, and V8 boxes the doubles merged with them** (charter items 1
+   and 3). Rolldown (Vite 8) emits `var` for every top-level const, unminified builds too. In a module script V8 cannot
+   fold a module `var`, so it loads it as an untyped tagged value, and a phi of it with a computed double is tagged:
+   `x > bx ? bx : x`, `if (y <= R) y = R`, `let best = BIG; ... best = d` box the double on every pass. Chromium 141
+   micro-benchmark (CDP heap sampling, per 1000 iterations): ternary with a module `const` 6 B, with a `var` 3.1 KB, a
+   clamped running sum 10.9 KB; storing a double into a module `let` / `var` boxes too (12.5 B per store, also in classic
+   scripts), as do double arguments to and results from calls V8 does not inline (12.5 B each). Fixed where it showed:
+   - `src/sim/ball/contact.ts` frame(): the post / bar clamps are branch stores (previewFlight: 1,786 -> 970 B per
+     call in a production-mode bundle, of which frame() 816 -> 0). Test `tests/perf/fin-p2-frame-alloc.test.ts`
+     (fails on the old frame(): 816 B attributed to it).
+   - `src/sim/control/switching.ts` simulateLoose(): its double constants are read from a Float64Array, and the
+     switching module's `BIG` is the literal 1e9 in code (simulateLoose was the second largest sim allocator in
+     Chromium, ~650 B a tick; now not in the top 30).
+   - `src/ai/steer.ts` (clamp limits as typed-array slots; targetOccupied / pathBlocked inputs through a scratch) and
+     `src/ai/cpu/defending.ts` (the stick being built and the goal-side unit in typed arrays instead of module lets):
+     correct by the micro-benchmark, no measurable change in the per-function totals.
+   Chromium sim + AI allocation, ticks 306-1809 of the bench match at 1x (`tests/perf/fin-p2-chrome-alloc.ts` on
+   unminified builds): before **8.9 KB a tick**, FIN-P2 **8.0 KB**, FIN-P2 + CR **6.6 KB** (render and loop ~6.8 KB a
+   frame, unchanged). The remaining sim + AI allocation is spread over ~40 functions (defendCarrier 0.77 KB, steerJob 0.4,
+   assignPressing 0.32, resolvePairs 0.3, ...): double arguments and results of calls V8 does not inline, Math.min /
+   max in Maglev code, and functions back in lower tiers after a deopt (item 3). The ~0-2 KB target is not reached.
+2. **rul-05-perf previewFlight** (charter item 3; was 1,542-1,686 B against ~1,016). Two causes: frame()'s boxed clamp
+   (item 1), and the test's own floor: it built its scratch copy with cloneState, whose nested objects are
+   dictionary-mode, and in a production-mode bundle copying and kicking into them left dictionary maps in the copier's
+   and the kick module's feedback, so previewFlight's own copy and kick then boxed every double. The app never does this
+   (every copy target is a createSimState: app/liveState.ts, previewFlight's scratchOf). The test now builds the scratch
+   as previewFlight does; its limit (floor + 256 B) is unchanged and the floor got lower: copyState 0 B, kick module
+   656 B, previewAim **528 B** and previewSwipe 576 B against 912 B. All 4 RUL-05 tests pass.
+3. **The carrier's decision never reached TurboFan before the match** (charter item 1). V8 tiers a function up to
+   TurboFan after ~3000 calls' worth of its own bytecode (and 500 more after any feedback change); the carrier decides
+   only every 6 ticks (World Class), so after the 9,000-tick warm-up and through the bench window scorePassOptions,
+   throughBall, lobPass, mateTimeAt, runnerMemo, fillContext, runDribble, exposure, updateTeamPhase and defendCarrier were
+   still Maglev code (`%GetOptimizationStatus` on a production-mode esbuild bundle in Node), slower and boxing at calls.
+   The warm-up now runs `T_WARMUP.decisionRounds` (3000, TUNING) forced CPU decisions on a scratch copy of its scratch
+   match during the open play (`src/sim/step.ts` warmDecide: re-decision forced, same owner as the tick before). In the
+   Node bundle the decision functions are TurboFan code at the window and sim + AI garbage at ticks 300-900 fell
+   26.1 -> 19.3 KB a tick (Node's V8 12 boxes more than Chromium's 14). Test `tests/unit/fin-p2-warmup-decisions.test.ts`.
+   Cost: navigation to match state 5.4 -> 6.1 s at 1x, 12.3 -> 14.6 s at 4x (`tests/perf/fin-p-load-time.ts`, one run
+   each); `T_WARMUP.decisionRounds` trades it. Still open: rare branches deoptimise in the window (Node, 5400 ticks: 27
+   deopts, all "insufficient type feedback" for a branch the warm-up never took, e.g. defendCarrier's
+   `T_LEVEL.boxSlideMul` read for a slide in our own area, resolvePairs 4x, sweepFrame, legalPt, boards); a function
+   that deopts runs in lower tiers for thousands of ticks. Covering each needs a scripted situation.
+4. **Carrier decision cost** (charter item 2). One decision (scorePassOptions, 238 states captured from the bench match)
+   solves the SIM-01 roll model ~79 (rollTime) and ~60 (passSpeed) times, 13 and 21 of them with inputs already solved in
+   that decision, ~900 series logarithms in all. `src/ai/cpu/passing.ts` keeps an exact memo (direct-mapped, keyed by the
+   inputs' bits, emptied when T_BALL's roll tuning changes): 94 -> 86 us per decision, back-to-back in Node (4
+   interleaved pairs), outputs bit-identical (digest of all 4,526 options unchanged). Unrolling the logarithm series: no
+   gain (not kept). Early exits are not possible without changing results: the carrier draws a noise value for every
+   option it considers (ai/cpu/carrier.ts passOptionsInto), so every option must be scored. Making the decision itself
+   much cheaper needs the TurboFan code (item 3) or the spread-over-ticks scan (FIN-P open decision 1).
+
+### Where the over-budget frames come from (FIN-P2 tree, shipped config)
+
+One traced run (`tests/perf/fin-p-tick-trace.ts --trace`, 1798 frames, 3 ticks a frame, p99 4.4 ms, 23 frames over 4 ms):
+
+| cause of the slow tick | frames | share |
+|---|---:|---:|
+| a scavenge (minor GC) inside the tick (4 of them also carrier-decision ticks) | 8 | 35 % |
+| compile / deopt work inside the tick, no GC | 1 | 4 % |
+| carrier-decision tick, no GC or compile (decision ticks are 6.5 % of all ticks, 39 % of the slow ones) | 5 | 22 % |
+| none of these: cold first tick of a frame and environment jitter | 9 | 39 % |
+
+The first tick of a frame averages 1.18 ms, the second and third 0.54 and 0.51 ms (SwiftShader draws ~250 ms between
+frames at 4x). 61 scavenges in the window (40 ticks overlapped one), 2 major GCs. Environment jitter, measured in the
+same run as a gate run (`--calib 300000`, a fixed workload 3 times a frame): p50 3.0 ms, p90 4.6, p99 6.3, max 13.2;
+865 of 5,406 calls over 4 ms: the container alone varies 2.1x between median and p99 (FIN-P measured the same).
+
+### Open for the lead
+
+1. **CR vite.config.ts** (lead-owned): keep the bundle's top-level `const`s so V8 can fold them:
+   ```diff
+      sourcemap: false,
+   +  // [FIN-P2] Vite 8 defaults Rolldown's output.topLevelVar to true; a module `var` is not a constant to V8, which then
+   +  // boxes every double merged with one (sim + AI 8.0 -> 6.6 KB a tick, sim avg 0.70 -> 0.59 ms at 4x).
+   +  rolldownOptions: { output: { topLevelVar: false } },
+    },
+   ```
+   Measured with exactly this override (a mergeConfig of the project config built into a dist-e2e folder): gate above
+   (3 of 4 PASS), postbuild PASS, index.html 2,469,620 B against 2,478,328 (Rolldown inlines more constants), e2e
+   fnd-04-boot, int-b-modes and int-b-setpieces on that build: 11 passed (every local mode to its end screen, set pieces
+   by touch and by controller). Risk: a module that reads another's top-level binding before it is initialised (an
+   import cycle at load) now throws a TDZ ReferenceError instead of reading `undefined`; none did in these runs.
+2. Even with the CR, 1 run in 4 fails on this container (p99 4.8 ms, 31 frames over): the gate is within the
+   container's jitter. The iPad benchmark (DEVICE_CHECKLIST step 2) remains the judge (SGN-04 open item 1).
+3. Deopts of rare branches in the window (item 3) and the remaining boxing at non-inlined calls are the next sim-side
+   levers; FIN-P open decision 1 (spreading the carrier's scan) is unchanged. Load time only: in Chromium
+   ai/setpieces.ts separate() deoptimises ~126 times during the warm-up ("insufficient type feedback for call" at one
+   call site of its Maglev code, a deopt loop); not in the bench window.
+
+### Reproduce (this round)
+
+```sh
+npx vite build --outDir dist-e2e/fin-p2 --emptyOutDir && node tools/postbuild.mjs dist-e2e/fin-p2
+npx tsx tools/bench.ts --dist dist-e2e/fin-p2 --throttle 4                                # the gate
+npx vite build --minify false --outDir dist-e2e/fin-p2-nomin --emptyOutDir                # names for the probe
+npx tsx tests/perf/fin-p2-chrome-alloc.ts --dist dist-e2e/fin-p2-nomin --from 300 --ticks 1500   # Chromium alloc by function
+npx tsx tests/perf/fin-p-tick-trace.ts --dist dist-e2e/fin-p2 --seconds 90 --trace        # slow ticks: GC / JIT
+npx tsx tests/perf/fin-p-tick-trace.ts --dist dist-e2e/fin-p2 --seconds 90 --calib 300000 # environment jitter
+node --single-threaded --sampling-heap-profiler-suppress-randomness --import tsx tests/perf/fin-p2-preview-alloc-probe.ts 3000
+npx tsx tools/hash-table.ts --compare before.json && npx tsx tests/perf/fin-p-prod-hash.ts --compare before.json
+npx tsx tests/perf/fin-p-load-time.ts --dist dist-e2e/fin-p2 --throttle 1,4 --runs 1
+```
 
 ## Render and app side (QF-7R, round 5)
 

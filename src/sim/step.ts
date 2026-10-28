@@ -175,7 +175,13 @@ function warmDecide(s: SimState, scr: SimState, ev: EventBuffer): void {
     br.p0 = scr.tick - 1;
     br.seenOwner = scr.ball.owner;
   }
+  const e0 = scr.teams[0]!.cpu.evalT, e1 = scr.teams[1]!.cpu.evalT;
   cpuThink(scr, ev);
+  // [FIN-P2 skeptic] Count the rounds in which the carrier's decide() really ran: only decide() raises evalT (to the
+  // level's re-decision period, >= 1); otherwise the brain counts it down or leaves it (loose ball, defending side,
+  // one-shot plan). tests/unit/fin-p2-warmup-decisions.test.ts checks that the rounds reach the decision, not only run.
+  if (scr.teams[0]!.cpu.evalT > e0) warmCarrierDecides++;
+  if (scr.teams[1]!.cpu.evalT > e1) warmCarrierDecides++;
 }
 
 /** The phase as a plain number (TypeScript would keep a narrowing across the steps that change it). */
@@ -203,6 +209,12 @@ let warmDecisions = 0;
 /** [FIN-P2] Forced CPU decision rounds the warm-up has run in this process (tests). */
 export function warmUpDecisions(): number {
   return warmDecisions;
+}
+/** [FIN-P2 skeptic] Forced rounds in which a CPU carrier's decide() ran (warmDecide). */
+let warmCarrierDecides = 0;
+/** [FIN-P2 skeptic] Carrier decisions the warm-up's forced rounds have run in this process (tests). */
+export function warmUpCarrierDecisions(): number {
+  return warmCarrierDecides;
 }
 /** Re-entrancy guard (warmUpSim builds its scratch state with initMatch). */
 let warming = false;
@@ -237,8 +249,7 @@ function warmUpSimImpl(makeState: (c: MatchConfig) => SimState, base: MatchConfi
     copyState(scr, s);
     let decided = 0;
     for (let t = 0; t < T_WARMUP.openPlayTicks && phaseOf(s) !== MatchPhase.POST_MATCH; t++) {
-      warmTick(s, prev, frames, ev);
-      ran++;
+      ran++; warmTick(s, prev, frames, ev); // (not at the start of a line: tests/unit/plt-06-docs lists those as stages)
       if (decided < T_WARMUP.decisionRounds && phaseOf(s) === MatchPhase.IN_PLAY) { warmDecide(s, scr, ev); decided++; }
     }
     warmDecisions += decided;

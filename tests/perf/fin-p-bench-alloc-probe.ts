@@ -1,11 +1,11 @@
 /**
- * [FIN-P skeptic] Sim + AI allocation per tick in the benchmark match, as the shipped app runs it (diagnostic; the
- * regression test is tests/perf/fin-p-bench-alloc.test.ts). Production-build behaviour: __DEV_BUILD__ is false before
- * anything loads, so initMatch runs the sim warm-up once (sim/init.ts warmUpOnce) and settles every state's shapes
- * (core/clone.ts). Then benchSetup(seed) is played exactly as the bench plays it (no input, cut-scenes in full, the
- * loop's copyState(prev, curr) before every step), and V8's sampling heap profiler counts every allocation of `ticks`
- * ticks from tick `from` (the bench measures from tick ~300). Garbage made inside step() lands as scavenges inside the
- * proxy gate's timed ticks. Run with the exact-allocation flags (tests/perf/qf-7r-alloc-flags.ts):
+ * [FIN-P skeptic] Sim + AI allocation per tick in the benchmark match, as the shipped app runs it (diagnostic only; no
+ * test asserts on it: [FIN-P2 skeptic] the file it named, tests/perf/fin-p-bench-alloc.test.ts, never existed).
+ * Production-build behaviour: __DEV_BUILD__ is false before anything loads, so initMatch runs the sim warm-up once
+ * (sim/init.ts warmUpOnce) and settles every state's shapes (core/clone.ts). Then benchSetup(seed) is played exactly as
+ * the bench plays it (no input, cut-scenes in full, the loop's copyState(prev, curr) before every step), and V8's
+ * sampling heap profiler counts every allocation of `ticks` ticks from tick `from` (the bench measures from tick ~300).
+ * Garbage made inside step() lands as scavenges inside the proxy gate's timed ticks. Run with the exact-allocation flags (tests/perf/qf-7r-alloc-flags.ts):
  *
  *   node --single-threaded --sampling-heap-profiler-suppress-randomness --import tsx \
  *        tests/perf/fin-p-bench-alloc-probe.ts [from 300] [ticks 1500] [seed BENCH_DEFAULTS.seed]
