@@ -113,7 +113,7 @@ to save the shared container (software WebGL).
 | Double-tap either of those: the lobbed version | D `unit/qf-3-touch-gestures.test.ts`: "Double-tap a teammate: the lobbed version"; `controls/sgn-02-touch-rows.test.ts`: "Double-tap the space in front of a teammate: the lobbed version (lobbed through ball)" | PASS |
 | Crossing zone, double-tap toward a post: cross to the near or far post | D `controls/sgn-02-touch-rows.test.ts`: "In the crossing zone, double-tap toward a post: the cross goes to the near or the far post"; `unit/qf-3-touch-gestures.test.ts`: "In the crossing zone, double-tap toward a post: cross" | PASS |
 | Swipe toward goal: shot; faster is harder and higher | D `controls/sgn-02-touch-rows.test.ts`: "Swipe toward goal: a faster swipe is harder and higher" (power and the ball height at the goal line, 3 seeds); `unit/qf-3-touch-gestures.test.ts`: "Swipe toward goal: shot; a faster swipe is harder" | PASS |
-| Curved swipe toward goal: finesse shot that bends with the swipe | D `controls/sgn-02-touch-rows.test.ts`: "Curved swipe toward goal: the finesse shot bends with the swipe (opposite bends curl opposite ways)"; `unit/qf-3-touch-gestures.test.ts`: "Curved swipe toward goal: finesse shot" | PASS |
+| Curved swipe toward goal: finesse shot that bends with the swipe ([FEEL-1] against the natural curl: trivela) | D `controls/sgn-02-touch-rows.test.ts`: "Curved swipe toward goal: the finesse shot bends with the swipe (opposite bends curl opposite ways)"; `unit/qf-3-touch-gestures.test.ts`: "Curved swipe toward goal: finesse shot"; `scenario/feel-1-feel.test.ts`: "touch: a curved swipe toward goal against his natural curl is a trivela, with it a finesse" | PASS |
 | Tap on the goal: chip shot | D `unit/qf-3-touch-gestures.test.ts`: "Tap on the goal: chip shot" | PASS |
 | Quick back-and-forth swipe toward goal: power shot | D `unit/qf-3-touch-gestures.test.ts`: "Quick back-and-forth swipe toward goal: power shot" | PASS |
 | Tap the opposing ball carrier: press him | D `unit/qf-3-touch-gestures.test.ts`: "Tap the opposing ball carrier: press him" | PASS |
@@ -181,7 +181,7 @@ Header requirements: bind by position (Standard Gamepad), label by family, detec
 | Sprint: R2 (hold) | D `controls/pad-02-rows.test.ts`: "Sprint: R2 (hold) sets wantSprint past 0.3 and covers more ground than a jog; 0.29 does not sprint" | PASS |
 | Shield the ball / jockey: L2 (hold) | D `controls/pad-02-rows.test.ts`: "Shield the ball / jockey: L2 (hold) shields with the ball and jockeys (faces the carrier) without it" | PASS |
 | Strafe dribble: L1 + left stick | D `controls/pad-02-rows.test.ts`: "Strafe dribble: L1 + left stick (faces the attacked goal, no sprint)" | PASS |
-| Controlled sprint: R1 (hold) | D `controls/pad-02-rows.test.ts`: "Controlled sprint: R1 (hold) with the ball sprints at a reduced stick" | PASS |
+| Controlled sprint: R1 (hold) | D `controls/pad-02-rows.test.ts`: "Controlled sprint: R1 (hold) with the ball sprints at a reduced stick"; `scenario/feel-1-feel.test.ts`: "R1 controlled sprint is tight (0.4-0.8 m) and a little slower than a full sprint, faster than a jog" | PASS |
 | Stop the ball: release left stick + R2 | D `controls/pad-02-rows.test.ts`: "Stop the ball: release left stick + R2 (STOP_BALL)" | PASS |
 | Stop and face goal: release left stick + L1 | D `controls/pad-02-rows.test.ts`: "Stop and face goal: release left stick + L1 (STOP_FACE_GOAL, no trigger run)" | PASS |
 | Knock-on: R2 + right-stick flick | D `controls/pad-02-rows.test.ts`: "Knock-on: R2 + right-stick flick (KNOCK_ON toward the flick)"; `controls/qf-3-pad-rows.test.ts`: "Knock-on: R2 + right-stick flick" | PASS |
@@ -220,7 +220,8 @@ Header requirements: bind by position (Standard Gamepad), label by family, detec
 | Shot (hold for power): Circle | D `controls/sgn-02-pad-rows.test.ts`: "Shot (hold for power): a longer Circle hold strikes harder (real SIM-11, KICK power and ball speed)"; `controls/pad-02-rows.test.ts`: "Shot (hold for power): Circle held longer gives more power; a tap a little" | PASS |
 | Finesse shot: R1 + Circle | D `controls/qf-3-pad-rows.test.ts`: "Finesse shot: R1 + Circle" | PASS |
 | Chip shot: L1 + Circle | D `controls/qf-3-pad-rows.test.ts`: "Chip shot: L1 + Circle" | PASS |
-| Power shot: L1 + R1 + Circle | D `controls/qf-3-pad-rows.test.ts`: "Power shot: L1 + R1 + Circle" | PASS |
+| Power shot: L1 + R1 + Circle | D `controls/qf-3-pad-rows.test.ts`: "Power shot: L1 + R1 + Circle"; `scenario/feel-1-feel.test.ts`: "power shot (L1 + R1 + SHOOT): longer wind-up, much faster, straight" | PASS |
+| [FEEL-1] Trivela: L2 + Circle (keyboard C + K) | D `scenario/feel-1-feel.test.ts`: "trivela (L2 + SHOOT) bends the other way to a finesse shot from the same spot" | PASS |
 | Low driven shot: Circle, then tap Circle again during power-up | D `controls/sgn-02-pad-rows.test.ts`: "Low driven shot: Circle, then tap Circle again during power-up strikes SHOT_LOW_DRIVEN; one held Circle is a normal shot"; `controls/pad-02-rows.test.ts`: "Low driven shot: Circle, then tap Circle again during power-up"; "Low driven shot: two quick Circle taps (both inside the tap window)"; "a single held Circle is a normal shot (no low driven)" | PASS |
 
 ### Defending

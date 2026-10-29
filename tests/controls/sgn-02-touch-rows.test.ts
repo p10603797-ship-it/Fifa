@@ -396,15 +396,18 @@ describe('SGN-02 section 9 pitch gestures (real touch source -> real sim)', () =
 
   it('Curved swipe toward goal: the finesse shot bends with the swipe (opposite bends curl opposite ways)', () => {
     const curls: number[] = [];
+    const kinds: string[] = [];
     for (const bend of [50, -50]) {
       const r = createTouchRig(attack(30, 0));
       centreOn(30, 0);
       r.tick(2);
       swipe(r, 700, 420, 900, 400, 160, bend);
       const k = untilKick(r, P);
-      expect(KickKind[k!.kind]).toBe('SHOT_FINESSE');
+      kinds.push(KickKind[k!.kind]!);
       curls.push(k!.curve);
     }
+    // [FEEL-1] The bend against the shooter's natural (inside-foot) curl is the outside of the foot: a trivela.
+    expect([...kinds].sort()).toEqual(['SHOT_FINESSE', 'SHOT_TRIVELA']);
     expect(Math.sign(curls[0]!)).toBe(-Math.sign(curls[1]!));
     expect(Math.abs(curls[0]!)).toBeGreaterThan(0.05);
   });

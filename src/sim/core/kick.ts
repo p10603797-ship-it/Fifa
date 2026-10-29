@@ -85,7 +85,7 @@ export function applyKick(s: SimState, slot: number, l: KickLaunch, power: numbe
 }
 
 function isShot(k: KickKind): boolean {
-  return (k >= KickKind.SHOT_NORMAL && k <= KickKind.SHOT_LOW_DRIVEN) || k === KickKind.HEADER_SHOT ||
+  return (k >= KickKind.SHOT_NORMAL && k <= KickKind.SHOT_LOW_DRIVEN) || k === KickKind.SHOT_TRIVELA || k === KickKind.HEADER_SHOT ||
     k === KickKind.VOLLEY_SHOT || k === KickKind.PENALTY || k === KickKind.FREE_KICK_SHOT;
 }
 

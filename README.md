@@ -382,7 +382,7 @@ and the buttons)
 | Double-tap either of those | The lobbed version |
 | In the crossing zone, double-tap toward a post | Cross to the near or far post |
 | Swipe toward goal | Shot; a faster swipe is harder and higher |
-| Curved swipe toward goal | Finesse shot that bends with the swipe |
+| Curved swipe toward goal | Finesse shot that bends with the swipe; bent against the shooter's natural curl (right-footer: to the right) it is a trivela |
 | Tap on the goal | Chip shot |
 | Quick back-and-forth swipe toward goal | Power shot |
 | Tap the opposing ball carrier | Press him |
@@ -436,7 +436,7 @@ pressed. "Cross, Cross" means press it twice quickly.
 | Sprint | R2 (hold) | RT (hold) |
 | Shield the ball / jockey | L2 (hold) | LT (hold) |
 | Strafe dribble | L1 + left stick | LB + left stick |
-| Controlled sprint | R1 (hold) | RB (hold) |
+| Controlled sprint (tight touches, a little slower than a full sprint) | R1 (hold) | RB (hold) |
 | Stop the ball | Release left stick + R2 | Release left stick + RT |
 | Stop and face goal | Release left stick + L1 | Release left stick + LB |
 | Knock-on | R2 + right-stick flick | RT + right-stick flick |
@@ -476,6 +476,7 @@ backward (LB + RB on Xbox).
 | Finesse shot | R1 + Circle | RB + B |
 | Chip shot | L1 + Circle | LB + B |
 | Power shot | L1 + R1 + Circle | LB + RB + B |
+| Trivela (outside-of-the-foot curler) | L2 + Circle | LT + B |
 | Low driven shot | Circle, then tap Circle again during power-up | B, then tap B again during power-up |
 
 **Defending**
@@ -555,7 +556,8 @@ rule, is [docs/KEYBOARD.md](docs/KEYBOARD.md).
 | Alt (Option) + I / K / J / L | Right stick up / down / left / right | Same, for laptops without a numpad |
 | R / F / T / G / H / B | Right-stick skills | Ball roll / body feint / step-over / roulette / heel flick / drag-back |
 
-Examples: E + J driven pass, Q + K chip shot, Q + E + K power shot, J then J lofted pass, K then J fake shot.
+Examples: E + J driven pass, Q + K chip shot, Q + E + K power shot, C + K trivela, E held while running controlled sprint, J then J
+lofted pass, K then J fake shot.
 On macOS, Ctrl + arrows may open Mission Control, and on Windows Alt + arrows may go back or forward in the browser:
 use 1-4 for the D-pad there.
 

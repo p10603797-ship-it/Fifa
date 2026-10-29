@@ -33,7 +33,8 @@ Source: `src/input/keyboard.ts` (match) and `src/input/menuInput.ts` (menus). Ke
 | H | right stick flicked forward then back | `skill = HEEL_FLICK` | heel flick |
 | B | L1 + R1 + left stick back | `skill = DRAG_BACK` | drag-back |
 
-Combos are the pad's combos with these keys: E + J driven pass, Q + K chip shot, Q + E + K power shot, J then J
+Combos are the pad's combos with these keys: E + J driven pass, Q + K chip shot, Q + E + K power shot, C + K trivela
+(outside-of-the-foot curler; C held at the K press), E held while running a controlled sprint (tight dribble), J then J
 lofted pass, K then J fake shot, Shift + a right-stick tap knock-on, Q + E + a back tap on the movement keys a
 drag-back, and so on (section 10 of `docs/BRIEF.md`).
 

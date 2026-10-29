@@ -88,13 +88,13 @@
 // Re-export the handler shell FIRST (import-cycle safety with actions/registry; see firstTouchHooks.ts).
 export { firstTouchHandler } from './firstTouchHooks';
 import { bindFirstTouchImpl } from './firstTouchHooks';
-import { BALL_RADIUS, DT, NUM_SLOTS, PLAYERS_PER_TEAM, teamFirstSlot } from '../../contracts/constants';
+import { BALL_RADIUS, CPU_CONTROLLER_BASE, DT, NUM_SLOTS, PLAYERS_PER_TEAM, teamFirstSlot } from '../../contracts/constants';
 import { ActionKind, CrossKind, KickKind, MatchPhase, isFootPassKind, isShotKind } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
 import { MoveMode, type BallState, type SimState } from '../../contracts/state';
 import { createKickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_DRIBBLE, T_PLAYER, T_TOUCH, T_FIRST_TOUCH } from '../../contracts/tuning';
+import { T_BALL, T_DRIBBLE, T_FEEL, T_PLAYER, T_TOUCH, T_FIRST_TOUCH } from '../../contracts/tuning';
 import { beginAction, isFree } from '../actions/dispatch';
 import { applyKick, ballTouchedThisTick, takePossession } from '../core/kick';
 import { clamp01, unlerp } from '../core/dmath';
@@ -226,12 +226,16 @@ function reachParam(s: SimState, slot: number): number {
   const l2 = dx * dx + dz * dz;
   let tc = l2 > 1e-12 ? -(ox * dx + oz * dz) / l2 : 1;
   if (tc < 0) tc = 0; else if (tc > 1) tc = 1;
+  // [FEEL-1] A human-controlled player steering (stick not idle) stretches for it: the receiving magnet's reach bonus.
+  const c = p.ctrl;
+  const bonus = c >= 0 && c < CPU_CONTROLLER_BASE && s.ctrl[c]!.stickIdleT === 0 ? T_FEEL.magnetReachBonus : 0;
   for (let k = 0; k < 2; k++) {
     const t = k === 0 ? tc : 1;
     if (k === 1 && tc === 1) break;
     const y = b.py + (b.y - b.py) * t;
-    const r = y <= CTRL_H ? T_TOUCH.receiveRadius : y <= T_TOUCH.trapHeight ? T_TOUCH.receiveRadius * L.chestReachMul : 0;
+    let r = y <= CTRL_H ? T_TOUCH.receiveRadius : y <= T_TOUCH.trapHeight ? T_TOUCH.receiveRadius * L.chestReachMul : 0;
     if (r <= 0) continue;
+    r += bonus;
     const cx = ox + dx * t, cz = oz + dz * t;
     if (cx * cx + cz * cz > r * r) continue;
     let te = 0;
@@ -337,13 +341,17 @@ function leadF(s: SimState, slot: number): void {
 /** The trap lead for speed F[F_SP] (m/s) into F[F_LEAD]. */
 function leadAtF(s: SimState, slot: number): void {
   const sp = F[F_SP]!;
-  const close = T_DRIBBLE.touchAheadClose, jogLead = T_DRIBBLE.touchAheadJog;
+  // [FEEL-1] A human-controlled receiver settles it at his close-control leads (T_FEEL.human*).
+  const pc = s.players[slot]!.ctrl;
+  const hc = pc >= 0 && pc < CPU_CONTROLLER_BASE;
+  const close = T_DRIBBLE.touchAheadClose, jogLead = hc ? T_FEEL.humanTouchAheadJog : T_DRIBBLE.touchAheadJog;
+  const sprintLead = hc ? T_FEEL.humanTouchAheadSprint : T_DRIBBLE.touchAheadSprint;
   const top = maxSpeed(s, slot, true);
   const jog = top * T_PLAYER.jogFraction;
   let lead: number;
   if (!(sp > L.standSpeed)) lead = close;
   else if (sp <= jog || jog <= L.standSpeed) lead = close + (jogLead - close) * clamp01((sp - L.standSpeed) / (jog - L.standSpeed));
-  else lead = jogLead + (T_DRIBBLE.touchAheadSprint - jogLead) * (top > jog + 1e-9 ? clamp01((sp - jog) / (top - jog)) : 1);
+  else lead = jogLead + (sprintLead - jogLead) * (top > jog + 1e-9 ? clamp01((sp - jog) / (top - jog)) : 1);
   F[F_LEAD] = lead;
 }
 

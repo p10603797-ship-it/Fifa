@@ -71,12 +71,12 @@
 import {
   CPU_CONTROLLER_BASE, DT, GOAL_HALF_WIDTH, HALF_LENGTH, HALF_WIDTH, NUM_SLOTS, PLAYERS_PER_TEAM, TICK_HZ,
 } from '../../contracts/constants';
-import { ActionKind, GestureKind, KickKind, SkillMove, TeamPhase } from '../../contracts/enums';
+import { ActionKind, Foot, GestureKind, KickKind, SkillMove, TeamPhase } from '../../contracts/enums';
 import type { EventSink } from '../../contracts/events';
 import { Btn, GESTURE_POS_SCALE, type InputFrame } from '../../contracts/input';
 import { CpuPlan, type CpuBrainState, type PlayerState, type SimState } from '../../contracts/state';
 import type { LevelParams, StyleWeights } from '../../contracts/systems';
-import { T_BALL, T_DRIBBLE, T_LEVEL, T_PASS, T_PLAYER, T_SKILL, T_CARRIER } from '../../contracts/tuning';
+import { T_BALL, T_DRIBBLE, T_FEEL, T_LEVEL, T_PASS, T_PLAYER, T_SKILL, T_CARRIER } from '../../contracts/tuning';
 import { dlog } from '../../sim/core/dmath';
 import { rngGauss } from '../../sim/core/rng';
 import { inPenaltyArea } from '../../sim/pitch/geometry';
@@ -712,7 +712,13 @@ function commitShot(s: SimState, team: number, brain: CpuBrainState, p: Readonly
   const a = s.attrs[p.slot]!;
   if (kOff >= LT.chipKeeperOff && dist >= LT.chipMinDist && dist <= LT.chipMaxDist) btn |= Btn.MOD_L;
   else if (dist >= LT.finesseMinDist && dist <= LT.finesseMaxDist && (p.z > LT.finesseMinAbsZ || p.z < -LT.finesseMinAbsZ) &&
-    a.curve >= LT.finesseMinCurve) btn |= Btn.MOD_R;
+    a.curve >= LT.finesseMinCurve) {
+    // [FEEL-1] Now and then a trivela instead (L2 + SHOOT): from the side where the outside of his stronger foot bends
+    // it back in (a right-footer on the right), a good curler, about one in trivelaEvery such chances (tick + slot).
+    const outsideSide = a.foot === Foot.LEFT ? p.z * dir < 0 : p.z * dir > 0;
+    if (outsideSide && a.curve >= T_FEEL.cpuTrivelaMinCurve && (s.tick + p.slot) % T_FEEL.cpuTrivelaEvery === 0) btn |= Btn.SHIELD;
+    else btn |= Btn.MOD_R;
+  }
   commitKick(brain, CpuPlan.SHOOT, MODE_BUTTON, -1, gx, az, btn, hold);
 }
 

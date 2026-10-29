@@ -40,8 +40,9 @@ describe('SIM-08 selectReceiver', () => {
     expect(selectReceiver(s, PASSER, 0, 0, 0.3, A, 0)).toBe(MATE_A);
     s.players[PASSER]!.fx = 0; s.players[PASSER]!.fz = 1;
     expect(selectReceiver(s, PASSER, 0, 0, 0.3, A, 0)).toBe(MATE_B);
-    // Nobody in the cone: -1 (a pass into space; the parked players are far behind on the left).
-    expect(selectReceiver(s, PASSER, 0, -1, 0.3, A, 0)).toBe(-1);
+    // Nobody in the cone: -1 (a pass into space; the parked players are far behind on the left). [FEEL-1] stick (0.5, -1)
+    // instead of (0, -1): the wider Assisted cone (58 degrees) reaches a parked player 57.7 degrees off (0, -1).
+    expect(selectReceiver(s, PASSER, 0.5, -1, 0.3, A, 0)).toBe(-1);
   });
 
   it('power picks the near or the far receiver on the same line', () => {
@@ -67,7 +68,8 @@ describe('SIM-08 selectReceiver', () => {
   it('openness: an opponent in the lane blocks a ground pass but much less a lofted one', () => {
     const s = quiet();
     place(s, MATE_A, 20, 0);
-    place(s, MATE_B, 17, -9);
+    // [FEEL-1] MATE_B 15 degrees off the stick (was 28: the stick now weighs more, T_PASS_KICK.alignWeight 0.8).
+    place(s, MATE_B, 17, -4.6);
     place(s, OPP_A, 9, 0.2); // standing in the lane to MATE_A
     expect(selectReceiver(s, PASSER, 1, 0, 0.5, A, 0)).toBe(MATE_B);
     expect(selectReceiver(s, PASSER, 1, 0, 0.5, A, 1)).toBe(MATE_A);

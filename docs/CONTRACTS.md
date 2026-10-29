@@ -86,3 +86,12 @@ runs, `tools/hash-table.ts`).
 - `tests/unit/fnd-03-*.test.ts` cover hashing, cloning and serialising the state layout, and replay determinism.
 - `tests/unit/tun-2-tuning-in-data.test.ts` keeps gameplay constants in `tuning.ts`.
 - `tools/hash-table.ts --compare <before.json>` proves a refactor leaves sim behaviour identical.
+
+## FEEL-1 contract additions
+
+- `enums.ts` `KickKind.SHOT_TRIVELA = 43` (appended, so every earlier value is unchanged): the outside-of-the-foot curler
+  (pad L2 + Circle, keyboard C + K, touch curved swipe against the shooter's natural curl, CPU rarely). `isShotKind`
+  includes it (stats, crowd, keeper reactions treat it as a shot). Tables sized by `KickKind` must use
+  `KickKind.SHOT_TRIVELA + 1` (registry, ai/transition updated).
+- `tuning.ts` `T_FEEL` (new block) plus FEEL-1 changes in `T_DRIBBLE`, `T_POSSESSION`, `T_PASS_KICK`, `T_SHOT`,
+  `T_SHOT_KICK`, `T_RESOLVE` (see docs/TUNING.md "FEEL-1").

@@ -94,7 +94,7 @@ import type { EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type PlayerState, type SimState } from '../../contracts/state';
 import { createKickLaunch, ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_PASS, T_PLAYER, T_SHOT, T_SHOT_KICK } from '../../contracts/tuning';
+import { T_BALL, T_FEEL, T_PASS, T_PLAYER, T_SHOT, T_SHOT_KICK } from '../../contracts/tuning';
 import { ballAirStep, curlSpinY, launchSpin } from '../ball/flight';
 import { dcos, dpow, dsin } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
@@ -169,7 +169,8 @@ function attr01(v: number): number { return clamp01((fin(v) - 1) / 98); }
 
 /** True for the kick kinds this module starts and solves. */
 export function isShotKind(k: KickKind): boolean {
-  return (k >= KickKind.SHOT_NORMAL && k <= KickKind.SHOT_LOW_DRIVEN) || k === KickKind.FREE_KICK_SHOT || k === KickKind.PENALTY;
+  return (k >= KickKind.SHOT_NORMAL && k <= KickKind.SHOT_LOW_DRIVEN) || k === KickKind.FREE_KICK_SHOT || k === KickKind.PENALTY ||
+    k === KickKind.SHOT_TRIVELA;
 }
 
 /** Wind-up ticks (contact tick) of a shot kind. */
@@ -434,6 +435,7 @@ export function shotSpeedFor(s: SimState, slot: number, kind: KickKind, power: n
   let v: number;
   switch (kind) {
     case KickKind.SHOT_FINESSE: v = (lo + (hi - lo) * pw) * T_SHOT.finesseSpeedMul; break;
+    case KickKind.SHOT_TRIVELA: v = (lo + (hi - lo) * pw) * T_FEEL.trivelaSpeedMul; break;
     case KickKind.SHOT_CHIP: v = (lo + (hi - lo) * pw) * T_SHOT.chipSpeedMul; break;
     case KickKind.SHOT_POWER: v = LT.powerShotMinSpeed + (T_SHOT.powerShotMax - LT.powerShotMinSpeed) * pw; break;
     case KickKind.SHOT_LOW_DRIVEN: v = LT.lowDrivenMinSpeed + (hi - LT.lowDrivenMinSpeed) * pw; break;
@@ -475,7 +477,7 @@ function shotAccuracy(s: SimState, slot: number, kind: KickKind, dist: number): 
   const a = s.attrs[slot]!;
   const w = clamp01((dist - LT.finishRange) / (LT.longRange - LT.finishRange));
   let v = fin(a.finishing) + (fin(a.longShots) - fin(a.finishing)) * w;
-  if (kind === KickKind.SHOT_FINESSE) v += (fin(a.curve) - v) * LT.finesseCurveWeight;
+  if (kind === KickKind.SHOT_FINESSE || kind === KickKind.SHOT_TRIVELA) v += (fin(a.curve) - v) * LT.finesseCurveWeight;
   else if (kind === KickKind.FREE_KICK_SHOT) v = fin(a.longShots) + (fin(a.curve) - fin(a.longShots)) * LT.fkCurveWeight;
   else if (kind === KickKind.PENALTY) v = fin(a.finishing) + (fin(a.composure) - fin(a.finishing)) * LT.penaltyComposureWeight;
   return attr01(v);
@@ -484,6 +486,7 @@ function shotAccuracy(s: SimState, slot: number, kind: KickKind, dist: number): 
 function kindErrMul(kind: KickKind): number {
   switch (kind) {
     case KickKind.SHOT_FINESSE: return LT.errMulFinesse;
+    case KickKind.SHOT_TRIVELA: return T_FEEL.trivelaErrMul;
     case KickKind.SHOT_CHIP: return LT.errMulChip;
     case KickKind.SHOT_POWER: return LT.errMulPower;
     case KickKind.SHOT_LOW_DRIVEN: return LT.errMulLowDriven;
@@ -725,6 +728,14 @@ function spinInto(s: SimState, slot: number, kind: KickKind, curve: number, flag
       }
       break;
     }
+    case KickKind.SHOT_TRIVELA: {
+      // [FEEL-1] Outside of the foot: the other way to his finesse (a right-footer bends it right); a request curl
+      // (curved swipe) sets the side.
+      const mag = T_FEEL.trivelaSpin * cm;
+      if (hasCurve) right = (cv > 0 ? 1 : -1) * mag;
+      else right = (a.foot === Foot.LEFT ? -1 : 1) * mag;
+      break;
+    }
     case KickKind.SHOT_CHIP:
       back = T_SHOT.chipBackspin;
       break;
@@ -739,6 +750,13 @@ function spinInto(s: SimState, slot: number, kind: KickKind, curve: number, flag
     }
     default:
       if (hasCurve) right = cv * LT.normalCurlSpin * cm;
+      else if (kind === KickKind.SHOT_NORMAL || kind === KickKind.SHOT_LOW_DRIVEN) {
+        // [FEEL-1] A natural slight curl off the instep: back toward the goal centre from an off-centre aim, else the
+        // kicking foot's way (the solver aims with it, so it bends in rather than missing).
+        const mag = (kind === KickKind.SHOT_NORMAL ? T_FEEL.normalNaturalSpin : T_FEEL.lowDrivenNaturalSpin) * cm;
+        if (zAim > LT.finesseCentreBand || zAim < -LT.finesseCentreBand) right = ((zAim > 0 ? -1 : 1) * (ux >= 0 ? 1 : -1)) * mag;
+        else right = (a.foot === Foot.LEFT ? 1 : -1) * mag;
+      }
   }
   F[T_CURL] = curlSpinY(right); // SIM-01 convention: positive sy curls LEFT of the travel direction
   F[T_BACK] = back;

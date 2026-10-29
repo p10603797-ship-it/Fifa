@@ -102,12 +102,13 @@ export const T_PLAYER = {
 } as const;
 
 export const T_DRIBBLE = {
-  /** Distance the ball is pushed ahead per touch at jog / sprint, m. */
+  /** Distance the ball is pushed ahead per touch at jog / sprint, m. [FEEL-1] CPU dribblers; a human-controlled
+   *  dribbler uses T_FEEL.humanTouchAhead* (close control, D-029). */
   touchAheadJog: 1.0,
   touchAheadSprint: 2.4,
   /** Close control (strafe / jockey-dribble) touch distance, m. */
   touchAheadClose: 0.55,
-  /** Ticks between touches at jog / sprint. */
+  /** Ticks between touches at jog / sprint. [FEEL-1] CPU dribblers; humans: T_FEEL.humanTouchInterval*. */
   touchIntervalJog: 18,
   touchIntervalSprint: 24,
   /** Max distance from the feet at which a dribbler can touch the ball, m. */
@@ -211,8 +212,8 @@ export const T_SHOT = {
   errorMax: 0.16,
   /** Assisted aim: target inset from the post, m. */
   assistInset: 0.55,
-  /** Finesse curl spin, rad/s. */
-  finesseSpin: 9,
+  /** Finesse curl spin, rad/s. [FEEL-1] 9 -> 11: it "clearly curls into the far corner" (user: shots all the same). */
+  finesseSpin: 11,
   /** Backspin for chips, rad/s. */
   chipBackspin: 12,
 } as const;
@@ -1132,7 +1133,7 @@ export const T_POSSESSION = {
   qBallControl: 0.35,
   qAgility: 0.2,
   /** Lead x (1 + leadQualityScale * (0.5 - q)). */
-  leadQualityScale: 0.2,
+  leadQualityScale: 0.2, // [FEEL-1] CPU dribblers; humans T_FEEL.humanLeadQualityScale
   /** Touch interval x (1 + intervalQualityScale * (0.5 - q)). */
   intervalQualityScale: 0.3,
   /** Random touch error at q = 0: direction, rad; lead, fraction. Sprint touches x (1 + errSprintMul). */
@@ -1320,14 +1321,14 @@ export const T_PASS_KICK = {
   /** Power-implied distance of a lofted pass at power 0 (power 1 = T_PASS.maxRange), m. */
   loftedDistMin: 10,
   /** Cone half-angle multipliers on T_PASS.coneHalfAngle: Assisted (wider) and Semi (narrower). */
-  assistedConeMul: 1.3,
+  assistedConeMul: 1.45, // [FEEL-1] 1.3 -> 1.45: a 58-degree assisted cone (user: "a little bit off still goes to the person")
   semiConeMul: 0.75,
   /** Teammates closer than this are not candidates, m. */
   minReceiverDist: 1.5,
   /** Score weights: alignment with the stick (Assisted / Semi), fit to the power-implied distance, forward progress. */
-  alignWeight: 0.45,
-  alignWeightSemi: 0.6,
-  distWeight: 0.3,
+  alignWeight: 0.8, // [FEEL-1] 0.45 -> 0.8 (and alignment linear in the angle): the stick decides who gets it
+  alignWeightSemi: 0.9, // [FEEL-1] 0.6 -> 0.9
+  distWeight: 0.15, // [FEEL-1] 0.3 -> 0.15: a half-held pass aimed at a man 10 m away went to one 20 m away 21 degrees off
   progressWeight: 0.1,
   /** Distance fit tolerance = distTol + distTolFrac x power-implied distance, m. */
   distTol: 4,
@@ -1679,7 +1680,7 @@ export const T_SHOT_KICK = {
   /** Shot speed multiplier at shotPower 1 (99 -> 1), dimensionless. */
   shotPowerMulMin: 0.8, // [QF-2, DAT-05] was 0.92: shot speed moved only ~4% from shotPower 40 to 90
   /** Power shot speed at power 0 (power 1 = T_SHOT.powerShotMax), m/s. */
-  powerShotMinSpeed: 22,
+  powerShotMinSpeed: 26, // [FEEL-1] 22 -> 26: a power shot is much faster than a normal one at any hold
   /** Low driven speed at power 0 (power 1 = T_SHOT.speedMax), m/s. */
   lowDrivenMinSpeed: 21,
   /** Free-kick shot speed at power 0 / 1, m/s, and the driven (L1 + R1) multiplier. */
@@ -2430,8 +2431,10 @@ export const T_RESOLVE = {
   autoJockeyDist: 5.0,
   /** Shield looks at the nearest opponent within this distance, m. */
   shieldLookDist: 8.0,
-  /** Controlled sprint (MOD_R held with the ball): stick magnitude scale with sprint requested (0..1). */
-  controlledSprintScale: 0.8,
+  /** Controlled sprint (MOD_R held with the ball): stick magnitude scale with sprint requested (0..1). [FEEL-1] 0.8 ->
+   *  0.52: SIM-04 sprints flat out from T_LOCOMOTION.sprintStickFull 0.6 of the stick, so 0.8 was a full sprint; 0.52 is
+   *  ~87% of top speed, with SIM-06's tight controlled-sprint touches (T_FEEL.touchAheadControlled). */
+  controlledSprintScale: 0.52,
   /** Stop ball / stop and face goal need the dribbler moving faster than this, m/s. */
   stopMinSpeed: 1.5,
   /** Stop ball fires when the stick was released at most this many ticks ago with SPRINT held, ticks. */
@@ -6183,4 +6186,75 @@ export const T_FORMATION_REMAP = {
   /** Cost per ROLE_FILL_PRIORITY point for leaving a new slot empty (team playing short), cm: large, so the most
    *  important slots are always filled first (CB 95 vs W 45 = 150 m outweighs any reshuffle). */
   remapEmptySlotCm: 300,
+} as const;
+
+/**
+ * [FEEL-1] Playtest feel (user feedback, D-028..D-031): receiving magnet, close-control dribbling, R1 controlled
+ * sprint, assisted pass pace and cone, shot variety (finesse / power / trivela). Units in the comments.
+ */
+export const T_FEEL = {
+  // ---- receiving magnet (SIM-15 resolveMove, human-controlled player steering at a loose ball / a pass to him)
+  /** The meeting point must be within this distance at ballControl 1 / 99 (Assisted), m. */
+  magnetRadiusMin: 6,
+  magnetRadiusMax: 9,
+  /** Radius multiplier by assist level: Assisted, Semi, Manual. */
+  magnetAssistMul: [1, 0.8, 0.55] as readonly number[],
+  /** Largest angle between the stick and the way to the meeting point that still engages, rad, at the edge of the
+   *  radius / right at the point (it widens as he gets closer). */
+  magnetAngleFar: 0.7,
+  magnetAngleNear: 1.2,
+  /** No magnet for a ball above this height now (headers / chest traps are SIM-12 / SIM-07 with their own reach), m. */
+  magnetMaxHeight: 1.6,
+  /** Engaged: he runs at least at this fraction of his jog speed (a gentle stick still meets the ball), 0..1. */
+  magnetMinJogFrac: 0.7,
+  /** Speed matching: he plans to reach the meeting point this long before the ball, s; and never slower than this
+   *  stick magnitude (a slow walk up to the point while the ball comes), 0..1. */
+  magnetEarlySec: 0.15,
+  magnetMinStick: 0.2,
+  /** A slow (pick-up) ball: the run target is this far beyond it along his line, so he runs through it at pace, m. */
+  magnetThrough: 2.5,
+  /** First-touch reach bonus for the human-controlled receiver the magnet is steering, m (SIM-07 receiveRadius +). */
+  magnetReachBonus: 0.35,
+  // ---- assisted passing (SIM-08 selectReceiver)
+  /** Score bonus of a nearer receiver: x (1 - power) x (1 - distance / T_PASS.maxRange); Semi half, Manual none. */
+  passNearWeight: 0.35,
+  /** Openness weight of SIM-08 selectReceiver (was T_PASS.opennessWeight 0.35, still the keeper release's): with the
+   *  stronger stick alignment a man 15 degrees off with an open lane still beats one with an opponent in his lane. */
+  passOpenWeight: 0.45,
+  // ---- shot variety (SIM-11 shot.ts)
+  /** Natural curl of a normal / low driven shot without a request curl (x the curve attribute's LT.curveMul), rad/s:
+   *  back toward the goal centre from an off-centre aim, else the kicking foot's way. */
+  normalNaturalSpin: 3.5,
+  lowDrivenNaturalSpin: 2,
+  /** Trivela (outside-of-the-foot curler, KickKind.SHOT_TRIVELA): speed x normal, curl spin rad/s (x curve attribute
+   *  multiplier), error multiplier (a harder technique than the finesse). */
+  trivelaSpeedMul: 0.9,
+  trivelaSpin: 10,
+  trivelaErrMul: 0.95,
+  /** Touch: a curved pitch swipe toward goal bending against the shooter's natural finesse curl (|gCurve| at least
+   *  this, of 127) is a trivela. */
+  trivelaGestureCurve: 16,
+  /** CPU (ai/cpu/carrier.ts): a finesse chance from the outside-of-the-foot side becomes a trivela for a curler with
+   *  curve >= cpuTrivelaMinCurve, one time in cpuTrivelaEvery (by tick + slot: deterministic). */
+  cpuTrivelaMinCurve: 75,
+  cpuTrivelaEvery: 3,
+  // ---- poke window (SIM-06 pokeTick)
+  /** A human dribbler's ball beyond his controlRadius between touches: an opponent within this of it (and nearer to it
+   *  than the owner) pokes it away, m. */
+  pokeReach: 0.9,
+  // ---- close control of a human-controlled dribbler (SIM-06 touches, SIM-07 clean-trap settle lead; D-029)
+  /** Touch lead at a jog / sprint, m (CPU: T_DRIBBLE.touchAheadJog 1.0 / touchAheadSprint 2.4). The user's sprint
+   *  dribble "launched the ball straight forward" (2.05 m mean ahead, one touch a second, the ball lost on every
+   *  90-degree sprint turn); EA FC keeps it about a stride ahead. */
+  humanTouchAheadJog: 0.8,
+  humanTouchAheadSprint: 1.45,
+  /** Ticks between touches at a jog / sprint (CPU: 18 / 24). */
+  humanTouchIntervalJog: 14,
+  humanTouchIntervalSprint: 16,
+  /** Lead x (1 + this x (0.5 - quality)): dribbling / control / agility show (CPU: T_POSSESSION.leadQualityScale 0.2). */
+  humanLeadQualityScale: 0.4,
+  // ---- R1 controlled sprint with the ball (SIM-15 resolveMove + SIM-06 possession)
+  /** Controlled sprint: touch lead (peak, m) and ticks between touches. */
+  touchAheadControlled: 0.62,
+  touchIntervalControlled: 10,
 } as const;

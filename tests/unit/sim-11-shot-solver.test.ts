@@ -346,9 +346,14 @@ describe('SIM-11 shot types', () => {
     expect(flightToGoal(s, l)!.peak).toBeLessThan(1);
   });
 
-  it('normal shots fly straight without a request curl; a request curl bends them its way', () => {
+  it('normal shots carry a slight natural curl without a request curl; a request curl bends them its way', () => {
+    // [FEEL-1] Was "fly straight": the user found every shot the same; a normal shot now curls a little off the instep
+    // (T_FEEL.normalNaturalSpin, a fraction of the finesse spin).
     const s = shootScene(36, 0, 1, false);
-    expect(solveKind(s, KickKind.SHOT_NORMAL, { power: 0.6 })!.sy).toBe(0);
+    const nat = solveKind(s, KickKind.SHOT_NORMAL, { power: 0.6 })!.sy;
+    expect(nat).not.toBe(0);
+    const sf = shootScene(36, 0, 1, false);
+    expect(Math.abs(nat)).toBeLessThan(0.5 * Math.abs(solveKind(sf, KickKind.SHOT_FINESSE, { power: 0.6 })!.sy));
     const s2 = shootScene(36, 0, 1, false);
     expect(solveKind(s2, KickKind.SHOT_NORMAL, { power: 0.6, curve: 1 })!.sy).toBeLessThan(0); // curls right (+z)
   });

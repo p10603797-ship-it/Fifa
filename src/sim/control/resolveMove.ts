@@ -16,15 +16,18 @@
  * Hot path: every value is computed into locals and written once at the end, no doubles cross a call boundary (V8
  * boxes those), so the stage allocates nothing.
  */
-import { BOARD_X, BOARD_Z, HALF_LENGTH } from '../../contracts/constants';
+import { BOARD_X, BOARD_Z, CPU_CONTROLLER_BASE, HALF_LENGTH } from '../../contracts/constants';
 import { ActionKind } from '../../contracts/enums';
 import { Btn } from '../../contracts/input';
 import { MoveMode, type ControllerState, type PlayerState, type SimState } from '../../contracts/state';
-import { T_IDLE_CHASE, T_PLAYER, T_RESOLVE, T_TOUCH } from '../../contracts/tuning';
+import { T_BALL, T_FEEL, T_FIRST_TOUCH, T_IDLE_CHASE, T_LOCOMOTION, T_PLAYER, T_POSSESSION, T_RESOLVE, T_TOUCH } from '../../contracts/tuning';
+import { dcos } from '../core/dmath';
 import { canManualSwitch } from './switching';
 import { Ctx, LT, MEET, SeqFlag, ballEta, clampMeetTarget, meetPoint, oppCarrier, validSlot } from './resolveShared';
 
 const TGT_MAX_X = BOARD_X - 1;
+/** [FEEL-1] Within this of the meeting point the stick angle no longer matters, m. */
+const MAG_DEAD = 0.4;
 const TGT_MAX_Z = BOARD_Z - 1;
 
 /** Nearest active opponent of p within LT.shieldLookDist, or -1. */
@@ -40,6 +43,92 @@ function nearestOpponent(s: SimState, p: Readonly<PlayerState>): number {
     if (d < bestD) { bestD = d; best = i; }
   }
   return best;
+}
+
+/** magnetEngaged output: [0..1] stick (pitch space, magnitude = SIM-04 stick for the planned speed), [2] sprint 0/1. */
+const MAG = new Float64Array(3);
+const MAG_COS_FAR = dcos(T_FEEL.magnetAngleFar);
+const MAG_COS_NEAR = dcos(T_FEEL.magnetAngleNear);
+const SPRINT_FULL = T_LOCOMOTION.sprintStickFull;
+
+/**
+ * [FEEL-1] Receiving magnet (BRIEF section 6 first touch, section 10 Assisted; EA FC's "the ball attracts the player"):
+ * a human-controlled free player steering (stick) at a low loose ball, or at a pass to him, is drawn onto it. The
+ * ball's meeting point (meetPoint: the earliest point of its track he can reach at his pace) must lie within the
+ * capture radius (T_FEEL.magnetRadiusMin..Max by ballControl, x magnetAssistMul by assist level) and within the
+ * capture angle of the stick (magnetAngleFar at the edge of the radius .. magnetAngleNear right at it). Engaged, the
+ * stick is re-aimed (MAG) straight at the meeting point and its speed matched: a ball still coming -> the speed that
+ * gets him there just before the ball (T_FEEL.magnetEarlySec; never above the pace the user asks for), so he meets it
+ * under control instead of running through its line at 20 m/s relative; a ball rolling away from him -> past the
+ * meeting point along its path, at least at its pace (as the idle receiver of a pass); a slow ball (a pick-up) ->
+ * through it at his pace. Not for a pass to someone else, a ball he has just kicked, or a high ball. Returns 1 when
+ * engaged. No doubles cross the call (V8 boxing): outputs in MAG.
+ */
+function magnetEngaged(s: SimState, ctl: ControllerState, p: PlayerState, sprint: number): number {
+  const b = s.ball;
+  if (!(b.y <= T_FEEL.magnetMaxHeight) || b.inNet !== 0) return 0;
+  const slot = p.slot;
+  if (b.passTarget >= 0 && b.passTarget !== slot) return 0;
+  if (b.lastKickBy === slot && s.tick - b.lastKickTick < T_FIRST_TOUCH.selfKickTicks) return 0;
+  const sm = Math.sqrt(ctl.mx * ctl.mx + ctl.mz * ctl.mz);
+  if (!(sm > 1e-6)) return 0;
+  const ux = ctl.mx / sm, uz = ctl.mz / sm;
+  meetPoint(s, slot, sprint);
+  let mx = MEET.x - p.x, mz = MEET.z - p.z;
+  let d = Math.sqrt(mx * mx + mz * mz);
+  const a = s.attrs[slot]!;
+  let q = (a.ballControl - 1) / 98;
+  if (!(q > 0)) q = 0; else if (q > 1) q = 1;
+  const am = T_FEEL.magnetAssistMul[ctl.assist] ?? 1;
+  const rad = (T_FEEL.magnetRadiusMin + (T_FEEL.magnetRadiusMax - T_FEEL.magnetRadiusMin) * q) * am;
+  if (!(d <= rad)) return 0;
+  if (d > MAG_DEAD) {
+    const c = (mx * ux + mz * uz) / d;
+    if (c < MAG_COS_NEAR + (MAG_COS_FAR - MAG_COS_NEAR) * (d / rad)) return 0;
+  }
+  const top = a.topSpeed;
+  const jog = top * T_PLAYER.jogFraction;
+  const m = sm < 1 ? sm : 1;
+  const cap = sprint === 1 ? top : jog * (m > T_FEEL.magnetMinJogFrac ? m : T_FEEL.magnetMinJogFrac);
+  let sp = cap;
+  const bv = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
+  const ahead = (b.x - p.x) * b.vx + (b.z - p.z) * b.vz;
+  if (bv > T_TOUCH.meetOvershootMinSpeed && ahead > 0) {
+    // Rolling away from him: past the meeting point along its path, at least at its pace.
+    let o = bv * T_TOUCH.meetOvershootSec;
+    if (o < T_TOUCH.meetOvershootMin) o = T_TOUCH.meetOvershootMin;
+    if (o > T_TOUCH.meetOvershootMax) o = T_TOUCH.meetOvershootMax;
+    MEET.x += (b.vx / bv) * o;
+    MEET.z += (b.vz / bv) * o;
+    clampMeetTarget();
+    if (sp < bv) sp = bv < top ? bv : top;
+  } else if (bv >= T_POSSESSION.pickUpMaxSpeed) {
+    // Still coming: arrive at the meeting point just before the ball does (rolling deceleration as meetPoint).
+    const along = (MEET.x - b.x) * b.vx / bv + (MEET.z - b.z) * b.vz / bv;
+    if (along > 0) {
+      const dec = b.grounded === 1 ? T_BALL.rollDecel + T_BALL.rollDamping * bv : 0;
+      let t: number;
+      if (dec > 1e-6) {
+        const disc = bv * bv - 2 * dec * along;
+        t = disc > 0 ? (bv - Math.sqrt(disc)) / dec : bv / dec;
+      } else t = along / bv;
+      t -= T_FEEL.magnetEarlySec;
+      const need = t > 0.05 ? d / t : cap;
+      if (need < sp) sp = need;
+    }
+  }
+  mx = MEET.x - p.x; mz = MEET.z - p.z;
+  d = Math.sqrt(mx * mx + mz * mz);
+  if (d < 1e-6) { MAG[0] = 0; MAG[1] = 0; MAG[2] = 0; return 1; }
+  // Stick for the planned speed (SIM-04: jog x |stick|, sprint top x |stick| / sprintStickFull).
+  let mag: number;
+  let want = 0;
+  if (sp > jog) { want = 1; mag = (sp / top) * SPRINT_FULL; } else mag = sp / jog;
+  if (mag > 1) mag = 1; else if (mag < T_FEEL.magnetMinStick) mag = T_FEEL.magnetMinStick;
+  MAG[0] = (mx / d) * mag;
+  MAG[1] = (mz / d) * mag;
+  MAG[2] = want;
+  return 1;
 }
 
 /** Movement intent for controller c's player p in context cls (IN_PLAY). */
@@ -79,6 +168,10 @@ export function moveTick(s: SimState, c: number, ctl: ControllerState, p: Player
     arrive = true;
     tx = MEET.x; tz = MEET.z; tsp = MEET.speed;
     look = true; lx = b.x; lz = b.z; // facing the ball, so it comes to the kicking spot in front of him
+  } else if (!idle && c < CPU_CONTROLLER_BASE && b.owner < 0 && b.heldBy < 0 && p.act === ActionKind.NONE &&
+    magnetEngaged(s, ctl, p, sprint ? 1 : 0) === 1) {
+    // [FEEL-1] Receiving magnet: the user runs at a loose ball / a pass to him; he is drawn onto its meeting point.
+    ix = MAG[0]!; iz = MAG[1]!; want = MAG[2]!;
   } else if (cls === Ctx.ATTACK) {
     if (b.owner === slot && b.heldBy < 0) {
       if ((btn & Btn.SHIELD) !== 0) {
@@ -91,6 +184,8 @@ export function moveTick(s: SimState, c: number, ctl: ControllerState, p: Player
         lx = s.teams[p.team]!.dir * HALF_LENGTH;
         lz = 0;
       } else if ((btn & Btn.MOD_R) !== 0 && !sprint) {
+        // [FEEL-1] Controlled sprint: ~87% of top speed (SIM-04 sprints at stick / sprintStickFull of top), with
+        // SIM-06's tight touches (it reads MOD_R held without SPRINT).
         ix *= LT.controlledSprintScale;
         iz *= LT.controlledSprintScale;
         want = ix !== 0 || iz !== 0 ? 1 : 0;

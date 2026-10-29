@@ -49,7 +49,7 @@ export function startKick(s: SimState, slot: number, kind: KickKind, req: Action
   if (kind >= KickKind.GROUND_PASS && kind <= KickKind.DINKED_PASS) return startPass(s, slot, kind, req, ev);
   if (isLobKind(kind)) return startLob(s, slot, kind, req, ev);
   if (kind >= KickKind.THROUGH_GROUND && kind <= KickKind.THROUGH_DINKED) return startThrough(s, slot, kind, req, ev);
-  if (kind >= KickKind.SHOT_NORMAL && kind <= KickKind.SHOT_LOW_DRIVEN) return startShot(s, slot, kind, req, ev);
+  if ((kind >= KickKind.SHOT_NORMAL && kind <= KickKind.SHOT_LOW_DRIVEN) || kind === KickKind.SHOT_TRIVELA) return startShot(s, slot, kind, req, ev);
   if (kind === KickKind.HEADER_SHOT || kind === KickKind.HEADER_PASS) return startHeader(s, slot, kind, req, ev);
   if (kind === KickKind.VOLLEY_SHOT || kind === KickKind.VOLLEY_PASS) return startVolley(s, slot, kind, req, ev);
   if (kind === KickKind.CLEARANCE) return startClearance(s, slot, kind, req, ev);
@@ -93,7 +93,7 @@ function launch(s: SimState, ctl: ControllerState, slot: number, bi: number, kin
 
 // ---------------------------------------------------------------- tables
 
-/** Section 9/10 attack table: kick kind for face button bi with modifiers (1 = MOD_L, 2 = MOD_R) and double tap. */
+/** Section 9/10 attack table: kick kind for face button bi with modifiers (1 = MOD_L, 2 = MOD_R, 4 = SHIELD) and double tap. */
 export function attackKindFor(bi: number, mods: number, dbl: boolean): KickKind {
   const L = (mods & 1) !== 0;
   const R = (mods & 2) !== 0;
@@ -118,6 +118,7 @@ export function attackKindFor(bi: number, mods: number, dbl: boolean): KickKind 
       if (L && R) return KickKind.SHOT_POWER;
       if (R) return KickKind.SHOT_FINESSE;
       if (L) return KickKind.SHOT_CHIP;
+      if ((mods & 4) !== 0) return KickKind.SHOT_TRIVELA; // [FEEL-1] L2 (SHIELD) held at the press: trivela
       return KickKind.SHOT_NORMAL;
     default:
       return KickKind.NONE;

@@ -93,7 +93,7 @@ export const REQ: ActionRequest = createActionRequest();
 /** Unpacked face press record (scratch; valid until the next unpackPress). */
 export const PR = { mods: 0, cls: 0, power: 0, curve: 0, flags: 0 };
 
-/** mods: 1 = MOD_L, 2 = MOD_R held at the face press. power 0..127 explicit (0 = from hold). curve -127..127. */
+/** mods: 1 = MOD_L, 2 = MOD_R, 4 = SHIELD held at the face press. power 0..127 explicit (0 = from hold). curve -127..127. */
 export function packPress(mods: number, cls: number, power: number, curve: number, flags: number): number {
   return mods + 16 * (cls + 4 * (power + 128 * ((curve + 127) + 255 * flags)));
 }

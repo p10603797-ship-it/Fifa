@@ -23,7 +23,8 @@
  *       on the far side of the body from the opponent.
  *     - Free (NONE / SHIELD with nobody near): dribble touches (below). FIRST_TOUCH: SIM-07's window, no touches.
  *     - Steal between touches (NONE / SHIELD / FIRST_TOUCH / KICK / SHOT wind-up; never during SKILL / FAKE, whose
- *       vulnerable window is SIM-14's): while the ball is out of the owner's reach, the nearest pick-up-eligible
+ *       vulnerable window is SIM-14's): while the ball is out of the owner's reach ([FEEL-1] or, NONE / SHIELD /
+ *       FIRST_TOUCH, beyond his controlRadius with the opponent nearer to it than he is: pokeTick), the nearest pick-up-eligible
  *       opponent within controlRadius of it (ties: closest, then lower slot; a shielding owner's shieldBlocks() keeps a
  *       challenger off) takes it when it is slow relative to him (stealMaxRelSpeed; takePossession), or blocks it
  *       (deflects it off his feet: the ball becomes loose, recordTouch + KICK event with KickKind.DEFLECTION) when it
@@ -97,7 +98,8 @@ import { CPU_CONTROLLER_BASE, DT, NUM_SLOTS } from '../../contracts/constants';
 import { ActionKind, KickKind, MatchPhase } from '../../contracts/enums';
 import { EventType, type EventSink } from '../../contracts/events';
 import { MoveMode, type PlayerState, type SimState } from '../../contracts/state';
-import { T_BALL, T_DRIBBLE, T_PLAYER, T_POSSESSION, T_LOCOMOTION } from '../../contracts/tuning';
+import { T_BALL, T_DRIBBLE, T_FEEL, T_PLAYER, T_POSSESSION, T_LOCOMOTION } from '../../contracts/tuning';
+import { Btn } from '../../contracts/input';
 import { ballTouchedThisTick, recordTouch, releasePossession, takePossession } from '../core/kick';
 import { rngRange } from '../core/rng';
 import { isShielding, shieldBallSpot, shieldBlocks } from './bodies';
@@ -147,6 +149,8 @@ const F_UX = 0, F_UZ = 1, F_VT = 2, F_JOG = 3, F_ACC = 4, F_UB = 5, F_TPK = 6, F
 const F_D0 = 9, F_V0 = 10, F_TGT = 11, F_BACK = 12, F_UBT = 13;
 /** The owner's reach this tick (m). */
 const F_REACH = 14;
+/** [FEEL-1] 1 = R1 controlled sprint (MOD_R held without SPRINT by the owner's controller, sprinting). */
+const F_CS = 15;
 /** shieldBallSpot output. */
 const SPOT = { x: 0, z: 0 };
 
@@ -239,6 +243,14 @@ function intentOf(s: SimState, slot: number): void {
     }
   }
   F[F_UX] = ux; F[F_UZ] = uz; F[F_VT] = vt; F[F_JOG] = jog; F[F_ACC] = acc;
+  // [FEEL-1] R1 controlled sprint: the owner's controller (human or CPU brain) holds MOD_R without SPRINT and he runs.
+  let cs = 0;
+  const c = p.ctrl;
+  if (c >= 0 && c < s.ctrl.length && p.wantSprint === 1 && vt > jog) {
+    const bt = s.ctrl[c]!.buttons;
+    if ((bt & Btn.MOD_R) !== 0 && (bt & Btn.SPRINT) === 0) cs = 1;
+  }
+  F[F_CS] = cs;
   F[F_SF] = vt > jog && top > jog + 1e-9 ? clamp01((vt - jog) / (top - jog)) : 0;
   // Touch quality.
   const wsum = L.qDribbling + L.qBallControl + L.qAgility;
@@ -412,16 +424,20 @@ function touchBall(s: SimState, slot: number, turn: number, ev: EventSink): void
   const b = s.ball;
   const ux = F[F_UX]!, uz = F[F_UZ]!, vt = F[F_VT]!, jog = F[F_JOG]!, sf = F[F_SF]!, q = F[F_Q]!;
   const close = T_DRIBBLE.touchAheadClose;
-  const jogLead = T_DRIBBLE.touchAheadJog;
+  // [FEEL-1] A human-controlled dribbler has close control (T_FEEL.human*); CPU dribblers keep the calibrated touches.
+  const hc = p.ctrl >= 0 && p.ctrl < CPU_CONTROLLER_BASE;
+  const jogLead = hc ? T_FEEL.humanTouchAheadJog : T_DRIBBLE.touchAheadJog;
+  const sprintLead = hc ? T_FEEL.humanTouchAheadSprint : T_DRIBBLE.touchAheadSprint;
   let lead: number;
   if (turn === 1 || p.jockeying === 1 || p.act === ActionKind.SHIELD || vt <= L.standSpeed) lead = close;
+  else if (F[F_CS] === 1) lead = T_FEEL.touchAheadControlled;
   else if (vt <= jog) lead = jog > L.standSpeed ? close + (jogLead - close) * clamp01((vt - L.standSpeed) / (jog - L.standSpeed)) : jogLead;
-  else lead = jogLead + (T_DRIBBLE.touchAheadSprint - jogLead) * sf;
+  else lead = jogLead + (sprintLead - jogLead) * sf;
   if (lead > close && sf < 1) {
     pressureOf(s, slot);
     lead += (close - lead) * F[F_TPK]! * (1 - sf);
   }
-  lead *= 1 + L.leadQualityScale * (0.5 - q);
+  lead *= 1 + (hc ? T_FEEL.humanLeadQualityScale : L.leadQualityScale) * (0.5 - q);
   const r1 = rngRange(s.rng, -1, 1);
   const r2 = rngRange(s.rng, -1, 1);
   const err = (1 - q) * (1 + L.errSprintMul * sf);
@@ -441,8 +457,11 @@ function touchBall(s: SimState, slot: number, turn: number, ev: EventSink): void
   // sideways offset is closed by then.
   let iv: number;
   if (turn === 1) iv = L.turnInterval;
+  else if (F[F_CS] === 1) iv = Math.round(T_FEEL.touchIntervalControlled * (1 + L.intervalQualityScale * (0.5 - q)));
   else {
-    iv = T_DRIBBLE.touchIntervalJog + (T_DRIBBLE.touchIntervalSprint - T_DRIBBLE.touchIntervalJog) * sf;
+    const ivJ = hc ? T_FEEL.humanTouchIntervalJog : T_DRIBBLE.touchIntervalJog;
+    const ivS = hc ? T_FEEL.humanTouchIntervalSprint : T_DRIBBLE.touchIntervalSprint;
+    iv = ivJ + (ivS - ivJ) * sf;
     iv = Math.round(iv * (1 + L.intervalQualityScale * (0.5 - q)));
   }
   if (iv < 1) iv = 1;
@@ -528,11 +547,15 @@ function controlAfterTake(s: SimState, slot: number, ev: EventSink): void {
   touchBall(s, slot, 0, ev);
 }
 
+/** nearestTaker's search radius squared (controlRadius; pokeTick widens it for its call). */
+let takerR2 = CR2;
+const POKE2 = T_FEEL.pokeReach * T_FEEL.pokeReach;
+
 /** Nearest pick-up-eligible player of slots [from, to) within controlRadius of the ball (ties: lower slot); -1 none. */
 function nearestTaker(s: SimState, from: number, to: number, owner: number): number {
   const b = s.ball;
   let best = -1;
-  let bestD2 = CR2;
+  let bestD2 = takerR2;
   const shield = owner >= 0 && isShielding(s, owner);
   const selfKick = owner < 0 && s.tick - b.lastKickTick < L.selfKickTicks ? b.lastKickBy : -1;
   for (let j = from; j < to; j++) {
@@ -556,6 +579,24 @@ function stealTick(s: SimState, owner: number, ev: EventSink): number {
   const first = o.team === 0 ? HALF_NS : 0;
   const j = nearestTaker(s, first, first + HALF_NS, owner);
   if (j < 0) return 0;
+  return stealBy(s, owner, j, ev);
+}
+
+/** [FEEL-1] The ball beyond the owner's controlRadius (still in his running reach): the nearest eligible opponent within
+ *  T_FEEL.pokeReach of it (a stretched leg) and nearer to it than the owner steals or blocks it, as between touches.
+ *  1 if the ball changed. */
+function pokeTick(s: SimState, owner: number, ev: EventSink): number {
+  const b = s.ball;
+  if (!(b.y <= CTRL_H)) return 0;
+  const o = s.players[owner]!;
+  const first = o.team === 0 ? HALF_NS : 0;
+  takerR2 = POKE2;
+  const j = nearestTaker(s, first, first + HALF_NS, owner);
+  takerR2 = CR2;
+  if (j < 0) return 0;
+  const q = s.players[j]!;
+  const qx = b.x - q.x, qz = b.z - q.z, ox = b.x - o.x, oz = b.z - o.z;
+  if (!(qx * qx + qz * qz < ox * ox + oz * oz)) return 0;
   return stealBy(s, owner, j, ev);
 }
 
@@ -642,6 +683,10 @@ function ownerTick(s: SimState, ev: EventSink): void {
   }
   if (act !== ActionKind.NONE && act !== ActionKind.SHIELD && act !== ActionKind.FIRST_TOUCH) return;
   if (!reach && stealTick(s, o, ev) === 1) return;
+  // [FEEL-1] Poke window: a human dribbler's shorter sprint touch stays inside his running reach, but while it is beyond
+  // his controlRadius between touches (about a stride ahead) an opponent nearer to it can still poke it away (section 6:
+  // "so it can be poked away between touches"; a CPU dribbler's longer touch runs out of his reach: stealTick).
+  if (reach && d2 > CR2 && p.ctrl >= 0 && p.ctrl < CPU_CONTROLLER_BASE && pokeTick(s, o, ev) === 1) return;
   if (act === ActionKind.FIRST_TOUCH) return;
   if (reach && underTick(s, o, ev) === 1) return;
   if (act === ActionKind.SHIELD && shieldBallSpot(s, o, SPOT)) { HOLD[0] = SPOT.x; HOLD[1] = SPOT.z; holdOn(s, o); return; }

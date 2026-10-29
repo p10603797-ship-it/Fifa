@@ -62,7 +62,7 @@ export const ACTION_HANDLERS: readonly ActionHandler[] = (() => {
 })();
 
 export const KICK_SOLVERS: readonly (KickSolver | null)[] = (() => {
-  const k: (KickSolver | null)[] = new Array<KickSolver | null>(KickKind.GK_RELEASE + 1).fill(null);
+  const k: (KickSolver | null)[] = new Array<KickSolver | null>(KickKind.SHOT_TRIVELA + 1).fill(null);
   k[KickKind.GROUND_PASS] = solveGroundPass;
   k[KickKind.DRIVEN_PASS] = solveGroundPass;
   k[KickKind.DINKED_PASS] = solveGroundPass;
@@ -79,6 +79,7 @@ export const KICK_SOLVERS: readonly (KickSolver | null)[] = (() => {
   k[KickKind.THROUGH_DINKED] = solveThrough;
   k[KickKind.SHOT_NORMAL] = solveShot;
   k[KickKind.SHOT_FINESSE] = solveShot;
+  k[KickKind.SHOT_TRIVELA] = solveShot;
   k[KickKind.SHOT_CHIP] = solveShot;
   k[KickKind.SHOT_POWER] = solveShot;
   k[KickKind.SHOT_LOW_DRIVEN] = solveShot;

@@ -82,7 +82,7 @@ const N_PHASES = MatchPhase.POST_MATCH + 1;
 const IS_RESTART = new Uint8Array(N_PHASES);
 for (const ph of RESTART_PHASES) IS_RESTART[ph] = 1;
 
-const N_KICKS = KickKind.GK_RELEASE + 1;
+const N_KICKS = KickKind.SHOT_TRIVELA + 1;
 /** 1 = a deliberate kick: the kicking team keeps possession while the ball travels. 0 = a contact that does not
  *  establish possession (deflection, poke, parry, punch, tip). */
 const CONTROL_KICK = new Uint8Array(N_KICKS);

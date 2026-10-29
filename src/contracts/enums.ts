@@ -152,6 +152,8 @@ export enum KickKind {
   FREE_KICK_SHOT = 40,
   SKILL_TOUCH = 41,
   GK_RELEASE = 42,
+  /** [FEEL-1] Outside-of-the-foot curler ("trivela"): bends the other way to a finesse shot (L2 + SHOOT). */
+  SHOT_TRIVELA = 43,
 }
 
 /** True for kinds that count as a deliberate pass/kick by a player's foot (back-pass rule). */
@@ -162,7 +164,7 @@ export const isFootPassKind = (k: KickKind): boolean =>
 /** True for shots (used for stats, half-end logic, crowd). */
 export const isShotKind = (k: KickKind): boolean =>
   (k >= KickKind.SHOT_NORMAL && k <= KickKind.SHOT_LOW_DRIVEN) || k === KickKind.HEADER_SHOT || k === KickKind.VOLLEY_SHOT ||
-  k === KickKind.PENALTY || k === KickKind.FREE_KICK_SHOT;
+  k === KickKind.PENALTY || k === KickKind.FREE_KICK_SHOT || k === KickKind.SHOT_TRIVELA;
 
 /** Skill moves (section 6). Eight core moves plus utility touches. */
 export enum SkillMove {

@@ -246,7 +246,9 @@ function playTick(s: SimState, c: number, ctl: ControllerState, f: Readonly<Inpu
     }
   }
   if (newFace !== 0) {
-    const mods = ((ctl.buttons & Btn.MOD_L) !== 0 ? 1 : 0) | ((ctl.buttons & Btn.MOD_R) !== 0 ? 2 : 0);
+    // [FEEL-1] 4 = L2 (SHIELD) held: SHOOT -> trivela (resolved at the face press, like every combo).
+    const mods = ((ctl.buttons & Btn.MOD_L) !== 0 ? 1 : 0) | ((ctl.buttons & Btn.MOD_R) !== 0 ? 2 : 0) |
+      ((ctl.buttons & Btn.SHIELD) !== 0 ? 4 : 0);
     for (let bi = 0; bi < 4; bi++) {
       if ((newFace & (1 << bi)) === 0) continue;
       const dbl = isDoubleTap(ctl, c, bi, s.tick) ? PressFlag.DOUBLE : 0;

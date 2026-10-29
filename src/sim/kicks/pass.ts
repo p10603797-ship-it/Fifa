@@ -93,7 +93,7 @@ import type { EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type BallState, type PlayerState, type SimState } from '../../contracts/state';
 import { createKickLaunch, ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_PASS, T_PLAYER, T_PASS_KICK, T_BALL_CONTACT } from '../../contracts/tuning';
+import { T_BALL, T_FEEL, T_PASS, T_PLAYER, T_PASS_KICK, T_BALL_CONTACT } from '../../contracts/tuning';
 import { MAX_SUBSTEPS } from '../ball/contact';
 import { ballAirStep, groundPassSpeed, groundRollTime } from '../ball/flight';
 import { dcos, dexp, dlog, dsin } from '../core/dmath';
@@ -310,6 +310,7 @@ export function selectReceiver(s: SimState, slot: number, dirX: number, dirZ: nu
   const semi = assist === AssistLevel.SEMI;
   const cosCone = semi ? COS_CONE_SEMI : COS_CONE_ASSISTED;
   const wAlign = semi ? LT.alignWeightSemi : LT.alignWeight;
+  const wNear = semi ? T_FEEL.passNearWeight * 0.5 : T_FEEL.passNearWeight;
   const tol = LT.distTol + LT.distTolFrac * dPow;
   const dir = s.teams[p.team]!.dir;
   const first = p.team === 0 ? 0 : PPT;
@@ -332,9 +333,16 @@ export function selectReceiver(s: SimState, slot: number, dirX: number, dirZ: nu
     const dx = qx - px, dz = qz - pz;
     const d = Math.sqrt(dx * dx + dz * dz);
     if (!(d >= minD) || d > maxD) continue;
-    const c = (dx * ux + dz * uz) / d;
+    let c = (dx * ux + dz * uz) / d;
+    // [FEEL-1] The stick may point at where he is now rather than where his run takes him: the better of the two counts
+    // (a teammate coming short toward the passer fell out of the cone of a stick aimed straight at him).
+    const cx = q.x - px, cz = q.z - pz;
+    const cd = Math.sqrt(cx * cx + cz * cz);
+    if (cd > 1e-6) { const c0 = (cx * ux + cz * uz) / cd; if (c0 > c) c = c0; }
     if (!(c >= cosCone)) continue;
-    const align = (c - cosCone) / (1 - cosCone);
+    // [FEEL-1] Linear in the angle off the stick (was 1 - (1 - c) / (1 - cosCone), flat near the stick: aiming straight
+    // at a man 20 m away picked the one 10 m away 21 degrees off with a tap). sqrt((1 - c) / (1 - cosCone)) ~ angle / cone.
+    const align = 1 - Math.sqrt((1 - c) / (1 - cosCone));
     const e = (d - dPow) / tol;
     const fit = 1 / (1 + e * e);
     // Openness: opponents near the lane (passer -> receiver) and near the receiver.
@@ -365,7 +373,11 @@ export function selectReceiver(s: SimState, slot: number, dirX: number, dirZ: nu
     const open = clamp01(1 - LT.laneWeight * lane - LT.markWeight * mark);
     let prog = dir * dx / LT.progressNorm;
     if (prog > 1) prog = 1; else if (prog < -1) prog = -1;
-    const score = wAlign * align + LT.distWeight * fit + T_PASS.opennessWeight * open + LT.progressWeight * prog;
+    // [FEEL-1] Assisted passing snaps to the teammate the stick points at, nearer ones first for a soft pass: a tap no
+    // longer picks a man 50 m away 9 degrees off the stick over one 20 m away 30 degrees off (Semi gets half the pull;
+    // a full power bar none, so a long pass along a line still finds the far man).
+    const near = wNear * (1 - pw) * (1 - d / maxD);
+    const score = wAlign * align + LT.distWeight * fit + T_FEEL.passOpenWeight * open + LT.progressWeight * prog + near;
     if (score > bestScore) { bestScore = score; best = i; }
   }
   return best;

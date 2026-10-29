@@ -13,12 +13,12 @@
  * Gestures go through the same starters as buttons (ReqFlag.GESTURE) and are buffered like presses.
  */
 import { GOAL_HALF_WIDTH, HALF_LENGTH, NUM_SLOTS } from '../../contracts/constants';
-import { ActionKind, GestureKind, KickKind } from '../../contracts/enums';
+import { ActionKind, Foot, GestureKind, KickKind } from '../../contracts/enums';
 import type { EventSink } from '../../contracts/events';
 import { GestureFlag } from '../../contracts/input';
 import type { ControllerState, PlayerState, SimState } from '../../contracts/state';
 import { ReqFlag } from '../../contracts/systems';
-import { T_PASS } from '../../contracts/tuning';
+import { T_FEEL, T_PASS } from '../../contracts/tuning';
 import { startTackle } from '../defend/tackle';
 import { startKeeperRush } from '../keeper/sweeper';
 import { inCrossingZone } from '../pitch/geometry';
@@ -160,8 +160,14 @@ function attackGesture(s: SimState, ctl: ControllerState, slot: number, ev: Even
     swipePower();
     return launchG(s, ctl, slot, ev);
   }
-  const sk = kind === GestureKind.CURVED_SWIPE ? KickKind.SHOT_FINESSE
+  let sk = kind === GestureKind.CURVED_SWIPE ? KickKind.SHOT_FINESSE
     : kind === GestureKind.BACK_FORTH_SWIPE ? KickKind.SHOT_POWER : KickKind.SHOT_NORMAL;
+  // [FEEL-1] A curved swipe bending against his natural finesse curl (a right-footer's inside foot curls it left) is
+  // the outside of the foot: a trivela.
+  if (kind === GestureKind.CURVED_SWIPE) {
+    const tc = T_FEEL.trivelaGestureCurve;
+    if (s.attrs[slot]!.foot === Foot.LEFT ? GR.gCurve <= -tc : GR.gCurve >= tc) sk = KickKind.SHOT_TRIVELA;
+  }
   glReset(sk, ft);
   if (!swipeDir()) return Res.DROP;
   const gxg = dir * HALF_LENGTH - p.x, gzg = -p.z;
