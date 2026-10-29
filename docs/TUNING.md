@@ -2146,85 +2146,89 @@ alone 77.0%), equal 55.7% points, mirror 50.1% points.
 
 ## FEEL-2 (CPU defending against a human dribbler; shot types)
 
-The user asked for the game to play "like FIFA": defenders jockey (hold a goal-side line, mirror lateral moves, show
-the attacker away from goal, shoulder challenge when level), so a side step is a skill move that works sometimes, not
-always; the finesse is the reliable placed shot and the trivela a harder, lower-percentage technique. Decisions D-033
-(defending) and D-034 (shots). Both are for human-controlled players only: the bot game is bit-identical (soak hashes
-equal), so the section 7 bands, the ladder and the balance are the FEEL-1 tree's. Measured with scripted pad input
-through the real pipeline (`tests/scenario/feel-2-helpers.ts`; runner `SEEDS=8 npx tsx tests/scenario/feel-2-measure.ts
-[def|skill|straight|shot]`, one scene traced with `npx tsx tests/scenario/feel-2-trace.ts style level seed lat weave`).
+The user asked for the game to play "like FIFA": a side step against a defender is a skill move that works sometimes,
+not always, and more often for a good dribbler; the finesse is the reliable placed shot and the trivela a harder
+technique. Decisions D-033 / D-034 (first version) and D-035 / D-036 (the skeptic round's rework, which this section
+describes). Everything is for human-controlled players only (the shots in open play only): bot v bot is bit-identical to
+cc2c605 (pinned hashes in `tests/scenario/feel-2-duel-safety.test.ts`), so the section 7 bands, the ladder and the
+balance are the FEEL-1 tree's. Measured with scripted pad input through the real pipeline
+(`tests/scenario/feel-2-helpers.ts`; runner `npx tsx tests/scenario/feel-2-measure.ts
+[grid|skill|straight|chase|diagonal|weave|shot|shotpoor]`).
 
-| Block | Constant | Was | Now | Why |
+| Block | Constant | Was (D-033 / D-034) | Now | Why |
 |---|---|---|---|---|
-| `T_FEEL2` (new) | `jockeyGoalSideCos`, `jockeyEngageDist`, `jockeyApproachSpeed` | - | 0.5, 6 m, 3 m/s | Jockey (TAI-11 jockeyPlan, SHIELD instead of contain) when the controlled defender is goal-side within 6 m of a human carrier running at our goal. Screened on an earlier version (full lead, no sell chance): 10 m and 16 m were no better than 5-6 m (planted 14 m out, the defender let the dribbler reach full pace). |
-| `T_FEEL2` | `jockeyStandoff` | - | 1.4 m | He keeps his distance from the ball along its line to goal (max(1.4, where he is)): no stepping in. 3 m (backing off) was worse in the same screen: the retreat used up the jockey's speed budget the lateral move needed. |
-| `T_FEEL2` | `jockeyRead`, `jockeyLeadMax` | - | 0.3, 0.6 s | Mirror: lateral lead 0.3 x the time to meet. A full lead went for the first step and was beaten by the second (the dribbler steps away from the defender's side): with no sell chance, Legend beaten 50% at 1, 44% at 0.6, 31% at 0.3. |
-| `T_FEEL2` | `jockeyStepLatSpeed`, `jockeySoldWindow`, `jockeySoldLean` | - | 1.2 m/s, 30 ticks, 0.25 s | A side step (lateral speed above 1.2 m/s) gets one read per 30 ticks and side (noise01, no RNG stream); sold, he leans the wrong way. |
-| `T_FEEL2` | `jockeySoldChance` | - | 0.9 / 0.8 / 0.6 / 0.3 / 0.2 / 0.15 | Sell chance by level (Beginner .. Legend). Professional 0.45 / 0.3 / 0.2: 69 / 58 / 56% beaten; World Class 0.35 / 0.2: 59 / 49%. |
-| `T_FEEL2` | `jockeySkillRef`, `jockeySkillSlope`, `jockeySkillMin` / `Max` | - | 75, 0.8, 0.35 / 1.6 | x (1 + 0.8 x (mean(dribbling, agility) - 75) / 50): a 90-rated dribbler beats Professional / Legend 57% v 30 / 24% for a 35-rated one (tackle resistance in SIM-14 adds to it). |
-| `T_FEEL2` | `tackleReachFrac` | (standReach) | 1 / 1 / 0.95 / 0.85 / 0.75 / 0.6 | A careful tackle on a human dribbler waits until the ball at mid-contact is well inside his reach: a lunge at the edge (SIM-14 edgeReachPenalty x 0.65) was mostly missed, and a missed tackle is a beaten defender (Legend R1 scenes, an earlier version: 10 / 9 / 10 beaten of 24 at 0.72 / 0.6 / 0.5). |
-| `T_FEEL2` | `jockeyBallFirst` | - | 0 / 0 / 1 / 1 / 1 / 1 | From Semi-Pro up a jockeying defender's careful tackle wants the ball first (lungePresented): side-stepping R1 dribblers were fouled through the body, 7 times in 48 Professional scenes. The low levels keep their clumsy challenges (with it on, a Beginner / Amateur defender made 3 exposed presses in 36 TAI-11 scenes). |
-| `T_FEEL2` | `jockeyRashMul` | - | 1 / 1 / 0.5 / 0.5 / 0.5 / 0.5 | Rash-lunge noise while jockeying: Semi-Pro's extra fouls (11 -> 2 in 96 scenes, with its shoulder challenge off). |
-| `T_FEEL2` | `tackleMaxClosing` | - | 4.5 m/s | No careful tackle at a closing speed RUL-09 calls reckless (4.7 m/s, whoever runs into whom): a planted defender's won tackles on a dribbler sprinting at him were yellow-card fouls. A contain or a back-off close up instead measured worse (Legend 31 -> 43-48% beaten, jog scenes fouled). |
-| `T_FEEL2` | `jockeySprintDist` | - | 0.6 m | Sprint jockey when the target is further than this. |
-| `T_FEEL2` | `shoulderChance`, `shoulderWindow`, `shoulderDist`, `shoulderMaxBehind` | - | 0 / 0 / 0 / 0.5 / 0.6 / 0.75 per 45 ticks, 1.15 m, 0.25 | Level and alongside a human dribbler (SIM-15 tackleKind SHOULDER, not behind him) the shoulder challenge without an exposed ball; SIM-14's strength duel decides. 0.9 per 30 ticks and from behind too gave shoulder fouls (RUL-09 weight 0.12, 3-5 in 96 scenes); Semi-Pro none (its fouls). |
-| `T_FEEL2` | `alongsideDist`, `alongsideGap`, `alongsideLead` | - | 5 m, 0.85 m, 0.15 s | Beaten at pace (Professional up): run to a point beside the carrier for the shoulder challenge, not to the recovery point behind the play. |
-| `T_FEEL2` | `finesseInset`, `finesseSnapFrom`, `trivelaSnapFrom` | (`T_SHOT.assistInset` 0.55) | 0.35 m, 1.8 m, 1.8 m | A human's assisted finesse toward a corner (stick ray 1.8 m+ off centre) is placed 0.35 m inside the post, his trivela at the normal inset. Explicit targets (the CPU's) unchanged. |
-| `T_FEEL2` | `humanFinesseSpeedMul`, `humanFinesseSpin` | (`T_SHOT` 0.78, 11) | 0.92, 13.5 rad/s | A human's finesse (22.2 m/s, still slower than a normal 24.1) beats a set Professional keeper from the edge of the box: 0 of 180 at 0.78 (0.9: 12%, 0.95: 26% without the placement), 41% now; bend 4.68 m from 22 m (was 4.58). |
-| `T_FEEL2` | `humanTrivelaSpeedMul`, `humanTrivelaSpin`, `humanTrivelaErrMul` | (`T_FEEL` 0.9, 10, 1.15) | 0.95, 10.8, 1.35 | Bend 3.61 m the other way (was 3.48); a poor shooter (40) sprays it 22% wide v 15% for a normal shot. At a normal shot's pace (1.0) it scored 31% pooled, still below a normal shot (41%). |
-| `T_FEEL2` | `humanPowerErrMul` | (`T_SHOT_KICK.errMulPower` 1.1) | 3.0 | A human's power shot scored twice a normal shot against a set keeper (52 v 26%); 45% pooled now (2.5: 47%, 3.5: 41%), still 30 m/s and straight; a poor shooter sprays it 38% wide. |
+| `T_FEEL2` | `duelGoalSideCos`, `duelEngageDist`, `duelApproachSpeed` | (jockey*: 0.5, 6 m, 3 m/s) | 0.5, 7 m, 2.5 m/s | The duel (defendCarrier duelState) engages a goal-side controlled defender within 7 m of a human coming at our goal. The D-033 jockey positioning is gone: the QF-14 / QF-16 positioning stays, the duel overrides it only while a side step is played out. |
+| `T_FEEL2` | `duelStepDelta`, `duelLatTrack` | (jockeyStepLatSpeed 1.2 m/s, a draw every 30 ticks) | 1.6 m/s, 0.08 / tick | A side step is a change of the carrier's lateral velocity by 1.6 m/s from a reference that follows a steady run: a constant diagonal is never a move (0 draws in 324 diagonal scenes; D-033 re-drew every 30 ticks and reversed the defender mid-chase). |
+| `T_FEEL2` | `duelSoldChance` | (jockeySoldChance 0.9 / 0.8 / 0.6 / 0.3 / 0.2 / 0.15) | 0.95 / 0.9 / 0.6 / 0.3 / 0.12 / 0.04 | One draw per move by level (Beginner .. Legend): beaten 81 / 90 / 81 / 56 / 40 / 37% over the grid below. Professional 0.27: 53% (lateral offsets -2 / 0 / 1.3 m and steps from 5 / 8 m: 66% at 0.3); Legend 0.03-0.05 moves it 1-2 points (its beats are mostly read duels lost to the R1 dribbler's second step: R1 52%, sprint 22%). |
+| `T_FEEL2` | `duelSoldTicks`, `duelSoldLean` | (0.25 s lean) | 50 ticks, 2.2 / 2 / 1.6 / 1.2 / 1.2 / 1.2 m | Sold: wrong-footed for 50 ticks, he goes the wrong way to 1.2-2.2 m beyond the ball's line on the far side from the step (already further: planted), no challenge, no slide, no chase. 24 ticks and ending when he was beaten let him recover and catch the dribbler (Amateur sold scenes 66% beaten); a lean from where he stands ran him 4 m the wrong way (a glitch). |
+| `T_FEEL2` | `duelReadTicks`, `duelReadLeadMax`, `duelReadStepIn` | (jockeyRead 0.3, jockeyLeadMax 0.6 s) | 60 ticks, 0.8 s, 0 / 0 / 0 / 0.2 / 0.3 / 0.4 | Read: he sprint-jockeys to where the ball crosses his line (full lead) and from Professional up steps in (Legend 42 -> 37% beaten); a standoff instead (giving ground) was worse (46%); 30 ticks ended the read before the step reached him. |
+| `T_FEEL2` | `duelReadReach` | (tackleReachFrac 1 .. 0.6) | 0.8 / 0.85 / 0.9 / 0.95 / 1 / 1 | Read tackle on the unexposed ball: within this x standReach at mid-contact, ball-first (lungePresented) and safe (below). |
+| `T_FEEL2` | `duelMaxClosing`, `duelClearSep`, `duelBodyGap` | (tackleMaxClosing 4.5 on the current velocities) | 4.2 m/s, 1.3 m, 0.05 m | In the duel no standing challenge whose contact closing speed (his lunge, 3.2 m/s at least, v the carrier's run, worst over now .. mid-contact) is above 4.2 (RUL-09 calls 4.675 reckless whoever runs into whom, ball first or not) unless the bodies are still 1.3 m apart at mid-contact, and none with the bodies within SIM-14's contact distance + 0.05 by mid-contact. D-033 checked the current closing speed, so a retreating defender's lunge was a yellow card (straight-jog fouls up to 61 in 432 scenes). Outside the duel the closing gate made TAI-11 / QF-13's exposed-ball tackles impossible. |
+| `T_FEEL2` | `duelMaxBehind` | - | 0.3 | Every standing challenge on a human carrier: fromBehind at most 0.3 over the contact (careful tackles on a dribbler who had passed were fouls). |
+| `T_FEEL2` | `duelSkillRef`, `duelSkillSlope`, `duelSkillMin` / `Max` | (jockeySkill*) | 75, 0.8, 0.35 / 1.6 | x (1 + 0.8 x (mean(dribbling, agility) - 75) / 50) on the sold chance: a 90-rated dribbler beats Professional / Legend 73 / 44%, a 35-rated one 19 / 9%. |
+| `T_FEEL2` | `shoulderChance`, `shoulderWindow` | 0 / 0 / 0 / 0.5 / 0.6 / 0.75 per 45 ticks | 0 / 0 / 0 / 0.35 / 0.45 / 0.55 per 45 | Level and alongside a human at pace. 134 shoulders in 160 Legend chase scenes before, 26% won. |
+| `T_FEEL2` | `shoulderMaxBehind`, `shoulderMaxClosing`, `shoulderMinSpeed`, `shoulderNoBoxFrom`, `shoulderCooldown` | (0.25 on the press-time geometry) | 0 predicted at the contact, 3 m/s, 6 m/s, Professional, 90 ticks | Never from behind at the contact (33 of 134 Legend shoulders resolved from behind: reds, penalties), not in our own area, not at a carrier through on goal (DOGSO), not at a jogger, then no challenge for 90 ticks. The D-033 run to get alongside (`alongside*`) is gone: the old contain branch capped it, and the defender escorted the dribbler 2-4 s. |
+| `T_FEEL2` | `finesseInset`, `finesseSnapFrom` | 0.35 m, 1.8 m | 0.5 m, 1.2 m | The placed finesse: no longer blended back toward the raw stick ray (at 0.35 a stick in the corner went wide 8-12%); from 1.2 m a stick half-way to the post places it too. |
+| `T_FEEL2` | `trivelaInset`, `trivelaSnapFrom` | (`T_SHOT.assistInset` 0.55), 1.8 m | 0.45 m, 1.2 m | The placed trivela (it starts inside and bends out to the corner). 0.38: 35% (wide 8-13%). |
+| `T_FEEL2` | `humanFinesseSpeedMul`, `humanFinesseSpin` | 0.92, 13.5 | 0.97, 14.2 rad/s | 23.4 m/s (normal 24.1), bend 4.6 m. At 0.92 the finesse scored about a normal shot on the skeptics' probe (36 v 37.5%). |
+| `T_FEEL2` | `humanTrivelaSpeedMul`, `humanTrivelaSpin`, `humanTrivelaErrMul`, `humanTrivelaErrSlope` | 0.95, 10.8, 1.35 flat | 1.02, 11.3, 0.7 + 1.0 x (1 - accuracy) | Trivela 42.0 v normal 39.2% for a top finisher (at 1.0 / 0.85: 36.3%; 1.0 / 0.7: 37.9%; 1.03 / 0.85: 38.4%); a poor shooter (40) 15.5 v 23.1%, wide 26 v 15%. Bend 3.5 m the other way (11.3: at 1.02 pace 10.8 bent 3.3 m). |
+| `T_FEEL2` | `humanPowerErrMul` | 3.0 | 3.0 | Kept: power 41.2 v normal 39.2%. Open play only now: a power penalty is 93% again (65-69% with it). |
 
-### FEEL-2 measurements (before -> after, same scripted inputs)
+### FEEL-2 measurements (D-035 / D-036, final tree)
 
-Side step against the CPU centre-back (slot 14, standingTackle 91; the dribbler slot 9, dribbling 78 / agility 69), 96
-scenes a level: R1 and sprint from 14 m, the defender 0 / 1.5 m either side of the line, a 0.4 or 0.8 stick side step
-from 6 m away from his side, seeds 1-8; beaten = past him by 4 m, or after 6 s still on the ball 1 m past him or level
-and 2.5 m clear to the side; lost = the ball won without a foul.
+The side-step grid (the FEEL-2 skeptics' multi-geometry probe): centre-backs (dribbler 9 from (5, -3), defender 13; 10
+from (10, 4), defender 14), a winger against a full-back ((5, 20) v 15; (8, -21) v 12), the edge of the box ((18, 2) v
+14; (16, -6) v 13), midfield ((-20, 3) v 17; (-15, -8) v 18) and the FEEL-1 skeptic's centre-back ((-20, 0) v 14 at 14
+m); the defender 10-14 m ahead and -1 / 0.7 / 2 m to the side; a side step of 0.6 stick from 4.5 or 7 m (away from his
+side, a double step, a step to one side; on the wing cut inside, down the line, double); R1 and sprint; seeds 21-23: 972
+scenes a level. Beaten: on the ball 2.5 m nearer goal than his defender, past x 48, the keeper winning it after the
+dribbler got past his defender, or still on the ball at the end with the defender not in front (escorts count).
 
-| Level | Beaten before | Beaten after (R1 / sprint) | Fouls before -> after |
-|---|---|---|---|
-| Beginner | 77% | 87.5% (100 / 75) | 4 -> 0 |
-| Amateur | 84% | 85.4% (94 / 77) | 8 -> 4 |
-| Semi-Pro | 56% | 74.0% (88 / 60) | 4 -> 2 |
-| Professional | 74% | 58.3% (60 / 56) | 5 -> 7 |
-| World Class | 66% | 49.0% (50 / 48) | 0 -> 3 |
-| Legend | 50% | 39.6% (56 / 23) | 2 -> 1 |
+| Level | cc2c605 | D-033 (first FEEL-2) | Now (R1 / sprint) | Fouls cc2c605 / D-033 / now | Escorts > 1.5 s now |
+|---|---|---|---|---|---|
+| Beginner | 67% | 65% | 81% (92 / 71) | 67 / 68 / 3 | 9 |
+| Amateur | 61% | 56% | 90% (97 / 83) | 80 / 93 / 0 | 0 |
+| Semi-Pro | 48% | 57% | 81% (89 / 72) | 123 / 72 / 2 | 5 |
+| Professional | 47% | 58% | 56% (68 / 45) | 70 / 90 / 2 | 2 |
+| World Class | 43% | 60% | 40% (49 / 30) | 34 / 40 / 14 | 0 |
+| Legend | 46% | 60% | 37% (52 / 22) | 38 / 34 / 8 | 1 |
 
-Running straight at him (R1, sprint, jog; 0 / +-0.5 m; seeds 1-4): the ball lost 92-100% at every level, never beaten
-(the rest are fouls on the dribbler; before: 94-100%). The FEEL-1 skeptic grid (R1, 0.4 side step, Professional and
-Legend, 24 scenes): beaten 19 -> 9, lost 5 -> 8. Glitch checks over the grids: no body overlap (closest 0.77 m, two
-radii 0.76), no jump above 0.161 m a tick (a sprint), free defenders pushing a stick without moving at most 3 ticks in 96
-scenes (as before), running straight at him at most one reversal of his lateral run (settling onto the line). The
-side-step grid at least doubles the lateral reversals a defender makes (he mirrors a dribbler who steps away from his
-side) and the CPU's control hand-offs to the team AI mid-duel (pre-existing) add a few; no oscillation was found in a
-trace.
+On unseen seeds 31-33: 83 / 90 / 83 / 62 / 41 / 34%; with lateral offsets -2 / 0 / 1.3 m and steps from 5 / 8 m: 90 / 86 /
+- / 66 / - / 45%. D-033's escorts over 1.5 s were 405-453 at Professional+ (cc2c605 6-9). A 90-rated dribbler (seed 21,
+324 scenes) beats Professional / Legend 72.8 / 44.1%, a 35-rated one 18.8 / 9.0%. Running straight at a Professional /
+World Class / Legend centre-back (jog 0.6-0.9, R1, sprint; straight or weaving; from x 10 and 24; 240 scenes): lost 239 /
+231 / 227, fouls 1 / 1 / 3 (slide DOGSO reds on the empty pitch), no yellow, no penalty. Chasing (0-2.5 m behind, from x
+10 and into the box from 25; 320 scenes a level): no foul, card or penalty (D-033: up to 11 fouls, 9 reds, 9 penalties);
+level chases (36 scenes): 0 / 4 / 8 shoulder challenges, no foul. The TAI-11 weaving jogger: dispossessed 48 of 48, fouls
+6 / 4 / 4, no yellow (cc2c605 7 / 5 / 5; D-033 13 / 12 / 13 with yellows). A constant diagonal: no move at any level.
+Fewer standing tackles overall: in the duel the CPU wins the ball mostly by being in the way (SIM-06), its exposed presses
+in the TAI-11 scene fell (Professional 13 -> 5 in 12 scenes). Wide areas are not calibrated: 7 m off a touchline a step
+inside beats Professional 25%, World Class / Legend 0%, down the line 50 / 71 / 8% (24 scenes each).
 
-Shots (a human shooter: finishing 95, curve 78, shot power 90) against a Professional keeper, five spots 16-21 m
-((36, 0), (38, +-7), (33, +-5)), aims 0.66 / 1.26 m inside either post, SHOOT 30 ticks, seeds 4-12, 180 shots a cell:
+Shots (slot 9: finishing 95, curve 78) against a Professional keeper set on his line and 8.6 m off it. Probe A: five
+spots 16-21 m out ((36, 0), (38, +-7), (33, +-5)), aims 0.66 / 1.26 m inside either post, SHOOT 30 ticks, seeds 4-12
+(360 a kind). Probe B (the skeptics' set): those plus (30, -10) and (41, 12), the stick 3.2 / 1.6 m off centre, SHOOT 22 /
+36 ticks, seeds 71-73 (336 a kind).
 
-| Kind | Keeper set: before -> after | Keeper 8.6 m off his line: before -> after | Pooled | Poor shooter (40) pooled, wide set / off |
-|---|---|---|---|---|
-| Normal | 26 -> 26% | 56 -> 56% | 41 -> 41% | 23%, 15 / 14% |
-| Finesse | 0 -> 41% | 52 -> 52% | 26 -> 47% | 18 -> 22%, 27 / 22% |
-| Power | 52 -> 39% | 57 -> 51% | 54 -> 45% | 33 -> 24%, 38 / 36% |
-| Trivela | 8 -> 17% | 38 -> 40% | 23 -> 28% | 12 -> 14%, 22 / 22% |
+| Kind | D-034, probe A pooled (seeds 4-12) | Now, A + B pooled | A: set / off | B: set / off | Poor shooter (40) pooled, wide set (A) |
+|---|---|---|---|---|---|
+| Normal | 40.8% | 39.2% | 25.6 / 56.1% | 16.1 / 58.9% | 23.1%, 15% |
+| Finesse | 46.7% | 52.0% | 55.6 / 57.8% | 31.0 / 63.1% | 26.0%, 18% |
+| Power | 45.0% | 41.2% | 38.9 / 51.1% | 20.8 / 53.6% | 23.6%, 38% |
+| Trivela | 28.3% | 42.0% | 31.1 / 47.8% | 27.4 / 61.9% | 15.5%, 26% |
 
-Flights from (30, -8) at the far post (SHOOT 20 ticks): normal 24.1 m/s, 1.06 m curl; finesse 22.2 m/s (was 18.8),
-4.68 m; power 30.0 m/s, straight; trivela 22.9 m/s (was 21.7), 3.61 m the other way. The FEEL-1 rates quoted in the
-assignment (normal 47 / finesse 56 / power 54 / trivela 62%, "five spots, n = 180, seeds 4-12") have no runner in the
-tree and were not reproduced: a FEEL-1-like setup (x = 26-34, keeper where the scenario puts him, SHOOT 20 ticks) gave 26
-/ 44 / 27 / 30% before FEEL-2, every probe built here had the trivela below the finesse already, and from 23-25 m a set
-keeper stops 94-100% of every kind.
+On the skeptics' probe B with their seeds the D-034 tree had slot 9 at normal 35.5, finesse 32.7, power 34.0, trivela 25.7%. Their own probe now (7 spots, 4 aims, 5 seeds, 2 holds)
+with their slots 10 / 5: normal 33.2 / 30.2, finesse 39.9 / 39.5, power 30.9 / 24.7, trivela 33.2 / 33.1%. Flights from
+(30, -8) at the far post (SHOOT 20 ticks): normal 24.1 m/s, 1.06 m curl; finesse 23.4 m/s, 4.59 m; power 30.0 m/s,
+straight; trivela 24.6 m/s, 3.48 m the other way. Penalties (rul-06 penaltyScenario, a human taker, 960 kicks) are
+identical to cc2c605.
 
-CPU shot mix (12 bot matches, Professional): 111 normal shots (33% scored), 28 finesse (18%), 2 trivela, no power shot;
-unchanged (the CPU keeps the calibrated pace, spin and error: D-034).
-
-Final runs on this tree (the bot game is bit-identical to FEEL-1's, so these equal FEEL-1's final runs): soak 500
-Professional (`npx tsx tools/soak.ts --matches 500 --seed 1 --difficulty 3 --enforce all`): PASS, 0 exceptions /
-invariant failures / watchdogs, determinism PASS; goals 2.99, shots 15.20, possession (side with more) 56.73%, home
-50.73%, pass completion 78.99%, fouls 10.61, offsides 0.18, blow-outs 1.40%. Fuzz 60 `--enforce all` (human input
-generators, so the FEEL-2 code runs): PASS (60 + 15 rematches, 0 exceptions / invariant failures / watchdogs,
-determinism PASS). Ladder `--matches 200` seeds 1 and 2 (pooled over 400): Amateur v Beginner 74.3%, Semi-Pro v
-Amateur 74.0%, Professional v Semi-Pro 67.3% (seed 2 alone 64.5%), World Class v Professional 68.5%, Legend v World
+Final runs on this tree (bot v bot is bit-identical to cc2c605, so these equal the FEEL-1 final runs): soak 500
+Professional (`npx tsx tools/soak.ts --matches 500 --seed 1 --difficulty 3 --enforce all --workers 4`): PASS, 0
+exceptions / invariant failures / watchdogs, determinism PASS; goals 2.99, shots 15.20, possession (side with more)
+56.73%, home 50.73%, pass completion 78.99%, fouls 10.61, offsides 0.18, blow-outs 1.40%. Fuzz 60 `--enforce all`
+(human input generators): PASS, 60 + 15 rematches, 0 exceptions / invariant failures / watchdogs, determinism PASS (16
+unfinished, as on cc2c605). Ladder `--matches 200` seeds 1 and 2 (pooled over 400): Amateur v Beginner 74.3%, Semi-Pro
+v Amateur 74.0%, Professional v Semi-Pro 67.3% (seed 2 alone 64.5%), World Class v Professional 68.5%, Legend v World
 Class 75.8%. Balance `--matches 200` seeds 1-4 (pooled over 800): top-bottom 81.6% wins (seed 4 alone 77.0%), equal
-55.7% points, mirror 50.1% points. A same-seed 16-match soak gave identical hashes before and after FEEL-2.
+55.7% points, mirror 50.1% points.
