@@ -6272,3 +6272,81 @@ export const T_FEEL = {
   leashLeadMinSpeed: 3,
   leashMaxLead: 0.4,
 } as const;
+
+/**
+ * [FEEL-2] CPU defending against a human dribbler (ai/cpu/defending.ts defendCarrier, D-033) and shot-type calibration
+ * (sim/kicks/shot.ts, D-034). Level tables are indexed by Difficulty (Beginner .. Legend).
+ */
+export const T_FEEL2 = {
+  // ---- jockey: a human carrier running at the controlled CPU defender
+  /** Engaged when the defender is goal-side (cosine to the carrier's goal side at least jockeyGoalSideCos) within
+   *  jockeyEngageDist m of the carrier, and the carrier comes at our goal at jockeyApproachSpeed m/s or more. */
+  jockeyGoalSideCos: 0.5,
+  jockeyEngageDist: 6,
+  jockeyApproachSpeed: 3,
+  /** He keeps at least jockeyStandoff m goal-side of the ball and does not step in toward it (he lets the dribbler
+   *  come): the target's distance from the ball along the goal line is max(jockeyStandoff, where he is now). */
+  jockeyStandoff: 1.4,
+  /** Mirror: his lateral target leads the carrier's lateral speed by jockeyRead x the time for the gap to close at the
+   *  carrier's approach speed (at most jockeyLeadMax s). A full lead (1) over-commits him: the dribbler's second step
+   *  the other way beat a Legend defender 7 of 8 times from the centre (0.3: 2 of 8). */
+  jockeyRead: 0.3,
+  jockeyLeadMax: 0.6,
+  /** Sold by the side step: a carrier moving across him faster than jockeyStepLatSpeed m/s gets one read per
+   *  jockeySoldWindow ticks and side; with this chance (by level, x the dribbler factor) the defender leans the wrong
+   *  way (lateral lead -jockeySoldLean s) until the next read. */
+  jockeyStepLatSpeed: 1.2,
+  jockeySoldWindow: 30,
+  jockeySoldLean: 0.25,
+  jockeySoldChance: [0.9, 0.8, 0.6, 0.3, 0.2, 0.15] as readonly number[],
+  /** Dribbler factor: x (1 + jockeySkillSlope x (mean(dribbling, agility) - jockeySkillRef) / 50), clamped. */
+  jockeySkillRef: 75,
+  jockeySkillSlope: 0.8,
+  jockeySkillMin: 0.35,
+  jockeySkillMax: 1.6,
+  /** 1 = a jockeying defender's careful tackle wants the ball first (lungePresented), by level: the low levels' go
+   *  through the body (their fouls; a Beginner / Amateur defender who never challenged was no Beginner). */
+  jockeyBallFirst: [0, 0, 1, 1, 1, 1] as readonly number[],
+  /** Rash-lunge noise multiplier while jockeying (TAI-11 decisionNoise draws), by level. */
+  jockeyRashMul: [1, 1, 0.5, 0.5, 0.5, 0.5] as readonly number[],
+  /** A jockeying defender's careful tackle on a human dribbler waits while they close faster than this, m/s. */
+  tackleMaxClosing: 4.5,
+  /** Sprint jockey (SPRINT with SHIELD: 0.55 x top sideways) when his target is more than this far away, m. */
+  jockeySprintDist: 0.6,
+  /** Careful tackle on a human dribbler's exposed ball: the ball at mid-contact within this fraction of standReach. */
+  tackleReachFrac: [1, 1, 0.95, 0.85, 0.75, 0.6] as readonly number[],
+  // ---- shoulder challenge: level and alongside a human carrier (SIM-15 tackleKind SHOULDER), no exposure needed
+  /** Chance per shoulderWindow-tick window that he goes shoulder to shoulder (0 = never), by level. */
+  shoulderChance: [0, 0, 0, 0.5, 0.6, 0.75] as readonly number[],
+  shoulderWindow: 45,
+  /** Not from behind: RUL-09 fromBehind (unit(carrier - defender) . carrier facing) at most this (0 = level). */
+  shoulderMaxBehind: 0.25,
+  /** Beaten (not goal-side) within alongsideDist m of a human carrier at pace: he sprints to a point alongsideGap m to
+   *  his side of the carrier, alongsideLead s ahead on his run (shoulder to shoulder), where shoulderChance > 0. */
+  alongsideDist: 5,
+  alongsideGap: 0.85,
+  alongsideLead: 0.15,
+  /** Bodies within this centre distance, m (SIM-14 shoulderReach 1.0 at contact). */
+  shoulderDist: 1.15,
+  // ---- shot types (SIM-11 shot.ts aimInto; D-034)
+  /** Assisted finesse placement (the placed shot): its aim may come this near the post (T_SHOT.assistInset 0.55 for
+   *  other shots), m. Explicit targets (the CPU's) are unchanged. */
+  finesseInset: 0.35,
+  /** A stick ray this far or more off the goal centre places an assisted finesse into that corner (finesseInset) and a
+   *  trivela into it at the normal inset, m. */
+  finesseSnapFrom: 1.8,
+  trivelaSnapFrom: 1.8,
+  /** A human-controlled shooter's finesse: speed x (T_SHOT.finesseSpeedMul 0.78 for the CPU) and curl spin, rad/s
+   *  (T_SHOT.finesseSpin 11): quick enough to beat a set Professional keeper from the edge of the box (0 of 180 at
+   *  0.78), still slower than a normal shot, bending ~4.7 m from 22 m. */
+  humanFinesseSpeedMul: 0.92,
+  humanFinesseSpin: 13.5,
+  /** A human's trivela: speed x, curl spin, error x (CPU: T_FEEL.trivela* 0.9 / 10 / 1.15): a harder technique that a
+   *  poor shooter sprays wide more than a normal shot (22% v 15% wide at shooting 40). */
+  humanTrivelaSpeedMul: 0.95,
+  humanTrivelaSpin: 10.8,
+  humanTrivelaErrMul: 1.35,
+  /** A human's power shot error x (CPU: T_SHOT_KICK.errMulPower 1.1, never used by the CPU in open play): about a
+   *  normal shot's scoring rate, not twice it (52% v 26% against a set keeper), still 30 m/s and straight. */
+  humanPowerErrMul: 3.0,
+} as const;

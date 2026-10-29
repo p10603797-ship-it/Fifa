@@ -94,11 +94,11 @@ import type { EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type PlayerState, type SimState } from '../../contracts/state';
 import { createKickLaunch, ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_FEEL, T_PASS, T_PLAYER, T_SHOT, T_SHOT_KICK } from '../../contracts/tuning';
+import { T_BALL, T_FEEL, T_FEEL2, T_PASS, T_PLAYER, T_SHOT, T_SHOT_KICK } from '../../contracts/tuning';
 import { ballAirStep, curlSpinY, launchSpin } from '../ball/flight';
 import { dcos, dpow, dsin } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
-import { pressureOn } from '../core/query';
+import { isHumanSlot, pressureOn } from '../core/query';
 import { rngGauss } from '../core/rng';
 import { staminaFactor } from '../players/locomotion';
 import {
@@ -373,6 +373,12 @@ function aimInto(
     zRay = (cross >= 0 ? end : -end) * LT.rayMaxZ;
   }
   let zM: number, zA: number;
+  // [FEEL-2] A human's finesse is the placed shot: its assisted aim may go nearer the post (T_FEEL2.finesseInset) and a
+  // stick toward a corner places it there (finesseSnapFrom; his trivela at the normal inset, trivelaSnapFrom). Explicit
+  // targets and the CPU's shots are unchanged (D-034).
+  const human = !explicit && isHumanSlot(s, slot);
+  const placed = human && kind === KickKind.SHOT_FINESSE;
+  const zLim = placed ? GHW - T_FEEL2.finesseInset : ASSIST_Z;
   if (explicit) {
     zM = fin(tz);
     if (zM > LT.rayMaxZ) zM = LT.rayMaxZ; else if (zM < -LT.rayMaxZ) zM = -LT.rayMaxZ;
@@ -381,25 +387,28 @@ function aimInto(
     zM = zRay;
     const kp = keeperProj(s, p.team, bx, bz, gx, end);
     const cap = GHW + LT.captureMargin;
-    if (hasDir) zA = zRay <= cap && zRay >= -cap ? zRay : zRay > 0 ? GHW : -GHW;
-    else if (kp === 1) {
+    if (hasDir) {
+      zA = zRay <= cap && zRay >= -cap ? zRay : zRay > 0 ? GHW : -GHW;
+      const snap = placed ? T_FEEL2.finesseSnapFrom : human && kind === KickKind.SHOT_TRIVELA ? T_FEEL2.trivelaSnapFrom : -1;
+      if (snap > 0 && (zA >= snap || zA <= -snap)) zA = zA > 0 ? zLim : -zLim;
+    } else if (kp === 1) {
       const kz = F[K_Z]!;
-      zA = ASSIST_Z - kz >= kz + ASSIST_Z ? ASSIST_Z : -ASSIST_Z; // the side with more room
-    } else zA = bz > 0 ? -ASSIST_Z : ASSIST_Z; // far post
-    if (zA > ASSIST_Z) zA = ASSIST_Z; else if (zA < -ASSIST_Z) zA = -ASSIST_Z;
+      zA = zLim - kz >= kz + zLim ? zLim : -zLim; // the side with more room
+    } else zA = bz > 0 ? -zLim : zLim; // far post
+    if (zA > zLim) zA = zLim; else if (zA < -zLim) zA = -zLim;
     if (kp === 1) {
       // Out of the keeper's cover (toward the side the aim is on), by at most keeperShiftMax.
       const kz = F[K_Z]!, kc = F[K_C]!;
       const d = zA - kz;
       if (d < kc && d > -kc) {
-        const side = d > 0 ? 1 : d < 0 ? -1 : ASSIST_Z - kz >= kz + ASSIST_Z ? 1 : -1;
+        const side = d > 0 ? 1 : d < 0 ? -1 : zLim - kz >= kz + zLim ? 1 : -1;
         let shift = kz + side * kc - zA;
         if (shift > LT.keeperShiftMax) shift = LT.keeperShiftMax; else if (shift < -LT.keeperShiftMax) shift = -LT.keeperShiftMax;
         zA += shift;
       }
     }
   }
-  if (zA > ASSIST_Z) zA = ASSIST_Z; else if (zA < -ASSIST_Z) zA = -ASSIST_Z;
+  if (zA > zLim) zA = zLim; else if (zA < -zLim) zA = -zLim;
   F[A_X] = gx;
   F[A_Z] = zM + (zA - zM) * A;
   F[A_Y] = aimHeight(kind, clamp01(power));
@@ -434,8 +443,9 @@ export function shotSpeedFor(s: SimState, slot: number, kind: KickKind, power: n
   const lo = T_SHOT.speedMin, hi = T_SHOT.speedMax;
   let v: number;
   switch (kind) {
-    case KickKind.SHOT_FINESSE: v = (lo + (hi - lo) * pw) * T_SHOT.finesseSpeedMul; break;
-    case KickKind.SHOT_TRIVELA: v = (lo + (hi - lo) * pw) * T_FEEL.trivelaSpeedMul; break;
+    // [FEEL-2] A human's finesse / trivela (T_FEEL2.human*, D-034); the CPU's keep the calibrated pace.
+    case KickKind.SHOT_FINESSE: v = (lo + (hi - lo) * pw) * (isHumanSlot(s, slot) ? T_FEEL2.humanFinesseSpeedMul : T_SHOT.finesseSpeedMul); break;
+    case KickKind.SHOT_TRIVELA: v = (lo + (hi - lo) * pw) * (isHumanSlot(s, slot) ? T_FEEL2.humanTrivelaSpeedMul : T_FEEL.trivelaSpeedMul); break;
     case KickKind.SHOT_CHIP: v = (lo + (hi - lo) * pw) * T_SHOT.chipSpeedMul; break;
     case KickKind.SHOT_POWER: v = LT.powerShotMinSpeed + (T_SHOT.powerShotMax - LT.powerShotMinSpeed) * pw; break;
     case KickKind.SHOT_LOW_DRIVEN: v = LT.lowDrivenMinSpeed + (hi - LT.lowDrivenMinSpeed) * pw; break;
@@ -483,12 +493,13 @@ function shotAccuracy(s: SimState, slot: number, kind: KickKind, dist: number): 
   return attr01(v);
 }
 
-function kindErrMul(kind: KickKind): number {
+function kindErrMul(kind: KickKind, human: boolean): number {
   switch (kind) {
     case KickKind.SHOT_FINESSE: return LT.errMulFinesse;
-    case KickKind.SHOT_TRIVELA: return T_FEEL.trivelaErrMul;
+    // [FEEL-2] A human's trivela / power shot errs more (T_FEEL2, D-034); the CPU's keep the calibrated error.
+    case KickKind.SHOT_TRIVELA: return human ? T_FEEL2.humanTrivelaErrMul : T_FEEL.trivelaErrMul;
     case KickKind.SHOT_CHIP: return LT.errMulChip;
-    case KickKind.SHOT_POWER: return LT.errMulPower;
+    case KickKind.SHOT_POWER: return human ? T_FEEL2.humanPowerErrMul : LT.errMulPower;
     case KickKind.SHOT_LOW_DRIVEN: return LT.errMulLowDriven;
     case KickKind.PENALTY: return LT.errMulPenalty;
     case KickKind.FREE_KICK_SHOT: return LT.errMulFreeKick;
@@ -507,7 +518,7 @@ export function shotErrorSigma(s: SimState, slot: number, kind: KickKind, power:
   const b = s.ball;
   const inv = 1 - shotAccuracy(s, slot, kind, fin(dist));
   let sigma = T_SHOT.errorMin + (T_SHOT.errorMax - T_SHOT.errorMin) * LT.errBaseShare * dpow(clamp01(inv), LT.errExp);
-  sigma *= kindErrMul(kind);
+  sigma *= kindErrMul(kind, isHumanSlot(s, slot));
   const pw = clamp01(fin(power));
   if (pw > KNEE) sigma *= 1 + LT.powerErrMul * (pw - KNEE) / (1 - KNEE);
   const ax = fin(dirX), az = fin(dirZ);
@@ -716,7 +727,7 @@ function spinInto(s: SimState, slot: number, kind: KickKind, curve: number, flag
   let back = 0;
   switch (kind) {
     case KickKind.SHOT_FINESSE: {
-      const mag = T_SHOT.finesseSpin * cm;
+      const mag = (isHumanSlot(s, slot) ? T_FEEL2.humanFinesseSpin : T_SHOT.finesseSpin) * cm;
       if (hasCurve) {
         const ac = cv < 0 ? -cv : cv;
         right = (cv > 0 ? 1 : -1) * mag * (LT.finesseSwipeMin + (1 - LT.finesseSwipeMin) * (ac < 1 ? ac : 1));
@@ -732,7 +743,7 @@ function spinInto(s: SimState, slot: number, kind: KickKind, curve: number, flag
       // [FEEL-1] Outside of the foot: always the other way to a finesse shot from the same spot. Off-centre aim: it
       // starts inside the post and bends OUT into the corner (the finesse starts outside and bends back in); central:
       // the outside of his foot's way (a right-footer bends it right). A request curl (curved swipe) sets the side.
-      const mag = T_FEEL.trivelaSpin * cm;
+      const mag = (isHumanSlot(s, slot) ? T_FEEL2.humanTrivelaSpin : T_FEEL.trivelaSpin) * cm;
       if (hasCurve) right = (cv > 0 ? 1 : -1) * mag;
       else if (zAim > LT.finesseCentreBand || zAim < -LT.finesseCentreBand) right = ((zAim > 0 ? 1 : -1) * (ux >= 0 ? 1 : -1)) * mag;
       else right = (a.foot === Foot.LEFT ? -1 : 1) * mag;

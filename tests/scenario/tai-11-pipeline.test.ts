@@ -40,7 +40,7 @@ import { ActionKind, Difficulty, GestureKind, MatchPhase } from '../../src/contr
 import { EventType } from '../../src/contracts/events';
 import { Btn, type InputFrame } from '../../src/contracts/input';
 import type { SimState } from '../../src/contracts/state';
-import { T_LEVEL } from '../../src/contracts/tuning';
+import { T_FEEL2, T_LEVEL } from '../../src/contracts/tuning';
 import { DEFEND_TUNING as L } from '../../src/ai/cpu/defending';
 import { hashState } from '../../src/sim/core/hash';
 import { RushMode } from '../../src/sim/keeper/sweeper';
@@ -117,6 +117,19 @@ describe('TAI-11 pipeline', () => {
   });
 
   it('presses reach SIM-14 as standing tackles / shoulder challenges after the level\'s timing; better levels strike earlier', () => {
+    // [FEEL-2] The TAI-11 tackle timing is measured on its own: the FEEL-2 jockey (a human dribbler running at the
+    // defender, D-033) is switched off here, since it holds the defender off this weaving jogger and waits for a
+    // presented ball (Legend made 0 exposed presses in these 12 scenes with it). tests/scenario/feel-2-defending.test.ts
+    // covers the jockey.
+    const F2 = T_FEEL2 as { jockeyApproachSpeed: number };
+    const keep = F2.jockeyApproachSpeed;
+    F2.jockeyApproachSpeed = 1e9;
+    try { pressTiming(); } finally { F2.jockeyApproachSpeed = keep; }
+  });
+});
+
+function pressTiming(): void {
+  {
     const meanAge: number[] = [];
     for (const lv of [Difficulty.BEGINNER, Difficulty.PROFESSIONAL, Difficulty.LEGEND]) {
       const ages: number[] = [];
@@ -148,7 +161,10 @@ describe('TAI-11 pipeline', () => {
     }
     console.log(`TAI-11 mean press age after the touch (Beginner, Pro, Legend): ${meanAge.map((a) => a.toFixed(1)).join(', ')}`);
     expect(meanAge[2]!).toBeLessThan(meanAge[0]!);
-  });
+  }
+}
+
+describe('TAI-11 pipeline (continued)', () => {
 
   it('player choice: a TAP on the best-placed teammate really moves control (SIM-16 manual switch, SWITCH event)', () => {
     const s = pipeScene({ cx: 0, cz: 0, dx: -8, dz: 6 }); // our defender beaten, behind the carrier

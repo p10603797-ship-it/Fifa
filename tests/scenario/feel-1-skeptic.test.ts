@@ -187,8 +187,13 @@ describe('FEEL-1 skeptic: close control is not glue', () => {
       const r = vsDefender('r1', level, seed, lat, 0.4);
       if (r === 'lost') lost++; else if (r === 'beat') beat++;
     }
-    expect(lost).toBeGreaterThanOrEqual(3); // measured 5 of 24
-    expect(beat).toBeGreaterThanOrEqual(12); // measured 19 of 24 (probe): a good side step still beats him
+    console.log(`FEEL-1 skeptic R1 side step v Professional / Legend: lost ${lost}, beat ${beat} of 24`);
+    // [FEEL-2] Thresholds changed on purpose (D-033): the CPU centre-back now jockeys a human dribbler (holds the goal-side
+    // line, mirrors, shoulder challenge), so a 0.4 side step beats him far less often than FEEL-1's 19 of 24; it still
+    // works sometimes (tests/scenario/feel-2-defending.test.ts pins the per-level rates).
+    expect(lost).toBeGreaterThanOrEqual(5); // FEEL-1: 5 of 24
+    expect(beat).toBeGreaterThanOrEqual(5); // FEEL-1: 19 of 24 (probe)
+    expect(beat).toBeLessThanOrEqual(16);
   });
 
   it('running the ball straight into a Legend centre-back loses it, at a sprint and in R1', () => {

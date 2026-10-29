@@ -161,21 +161,28 @@ describe('TAI-11 approach, jockey and contain', () => {
   });
 
   it('contain (PASS held) when the carrier dribbles at speed and we are goal-side within 8 m', () => {
-    const s = scene({ c: { x: 0, z: 0, vx: 7, fx: 1 }, d: { x: 5, z: 1 } });
+    // [FEEL-2] A human carrier running AT our goal is jockeyed instead (D-033, below); contain is for one crossing at
+    // speed (vz), as before for every carrier.
+    const s = scene({ c: { x: 0, z: 0, vz: 7, fx: 1 }, d: { x: 5, z: 1 } });
     const f = think(s);
     expect(has(f, Btn.PASS)).toBe(true);
     expect(has(f, Btn.SHIELD)).toBe(false);
     expect(has(f, Btn.SPRINT)).toBe(false);
     // Hysteresis: keeps containing down to containKeepSpeed.
-    s.players[C]!.vx = 5.5;
+    s.players[C]!.vz = 5.5;
     expect(has(think(s), Btn.PASS)).toBe(false);
     s.ctrl[CPU]!.buttons = Btn.PASS;
     expect(has(think(s), Btn.PASS)).toBe(true);
     // Too far / from behind: no contain.
-    const far = scene({ c: { x: 0, z: 0, vx: 7, fx: 1 }, d: { x: 9, z: 0 } });
+    const far = scene({ c: { x: 0, z: 0, vz: 7, fx: 1 }, d: { x: 9, z: 0 } });
     expect(has(think(far), Btn.PASS)).toBe(false);
-    const behind = scene({ c: { x: 0, z: 0, vx: 7, fx: 1 }, d: { x: -3, z: 0.5 } });
+    const behind = scene({ c: { x: 0, z: 0, vz: 7, fx: 1 }, d: { x: -3, z: 0.5 } });
     expect(has(think(behind), Btn.PASS)).toBe(false);
+    // [FEEL-2] The human dribbler running at us at speed: jockey (SHIELD), not contain.
+    const atUs = scene({ c: { x: 0, z: 0, vx: 7, fx: 1 }, d: { x: 5, z: 1 } });
+    const g = think(atUs);
+    expect(has(g, Btn.SHIELD)).toBe(true);
+    expect(has(g, Btn.PASS)).toBe(false);
   });
 
   it('a stick never left idle with SPRINT (that would mean "press" to SIM-15)', () => {

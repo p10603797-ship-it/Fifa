@@ -66,6 +66,12 @@
  *       shielder is held at the guard point (defendBlockShieldCos0); no poke at a ball already at his feet
  *       (defendBlockFeetDist: SIM-06 gives it to him); careful tackles while blocking want the ball first
  *       (lungePresented), and rash tackles want it not hidden behind his body (ballHidden).
+ *     - [FEEL-2] Against a HUMAN dribbler running at our goal (D-033; bot carriers unchanged): the jockey (jockeyPlan,
+ *       SHIELD) instead of contain: he holds the goal-side line without stepping in, mirrors the dribbler's lateral
+ *       moves and is sold by a side step with a level / dribbling-skill chance (T_FEEL2.jockeySoldChance); careful
+ *       tackles wait for the ball well inside his reach (T_FEEL2.tackleReachFrac), ball-first from Semi-Pro up, and not
+ *       at a reckless closing speed; beaten at pace he runs to get alongside, and level and alongside he makes the
+ *       shoulder challenge (T_FEEL2.shoulderChance, Professional up).
  *     - Slide (LOB press) only when goal-side, the ball loose-ish (between touches, beyond standing reach but within
  *       slide reach) in our half, one draw per window; from behind only for a carrier through on goal in our third
  *       with a tiny chance (slideBehindChance x decisionNoise).
@@ -97,6 +103,7 @@ import type { ControllerState, CpuBrainState, PlayerState, SimState } from '../.
 import type { LevelParams } from '../../contracts/systems';
 import {
   T_AI, T_DRIBBLE, T_LEVEL, T_PLAYER, T_SKILL, T_TACKLE, T_TOUCH, T_DEFENDING, T_TACKLE_PLAY, T_FIRST_TOUCH, T_LOCOMOTION,
+  T_FEEL2,
 } from '../../contracts/tuning';
 import { isFree } from '../../sim/actions/dispatch';
 import { tackleKind } from '../../sim/control/resolveActions';
@@ -147,6 +154,8 @@ export const DEFEND_DEBUG = { hold: 0, why0: 0, why1: 0 };
 /** DEFEND_DEBUG challenge reasons: careful tackle on an exposed ball, rash (noisy) one, still carrier, held carrier,
  *  block poke, rash lunge at his feet, slide goal-side, slide from behind. */
 export const CH_CAREFUL = 1, CH_RASH = 2, CH_STILL = 3, CH_HELD = 4, CH_POKE = 5, CH_LUNGE = 6, CH_SLIDE = 7, CH_SLIDE_BEHIND = 8;
+/** [FEEL-2] Shoulder challenge alongside a human dribbler. */
+export const CH_SHOULDER = 9;
 
 // ---------------------------------------------------------------- small helpers
 
@@ -355,14 +364,15 @@ function exposure(s: SimState, q: Readonly<PlayerState>): void {
  * Careful timing: at mid-contact of a standing tackle (wind-up + half the contact window) the ball (linear) is within
  * standReach of the defender (keeping his velocity) and still exposed (skill window open, or away from the carrier).
  */
-function wellTimed(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState>): boolean {
+function wellTimed(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState>, reachMul = 1): boolean {
   const ct = T_TACKLE.standWindup + (T_TACKLE.standContactTicks >> 1);
   const t = ct / TICK_HZ;
   const b = s.ball;
   const bx = b.x + b.vx * t, bz = b.z + b.vz * t;
   const px = p.x + p.vx * t, pz = p.z + p.vz * t;
   const dx = bx - px, dz = bz - pz;
-  if (dx * dx + dz * dz > T_TACKLE.standReach * T_TACKLE.standReach) return false;
+  const reach = T_TACKLE.standReach * reachMul;
+  if (dx * dx + dz * dz > reach * reach) return false;
   if (expSkill === 1) {
     if (q.act === ActionKind.FIRST_TOUCH) return q.actT + ct < (q.actDur > 0 ? q.actDur : T_TOUCH.firstTouchTicks);
     const k = q.act === ActionKind.FAKE ? SkillMove.FAKE_SHOT : q.actSkill;
@@ -638,6 +648,43 @@ function blockPlan(s: SimState, dir: number, p: Readonly<PlayerState>, q: Readon
   return true;
 }
 
+/**
+ * [FEEL-2] Jockey plan against human carrier q running at our goal (defendCarrier decides when; D-033). The target lies
+ * on the ball's line to our goal (unit g) at max(jockeyStandoff, his current distance from the ball along g): he lets
+ * the dribbler come instead of stepping in (a defender running at a dribbler is sold by any side step). Laterally he
+ * mirrors the carrier, leading his lateral speed by jockeyRead x the time the gap takes to close (at most
+ * jockeyLeadMax): a full lead over-commits him to the first step. A side step (lateral speed above
+ * jockeyStepLatSpeed) gets one read per jockeySoldWindow ticks and side (noise01: deterministic, no RNG stream): with
+ * jockeySoldChance (by level, x the dribbler's dribbling / agility factor) he is sold and leans the wrong way
+ * (-jockeySoldLean s) until the next read. Writes ST and wantSprint. Pure apart from the module scratch. Always true.
+ */
+function jockeyPlan(s: SimState, team: number, p: Readonly<PlayerState>, q: Readonly<PlayerState>, gx: number, gz: number): boolean {
+  const F = T_FEEL2;
+  const b = s.ball;
+  const nx = -gz, nz = gx;
+  const latV = q.vx * nx + q.vz * nz;
+  const alongNow = (p.x - b.x) * gx + (p.z - b.z) * gz;
+  // Where the ball will cross his line: the time for the gap to close at the carrier's approach speed, capped.
+  const app = q.vx * gx + q.vz * gz;
+  let tMeet = app > EPS ? alongNow / app : F.jockeyLeadMax;
+  tMeet = tMeet < 0 ? 0 : tMeet > F.jockeyLeadMax ? F.jockeyLeadMax : tMeet;
+  let ant = tMeet * F.jockeyRead;
+  if ((latV < 0 ? -latV : latV) >= F.jockeyStepLatSpeed) {
+    const a = s.attrs[q.slot]!;
+    let k = 1 + F.jockeySkillSlope * ((a.dribbling + a.agility) * 0.5 - F.jockeySkillRef) / 50;
+    if (!(k >= F.jockeySkillMin)) k = F.jockeySkillMin; else if (k > F.jockeySkillMax) k = F.jockeySkillMax;
+    const key = Math.floor(s.tick / F.jockeySoldWindow) * 2 + (latV > 0 ? 1 : 0);
+    if (noise01(s.config.seed | 0, team * 64 + q.slot + 4096, key) < levelValue(s, team, F.jockeySoldChance) * k) ant = -F.jockeySoldLean;
+  }
+  const along = alongNow > F.jockeyStandoff ? alongNow : F.jockeyStandoff;
+  const tx = b.x + gx * along + nx * latV * ant;
+  const tz = b.z + gz * along + nz * latV * ant;
+  steerTo(p, tx, tz, 0);
+  const dx = tx - p.x, dz = tz - p.z;
+  wantSprint = dx * dx + dz * dz > F.jockeySprintDist * F.jockeySprintDist ? 1 : 0;
+  return true;
+}
+
 function defendCarrier(
   s: SimState, team: number, ci: number, ctl: ControllerState, brain: CpuBrainState, lv: LevelParams,
   p0: PlayerState, carrier: number, out: InputFrame,
@@ -728,6 +775,21 @@ function defendCarrier(
   DEFEND_DEBUG.hold = hold ? 1 : 0;
   steerTo(p, tgx, tgz, 1);
   if (w > 0 && !hold) wantSprint = 1;
+  // [FEEL-2] Jockey a human dribbler who runs at us (D-033): hold the goal-side line, mirror his lateral moves, never
+  // step in; a side step sells the defender with a level / skill chance (jockeyPlan).
+  const jockeyed = humanQ && !hold && cosG >= T_FEEL2.jockeyGoalSideCos && d <= T_FEEL2.jockeyEngageDist &&
+    q.vx * gx + q.vz * gz >= T_FEEL2.jockeyApproachSpeed && jockeyPlan(s, team, p, q, gx, gz);
+  // [FEEL-2] Beaten by a human dribbler at pace: run to get alongside him (shoulder to shoulder) rather than to the
+  // recovery point behind the play, at the levels that make the shoulder challenge (D-033).
+  if (humanQ && !hold && !jockeyed && cosG < T_FEEL2.jockeyGoalSideCos && d <= T_FEEL2.alongsideDist &&
+    qs >= T_FEEL2.jockeyApproachSpeed && levelValue(s, team, T_FEEL2.shoulderChance) > 0) {
+    const ux = q.vx / qs, uz = q.vz / qs;
+    const sd = (p.x - q.x) * -uz + (p.z - q.z) * ux >= 0 ? 1 : -1;
+    steerTo(p, q.x + q.vx * T_FEEL2.alongsideLead - uz * sd * T_FEEL2.alongsideGap,
+      q.z + q.vz * T_FEEL2.alongsideLead + ux * sd * T_FEEL2.alongsideGap, 0);
+    ST[2] = 1;
+    wantSprint = 1;
+  }
 
   // Contain / jockey.
   const jogP = s.attrs[slot]!.topSpeed * T_PLAYER.jogFraction;
@@ -753,7 +815,9 @@ function defendCarrier(
   }
   const wasContain = (ctl.buttons & Btn.PASS) !== 0;
   const wasJockey = (ctl.buttons & Btn.SHIELD) !== 0;
-  if (cosG > L.behindCos && d <= L.containDist && qs >= (wasContain ? L.containKeepSpeed : L.containSpeed)) {
+  if (jockeyed) {
+    btn |= Btn.SHIELD;
+  } else if (cosG > L.behindCos && d <= L.containDist && qs >= (wasContain ? L.containKeepSpeed : L.containSpeed)) {
     btn |= Btn.PASS;
     wantSprint = 0;
   } else if (goalSide && d <= (wasJockey ? L.jockeyKeepDist : L.jockeyDist)) {
@@ -799,9 +863,19 @@ function defendCarrier(
   // (T_LEVEL.boxRashMul / boxSlideMul).
   const inBox = inPenaltyArea(q.x, q.z, -dir);
   if (inBox) noisy *= levelValue(s, team, T_LEVEL.boxRashMul);
+  // [FEEL-2] A jockeying defender is set to mirror, not to dive in: fewer rash lunges (they were the extra fouls).
+  if (jockeyed) noisy *= levelValue(s, team, T_FEEL2.jockeyRashMul);
 
   // Standing tackle / shoulder (never from behind: that would be a push or pull).
   const kind = tackleKind(s, p, carrier);
+  // [FEEL-2] Level and alongside a human dribbler (not behind him: RUL-09's from-behind weight), the shoulder
+  // challenge, no exposed ball needed (D-033), one draw per shoulderWindow ticks (T_FEEL2.shoulderChance by level; SIM-14
+  // makes it a strength duel).
+  if (kind === ActionKind.SHOULDER && humanQ && d <= T_FEEL2.shoulderDist &&
+    -(d0x * q.fx + d0z * q.fz) <= T_FEEL2.shoulderMaxBehind * d &&
+    noise01(seed, who, Math.floor(s.tick / T_FEEL2.shoulderWindow) * 4 + 3) < levelValue(s, team, T_FEEL2.shoulderChance)) {
+    why(team, CH_SHOULDER); pressTackle(brain, lv); return;
+  }
   if (kind === ActionKind.STAND_TACKLE || kind === ActionKind.SHOULDER) {
     exposure(s, q);
     if (expOn === 1) {
@@ -818,8 +892,19 @@ function defendCarrier(
         // across the defender (MOD_L, 3 m/s, the ball on his far side) is blocked since the jog block, and the careful
         // tackle on his touches went through his body (6-7 fouls in 8 scenes at World Class / Legend; 0-2 before).
         // Bot carriers (blocked at a walk only) keep the old careful tackle: the bot game is unchanged.
-        const first = holdV < 0 || !humanQ || lungePresented(s, p, q, L.blockPokeMargin);
-        if (rash || (wellTimed(s, p, q) && careful && first)) { why(team, rash ? CH_RASH : CH_CAREFUL); pressTackle(brain, lv); return; }
+        // [FEEL-2] Jockeying a human dribbler too: his careful tackles at a side-stepping R1 dribbler went through the
+        // body (7 fouls in 48 probe scenes at Professional) without the ball-first test.
+        const first = (holdV < 0 && (!jockeyed || !(levelValue(s, team, T_FEEL2.jockeyBallFirst) > 0))) || !humanQ ||
+          lungePresented(s, p, q, L.blockPokeMargin);
+        // [FEEL-2] Against a human dribbler a careful tackle waits until the ball will be well inside his reach
+        // (T_FEEL2.tackleReachFrac by level): a lunge at the edge of reach (SIM-14 edgeReachPenalty) was mostly missed,
+        // and a missed tackle is a beaten defender.
+        const reachMul = humanQ ? levelValue(s, team, T_FEEL2.tackleReachFrac) : 1;
+        // [FEEL-2] ... and not while the two close faster than T_FEEL2.tackleMaxClosing: RUL-09 calls a challenge
+        // reckless above 4.7 m/s closing whoever runs into whom, so a jockeying defender's won tackle on a dribbler
+        // sprinting at him was a foul (the dribbler running on into him loses the ball to SIM-06 instead).
+        const closing = humanQ && jockeyed ? ((q.vx - p.vx) * d0x + (q.vz - p.vz) * d0z) / (d > EPS ? d : 1) : 0;
+        if (rash || (wellTimed(s, p, q, reachMul) && careful && first && closing <= T_FEEL2.tackleMaxClosing)) { why(team, rash ? CH_RASH : CH_CAREFUL); pressTackle(brain, lv); return; }
       }
     } else if (dBall <= T_TACKLE.standReach && goalSide) {
       // [QF-14 resume] Patience with a carrier standing on the ball: he never exposes it (no touch, no turn), so a

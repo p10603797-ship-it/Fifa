@@ -7,7 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { ActionKind, AssistLevel, AutoSwitch, Foot, GestureKind, KickKind, MatchPhase } from '../../src/contracts/enums';
 import { EventType } from '../../src/contracts/events';
 import { Btn } from '../../src/contracts/input';
-import { T_DRIBBLE } from '../../src/contracts/tuning';
+import { GOAL_HALF_WIDTH } from '../../src/contracts/constants';
+import { T_DRIBBLE, T_FEEL2, T_SHOT } from '../../src/contracts/tuning';
 import { KEY_BUTTONS } from '../../src/input/keyboard';
 import { selectReceiver } from '../../src/sim/kicks/pass';
 import { makeScenario, runTicks } from '../harness/scenario';
@@ -201,8 +202,10 @@ describe('FEEL-1 #4 shooting variety you can see in the flight', () => {
     const n = at('normal', 30, -8, 2.5), f = at('finesse', 30, -8, 2.5);
     expect(f.kind).toBe(KickKind.SHOT_FINESSE);
     expect(f.curve).toBeLessThan(-3); // launched wide of the far post, bending back toward the centre
-    expect(f.speed).toBeLessThan(n.speed - 3);
-    expect(Math.abs(f.crossZ - 2.5)).toBeLessThan(0.6);
+    // [FEEL-2] Changed on purpose (D-034): a human's finesse is quicker (22.2 v 18.8 m/s, still slower than a normal
+    // 24.1) and an assisted stick toward a corner places it finesseInset inside the post (was: n.speed - 3, aim +- 0.6).
+    expect(f.speed).toBeLessThan(n.speed - 1.5);
+    expect(Math.abs(f.crossZ - (GOAL_HALF_WIDTH - T_FEEL2.finesseInset))).toBeLessThan(0.6);
   });
   it('power shot (L1 + R1 + SHOOT): longer wind-up, much faster, straight', () => {
     const n = at('normal', 30, -8, 2.5), pw = at('power', 30, -8, 2.5);
@@ -219,7 +222,8 @@ describe('FEEL-1 #4 shooting variety you can see in the flight', () => {
       const f = at('finesse', 30, z, aim), t = at('trivela', 30, z, aim);
       expect(t.kind).toBe(KickKind.SHOT_TRIVELA);
       expect(Math.abs(t.curve)).toBeGreaterThan(2.5);
-      expect(Math.abs(t.crossZ - aim)).toBeLessThan(0.7);
+      // [FEEL-2] An assisted trivela toward a corner is placed at the normal inset (D-034; was: the stick's aim +- 0.7).
+      expect(Math.abs(t.crossZ - Math.sign(aim) * (GOAL_HALF_WIDTH - T_SHOT.assistInset))).toBeLessThan(0.7);
       expect(Math.sign(t.curve)).toBe(-Math.sign(f.curve)); // from either side: finesse bends in, trivela bends out
     }
   });
