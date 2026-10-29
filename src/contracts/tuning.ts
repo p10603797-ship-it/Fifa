@@ -832,7 +832,7 @@ export const T_WARMUP = {
    *  to get back to open play before the next. */
   sceneTicks: 300,
   /** Scratch match seed and half length (minutes; longer than the warm-up, so it never reaches half time). */
-  seed: 0x5eed,
+  seed: 0x5eef, // [FEEL-1] was 0x5eed: the reshaped scratch match reached the carrier decide() in 470 of 3000 rounds (1902 now)
   halfMinutes: 4,
   /** A hashState of the scratch state every this many ticks (warms the generated hasher the replay recorder runs). */
   hashEvery: 8,
@@ -6213,6 +6213,12 @@ export const T_FEEL = {
   magnetMinStick: 0.2,
   /** A slow (pick-up) ball: the run target is this far beyond it along his line, so he runs through it at pace, m. */
   magnetThrough: 2.5,
+  /** A ball travelling his way that comes within T_TOUCH.receiveRadius of him anyway if he carries on along his stick
+   *  at his current pace (at least this fraction of the pace asked for) is left to him: checked every magnetLineStep
+   *  over magnetLineSec, s (a led through ball is run onto in stride, not cut across to). */
+  magnetLinePaceFrac: 0.8,
+  magnetLineStep: 0.1,
+  magnetLineSec: 2,
   /** First-touch reach bonus for the human-controlled receiver the magnet is steering, m (SIM-07 receiveRadius +). */
   magnetReachBonus: 0.35,
   // ---- assisted passing (SIM-08 selectReceiver)
@@ -6230,7 +6236,7 @@ export const T_FEEL = {
    *  multiplier), error multiplier (a harder technique than the finesse). */
   trivelaSpeedMul: 0.9,
   trivelaSpin: 10,
-  trivelaErrMul: 0.95,
+  trivelaErrMul: 1.15,
   /** Touch: a curved pitch swipe toward goal bending against the shooter's natural finesse curl (|gCurve| at least
    *  this, of 127) is a trivela. */
   trivelaGestureCurve: 16,
@@ -6246,15 +6252,23 @@ export const T_FEEL = {
   /** Touch lead at a jog / sprint, m (CPU: T_DRIBBLE.touchAheadJog 1.0 / touchAheadSprint 2.4). The user's sprint
    *  dribble "launched the ball straight forward" (2.05 m mean ahead, one touch a second, the ball lost on every
    *  90-degree sprint turn); EA FC keeps it about a stride ahead. */
-  humanTouchAheadJog: 0.8,
+  humanTouchAheadJog: 1.0, // = T_DRIBBLE.touchAheadJog: walk / jog touches unchanged (QF-16 walkers stay dispossessable)
   humanTouchAheadSprint: 1.45,
   /** Ticks between touches at a jog / sprint (CPU: 18 / 24). */
-  humanTouchIntervalJog: 14,
+  humanTouchIntervalJog: 18, // = T_DRIBBLE.touchIntervalJog
   humanTouchIntervalSprint: 16,
   /** Lead x (1 + this x (0.5 - quality)): dribbling / control / agility show (CPU: T_POSSESSION.leadQualityScale 0.2). */
   humanLeadQualityScale: 0.4,
   // ---- R1 controlled sprint with the ball (SIM-15 resolveMove + SIM-06 possession)
   /** Controlled sprint: touch lead (peak, m) and ticks between touches. */
-  touchAheadControlled: 0.62,
+  touchAheadControlled: 0.8,
   touchIntervalControlled: 10,
+  // ---- [FEEL-1 skeptic] human dribble leash (SIM-15 resolveMove leashEngaged)
+  /** The stick more than acos(leashCos) away from his ball while it is at the edge of his touch reach (less leashInner,
+   *  m) and leaving him: he runs to where it will be (lead = distance / max(speed, leashLeadMinSpeed m/s), at most
+   *  leashMaxLead s), and SIM-06 takes the turn touch. */
+  leashCos: 0.9,
+  leashInner: 0.15,
+  leashLeadMinSpeed: 3,
+  leashMaxLead: 0.4,
 } as const;

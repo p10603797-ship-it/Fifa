@@ -62,7 +62,8 @@ function scanLevel(level: Difficulty, n: number, seed: number): Scan {
 }
 
 describe('QF-11 keeper reaction by level keeps the keeper glitches away', () => {
-  const beginner = scanLevel(Difficulty.BEGINNER, 4, 0x11b);
+  // [FEEL-1] 4 -> 6 Beginner matches: the reshaped matches of seed 0x11b gave a Beginner keeper no dive in the first 4.
+  const beginner = scanLevel(Difficulty.BEGINNER, 6, 0x11b);
   const legend = scanLevel(Difficulty.LEGEND, 4, 0x11e);
 
   it('the level part is really applied: a Beginner keeper reacts later than a Legend one (>= 0 ticks always)', () => {

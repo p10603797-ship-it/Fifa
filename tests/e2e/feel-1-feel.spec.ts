@@ -83,7 +83,7 @@ async function sampleDist(page: Page, n: number): Promise<{ mean: number; max: n
 }
 
 test.describe('FEEL-1 in a real match', () => {
-  test('sprint dribble a stride ahead, R1 tight, L2 + Circle trivela', async ({ page }) => {
+  test('sprint dribble a stride ahead, R1 tight, L2 + Circle trivela, receiving magnet, assisted pass', async ({ page }) => {
     test.setTimeout(240_000);
     const errors = collectConsole(page);
     await page.addInitScript(padInit(1));
@@ -123,6 +123,43 @@ test.describe('FEEL-1 in a real match', () => {
     await padTap(page, 0, PAD.CIRCLE, 4);
     await padButton(page, 0, PAD.L2, false);
     await expect.poll(() => page.evaluate(() => (window as any).__dotkick.ctx.session.runtime().curr.ball.lastKickKind), { timeout: 10_000 }).toBe(43);
+    await padStick(page, 0, 0, 0);
+
+    // Receiving magnet: a loose ball rolling at him while he sprints with the stick ~15 degrees off his line to it.
+    dir = await giveBall(page, -30, 0);
+    const mag = await page.evaluate((d) => {
+      const st = (window as any).__dotkick.ctx.session.runtime().curr;
+      const slot = st.ctrl[0].slot;
+      const p = st.players[slot];
+      Object.assign(st.ball, { x: p.x + d * 18, z: p.z + 2, px: p.x + d * 18, pz: p.z + 2, vx: -d * 9, vz: -1, owner: -1,
+        lastTouch: -1, lastTouchTeam: -1, lastKickBy: -1, passTarget: -1 });
+      return slot;
+    }, dir);
+    await padStick(page, 0, dir, 0.27); // the ball comes in along ~-6 degrees, the stick points ~+15
+    await padButton(page, 0, PAD.R2, true);
+    await expect.poll(() => page.evaluate((sl) => (window as any).__dotkick.ctx.session.runtime().curr.ball.owner === sl, mag),
+      { timeout: 10_000 }).toBe(true);
+    await padButton(page, 0, PAD.R2, false);
+    await padStick(page, 0, 0, 0);
+
+    // Assisted pass: the stick ~30 degrees off the only teammate nearby (15 m); a tap of Cross still finds him.
+    dir = await giveBall(page, -20, 0);
+    const mate = await page.evaluate((d) => {
+      const st = (window as any).__dotkick.ctx.session.runtime().curr;
+      const slot = st.ctrl[0].slot;
+      const p = st.players[slot];
+      let pick = -1;
+      for (let i = 0; i < 22; i++) {
+        const q = st.players[i];
+        if (q.team !== p.team || i === slot || q.isKeeper === 1) continue;
+        if (pick < 0) { pick = i; q.x = p.x + d * 13; q.z = 7.5; } else { q.x = p.x - d * 25; q.z = -30 + (i % 11) * 6; }
+        q.vx = 0; q.vz = 0;
+      }
+      return pick;
+    }, dir);
+    await padStick(page, 0, dir, 0); // straight ahead; he stands 30 degrees to the side
+    await padTap(page, 0, PAD.CROSS, 3);
+    await expect.poll(() => page.evaluate(() => (window as any).__dotkick.ctx.session.runtime().curr.ball.passTarget), { timeout: 10_000 }).toBe(mate);
     await padStick(page, 0, 0, 0);
     expect(errors).toEqual([]);
   });

@@ -729,10 +729,12 @@ function spinInto(s: SimState, slot: number, kind: KickKind, curve: number, flag
       break;
     }
     case KickKind.SHOT_TRIVELA: {
-      // [FEEL-1] Outside of the foot: the other way to his finesse (a right-footer bends it right); a request curl
-      // (curved swipe) sets the side.
+      // [FEEL-1] Outside of the foot: always the other way to a finesse shot from the same spot. Off-centre aim: it
+      // starts inside the post and bends OUT into the corner (the finesse starts outside and bends back in); central:
+      // the outside of his foot's way (a right-footer bends it right). A request curl (curved swipe) sets the side.
       const mag = T_FEEL.trivelaSpin * cm;
       if (hasCurve) right = (cv > 0 ? 1 : -1) * mag;
+      else if (zAim > LT.finesseCentreBand || zAim < -LT.finesseCentreBand) right = ((zAim > 0 ? 1 : -1) * (ux >= 0 ? 1 : -1)) * mag;
       else right = (a.foot === Foot.LEFT ? -1 : 1) * mag;
       break;
     }

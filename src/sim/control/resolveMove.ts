@@ -20,7 +20,7 @@ import { BOARD_X, BOARD_Z, CPU_CONTROLLER_BASE, HALF_LENGTH } from '../../contra
 import { ActionKind } from '../../contracts/enums';
 import { Btn } from '../../contracts/input';
 import { MoveMode, type ControllerState, type PlayerState, type SimState } from '../../contracts/state';
-import { T_BALL, T_FEEL, T_FIRST_TOUCH, T_IDLE_CHASE, T_LOCOMOTION, T_PLAYER, T_POSSESSION, T_RESOLVE, T_TOUCH } from '../../contracts/tuning';
+import { T_BALL, T_DRIBBLE, T_FEEL, T_FIRST_TOUCH, T_IDLE_CHASE, T_LOCOMOTION, T_PLAYER, T_POSSESSION, T_RESOLVE, T_TOUCH } from '../../contracts/tuning';
 import { dcos } from '../core/dmath';
 import { canManualSwitch } from './switching';
 import { Ctx, LT, MEET, SeqFlag, ballEta, clampMeetTarget, meetPoint, oppCarrier, validSlot } from './resolveShared';
@@ -50,6 +50,8 @@ const MAG = new Float64Array(3);
 const MAG_COS_FAR = dcos(T_FEEL.magnetAngleFar);
 const MAG_COS_NEAR = dcos(T_FEEL.magnetAngleNear);
 const SPRINT_FULL = T_LOCOMOTION.sprintStickFull;
+/** [FEEL-1] "Within his reach" for the led-pass check: T_TOUCH.receiveRadius squared, m^2. */
+const LINE_R2 = T_TOUCH.receiveRadius * T_TOUCH.receiveRadius;
 
 /**
  * [FEEL-1] Receiving magnet (BRIEF section 6 first touch, section 10 Assisted; EA FC's "the ball attracts the player"):
@@ -70,9 +72,14 @@ function magnetEngaged(s: SimState, ctl: ControllerState, p: PlayerState, sprint
   const slot = p.slot;
   if (b.passTarget >= 0 && b.passTarget !== slot) return 0;
   if (b.lastKickBy === slot && s.tick - b.lastKickTick < T_FIRST_TOUCH.selfKickTicks) return 0;
+  // His own knock-on / push into space (he is its target): he runs onto it at his own pace, not drawn into it early.
+  if (b.lastKickBy === slot && b.passTarget === slot) return 0;
   const sm = Math.sqrt(ctl.mx * ctl.mx + ctl.mz * ctl.mz);
   if (!(sm > 1e-6)) return 0;
   const ux = ctl.mx / sm, uz = ctl.mz / sm;
+  // Only a ball in front of him (he runs at it): a pass played into his run from behind (a through ball) is the
+  // passer's lead to run onto in stride; cutting across to an earlier meeting point would cost him his pace.
+  if ((b.x - p.x) * ux + (b.z - p.z) * uz <= 0) return 0;
   meetPoint(s, slot, sprint);
   let mx = MEET.x - p.x, mz = MEET.z - p.z;
   let d = Math.sqrt(mx * mx + mz * mz);
@@ -83,7 +90,11 @@ function magnetEngaged(s: SimState, ctl: ControllerState, p: PlayerState, sprint
   const rad = (T_FEEL.magnetRadiusMin + (T_FEEL.magnetRadiusMax - T_FEEL.magnetRadiusMin) * q) * am;
   if (!(d <= rad)) return 0;
   if (d > MAG_DEAD) {
-    const c = (mx * ux + mz * uz) / d;
+    let c = (mx * ux + mz * uz) / d;
+    // [FEEL-1 skeptic] ... or at the ball itself ("I sprint at the ball"): a user chasing a hard square pass with the
+    // stick on the ball (not on where it is going) ran up behind its line and never met it (20 m/s across 8 m ahead).
+    const bx0 = b.x - p.x, bz0 = b.z - p.z, bd0 = Math.sqrt(bx0 * bx0 + bz0 * bz0);
+    if (bd0 > 1e-6) { const cb = (bx0 * ux + bz0 * uz) / bd0; if (cb > c) c = cb; }
     if (c < MAG_COS_NEAR + (MAG_COS_FAR - MAG_COS_NEAR) * (d / rad)) return 0;
   }
   const top = a.topSpeed;
@@ -92,6 +103,21 @@ function magnetEngaged(s: SimState, ctl: ControllerState, p: PlayerState, sprint
   const cap = sprint === 1 ? top : jog * (m > T_FEEL.magnetMinJogFrac ? m : T_FEEL.magnetMinJogFrac);
   let sp = cap;
   const bv = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
+  const pv = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
+  if (b.vx * ux + b.vz * uz > 0 && bv > 1e-6 && pv >= cap * T_FEEL.magnetLinePaceFrac) {
+    // A ball travelling his way (a through ball or a pass led across his run) that comes within his reach anyway if he
+    // carries on along his stick at his pace (rolling deceleration as meetPoint, sampled every magnetLineStep over
+    // magnetLineSec): the pass was led to him, he runs onto it in stride; no re-aim (cutting across costs pace).
+    const dec = b.grounded === 1 ? T_BALL.rollDecel + T_BALL.rollDamping * bv : 0;
+    const tStop = dec > 1e-6 ? bv / dec : T_FEEL.magnetLineSec;
+    const bux = b.vx / bv, buz = b.vz / bv;
+    for (let t = T_FEEL.magnetLineStep; t <= T_FEEL.magnetLineSec + 1e-9; t += T_FEEL.magnetLineStep) {
+      const tb = t < tStop ? t : tStop;
+      const sb = bv * tb - 0.5 * dec * tb * tb;
+      const ex = b.x + bux * sb - (p.x + ux * pv * t), ez = b.z + buz * sb - (p.z + uz * pv * t);
+      if (ex * ex + ez * ez <= LINE_R2) return 0;
+    }
+  }
   const ahead = (b.x - p.x) * b.vx + (b.z - p.z) * b.vz;
   if (bv > T_TOUCH.meetOvershootMinSpeed && ahead > 0) {
     // Rolling away from him: past the meeting point along its path, at least at its pace.
@@ -102,8 +128,9 @@ function magnetEngaged(s: SimState, ctl: ControllerState, p: PlayerState, sprint
     MEET.z += (b.vz / bv) * o;
     clampMeetTarget();
     if (sp < bv) sp = bv < top ? bv : top;
-  } else if (bv >= T_POSSESSION.pickUpMaxSpeed) {
-    // Still coming: arrive at the meeting point just before the ball does (rolling deceleration as meetPoint).
+  } else if (bv >= T_POSSESSION.pickUpMaxSpeed && mx * b.vx + mz * b.vz < 0) {
+    // Coming at him: arrive at the meeting point just before the ball does (rolling deceleration as meetPoint). A ball
+    // from behind travelling his way (a through ball into his run) is met in stride at his pace: no slowing for it.
     const along = (MEET.x - b.x) * b.vx / bv + (MEET.z - b.z) * b.vz / bv;
     if (along > 0) {
       const dec = b.grounded === 1 ? T_BALL.rollDecel + T_BALL.rollDamping * bv : 0;
@@ -128,6 +155,48 @@ function magnetEngaged(s: SimState, ctl: ControllerState, p: PlayerState, sprint
   MAG[0] = (mx / d) * mag;
   MAG[1] = (mz / d) * mag;
   MAG[2] = want;
+  return 1;
+}
+
+const LEASH_COS = T_FEEL.leashCos;
+
+/**
+ * [FEEL-1 skeptic] Human dribble leash (the CPU carrier has its own, ai/cpu/carrier.ts): the human-controlled owner's
+ * stick turns more than acos(T_FEEL.leashCos) away from his low ball while it is at (or beyond) the edge of his touch
+ * reach (SIM-06: T_DRIBBLE.controlRadius + speed x T_POSSESSION.reachLookahead, less T_FEEL.leashInner). He runs to
+ * where the ball will be (lead = distance / his speed, at most T_FEEL.leashMaxLead s) and SIM-06 then takes the turn
+ * touch the new way. Without it a user who received a pass on the run and pushed the stick up the pitch (a 50-90
+ * degree turn just after the first touch) ran on along the stick while his ball rolled off the old way: lost at 2.8 m
+ * in more than half the side-on receptions. Inputs and outputs in MAG (stick x, z, sprint); 1 when engaged.
+ */
+function leashEngaged(s: SimState, p: PlayerState): number {
+  // Inputs in MAG too (stick x, z, sprint): doubles crossing a call get boxed (allocation per tick).
+  const ix = MAG[0]!, iz = MAG[1]!, want = MAG[2]!;
+  const b = s.ball;
+  if (!(b.y <= T_DRIBBLE.controlHeight)) return 0;
+  const bx = b.x - p.x, bz = b.z - p.z;
+  const bd = Math.sqrt(bx * bx + bz * bz);
+  const sm = Math.sqrt(ix * ix + iz * iz);
+  if (!(bd > 1e-6) || !(sm > 1e-6)) return 0;
+  if ((bx * ix + bz * iz) / (bd * sm) >= LEASH_COS) return 0;
+  const v = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
+  const reach = T_DRIBBLE.controlRadius + v * T_POSSESSION.reachLookahead;
+  if (!(bd > reach - T_FEEL.leashInner)) return 0;
+  // Only while it is leaving him (relative motion outward): a ball coming back into his reach needs no chase.
+  if ((b.vx - p.vx) * bx + (b.vz - p.vz) * bz <= 0 && bd <= reach) return 0;
+  let lead = bd / (v > T_FEEL.leashLeadMinSpeed ? v : T_FEEL.leashLeadMinSpeed);
+  if (lead > T_FEEL.leashMaxLead) lead = T_FEEL.leashMaxLead;
+  const px = bx + b.vx * lead, pz = bz + b.vz * lead;
+  const pd = Math.sqrt(px * px + pz * pz);
+  let dx = bx / bd, dz = bz / bd;
+  if (pd > 1e-6) { dx = px / pd; dz = pz / pd; }
+  // Pace: as asked, but sprinting after a ball that runs faster than his jog.
+  const jog = s.attrs[p.slot]!.topSpeed * T_PLAYER.jogFraction;
+  const bv = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
+  let mag = sm < 1 ? sm : 1;
+  let w = want;
+  if (bv > jog) { w = 1; mag = 1; } else if (mag < T_FEEL.magnetMinJogFrac) mag = T_FEEL.magnetMinJogFrac;
+  MAG[0] = dx * mag; MAG[1] = dz * mag; MAG[2] = w;
   return 1;
 }
 
@@ -189,6 +258,12 @@ export function moveTick(s: SimState, c: number, ctl: ControllerState, p: Player
         ix *= LT.controlledSprintScale;
         iz *= LT.controlledSprintScale;
         want = ix !== 0 || iz !== 0 ? 1 : 0;
+      }
+      MAG[0] = ix; MAG[1] = iz; MAG[2] = want;
+      if (c < CPU_CONTROLLER_BASE && (btn & Btn.SHIELD) === 0 && (ix !== 0 || iz !== 0) &&
+        (p.act === ActionKind.NONE || p.act === ActionKind.FIRST_TOUCH) && leashEngaged(s, p) === 1) {
+        // [FEEL-1 skeptic] Human dribble leash: the stick turned away from his ball while it is leaving his reach.
+        ix = MAG[0]!; iz = MAG[1]!; want = MAG[2]!;
       }
     } else if (idle && b.owner < 0 && b.heldBy < 0 && b.passTarget === slot && b.lastTouchTeam === p.team) {
       // Intended receiver of our pass: meet the ball until the user steers him.

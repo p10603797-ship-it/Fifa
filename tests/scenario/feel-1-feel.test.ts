@@ -4,10 +4,11 @@
  * before / after numbers are in docs/TUNING.md (FEEL-1).
  */
 import { describe, expect, it } from 'vitest';
-import { AssistLevel, AutoSwitch, Foot, GestureKind, KickKind, MatchPhase } from '../../src/contracts/enums';
+import { ActionKind, AssistLevel, AutoSwitch, Foot, GestureKind, KickKind, MatchPhase } from '../../src/contracts/enums';
 import { EventType } from '../../src/contracts/events';
 import { Btn } from '../../src/contracts/input';
 import { T_DRIBBLE } from '../../src/contracts/tuning';
+import { KEY_BUTTONS } from '../../src/input/keyboard';
 import { selectReceiver } from '../../src/sim/kicks/pass';
 import { makeScenario, runTicks } from '../harness/scenario';
 import {
@@ -213,14 +214,31 @@ describe('FEEL-1 #4 shooting variety you can see in the flight', () => {
     const pt = shotScenario({ style: 'power', x: 30, z: -8, aimZ: 2.5, hold: 3, seed: 3 });
     expect(pt.windup).toBeGreaterThan(nt.windup + 3);
   });
-  it('trivela (L2 + SHOOT) bends the other way to a finesse shot from the same spot', () => {
+  it('trivela (L2 + SHOOT) bends the other way to a finesse shot from the same spot, from either side', () => {
     for (const [z, aim] of [[8, -2.5], [-8, 2.5]] as const) {
       const f = at('finesse', 30, z, aim), t = at('trivela', 30, z, aim);
       expect(t.kind).toBe(KickKind.SHOT_TRIVELA);
       expect(Math.abs(t.curve)).toBeGreaterThan(2.5);
       expect(Math.abs(t.crossZ - aim)).toBeLessThan(0.7);
-      if (z === -8) expect(Math.sign(t.curve)).toBe(-Math.sign(f.curve)); // right-footer: finesse in, trivela out-swing
+      expect(Math.sign(t.curve)).toBe(-Math.sign(f.curve)); // from either side: finesse bends in, trivela bends out
     }
+  });
+  for (const src of ['pad L2 + Circle', 'keyboard C + K'] as const) it(`${src} with L2 already held (shielding off a marker): the shield ends and the trivela is struck`, () => {
+    const L2 = src === 'pad L2 + Circle' ? Btn.SHIELD : KEY_BUTTONS.KeyC!;
+    const CIRCLE = src === 'pad L2 + Circle' ? Btn.SHOOT : KEY_BUTTONS.KeyK!;
+    const s = makeScenario({ phase: MatchPhase.IN_PLAY, seed: 6, humans: [{ side: 0, slot: HS, autoSwitch: AutoSwitch.OFF }] });
+    const p = s.players[HS]!; p.x = 28; p.z = -6; p.fx = 1; p.fz = 0;
+    const m = s.players[13]!; m.x = 26.8; m.z = -6.3; m.vx = 0; m.vz = 0; // a marker at his back: L2 is a real shield
+    Object.assign(s.ball, { x: 28.5, z: -6, px: 28.5, pz: -6, y: 0.11, py: 0.11, vx: 0, vz: 0, owner: HS, lastTouch: HS, lastTouchTeam: 0 });
+    let kind = -1, shielded = false;
+    runTicks(s, 90, (t, st, out) => {
+      const f = out[0]!;
+      f.buttons |= L2;
+      if (st.players[HS]!.act === ActionKind.SHIELD) shielded = true;
+      if (t > 40 && t < 46) { f.mx = 127; f.mz = 30; f.buttons |= CIRCLE; }
+    }, { until: (_st, ev) => { for (const e of ev) if (e.type === EventType.KICK && e.a === HS && e.b !== KickKind.DRIBBLE_TOUCH) kind = e.b; return kind >= 0; } });
+    expect(shielded).toBe(true);
+    expect(kind).toBe(KickKind.SHOT_TRIVELA);
   });
   it('touch: a curved swipe toward goal against his natural curl is a trivela, with it a finesse', () => {
     const shoot = (curve: number): number => {

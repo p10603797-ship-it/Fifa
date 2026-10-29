@@ -40,7 +40,9 @@ describe('QF-13 SIM-11: no balloon shots', () => {
             expect(e, `d ${d} z ${z} kind ${kind} skill ${sk}`).toBeLessThanOrEqual(T_SHOT.maxAimedElevation + 1e-9);
             // It still goes toward the goal: forward, and on (in the air, then bouncing / rolling) most of the way.
             expect(l!.vx).toBeGreaterThan(8);
-            expect(progress(s, l!), `d ${d} z ${z} kind ${kind} skill ${sk}`).toBeGreaterThan(24);
+            // [FEEL-1] 24 -> 23: the finesse curls harder (T_SHOT.finesseSpin 9 -> 11), so a tapped skill-35 finesse from
+            // 30 m wide (z -14) bends more and runs 23.7 m on, still well toward the goal.
+            expect(progress(s, l!), `d ${d} z ${z} kind ${kind} skill ${sk}`).toBeGreaterThan(23);
             n++;
           }
         }

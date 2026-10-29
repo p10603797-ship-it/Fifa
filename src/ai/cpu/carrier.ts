@@ -713,8 +713,8 @@ function commitShot(s: SimState, team: number, brain: CpuBrainState, p: Readonly
   if (kOff >= LT.chipKeeperOff && dist >= LT.chipMinDist && dist <= LT.chipMaxDist) btn |= Btn.MOD_L;
   else if (dist >= LT.finesseMinDist && dist <= LT.finesseMaxDist && (p.z > LT.finesseMinAbsZ || p.z < -LT.finesseMinAbsZ) &&
     a.curve >= LT.finesseMinCurve) {
-    // [FEEL-1] Now and then a trivela instead (L2 + SHOOT): from the side where the outside of his stronger foot bends
-    // it back in (a right-footer on the right), a good curler, about one in trivelaEvery such chances (tick + slot).
+    // [FEEL-1] Now and then a trivela instead (L2 + SHOOT; it bends out where the finesse bends in): from his
+    // outside-of-the-foot side (a right-footer on the right), a good curler, one in trivelaEvery such chances (tick + slot).
     const outsideSide = a.foot === Foot.LEFT ? p.z * dir < 0 : p.z * dir > 0;
     if (outsideSide && a.curve >= T_FEEL.cpuTrivelaMinCurve && (s.tick + p.slot) % T_FEEL.cpuTrivelaEvery === 0) btn |= Btn.SHIELD;
     else btn |= Btn.MOD_R;

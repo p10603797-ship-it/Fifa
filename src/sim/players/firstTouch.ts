@@ -228,7 +228,12 @@ function reachParam(s: SimState, slot: number): number {
   if (tc < 0) tc = 0; else if (tc > 1) tc = 1;
   // [FEEL-1] A human-controlled player steering (stick not idle) stretches for it: the receiving magnet's reach bonus.
   const c = p.ctrl;
-  const bonus = c >= 0 && c < CPU_CONTROLLER_BASE && s.ctrl[c]!.stickIdleT === 0 ? T_FEEL.magnetReachBonus : 0;
+  // As the magnet: a loose ball or a pass to him, not one meant for someone else, nor his own knock-on / push into space
+  // (he is its target: that ball runs on ahead as the move intends).
+  // Only while the stick points his way toward the ball (running at it, not turning away from it).
+  const cs = c >= 0 && c < CPU_CONTROLLER_BASE ? s.ctrl[c]! : null;
+  const bonus = cs !== null && cs.stickIdleT === 0 && (b.passTarget < 0 || b.passTarget === slot) &&
+    !(b.lastKickBy === slot && b.passTarget === slot) && cs.mx * (b.x - p.x) + cs.mz * (b.z - p.z) > 0 ? T_FEEL.magnetReachBonus : 0;
   for (let k = 0; k < 2; k++) {
     const t = k === 0 ? tc : 1;
     if (k === 1 && tc === 1) break;

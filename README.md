@@ -382,7 +382,8 @@ and the buttons)
 | Double-tap either of those | The lobbed version |
 | In the crossing zone, double-tap toward a post | Cross to the near or far post |
 | Swipe toward goal | Shot; a faster swipe is harder and higher |
-| Curved swipe toward goal | Finesse shot that bends with the swipe; bent against the shooter's natural curl (right-footer: to the right) it is a trivela |
+| Curved swipe toward goal | Finesse shot that bends with the swipe |
+| Curved swipe toward goal, bent against the shooter's natural curl (right-footer: to the right) | Trivela (outside-of-the-foot curler, bends the other way to a finesse) |
 | Tap on the goal | Chip shot |
 | Quick back-and-forth swipe toward goal | Power shot |
 | Tap the opposing ball carrier | Press him |
@@ -436,7 +437,7 @@ pressed. "Cross, Cross" means press it twice quickly.
 | Sprint | R2 (hold) | RT (hold) |
 | Shield the ball / jockey | L2 (hold) | LT (hold) |
 | Strafe dribble | L1 + left stick | LB + left stick |
-| Controlled sprint (tight touches, a little slower than a full sprint) | R1 (hold) | RB (hold) |
+| Controlled sprint | R1 (hold) | RB (hold) |
 | Stop the ball | Release left stick + R2 | Release left stick + RT |
 | Stop and face goal | Release left stick + L1 | Release left stick + LB |
 | Knock-on | R2 + right-stick flick | RT + right-stick flick |

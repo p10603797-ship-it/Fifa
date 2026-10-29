@@ -7,7 +7,7 @@ formerly inline values; module blocks are named in the TUN-1 and TUN-2 tables be
 
 ## Block index (`src/contracts/tuning.ts`, final tree)
 
-94 exported blocks. Non-gameplay modules (render, audio, ui, net, platform, app, data generation, modes/stats) keep
+95 exported blocks. Non-gameplay modules (render, audio, ui, net, platform, app, data generation, modes/stats) keep
 their values in a local block marked `// LOCAL_TUNING (non-gameplay: <reason>)` (TUN-2 below).
 
 **Wave 0 shared tables** (written with the contracts; read by many modules):
@@ -2059,16 +2059,18 @@ the same. Decisions D-028..D-031. Measured with scripted pad-input scenarios thr
 
 | Block | Constant | Was | Now | Why |
 |---|---|---|---|---|
-| `T_FEEL` (new) | `humanTouchAheadJog` / `humanTouchAheadSprint` | (T_DRIBBLE 1.0 / 2.4 m) | 0.8 / 1.45 m | Close control of the human-controlled dribbler (D-029): a sprint touch about a stride ahead (was 2.05 m mean, one touch a second, the ball lost on every 90-degree sprint turn). CPU dribblers keep `T_DRIBBLE`. Also his clean first-touch settle lead (SIM-07). |
-| `T_FEEL` | `humanTouchIntervalJog` / `humanTouchIntervalSprint` | (18 / 24 ticks) | 14 / 16 ticks | Quicker, shorter touches. |
-| `T_FEEL` | `humanLeadQualityScale` | (`T_POSSESSION.leadQualityScale` 0.2) | 0.4 | Dribbling / control / agility show in how close the ball stays (sprint mean 1.57 m at 40 v 1.19 m at 90; was 2.07 v 2.02). |
+| `T_FEEL` (new) | `humanTouchAheadJog` / `humanTouchAheadSprint` | (T_DRIBBLE 1.0 / 2.4 m) | 1.0 / 1.45 m | Close control of the human-controlled dribbler (D-029): a sprint touch about a stride ahead (was 2.05 m mean, one touch a second, the ball lost on every 90-degree sprint turn). The jog / walk touch stays the calibrated 1.0 m (0.92 m mean, inside the 0.5-1 m target): 0.8 m let a walker keep the ball from a World Class / Legend defender (qf-16-box-walker shuffle kept 4/8, qf-16-escort-block 7.2 m gained). CPU dribblers keep `T_DRIBBLE`. Also his clean first-touch settle lead (SIM-07). |
+| `T_FEEL` | `humanTouchIntervalJog` / `humanTouchIntervalSprint` | (18 / 24 ticks) | 18 / 16 ticks | Quicker, shorter touches at pace (jog unchanged, as above). |
+| `T_FEEL` | `humanLeadQualityScale` | (`T_POSSESSION.leadQualityScale` 0.2) | 0.4 at a full sprint (blended from 0.2 by the sprint fraction) | Dribbling / control / agility show in how close the ball stays (sprint mean 1.57 m at 40 v 1.19 m at 90; was 2.07 v 2.02). |
 | `T_FEEL` | `pokeReach` | - | 0.9 m | Poke window for a human dribbler (his ball beyond controlRadius, an opponent within this of it and nearer to it). |
 | `T_RESOLVE` | `controlledSprintScale` | 0.8 | 0.52 | 0.8 was a full sprint (SIM-04 sprints flat out from `sprintStickFull` 0.6); 0.52 is ~87% of top speed. |
-| `T_FEEL` (new) | `touchAheadControlled` / `touchIntervalControlled` | - | 0.62 m / 10 ticks | R1 controlled sprint touches (SIM-06 reads MOD_R held without SPRINT on the owner's controller). |
+| `T_FEEL` (new) | `touchAheadControlled` / `touchIntervalControlled` | - | 0.8 m / 10 ticks (skeptic: was 0.62 m) | R1 controlled sprint touches (SIM-06 reads MOD_R held without SPRINT on the owner's controller); 0.72 m mean, 0.79 m max. At 0.62 m (max 0.59 m) the ball never left the CPU's exposeDist (0.7 m), so no CPU defender ever made a careful tackle on it: an R1 dribbler with a 22-degree side step beat a Legend centre-back 12 of 12 (0 lost); now 75-83% beat, 17-25% lost, and straight at him still lost every time. |
+| `T_FEEL` (skeptic, new) | `leashCos`, `leashInner`, `leashLeadMinSpeed`, `leashMaxLead` | - | 0.9, 0.15 m, 3 m/s, 0.4 s | Human dribble leash (SIM-15 resolveMove): the stick turned more than ~26 degrees from his ball while it is at the edge of his touch reach and leaving him: he runs to where it will be, SIM-06 then takes the turn touch the new way (the CPU carrier has its own leash). A square pass received at a sprint and taken straight up the pitch was kept 44% (the ball rolled off the old way); now 94%. Sprint zig-zag 45 degrees each way: kept 4/4 at 8.3 m/s (was 2/4 at 5.9 m/s); 180-degree reversal at a sprint / R1: 4/4 (was 0/4). |
 | `T_FEEL` | `magnetRadiusMin` / `Max`, `magnetAssistMul` | - | 6 / 9 m by ballControl; x 1 / 0.8 / 0.55 (Assisted / Semi / Manual) | Receiving magnet capture radius (human-controlled player only, D-028). |
-| `T_FEEL` | `magnetAngleFar` / `Near` | - | 0.7 / 1.2 rad | Capture angle of the stick at the edge of the radius / at the meeting point. |
+| `T_FEEL` | `magnetAngleFar` / `Near` | - | 0.7 / 1.2 rad | Capture angle of the stick at the edge of the radius / at the meeting point; [skeptic] the stick may point at the meeting point or at the ball itself (a 20 m/s square pass chased with the stick on the ball was never met). |
 | `T_FEEL` | `magnetMaxHeight`, `magnetMinJogFrac`, `magnetEarlySec`, `magnetMinStick`, `magnetThrough` | - | 1.6 m, 0.7, 0.15 s, 0.2, 2.5 m | No magnet for a high ball; a gentle stick still meets the ball; speed matching arrives just before the ball; a pick-up ball is run through at pace. |
-| `T_FEEL` | `magnetReachBonus` | - | 0.35 m | SIM-07 receive reach of a human-controlled player who is steering. |
+| `T_FEEL` | `magnetLinePaceFrac`, `magnetLineStep`, `magnetLineSec` | - | 0.8, 0.1 s, 2 s | A ball travelling his way that reaches him anyway on his own line at his pace (rolling deceleration, sampled) is left to him: a led through ball is run onto in stride (sim-10 THROUGH_GROUND kept its never-slowing runner). The magnet also needs the ball in front of him. |
+| `T_FEEL` | `magnetReachBonus` | - | 0.35 m | SIM-07 receive reach of a human-controlled player whose stick points toward a loose ball or a pass to him (not his own knock-on, not a pass for someone else). |
 | `T_PASS_KICK` | `assistedConeMul` | 1.3 | 1.45 | 58-degree Assisted cone. |
 | `T_PASS_KICK` | `alignWeight` / `alignWeightSemi` | 0.45 / 0.6 | 0.8 / 0.9 | The stick decides; alignment is now linear in the angle (was flat near the stick) and uses his current or led position, whichever the stick points nearer. |
 | `T_PASS_KICK` | `distWeight` | 0.3 | 0.15 | A half-held pass aimed at a man 10 m away went to one 20 m away 21 degrees off. |
@@ -2076,8 +2078,9 @@ the same. Decisions D-028..D-031. Measured with scripted pad-input scenarios thr
 | `T_SHOT` | `finesseSpin` | 9 | 11 rad/s | Finesse clearly curls (4.6 m of bend from 22 m, was 3.8). |
 | `T_SHOT_KICK` | `powerShotMinSpeed` | 22 | 26 m/s | A power shot is much faster than a normal shot at any hold (30 v 24 m/s at a 20-tick hold). |
 | `T_FEEL` | `normalNaturalSpin` / `lowDrivenNaturalSpin` | - | 3.5 / 2 rad/s | A slight natural curl (about 1 m from 22 m), the solver aiming with it. |
-| `T_FEEL` | `trivelaSpeedMul`, `trivelaSpin`, `trivelaErrMul`, `trivelaGestureCurve` | - | 0.9, 10 rad/s, 0.95, 16 | `KickKind.SHOT_TRIVELA`: bends the other way to the finesse (right-footer: to the right). |
+| `T_FEEL` | `trivelaSpeedMul`, `trivelaSpin`, `trivelaErrMul`, `trivelaGestureCurve` | - | 0.9, 10 rad/s, 1.15 (skeptic: was 0.95), 16 | `KickKind.SHOT_TRIVELA`: always bends the other way to a finesse from the same spot (off-centre aim: starts inside the post and bends out into the corner; central: the outside of his foot's way, a right-footer to the right). |
 | `T_FEEL` | `cpuTrivelaMinCurve`, `cpuTrivelaEvery` | - | 75, 3 | The CPU plays one about every third finesse chance from the outside-of-the-foot side. |
+| `T_WARMUP` | `seed` | 0x5eed | 0x5eef | The reshaped scratch match reached the carrier decide() in 470 of 3000 forced rounds (fin-p2 needs > 750); 1902 now. |
 
 ### FEEL-1 measurements (before -> after, same scripted inputs)
 
@@ -2088,10 +2091,10 @@ the same. Decisions D-028..D-031. Measured with scripted pad-input scenarios thr
 | Pass crossing his run (he leads it) | 100% / 81% kept | 100% / 100% kept |
 | Loose ball sprinted at, stick 15 deg off | 17% | 100% |
 | Ball from his feet 0.5 s after a sprinting first touch | 1.80 m | 0.81 m |
-| Jog dribble, ball from his centre mean / max | 0.92 / 0.99 m | 0.69 / 0.74 m |
+| Jog dribble, ball from his centre mean / max | 0.92 / 0.99 m | 0.92 / 0.99 m (unchanged on purpose, see humanTouchAheadJog) |
 | Sprint dribble mean / max, touches per 4 s | 2.05 / 2.39 m, 4 | 1.24 / 1.36 m, 15.5 |
 | Sprint dribble with a 90-degree turn: kept | 0 / 4 | 4 / 4 |
-| R1 controlled sprint mean / max, speed | = sprint (2.05 m, 8.9 m/s) | 0.54 / 0.58 m, 7.9 m/s |
+| R1 controlled sprint mean / max, speed | = sprint (2.05 m, 8.9 m/s) | 0.55 / 0.59 m, 7.9 m/s |
 | Sprint lead at dribbling 40 v 90 | 2.07 v 2.02 m | 1.57 v 1.19 m |
 | Kick-off shape, Assisted, stick straight at an unambiguous teammate: targeted | 33% (Semi 67%) | 83% (Semi 83%) |
 | Open play, Assisted, stick 30 / 45 deg off the intended man (decoy 75 deg the other side) | 96% / 96% reached (88% / 71% targeted) | 100% / 100% (100% / 96%) |
@@ -2099,17 +2102,44 @@ the same. Decisions D-028..D-031. Measured with scripted pad-input scenarios thr
 | Shot from (30, -8) at the far post: normal speed / bend | 24.1 m/s / 0 m | 24.1 m/s / 1.06 m |
 | Finesse speed / bend | 18.8 m/s / 3.8 m | 18.8 m/s / 4.6 m |
 | Power speed / bend (20-tick hold) | 28.0 m/s / 0 | 30.0 m/s / 0 |
-| Trivela (L2 + Circle) speed / bend | (a normal shot) | 21.7 m/s / 3.5 m the other way |
+| Trivela (L2 + Circle) speed / bend | (a normal shot) | 21.7 m/s / 3.5 m the other way (from (30, +8) too: finesse +4.7 m, trivela -3.5 m) |
 
-In Chromium (`tests/e2e/feel-1-feel.spec.ts`, simulated pad in a Kick-Off match): sprint dribble mean 1.31 m / max 1.38 m,
-R1 0.55 / 0.58 m at 7.9 m/s, L2 + Circle struck `SHOT_TRIVELA`.
+In Chromium (`tests/e2e/feel-1-feel.spec.ts`, simulated pad in a Kick-Off match): sprint dribble mean 1.28 m / max 1.37 m
+at 9.1 m/s, 0 frames lost; R1 0.55 / 0.58 m at 7.9 m/s; L2 + Circle struck `SHOT_TRIVELA`; a loose ball sprinted at with
+the stick ~20 degrees off its line was collected; a Cross tap with the stick 30 degrees off the only nearby teammate
+found him.
 
-Bot game (CPU dribblers keep the calibrated touches, D-029; the shot, CPU trivela and pass-selection changes apply):
-`tools/soak.ts --matches 150 --difficulty 3 --enforce all --halfMinutes 4` seed 1: PASS, 0 exceptions / invariant
-failures / watchdogs, determinism PASS; goals 2.91 (FIN-K 2.76), shots 15.65 (14.89), possession of the side with more
-56.8%, home 50.6%, pass completion 78.7% (78.2%), fouls 10.95, offsides 0.18, blow-outs 0.67%. Ladder top pairs
-(`--pairs 3,4 --matches 100`, seeds 1-4, 400 a pair): World Class v Professional 72 / 70 / 78 / 76 = 74.0%, Legend v
-World Class 72 / 77 / 73 / 75 = 74.25% (target 65%). Fuzz 60 `--enforce all`: PASS (60 + 15 rematches, 0 exceptions,
-determinism PASS). Close control for every player was measured first (D-029): goals 3.2-3.6 on the first 100 configs
+Bot game (CPU dribblers keep the calibrated touches, D-029; the shot, CPU trivela and pass-selection changes apply),
+re-measured after the resume fixes (trivela bend side, knock-on / reach-bonus gating): `tools/soak.ts --matches 150
+--difficulty 3 --enforce all --halfMinutes 4` seed 1, before FEEL-1 -> now: PASS, 0 exceptions / invariant failures /
+watchdogs, determinism PASS; goals 2.76 -> 2.87, shots 14.89 -> 15.69, possession of the side with more 56.7% -> 56.9%,
+home 49.5% -> 50.6%, pass completion 78.2% -> 78.7%, fouls 10.65 -> 10.93, offsides 0.17 -> 0.18, blow-outs 0.67% ->
+0.67%. No retune needed (every band holds with margin). Ladder top pairs (`--pairs 3,4 --matches 400` seed 1): World
+Class v Professional 71.3% [66.6-75.5], Legend v World Class 71.0% [66.4-75.2] (target 65%). Fuzz 60 `--enforce all`:
+PASS (60 + 15 rematches, 0 exceptions / invariant failures / watchdogs, determinism PASS). Close control for every player was measured first (D-029): goals 3.2-3.6 on the first 100 configs
 (2.87 on the tree before FEEL-1) and blow-outs 5.33% over 150 (FAIL); with a wider poke reach 3.54; with the CPU's
 exposeDist 0.6 3.19 and fouls 13; with shot error +20% 3.11 and blow-outs 6%. Hence the human-only close control.
+
+### FEEL-1 skeptic (new scripted inputs, fixes, final runs)
+
+New scripted human inputs (before FEEL-1 -> FEEL-1 first pass -> skeptic), real pipeline: a square pass received at a
+sprint and then taken straight up the pitch (stick on the ball, then +x; 64 cases, 8-20 m/s, +-4/12 degrees, 16/26 m):
+kept 40 ticks later 47% -> 44% -> 94%; the same on keyboard 8-way 53% -> 56% -> 94%; a pass met with the stick on a fixed
+keyboard 8-way direction 31% -> 88% -> 100%; pad stick fixed 25 / 35 degrees off 16 / 16% -> 72 / 59% -> 94 / 78%; a
+bouncing (0.9 m) pass chased at a sprint kept 69% -> 94% -> 100%. Sprint zig-zag (45 degrees each way every 40 ticks):
+kept 0/4 -> 2/4 at 5.9 m/s -> 4/4 at 8.3 m/s (max 1.23 m); 180-degree reversal at a sprint 0/4 -> 0/4 -> 4/4, in R1
+0/4 -> 0/4 -> 4/4. Against a real CPU centre-back (12 scenes per row, side step 0 / 0.4 / 0.8 of the stick from 6 m):
+straight at him the ball is lost every time at every level (sprint and R1); R1 with a 0.4 side step at Legend lost 100%
+-> 0% (never tackled: the 0.62 m touch never left the CPU's exposeDist) -> 25%; sprint with the side step at Legend 100%
+-> 58% lost; a poor dribbler (30) at a sprint still loses it 94-100%. Assisted passing with an opponent in the lane: 25%
+intercepted (passes can still be cut out). Shots against a Professional keeper from five spots (n = 180 each, seeds
+4-12): before FEEL-1 normal 52% / finesse 53% / power 50%; now normal 47%, finesse 56%, power 54%, trivela 62% (the
+trivela bends away from the keeper; its error was raised to x1.15 so a poor shooter sprays it more than a normal shot).
+
+Final runs on this tree: soak 500 Professional (`--matches 500 --seed 1 --difficulty 3 --enforce all`): PASS, 0
+exceptions / invariant failures / watchdogs, determinism PASS; goals 2.99, shots 15.20, possession (side with more)
+56.73%, home 50.73%, pass completion 78.99%, fouls 10.61, offsides 0.18, blow-outs 1.40%. Fuzz 60 `--enforce all`: PASS
+(60 + 15 rematches, 0 exceptions / invariant failures / watchdogs). Ladder 2 seeds x 200 (pooled over 400): Amateur v
+Beginner 74.3%, Semi-Pro v Amateur 74.0%, Professional v Semi-Pro 67.3% (seed 2 alone 64.5%), World Class v
+Professional 68.5%, Legend v World Class 75.8%. Balance 4 seeds x 200 (pooled over 800): top-bottom 81.6% wins (seed 4
+alone 77.0%), equal 55.7% points, mirror 50.1% points.

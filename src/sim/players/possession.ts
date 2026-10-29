@@ -437,7 +437,8 @@ function touchBall(s: SimState, slot: number, turn: number, ev: EventSink): void
     pressureOf(s, slot);
     lead += (close - lead) * F[F_TPK]! * (1 - sf);
   }
-  lead *= 1 + (hc ? T_FEEL.humanLeadQualityScale : L.leadQualityScale) * (0.5 - q);
+  // [FEEL-1] A human's dribbling / control / agility show more at pace (sf): walking touches stay the calibrated ones.
+  lead *= 1 + (hc ? L.leadQualityScale + (T_FEEL.humanLeadQualityScale - L.leadQualityScale) * sf : L.leadQualityScale) * (0.5 - q);
   const r1 = rngRange(s.rng, -1, 1);
   const r2 = rngRange(s.rng, -1, 1);
   const err = (1 - q) * (1 + L.errSprintMul * sf);

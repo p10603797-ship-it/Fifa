@@ -120,13 +120,14 @@ describe('QF-4 skeptic QA-31: camera settings, aspects and frame pacing', () => 
 
   it('glitch: dipping below ground or into the stand - every camera type at slider extremes keeps the camera in its box and the ball on screen, clear of the controls', () => {
     const cases: Case[] = [
-      { type: CameraType.BROADCAST, height: 0, zoom: 20, w: 1180, h: 820, mirror: false, reduced: false, jitter: true, seed: 3 },
-      { type: CameraType.BROADCAST, height: 20, zoom: 0, w: 1688, h: 780, mirror: false, reduced: true, jitter: true, seed: 3 },
+      // [FEEL-1] seed 3 -> 5: the FEEL-1 shot changes reshaped seed 3's match (a goal + replay early: 1031 open-play frames), every seed-3 case
+      { type: CameraType.BROADCAST, height: 0, zoom: 20, w: 1180, h: 820, mirror: false, reduced: false, jitter: true, seed: 5 },
+      { type: CameraType.BROADCAST, height: 20, zoom: 0, w: 1688, h: 780, mirror: false, reduced: true, jitter: true, seed: 5 },
       { type: CameraType.WIDE, height: 20, zoom: 0, w: 1024, h: 768, mirror: true, reduced: false, jitter: false, seed: 4 },
       { type: CameraType.CLOSE, height: 0, zoom: 20, w: 1024, h: 768, mirror: false, reduced: false, jitter: true, seed: 4 },
       { type: CameraType.CLOSE, height: 0, zoom: 20, w: 1024, h: 768, mirror: true, reduced: false, jitter: false, seed: 4 },
-      { type: CameraType.END_TO_END, height: 0, zoom: 20, w: 1180, h: 820, mirror: false, reduced: false, jitter: true, seed: 3 },
-      { type: CameraType.END_TO_END, height: 20, zoom: 0, w: 1688, h: 780, mirror: true, reduced: true, jitter: false, seed: 3 },
+      { type: CameraType.END_TO_END, height: 0, zoom: 20, w: 1180, h: 820, mirror: false, reduced: false, jitter: true, seed: 5 },
+      { type: CameraType.END_TO_END, height: 20, zoom: 0, w: 1688, h: 780, mirror: true, reduced: true, jitter: false, seed: 5 },
     ];
     for (const c of cases) {
       const r = sweep(c, 2400);

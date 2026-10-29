@@ -10,7 +10,7 @@ import { ActionKind, AutoSwitch, ControllerKind, KickKind, MatchPhase } from '..
 import { EventType, type SimEvent } from '../../src/contracts/events';
 import { AXIS_SCALE, Btn } from '../../src/contracts/input';
 import { MoveMode, type SimState } from '../../src/contracts/state';
-import { T_DRIBBLE } from '../../src/contracts/tuning';
+import { T_DRIBBLE, T_FEEL } from '../../src/contracts/tuning';
 import { hashState } from '../../src/sim/core/hash';
 import { LOCAL_TUNING as L } from '../../src/sim/players/possession';
 import { makeScenario, runTicks } from '../harness/scenario';
@@ -71,7 +71,10 @@ describe('SIM-06 in the step pipeline: a human dribbling with the stick', () => 
       expect(s.players[P1]!.x).toBeGreaterThan(sprint ? 5 : -5);
     }
     expect(lead[0]).toBeLessThan(1.3 * T_DRIBBLE.touchAheadJog);
-    expect(lead[1]).toBeGreaterThan(lead[0]! + 0.8);
+    // [FEEL-1] (D-029) a human-controlled dribbler has close control: the sprint touch runs further ahead than the jog
+    // touch, but about a stride (T_FEEL.humanTouchAheadSprint 1.45 m), not 2.4 m ahead (was lead[0] + 0.8).
+    expect(lead[1]).toBeGreaterThan(lead[0]! + 0.25);
+    expect(lead[1]).toBeLessThan(1.25 * T_FEEL.humanTouchAheadSprint);
   });
 
   it('a 90-degree turn and a stop at a jog keep the ball (stick only)', () => {
