@@ -91,7 +91,14 @@ type PNode = { id: number; callFrame: { url: string; functionName: string }; chi
 /** Bytes allocated by src/ui/ code during run(TICKS), by site; and by the power bar. */
 async function window(press: number): Promise<{ bytes: number; count: number; power: number; charging: number; by: Record<string, number> }> {
   K[0] = press;
-  run(WARM + TICKS); // every situation of the window once (JIT feedback)
+  // Every situation of the window once (JIT feedback): the same fresh match, so a code path first taken in the window
+  // (a toast kind, a set-piece hint) is warm when measured. Continuing the previous window's match instead warmed a
+  // different stretch: whatever first ran in the measured window was charged with its tier-up (unoptimised double
+  // arithmetic, lazy compilation, ~2.5 B per frame when FEEL-1 reshaped the match), not with a per-frame allocation.
+  curr = initMatch(cfg);
+  prev = cloneState(curr);
+  hud.setMatch(curr, CLUBS);
+  run(WARM + TICKS);
   curr = initMatch(cfg);
   prev = cloneState(curr);
   hud.setMatch(curr, CLUBS);

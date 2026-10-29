@@ -4,6 +4,7 @@
  * inputs), and run the same pair again with one state change on one side at a chosen tick.
  */
 import { expect } from 'vitest';
+import { TICK_MS } from '../../src/app/loopMath';
 import type { SimState } from '../../src/contracts/state';
 import { HASH_INTERVAL_TICKS } from '../../src/net/desync';
 import { createOnlinePair, hashState, type PairOptions } from './net-06-harness';
@@ -60,6 +61,19 @@ export async function runWithNudge(opts: PairOptions, who: 'host' | 'guest', at:
   const bothFinishedAfterMs = both ? h.clock.now() - t0 : -1;
   await h.run(tailMs);
   return { h, hit, bothFinishedAfterMs };
+}
+
+/**
+ * Like h.runUntil, but checks `pred` after every animation frame instead of every 6: for moments that last only a few
+ * frames (e.g. a late side between its final mismatch and the friend's final state, one link latency later).
+ */
+export async function runUntilEachFrame(h: Pair, pred: () => boolean, maxMs: number): Promise<boolean> {
+  const end = h.clock.now() + maxMs;
+  while (h.clock.now() < end) {
+    if (pred()) return true;
+    await h.run(TICK_MS);
+  }
+  return pred();
 }
 
 /** The final verdicts agree with the final states: 'ok' on both sides exactly when both are identical. */

@@ -292,6 +292,16 @@ export function toastForEvent(e: Readonly<SimEvent>, state: ReadonlySimState, cl
   }
 }
 
+/** `a b` with single spaces, either side '' allowed (no regex: a RegExp literal is an object per call). */
+function joinWord(a: string, b: string): string {
+  return b === '' ? a : a === '' ? b : a + ' ' + b;
+}
+
+/** Screen-reader label of a toast: its non-empty texts, single-spaced (title, team code, line, sub line, minute). */
+function ariaLabel(t: Readonly<ToastSpec>): string {
+  return joinWord(joinWord(joinWord(joinWord(t.title.trim(), t.code.trim()), t.line.trim()), t.sub.trim()), t.minute.trim());
+}
+
 // ============================================================ part
 
 export function createToasts(): HudPart {
@@ -349,7 +359,7 @@ export function createToasts(): HudPart {
     // The queue always fades a toast out before the next one starts, so the class goes is-out -> is-in and the
     // animation-name change restarts the slide-in.
     setCls('hud-toast is-in');
-    el.setAttribute('aria-label', `${t.title} ${t.code} ${t.line} ${t.sub} ${t.minute}`.replace(/\s+/g, ' ').trim());
+    el.setAttribute('aria-label', ariaLabel(t));
   }
 
   return {

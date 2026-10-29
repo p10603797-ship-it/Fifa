@@ -22,7 +22,7 @@ import type { MemoryLinkOptions } from '../../src/net/memoryTransport';
 import { SESSION_FINAL, SESSION_FINAL_STATE } from '../../src/net/session';
 import type { ControlMessage } from '../../src/net/types';
 import { createOnlinePair, type PairOptions } from './net-06-harness';
-import { expectCleanFinish, expectHonestVerdict, finalWhistleTick, lastHashedTick } from './qf-15-harness';
+import { expectCleanFinish, expectHonestVerdict, finalWhistleTick, lastHashedTick, runUntilEachFrame } from './qf-15-harness';
 
 const LOSSY: MemoryLinkOptions = { latencyMs: 80, jitterMs: 20, loss: 0.05 };
 
@@ -58,20 +58,31 @@ describe('QF-15 second pass: online final whistle', () => {
   }, 120_000);
 
   it('glitch: desync — a divergence after the last hash in the last RESULT of a cup shoot-out is caught; the late side takes the finished side\'s final state and both screens show the same winner', async () => {
-    const opts: PairOptions = { config: { cupRules: 1 } };
-    const d = createOnlinePair(opts);
-    await d.startMatch();
-    let before = -1;
-    d.host.onTick = (s) => {
-      levelAtFullTime(s);
-      if (before < 0 && s.match.phase === MatchPhase.POST_MATCH) before = s.match.prevPhase;
-    };
-    d.guest.onTick = levelAtFullTime;
-    expect(await d.runUntil(() => d.host.session.finished && d.guest.session.finished, 300_000)).toBe(true);
-    await d.run(1000);
-    expect(before).toBe(MatchPhase.SHOOT_OUT); // extra time, then penalties
-    expect(d.host.os!.stats.finalCheck).toBe('ok');
-    const post = d.host.state!.tick;
+    // The divergence must land after the last hashed tick and before the whistle, so the match has to end at least 2
+    // ticks after a multiple of the hash interval. Where a shoot-out ends depends on the whole match flow (any sim or AI
+    // change moves it, and a whistle on the tick right after a hash leaves no such tick), so pick the first half
+    // length, dry run by dry run, whose cup match fits.
+    let opts: PairOptions = {};
+    let post = -1;
+    for (const halfMinutes of [0.1, 0.11, 0.12, 0.13, 0.15, 0.2]) {
+      opts = { config: { cupRules: 1, halfMinutes } };
+      const d = createOnlinePair(opts);
+      await d.startMatch();
+      let before = -1;
+      d.host.onTick = (s) => {
+        levelAtFullTime(s);
+        if (before < 0 && s.match.phase === MatchPhase.POST_MATCH) before = s.match.prevPhase;
+      };
+      d.guest.onTick = levelAtFullTime;
+      expect(await d.runUntil(() => d.host.session.finished && d.guest.session.finished, 300_000)).toBe(true);
+      await d.run(1000);
+      expect(before).toBe(MatchPhase.SHOOT_OUT); // extra time, then penalties
+      expect(d.host.os!.stats.finalCheck).toBe('ok');
+      post = d.host.state!.tick;
+      if (lastHashedTick(post) + 1 < post) break;
+      post = -1;
+    }
+    expect(post, 'a cup match whose whistle comes at least 2 ticks after the last hashed tick').toBeGreaterThan(0);
     const at = lastHashedTick(post) + 1;
     const nudges: [string, (s: SimState) => void, boolean][] = [
       // the RESULT timer: the late side's whistle comes 40 ticks after the friend's, past its last frames
@@ -198,7 +209,9 @@ describe('QF-15 second pass: online final whistle', () => {
         lp.onTick = (s) => {
           if (s.tick === at) s.match.phaseT -= 30;
         };
-        expect(await h.runUntil(() => lp.os!.stats.finalCheck === 'mismatch', 120_000), tag).toBe(true);
+        // Frame by frame: the late side adopts the friend's final state one link latency after its mismatch.
+        expect(await runUntilEachFrame(h, () => lp.os!.stats.finalCheck === 'mismatch', 120_000), tag).toBe(true);
+        expect(lp.os!.stats.finalAdopted, tag).toBe(false); // still waiting for the friend's final state
         if (how === 'pause') lp.session.pause(lp.os!.localHuman);
         else lp.session.setHidden(true);
         expect(lp.session.paused, tag).toBe(true);
