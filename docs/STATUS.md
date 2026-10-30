@@ -228,6 +228,6 @@ Total assignments: 201.
 | FIN-P2 | done (rare-path boxing, decision warm-up, roll-solver memo, previewFlight; build keeps module const/let D-026; gate at the 4 ms line, D-027) | |
 | FEEL-1 | done | playtest feel: receiving magnet (sprinted-at pass collected 22% -> 100%), close-control and R1 dribbling (sprint touch gap 2.05 -> 1.24 m), assisted passing (on target 33% -> 83%), distinct finesse / power / trivela / normal shots; soak 500, ladder, balance, fuzz pass (cc2c605) |
 | FEEL-1 CRs | done | bench seed 1 -> 42 (window again holds goal, replay, corner, free kick); qf-15 rejoin / s2-final retimed to find their moments frame by frame; HUD charging-alloc probe warms the measured window (0.33 v limit 4) and toast aria-label without a regex (cbaad39) |
-| FEEL-2 | running | CPU defenders jockey / shoulder by level against human side-steps; trivela below finesse in scoring rate |
+| FEEL-2 / 2C / 2D | done | CPU defenders read or are sold by a human side-step by level (beaten ~85% Beginner/Amateur, ~55% Professional, ~35% Legend), safe challenges on a human (fouls flat across levels); finesse best placed shot, trivela harder, power ~ normal; fuzz seed 3 root causes (restart / shoot-out hand-off to CPU); HUD event-time allocations removed; bot-v-bot bit-identical (D-033..D-042) |
 | QF-8 + SGN-03 + SGN-01 | waiting (after the user confirms the feel) | final campaign (verify, soak 2000, fuzz 500, determinism, full e2e, benchmark refresh), then the definition-of-done audit |
 
