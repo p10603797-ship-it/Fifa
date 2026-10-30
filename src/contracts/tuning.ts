@@ -6348,8 +6348,8 @@ export const T_FEEL2 = {
   // ---- shot types (SIM-11 shot.ts; D-034, D-036). A HUMAN-controlled shooter in open play only: penalties, shoot-outs
   // and free kicks (struck in their restart phase), explicit targets and the CPU keep the calibrated T_SHOT / T_FEEL.
   /** Assisted finesse placement (the placed shot): a stick ray at least finesseSnapFrom m off the goal centre places it
-   *  toward finesseInset m inside that post (the raw ray, kept inside that, is the other end: placedRoom below decides
-   *  how far; with full room exactly there). [D-036: 0.35 / 1.8 -> 0.5 / 1.2: at 0.35 a finesse to the corner went
+   *  toward finesseInset m inside that post (a normal shot's aim with the same stick is the other end, D-040: placedRoom
+   *  below decides how far; with full room exactly there). [D-036: 0.35 / 1.8 -> 0.5 / 1.2: at 0.35 a finesse to the corner went
    *  wide 8% of the time; from 1.2 m a stick half-way to the post places it too, so the finesse is the best shot at any
    *  aim, not only at the implementer's 2.4 / 3.0 m aims] */
   finesseInset: 0.5,
@@ -6361,9 +6361,12 @@ export const T_FEEL2 = {
    *  the corner (finesseInset / trivelaInset, from the stick's own ray) and its curl scale from 1 with the keeper this
    *  far from the ball or more ... m. 13: a set keeper from the edge of the box (15-21 m) leaves full room. */
   placedKeeperFar: 13,
-  /** ... to 0 with him this near or nearer (a straight side-foot where the stick points), m. 7: a keeper rushing out at a
-   *  runner (8 m at the strike) took the finesse from 79% (normal 36%) to 46% (D-037). */
-  placedKeeperNear: 7,
+  /** ... to 0 with him this near or nearer (a normal shot's aim with the same stick, no curl), m. 7: a keeper rushing out
+   *  at a runner (8 m at the strike) took the finesse from 79% (normal 36%) to 46% (D-037). [FEEL-2C, D-040: 7 -> 9: a
+   *  Professional keeper rushing to 8-10 m from a runner 17-19 m out still left half the room, and the finesse there
+   *  scored 90.6% v 64.9% for a normal shot (central hot zone); now 70.1%. 8 / 14: 75.7, 9 / 14: 66.7 but the run-up
+   *  finesse fell to a normal shot's rate (35.4%), 9.5 / 13: 65.3 and 39.3%] */
+  placedKeeperNear: 9,
   /** The trivela keeps this share of its placement and curl with no room (placedRoom 0), 0..1: with the finesse's full
    *  fade it fell to 27% v 35% for a normal shot from a run; 0.5: 37.9 v 35.4% (D-037). */
   trivelaRoomMin: 0.5,

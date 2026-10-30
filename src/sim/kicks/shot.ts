@@ -322,7 +322,7 @@ function keeperProj(s: SimState, team: number, bx: number, bz: number, gx: numbe
  * [FEEL-2 round 2] A human's placed shot (finesse, trivela) closed down by the keeper (D-037): 0..1, 1 with the defending
  * keeper T_FEEL2.placedKeeperFar m or more from the ball (b), 0 at placedKeeperNear m or nearer. Scales the shot's
  * placement toward the corner (aimInto) and its curl (spinInto): with the keeper on top of him there is no room to wrap
- * the ball round him, and he side-foots it where the stick points.
+ * the ball round him, and he side-foots it where the stick points (a normal shot's aim). [FEEL-2C, D-040: near 7 -> 9 m]
  */
 function placedRoom(s: SimState, team: number, bx: number, bz: number): number {
   const k = s.teams[team === 0 ? 1 : 0]!.keeperSlot;
@@ -353,6 +353,41 @@ function aimHeight(kind: KickKind, power: number): number {
  */
 function humanOpenPlay(s: SimState, slot: number): boolean {
   return s.match.phase === MatchPhase.IN_PLAY && isHumanSlot(s, slot);
+}
+
+/** 1 when the last assistedZ snapped its aim to the placed corner (module scratch: no per-call allocation). */
+let SNAPPED = 0;
+
+/**
+ * Assisted aim z on the goal line from the stick's ray zRay (hasDir) or, with an idle stick, the side with more room
+ * (keeper projected, kp = keeperProj's result) / the far post, kept inside zLim and moved out of the keeper's cover.
+ * snap > 0: a ray at least snap m off centre goes to the corner at zLim (sets SNAPPED). Reads F[K_Z] / F[K_C].
+ */
+function assistedZ(zRay: number, hasDir: boolean, kp: number, bz: number, zLim: number, snap: number): number {
+  SNAPPED = 0;
+  let zA: number;
+  const cap = GHW + LT.captureMargin;
+  if (hasDir) {
+    zA = zRay <= cap && zRay >= -cap ? zRay : zRay > 0 ? GHW : -GHW;
+    if (snap > 0 && (zA >= snap || zA <= -snap)) { zA = zA > 0 ? zLim : -zLim; SNAPPED = 1; }
+  } else if (kp === 1) {
+    const kz = F[K_Z]!;
+    zA = zLim - kz >= kz + zLim ? zLim : -zLim; // the side with more room
+  } else zA = bz > 0 ? -zLim : zLim; // far post
+  if (zA > zLim) zA = zLim; else if (zA < -zLim) zA = -zLim;
+  if (kp === 1) {
+    // Out of the keeper's cover (toward the side the aim is on), by at most keeperShiftMax.
+    const kz = F[K_Z]!, kc = F[K_C]!;
+    const d = zA - kz;
+    if (d < kc && d > -kc) {
+      const side = d > 0 ? 1 : d < 0 ? -1 : zLim - kz >= kz + zLim ? 1 : -1;
+      let shift = kz + side * kc - zA;
+      if (shift > LT.keeperShiftMax) shift = LT.keeperShiftMax; else if (shift < -LT.keeperShiftMax) shift = -LT.keeperShiftMax;
+      zA += shift;
+    }
+  }
+  if (zA > zLim) zA = zLim; else if (zA < -zLim) zA = -zLim;
+  return zA;
 }
 
 /**
@@ -396,55 +431,38 @@ function aimInto(
     const cross = gcx * uz - gcz * ux;
     zRay = (cross >= 0 ? end : -end) * LT.rayMaxZ;
   }
-  let zM: number, zA: number;
+  let zM: number;
   // [FEEL-2] A human's finesse is the placed shot: its assisted aim may go nearer the post (T_FEEL2.finesseInset) and a
   // stick toward a corner places it there (finesseSnapFrom); his trivela likewise at trivelaInset (trivelaSnapFrom).
   // The assist strength's blend is not used for it (a stick pushed right into the corner sent the finesse wide): it goes
-  // from the stick's ray toward the placed corner by the keeper's room (placedRoom, D-037). Explicit targets, set pieces
-  // and the CPU's shots are unchanged (D-034, D-036).
+  // from a normal shot's aim toward the placed corner by the keeper's room (placedRoom, D-037 / D-040). Explicit targets,
+  // set pieces and the CPU's shots are unchanged (D-034, D-036).
   const human = !explicit && humanOpenPlay(s, slot);
   const placed = human && kind === KickKind.SHOT_FINESSE;
   const placedT = human && kind === KickKind.SHOT_TRIVELA;
   const zLim = placed ? GHW - T_FEEL2.finesseInset : placedT ? GHW - T_FEEL2.trivelaInset : ASSIST_Z;
-  let snapped = false;
+  let zA: number, kp = 0;
   if (explicit) {
     zM = fin(tz);
     if (zM > LT.rayMaxZ) zM = LT.rayMaxZ; else if (zM < -LT.rayMaxZ) zM = -LT.rayMaxZ;
-    zA = zM;
+    zA = zM > zLim ? zLim : zM < -zLim ? -zLim : zM;
+    SNAPPED = 0;
   } else {
     zM = zRay;
-    const kp = keeperProj(s, p.team, bx, bz, gx, end);
-    const cap = GHW + LT.captureMargin;
-    if (hasDir) {
-      zA = zRay <= cap && zRay >= -cap ? zRay : zRay > 0 ? GHW : -GHW;
-      const snap = placed ? T_FEEL2.finesseSnapFrom : placedT ? T_FEEL2.trivelaSnapFrom : -1;
-      if (snap > 0 && (zA >= snap || zA <= -snap)) { zA = zA > 0 ? zLim : -zLim; snapped = true; }
-    } else if (kp === 1) {
-      const kz = F[K_Z]!;
-      zA = zLim - kz >= kz + zLim ? zLim : -zLim; // the side with more room
-    } else zA = bz > 0 ? -zLim : zLim; // far post
-    if (zA > zLim) zA = zLim; else if (zA < -zLim) zA = -zLim;
-    if (kp === 1) {
-      // Out of the keeper's cover (toward the side the aim is on), by at most keeperShiftMax.
-      const kz = F[K_Z]!, kc = F[K_C]!;
-      const d = zA - kz;
-      if (d < kc && d > -kc) {
-        const side = d > 0 ? 1 : d < 0 ? -1 : zLim - kz >= kz + zLim ? 1 : -1;
-        let shift = kz + side * kc - zA;
-        if (shift > LT.keeperShiftMax) shift = LT.keeperShiftMax; else if (shift < -LT.keeperShiftMax) shift = -LT.keeperShiftMax;
-        zA += shift;
-      }
-    }
+    kp = keeperProj(s, p.team, bx, bz, gx, end);
+    const snap = placed ? T_FEEL2.finesseSnapFrom : placedT ? T_FEEL2.trivelaSnapFrom : -1;
+    zA = assistedZ(zRay, hasDir, kp, bz, zLim, snap);
   }
-  if (zA > zLim) zA = zLim; else if (zA < -zLim) zA = -zLim;
   F[A_X] = gx;
-  if (snapped) {
-    // [FEEL-2 round 2] Placed toward the corner from the stick's own ray (kept inside zLim, so a stick right in the
-    // corner does not send it wide) by the room the keeper leaves him (placedRoom, D-037): the exact corner from any stick
-    // 1.2 m off centre, the keeper rushing out at him, made the finesse from a short run a near-certain goal.
-    const zc = zM > zLim ? zLim : zM < -zLim ? -zLim : zM;
+  if (SNAPPED === 1) {
+    // [FEEL-2C] Placed toward the corner from the aim a normal shot would take with the same stick (the assisted aim,
+    // out of the keeper's cover), by the room the keeper leaves him (placedRoom, D-037 / D-040): with no room it is
+    // that normal shot's aim (a side-foot where the stick points), with full room the corner. [D-037 started from the
+    // stick's own ray clamped to the corner, so a stick at or beyond 3.16 m was always the exact corner.]
+    const zN = assistedZ(zRay, hasDir, kp, bz, ASSIST_Z, -1); // F[K_Z] / F[K_C] still hold keeperProj's
+    const anchor = zM + (zN - zM) * A;
     const room = placedRoom(s, p.team, bx, bz);
-    F[A_Z] = zc + (zA - zc) * (placed ? room : T_FEEL2.trivelaRoomMin + (1 - T_FEEL2.trivelaRoomMin) * room);
+    F[A_Z] = anchor + (zA - anchor) * (placed ? room : T_FEEL2.trivelaRoomMin + (1 - T_FEEL2.trivelaRoomMin) * room);
   } else F[A_Z] = zM + (zA - zM) * A;
   F[A_Y] = aimHeight(kind, clamp01(power));
   F[A_END] = end;

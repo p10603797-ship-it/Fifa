@@ -2169,7 +2169,7 @@ balance are the FEEL-1 tree's. Measured with scripted pad input through the real
 | `T_FEEL2` | `shoulderChance`, `shoulderWindow` | 0 / 0 / 0 / 0.5 / 0.6 / 0.75 per 45 ticks | 0 / 0 / 0 / 0.35 / 0.45 / 0.55 per 45 | Level and alongside a human at pace. 134 shoulders in 160 Legend chase scenes before, 26% won. |
 | `T_FEEL2` | `shoulderMaxBehind`, `shoulderMaxClosing`, `shoulderMinSpeed`, `shoulderNoBoxFrom`, `shoulderCooldown` | (0.25 on the press-time geometry) | 0 predicted at the contact, 3 m/s, 6 m/s, Professional, 90 ticks | Never from behind at the contact (33 of 134 Legend shoulders resolved from behind: reds, penalties), not in our own area, not at a carrier through on goal (DOGSO), not at a jogger, then no challenge for 90 ticks. The D-033 run to get alongside (`alongside*`) is gone: the old contain branch capped it, and the defender escorted the dribbler 2-4 s. |
 | `T_FEEL2` | `finesseInset`, `finesseSnapFrom` | 0.35 m, 1.8 m | 0.5 m, 1.2 m | The placed finesse: no longer blended back toward the raw stick ray (at 0.35 a stick in the corner went wide 8-12%); from 1.2 m a stick half-way to the post places it too. [D-037] How far toward that corner (from the stick's own ray, kept inside it) is the keeper's room below. |
-| `T_FEEL2` | `placedKeeperFar`, `placedKeeperNear` | - (D-036: always the exact corner, full curl) | 13 m, 7 m | [D-037] A human's finesse / trivela closed down by the keeper (shot.ts placedRoom): placement toward the corner and curl x 1 with the keeper 13 m or more from the ball, x 0 at 7 m or nearer (a straight side-foot where the stick points). The exact corner plus full curl round a keeper rushing out at a runner scored 79% v 36% for a normal shot (Legend keeper 50 v 10%). 6 / 13: run 53%; 7 / 14: standing finesse only normal + 6; 8 / 14: normal + 3-4 everywhere. A full-curl / no-placement finesse from a run still scored 58% (curl alone), a distance-to-goal curl scale did not separate the run from standing shots (both 14-21 m). |
+| `T_FEEL2` | `placedKeeperFar`, `placedKeeperNear` | - (D-036: always the exact corner, full curl); D-037 13 m, 7 m | 13 m, 9 m (D-040) | [D-040] 7 -> 9 m, and with no room the finesse is a normal shot's aim (it was the stick's ray clamped to the corner, so a stick at or beyond 3.16 m was always the corner): after a 5-7 m run at central spots 17-19 m out, a Professional keeper rushing to 8-10 m left half the room and the finesse scored 91.1% v 68.1% for a normal shot; now 70.1%. 8 / 14: 75.7%; 9 / 14: 66.7% but the run-up probe R finesse fell to a normal shot's 35.4%; 9.5 / 13: 65.3 / 39.3%. [D-037] A human's finesse / trivela closed down by the keeper (shot.ts placedRoom): placement toward the corner and curl x 1 with the keeper 13 m or more from the ball, x 0 at 7 m or nearer (a straight side-foot where the stick points). The exact corner plus full curl round a keeper rushing out at a runner scored 79% v 36% for a normal shot (Legend keeper 50 v 10%). 6 / 13: run 53%; 7 / 14: standing finesse only normal + 6; 8 / 14: normal + 3-4 everywhere. A full-curl / no-placement finesse from a run still scored 58% (curl alone), a distance-to-goal curl scale did not separate the run from standing shots (both 14-21 m). |
 | `T_FEEL2` | `trivelaRoomMin` | - | 0.5 | [D-037] The trivela keeps half its placement and curl with no room (0: 27.0 v 35.7% from a run; 0.3: 32.5; 0.5: 38.1; 0.7: 43.3%). |
 | `T_FEEL2` | `trivelaInset`, `trivelaSnapFrom` | (`T_SHOT.assistInset` 0.55), 1.8 m | 0.45 m, 1.2 m | The placed trivela (it starts inside and bends out to the corner). 0.38: 35% (wide 8-13%). |
 | `T_FEEL2` | `humanFinesseSpeedMul`, `humanFinesseSpin` | 0.92, 13.5 | 0.97, 14.2 rad/s | 23.4 m/s (normal 24.1), bend 4.6 m. At 0.92 the finesse scored about a normal shot on the skeptics' probe (36 v 37.5%). |
@@ -2292,3 +2292,22 @@ Fuzz `--enforce all` on this tree: seed 3 (60) PASS (was FAIL on #57's rematch),
 seed 11 (200) PASS (its first run, with a first cut of the allowance that also credited practice goals, timed out on
 four Penalties-practice jobs and stopped two idle-human shoot-outs at kick 17; both fixed, see D-039). 0 exceptions,
 0 invariant failures, 0 watchdogs, determinism PASS in every run.
+
+### FEEL-2C: the finesse closed down by a rushing keeper (D-040)
+
+`T_FEEL2.placedKeeperNear` 7 -> 9 m (`placedKeeperFar` stays 13 m), and with no room the placed finesse / trivela now
+start from a normal shot's aim for the same stick (the assisted aim, moved out of the keeper's cover; shot.ts
+`assistedZ`), not from the stick's ray clamped to the corner. The FEEL-2 round-2 skeptic's probe (shooter 85, R1 run
+of 5-7 m to central spots 17-19 m out, stick 2.2 / 2.8 / 3.4 m off centre, seeds 201-208, Professional keeper rushing
+to 7.5-10.2 m from the ball): finesse 91.1% -> 70.1% (by spot 73 / 65 / 72%), normal 68.1% (54 / 70 / 80%).
+Other levels, same zone (4 seeds): Semi-Pro 98.3 v 88.9, World Class 20.1 v 26.7, Legend 3.5 v 11.5%; poor shooter (45)
+32.3 v 32.3%. FEEL-2 probes: A + B finesse 47.7% (was 48.4) v normal 39.2; B 43.8 v 37.5; run-up probe R 41.4 (was
+46.4) v 35.4 (fresh seeds 46-50: 42.1 v 37.9); Legend run-up 4.6 v 7.5; trivela 42.7 / 43.8 / 37.5%. Sweep in D-040.
+
+Final runs on this tree (bot v bot is bit-identical: every number equals the FEEL-2 round-2 final runs): soak 500
+Professional seed 1 `--enforce all`: PASS, goals 2.99, shots 15.20, possession (side with more) 56.73%, home 50.73%,
+pass completion 78.99%, fouls 10.61, offsides 0.18, blow-outs 1.40%, 0 exceptions / invariant failures / watchdogs,
+determinism PASS. Ladder `--matches 200` seeds 1 and 2 (pooled over 400): 74.3 / 74.0 / 67.3 (seed 2 alone 64.5) /
+68.5 / 75.8%. Balance `--matches 200` seeds 1-4 (pooled over 800): top-bottom 81.6% (seed 4 alone 77.0), equal 55.6%
+points, mirror 50.1% points. Fuzz 60 `--enforce all`: seed 3 PASS (60 + 14 rematches), seed 6 PASS (60 + 13), 0
+exceptions / invariant failures / watchdogs, determinism PASS.

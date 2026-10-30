@@ -35,7 +35,7 @@ describe('FEEL-2: shot types against a Professional keeper (good shooter, both p
   it('finesse best; power about normal; trivela normal +0..5 points', () => {
     const normal = rate(cells('normal')), finesse = rate(cells('finesse')), power = rate(cells('power')), trivela = rate(cells('trivela'));
     console.log(`FEEL-2 shot rates (n=696 each): normal ${(100 * normal).toFixed(1)}%, finesse ${(100 * finesse).toFixed(1)}%, power ${(100 * power).toFixed(1)}%, trivela ${(100 * trivela).toFixed(1)}%`);
-    // Measured 39.2 / 48.4 / 36.4 / 42.7% (D-037; D-036 39.2 / 52.0 / 41.2 / 42.0; the first FEEL-2 commit on probe A
+    // Measured 39.2 / 47.7 / 36.4 / 42.7% (D-040; D-037 39.2 / 48.4 / 36.4 / 42.7; D-036 39.2 / 52.0 / 41.2 / 42.0; the first FEEL-2 commit on probe A
     // alone: 41 / 47 / 45 / 28%).
     expect(finesse).toBeGreaterThanOrEqual(normal + 0.06);
     expect(finesse).toBeLessThanOrEqual(normal + 0.16); // [FEEL-2 round 2] the best shot, not a sure one
@@ -48,7 +48,7 @@ describe('FEEL-2: shot types against a Professional keeper (good shooter, both p
 
   it('the same order on probe B alone (the skeptics\' spots, aims and holds): finesse best, trivela not below normal', () => {
     const b = (st: KShot): number => rate(cells(st).slice(2));
-    // Measured normal 37.5%, finesse 44.3%, power 33.3%, trivela 44.0% (D-036: 37.5 / 47.0 / 37.2 / 44.6; the first
+    // Measured normal 37.5%, finesse 43.8%, power 33.3%, trivela 43.8% (D-037: 37.5 / 44.3 / 33.3 / 44.0; D-036: 37.5 / 47.0 / 37.2 / 44.6; the first
     // FEEL-2 commit, skeptics' slot 9:
     // finesse 32.7 v normal 35.5, trivela 25.7%).
     expect(b('finesse')).toBeGreaterThan(b('normal') + 0.05);
@@ -88,7 +88,8 @@ describe('FEEL-2 round 2: shots struck at the end of a run (probe R)', () => {
     const P = Difficulty.PROFESSIONAL;
     const normal = runRate('normal', P), finesse = runRate('finesse', P), power = runRate('power', P), trivela = runRate('trivela', P);
     console.log(`FEEL-2 run-up shot rates (n=280 each): normal ${(100 * normal).toFixed(1)}%, finesse ${(100 * finesse).toFixed(1)}%, power ${(100 * power).toFixed(1)}%, trivela ${(100 * trivela).toFixed(1)}%`);
-    // Measured 35.4 / 46.4 / 33.6 / 37.9% (D-036 on the skeptics' probe: 35.0 / 79.0 / 41.7 / 46.7%).
+    // Measured 35.4 / 41.4 / 33.6 / 37.5% (D-040; D-037 35.4 / 46.4 / 33.6 / 37.9%; D-036 on the skeptics' probe: 35.0 /
+    // 79.0 / 41.7 / 46.7%). The central hot zone after a 5-7 m run: feel-2c-finesse-closed-down.test.ts.
     expect(finesse).toBeGreaterThanOrEqual(normal + 0.04);
     expect(finesse).toBeLessThanOrEqual(normal + 0.18);
     expect(finesse).toBeLessThan(0.6);
