@@ -187,8 +187,14 @@ describe('FEEL-1 skeptic: close control is not glue', () => {
       const r = vsDefender('r1', level, seed, lat, 0.4);
       if (r === 'lost') lost++; else if (r === 'beat') beat++;
     }
-    expect(lost).toBeGreaterThanOrEqual(3); // measured 5 of 24
-    expect(beat).toBeGreaterThanOrEqual(12); // measured 19 of 24 (probe): a good side step still beats him
+    console.log(`FEEL-1 skeptic R1 side step v Professional / Legend: lost ${lost}, beat ${beat} of 24`);
+    // [FEEL-2] Thresholds changed on purpose (D-033 / D-035): a side step against a Professional / Legend centre-back is
+    // a duel he reads or is sold by (sold chance 0.3 / 0.04 a move), so this small 0.4 step from 6 m beats him far less
+    // often than FEEL-1's 19 of 24 (measured: beat 6, lost 18); it still works sometimes, and the per-level rates over
+    // the multi-geometry grid are pinned in tests/scenario/feel-2-defending.test.ts.
+    expect(lost).toBeGreaterThanOrEqual(5); // FEEL-1: 5 of 24
+    expect(beat).toBeGreaterThanOrEqual(3); // FEEL-1: 19 of 24 (probe)
+    expect(beat).toBeLessThanOrEqual(16);
   });
 
   it('running the ball straight into a Legend centre-back loses it, at a sprint and in R1', () => {
@@ -200,8 +206,11 @@ describe('FEEL-1 skeptic: close control is not glue', () => {
 
 describe('FEEL-1 skeptic: the trivela is a harder technique', () => {
   it('a poor shooter sprays the trivela more than a normal shot from the same spot (error x1.15 v x1.0)', () => {
-    const spread = (trivela: boolean): number => {
-      let sum = 0, n = 0;
+    // [FEEL-2] (D-036) Counted as shots on target (crossing the goal line inside the mouth): a human's assisted trivela
+    // toward a corner is now placed there (trivelaInset), not at the stick's 2.5 m, so the distance from 2.5 m (the
+    // FEEL-1 measure) is placement, and the poor shooter's wild ones hit the frame or the side netting.
+    const onTarget = (trivela: boolean): number => {
+      let n = 0;
       for (let seed = 1; seed <= 16; seed++) {
         const s = base(seed);
         const p = s.players[HS]!;
@@ -210,18 +219,20 @@ describe('FEEL-1 skeptic: the trivela is a harder technique', () => {
         a.finishing = 30; a.longShots = 30; a.curve = 30;
         const k = s.players[11]!; k.x = 60; k.z = 30;
         Object.assign(s.ball, { x: 30.5, y: 0.11, z: 0, px: 30.5, py: 0.11, pz: 0, vx: 0, vy: 0, vz: 0, owner: HS, lastTouch: HS, lastTouchTeam: 0 });
-        let crossZ = NaN;
+        let on = false;
         runTicks(s, 200, (tk, _st, out) => {
           const f = out[0]!;
           stick(f, 22.5, 2.5);
           if (trivela) f.buttons |= Btn.SHIELD;
           if (tk - 1 < 18) f.buttons |= Btn.SHOOT;
-        }, { until: (st) => { if (st.ball.x >= 52.5) { crossZ = st.ball.z; return true; } return false; } });
-        if (Number.isFinite(crossZ)) { sum += Math.abs(crossZ - 2.5); n++; } // a few hit the frame / are kept out
+        }, { until: (st) => { if (st.ball.x >= 52.5) { on = Math.abs(st.ball.z) < 3.66 && st.ball.y < 2.44; return true; } return false; } });
+        if (on) n++;
       }
-      expect(n).toBeGreaterThanOrEqual(10);
-      return sum / n;
+      return n;
     };
-    expect(spread(true)).toBeGreaterThan(spread(false));
+    const t = onTarget(true), nrm = onTarget(false);
+    console.log(`FEEL-1 skeptic poor shooter on target of 16: trivela ${t}, normal ${nrm}`);
+    expect(t).toBeLessThan(nrm); // measured 8 v 11
   });
+
 });

@@ -94,11 +94,11 @@ import type { EventSink } from '../../contracts/events';
 import { createBallState, MoveMode, type PlayerState, type SimState } from '../../contracts/state';
 import { createKickLaunch, ReqFlag, type ActionRequest, type KickLaunch } from '../../contracts/systems';
 import { RESTART_PHASES } from '../../contracts/transitions';
-import { T_BALL, T_FEEL, T_PASS, T_PLAYER, T_SHOT, T_SHOT_KICK } from '../../contracts/tuning';
+import { T_BALL, T_FEEL, T_FEEL2, T_PASS, T_PLAYER, T_SHOT, T_SHOT_KICK } from '../../contracts/tuning';
 import { ballAirStep, curlSpinY, launchSpin } from '../ball/flight';
 import { dcos, dpow, dsin } from '../core/dmath';
 import { applyKick, ballTouchedThisTick } from '../core/kick';
-import { pressureOn } from '../core/query';
+import { isHumanSlot, pressureOn } from '../core/query';
 import { rngGauss } from '../core/rng';
 import { staminaFactor } from '../players/locomotion';
 import {
@@ -318,6 +318,22 @@ function keeperProj(s: SimState, team: number, bx: number, bz: number, gx: numbe
   return 1;
 }
 
+/**
+ * [FEEL-2 round 2] A human's placed shot (finesse, trivela) closed down by the keeper (D-037): 0..1, 1 with the defending
+ * keeper T_FEEL2.placedKeeperFar m or more from the ball (b), 0 at placedKeeperNear m or nearer. Scales the shot's
+ * placement toward the corner (aimInto) and its curl (spinInto): with the keeper on top of him there is no room to wrap
+ * the ball round him, and he side-foots it where the stick points.
+ */
+function placedRoom(s: SimState, team: number, bx: number, bz: number): number {
+  const k = s.teams[team === 0 ? 1 : 0]!.keeperSlot;
+  if (!validSlot(k)) return 1;
+  const q = s.players[k]!;
+  if (q.active !== 1) return 1;
+  const dx = q.x - bx, dz = q.z - bz;
+  const F2 = T_FEEL2;
+  return clamp01((Math.sqrt(dx * dx + dz * dz) - F2.placedKeeperNear) / (F2.placedKeeperFar - F2.placedKeeperNear));
+}
+
 /** Height of the aim at the goal line for kind and power (0..1), m. */
 function aimHeight(kind: KickKind, power: number): number {
   switch (kind) {
@@ -329,6 +345,14 @@ function aimHeight(kind: KickKind, power: number): number {
     case KickKind.PENALTY: return LT.penaltyYLo + (LT.penaltyYHi - LT.penaltyYLo) * power;
     default: return LT.normalYLo + (LT.normalYHi - LT.normalYLo) * power;
   }
+}
+
+/**
+ * [FEEL-2] The human-controlled shooter's own shot calibration (T_FEEL2.human*, D-034 / D-036) applies in open play
+ * only: penalties, shoot-outs and free kicks (struck in their restart phase) keep the calibrated values.
+ */
+function humanOpenPlay(s: SimState, slot: number): boolean {
+  return s.match.phase === MatchPhase.IN_PLAY && isHumanSlot(s, slot);
 }
 
 /**
@@ -373,6 +397,16 @@ function aimInto(
     zRay = (cross >= 0 ? end : -end) * LT.rayMaxZ;
   }
   let zM: number, zA: number;
+  // [FEEL-2] A human's finesse is the placed shot: its assisted aim may go nearer the post (T_FEEL2.finesseInset) and a
+  // stick toward a corner places it there (finesseSnapFrom); his trivela likewise at trivelaInset (trivelaSnapFrom).
+  // The assist strength's blend is not used for it (a stick pushed right into the corner sent the finesse wide): it goes
+  // from the stick's ray toward the placed corner by the keeper's room (placedRoom, D-037). Explicit targets, set pieces
+  // and the CPU's shots are unchanged (D-034, D-036).
+  const human = !explicit && humanOpenPlay(s, slot);
+  const placed = human && kind === KickKind.SHOT_FINESSE;
+  const placedT = human && kind === KickKind.SHOT_TRIVELA;
+  const zLim = placed ? GHW - T_FEEL2.finesseInset : placedT ? GHW - T_FEEL2.trivelaInset : ASSIST_Z;
+  let snapped = false;
   if (explicit) {
     zM = fin(tz);
     if (zM > LT.rayMaxZ) zM = LT.rayMaxZ; else if (zM < -LT.rayMaxZ) zM = -LT.rayMaxZ;
@@ -381,27 +415,37 @@ function aimInto(
     zM = zRay;
     const kp = keeperProj(s, p.team, bx, bz, gx, end);
     const cap = GHW + LT.captureMargin;
-    if (hasDir) zA = zRay <= cap && zRay >= -cap ? zRay : zRay > 0 ? GHW : -GHW;
-    else if (kp === 1) {
+    if (hasDir) {
+      zA = zRay <= cap && zRay >= -cap ? zRay : zRay > 0 ? GHW : -GHW;
+      const snap = placed ? T_FEEL2.finesseSnapFrom : placedT ? T_FEEL2.trivelaSnapFrom : -1;
+      if (snap > 0 && (zA >= snap || zA <= -snap)) { zA = zA > 0 ? zLim : -zLim; snapped = true; }
+    } else if (kp === 1) {
       const kz = F[K_Z]!;
-      zA = ASSIST_Z - kz >= kz + ASSIST_Z ? ASSIST_Z : -ASSIST_Z; // the side with more room
-    } else zA = bz > 0 ? -ASSIST_Z : ASSIST_Z; // far post
-    if (zA > ASSIST_Z) zA = ASSIST_Z; else if (zA < -ASSIST_Z) zA = -ASSIST_Z;
+      zA = zLim - kz >= kz + zLim ? zLim : -zLim; // the side with more room
+    } else zA = bz > 0 ? -zLim : zLim; // far post
+    if (zA > zLim) zA = zLim; else if (zA < -zLim) zA = -zLim;
     if (kp === 1) {
       // Out of the keeper's cover (toward the side the aim is on), by at most keeperShiftMax.
       const kz = F[K_Z]!, kc = F[K_C]!;
       const d = zA - kz;
       if (d < kc && d > -kc) {
-        const side = d > 0 ? 1 : d < 0 ? -1 : ASSIST_Z - kz >= kz + ASSIST_Z ? 1 : -1;
+        const side = d > 0 ? 1 : d < 0 ? -1 : zLim - kz >= kz + zLim ? 1 : -1;
         let shift = kz + side * kc - zA;
         if (shift > LT.keeperShiftMax) shift = LT.keeperShiftMax; else if (shift < -LT.keeperShiftMax) shift = -LT.keeperShiftMax;
         zA += shift;
       }
     }
   }
-  if (zA > ASSIST_Z) zA = ASSIST_Z; else if (zA < -ASSIST_Z) zA = -ASSIST_Z;
+  if (zA > zLim) zA = zLim; else if (zA < -zLim) zA = -zLim;
   F[A_X] = gx;
-  F[A_Z] = zM + (zA - zM) * A;
+  if (snapped) {
+    // [FEEL-2 round 2] Placed toward the corner from the stick's own ray (kept inside zLim, so a stick right in the
+    // corner does not send it wide) by the room the keeper leaves him (placedRoom, D-037): the exact corner from any stick
+    // 1.2 m off centre, the keeper rushing out at him, made the finesse from a short run a near-certain goal.
+    const zc = zM > zLim ? zLim : zM < -zLim ? -zLim : zM;
+    const room = placedRoom(s, p.team, bx, bz);
+    F[A_Z] = zc + (zA - zc) * (placed ? room : T_FEEL2.trivelaRoomMin + (1 - T_FEEL2.trivelaRoomMin) * room);
+  } else F[A_Z] = zM + (zA - zM) * A;
   F[A_Y] = aimHeight(kind, clamp01(power));
   F[A_END] = end;
   F[A_STR] = A;
@@ -434,8 +478,9 @@ export function shotSpeedFor(s: SimState, slot: number, kind: KickKind, power: n
   const lo = T_SHOT.speedMin, hi = T_SHOT.speedMax;
   let v: number;
   switch (kind) {
-    case KickKind.SHOT_FINESSE: v = (lo + (hi - lo) * pw) * T_SHOT.finesseSpeedMul; break;
-    case KickKind.SHOT_TRIVELA: v = (lo + (hi - lo) * pw) * T_FEEL.trivelaSpeedMul; break;
+    // [FEEL-2] A human's finesse / trivela (T_FEEL2.human*, D-034); the CPU's keep the calibrated pace.
+    case KickKind.SHOT_FINESSE: v = (lo + (hi - lo) * pw) * (humanOpenPlay(s, slot) ? T_FEEL2.humanFinesseSpeedMul : T_SHOT.finesseSpeedMul); break;
+    case KickKind.SHOT_TRIVELA: v = (lo + (hi - lo) * pw) * (humanOpenPlay(s, slot) ? T_FEEL2.humanTrivelaSpeedMul : T_FEEL.trivelaSpeedMul); break;
     case KickKind.SHOT_CHIP: v = (lo + (hi - lo) * pw) * T_SHOT.chipSpeedMul; break;
     case KickKind.SHOT_POWER: v = LT.powerShotMinSpeed + (T_SHOT.powerShotMax - LT.powerShotMinSpeed) * pw; break;
     case KickKind.SHOT_LOW_DRIVEN: v = LT.lowDrivenMinSpeed + (hi - LT.lowDrivenMinSpeed) * pw; break;
@@ -483,12 +528,15 @@ function shotAccuracy(s: SimState, slot: number, kind: KickKind, dist: number): 
   return attr01(v);
 }
 
-function kindErrMul(kind: KickKind): number {
+function kindErrMul(kind: KickKind, human: boolean, inv: number): number {
   switch (kind) {
     case KickKind.SHOT_FINESSE: return LT.errMulFinesse;
-    case KickKind.SHOT_TRIVELA: return T_FEEL.trivelaErrMul;
+    // [FEEL-2] A human's trivela errs more the poorer his accuracy (inv = 1 - accuracy: about a normal shot's error for
+    // a top finisher, far more for a poor one), his power shot more (T_FEEL2, D-034 / D-036); the CPU's keep the
+    // calibrated error.
+    case KickKind.SHOT_TRIVELA: return human ? T_FEEL2.humanTrivelaErrMul + T_FEEL2.humanTrivelaErrSlope * clamp01(inv) : T_FEEL.trivelaErrMul;
     case KickKind.SHOT_CHIP: return LT.errMulChip;
-    case KickKind.SHOT_POWER: return LT.errMulPower;
+    case KickKind.SHOT_POWER: return human ? T_FEEL2.humanPowerErrMul : LT.errMulPower;
     case KickKind.SHOT_LOW_DRIVEN: return LT.errMulLowDriven;
     case KickKind.PENALTY: return LT.errMulPenalty;
     case KickKind.FREE_KICK_SHOT: return LT.errMulFreeKick;
@@ -507,7 +555,7 @@ export function shotErrorSigma(s: SimState, slot: number, kind: KickKind, power:
   const b = s.ball;
   const inv = 1 - shotAccuracy(s, slot, kind, fin(dist));
   let sigma = T_SHOT.errorMin + (T_SHOT.errorMax - T_SHOT.errorMin) * LT.errBaseShare * dpow(clamp01(inv), LT.errExp);
-  sigma *= kindErrMul(kind);
+  sigma *= kindErrMul(kind, humanOpenPlay(s, slot), inv);
   const pw = clamp01(fin(power));
   if (pw > KNEE) sigma *= 1 + LT.powerErrMul * (pw - KNEE) / (1 - KNEE);
   const ax = fin(dirX), az = fin(dirZ);
@@ -709,14 +757,20 @@ function solveChipSpeed(): number {
 /** Curl (sy) and backspin of a shot into F[T_CURL] / F[T_BACK]; zAim / dxEnd = aim z and the x sign of travel. */
 function spinInto(s: SimState, slot: number, kind: KickKind, curve: number, flags: number, zAim: number, ux: number): void {
   const a = s.attrs[slot]!;
-  const cm = LT.curveMulMin + (LT.curveMulMax - LT.curveMulMin) * attr01(a.curve);
+  let cm = LT.curveMulMin + (LT.curveMulMax - LT.curveMulMin) * attr01(a.curve);
+  // [FEEL-2 round 2] A human's curled shot closed down by the keeper has less curl (placedRoom, D-037): a full curl
+  // round a keeper rushing out from 8 m nearly always went in. From range (the flights FEEL-1 / FEEL-2 pin) full curl.
+  if ((kind === KickKind.SHOT_FINESSE || kind === KickKind.SHOT_TRIVELA) && humanOpenPlay(s, slot)) {
+    const room = placedRoom(s, s.players[slot]!.team, F[A_BX]!, F[A_BZ]!);
+    cm *= kind === KickKind.SHOT_FINESSE ? room : T_FEEL2.trivelaRoomMin + (1 - T_FEEL2.trivelaRoomMin) * room;
+  }
   const cv = fin(curve);
   const hasCurve = cv >= LT.curveDead || cv <= -LT.curveDead;
   let right = 0; // curl toward the right of travel, rad/s
   let back = 0;
   switch (kind) {
     case KickKind.SHOT_FINESSE: {
-      const mag = T_SHOT.finesseSpin * cm;
+      const mag = (humanOpenPlay(s, slot) ? T_FEEL2.humanFinesseSpin : T_SHOT.finesseSpin) * cm;
       if (hasCurve) {
         const ac = cv < 0 ? -cv : cv;
         right = (cv > 0 ? 1 : -1) * mag * (LT.finesseSwipeMin + (1 - LT.finesseSwipeMin) * (ac < 1 ? ac : 1));
@@ -732,7 +786,7 @@ function spinInto(s: SimState, slot: number, kind: KickKind, curve: number, flag
       // [FEEL-1] Outside of the foot: always the other way to a finesse shot from the same spot. Off-centre aim: it
       // starts inside the post and bends OUT into the corner (the finesse starts outside and bends back in); central:
       // the outside of his foot's way (a right-footer bends it right). A request curl (curved swipe) sets the side.
-      const mag = T_FEEL.trivelaSpin * cm;
+      const mag = (humanOpenPlay(s, slot) ? T_FEEL2.humanTrivelaSpin : T_FEEL.trivelaSpin) * cm;
       if (hasCurve) right = (cv > 0 ? 1 : -1) * mag;
       else if (zAim > LT.finesseCentreBand || zAim < -LT.finesseCentreBand) right = ((zAim > 0 ? 1 : -1) * (ux >= 0 ? 1 : -1)) * mag;
       else right = (a.foot === Foot.LEFT ? -1 : 1) * mag;
