@@ -318,6 +318,22 @@ function keeperProj(s: SimState, team: number, bx: number, bz: number, gx: numbe
   return 1;
 }
 
+/**
+ * [FEEL-2 round 2] A human's placed shot (finesse, trivela) closed down by the keeper (D-037): 0..1, 1 with the defending
+ * keeper T_FEEL2.placedKeeperFar m or more from the ball (b), 0 at placedKeeperNear m or nearer. Scales the shot's
+ * placement toward the corner (aimInto) and its curl (spinInto): with the keeper on top of him there is no room to wrap
+ * the ball round him, and he side-foots it where the stick points.
+ */
+function placedRoom(s: SimState, team: number, bx: number, bz: number): number {
+  const k = s.teams[team === 0 ? 1 : 0]!.keeperSlot;
+  if (!validSlot(k)) return 1;
+  const q = s.players[k]!;
+  if (q.active !== 1) return 1;
+  const dx = q.x - bx, dz = q.z - bz;
+  const F2 = T_FEEL2;
+  return clamp01((Math.sqrt(dx * dx + dz * dz) - F2.placedKeeperNear) / (F2.placedKeeperFar - F2.placedKeeperNear));
+}
+
 /** Height of the aim at the goal line for kind and power (0..1), m. */
 function aimHeight(kind: KickKind, power: number): number {
   switch (kind) {
@@ -383,8 +399,9 @@ function aimInto(
   let zM: number, zA: number;
   // [FEEL-2] A human's finesse is the placed shot: its assisted aim may go nearer the post (T_FEEL2.finesseInset) and a
   // stick toward a corner places it there (finesseSnapFrom); his trivela likewise at trivelaInset (trivelaSnapFrom).
-  // A placed shot goes where it is placed: the raw stick ray is not blended back in (a stick pushed right into the
-  // corner sent the finesse wide). Explicit targets, set pieces and the CPU's shots are unchanged (D-034, D-036).
+  // The assist strength's blend is not used for it (a stick pushed right into the corner sent the finesse wide): it goes
+  // from the stick's ray toward the placed corner by the keeper's room (placedRoom, D-037). Explicit targets, set pieces
+  // and the CPU's shots are unchanged (D-034, D-036).
   const human = !explicit && humanOpenPlay(s, slot);
   const placed = human && kind === KickKind.SHOT_FINESSE;
   const placedT = human && kind === KickKind.SHOT_TRIVELA;
@@ -421,7 +438,14 @@ function aimInto(
   }
   if (zA > zLim) zA = zLim; else if (zA < -zLim) zA = -zLim;
   F[A_X] = gx;
-  F[A_Z] = snapped ? zA : zM + (zA - zM) * A;
+  if (snapped) {
+    // [FEEL-2 round 2] Placed toward the corner from the stick's own ray (kept inside zLim, so a stick right in the
+    // corner does not send it wide) by the room the keeper leaves him (placedRoom, D-037): the exact corner from any stick
+    // 1.2 m off centre, the keeper rushing out at him, made the finesse from a short run a near-certain goal.
+    const zc = zM > zLim ? zLim : zM < -zLim ? -zLim : zM;
+    const room = placedRoom(s, p.team, bx, bz);
+    F[A_Z] = zc + (zA - zc) * (placed ? room : T_FEEL2.trivelaRoomMin + (1 - T_FEEL2.trivelaRoomMin) * room);
+  } else F[A_Z] = zM + (zA - zM) * A;
   F[A_Y] = aimHeight(kind, clamp01(power));
   F[A_END] = end;
   F[A_STR] = A;
@@ -733,7 +757,13 @@ function solveChipSpeed(): number {
 /** Curl (sy) and backspin of a shot into F[T_CURL] / F[T_BACK]; zAim / dxEnd = aim z and the x sign of travel. */
 function spinInto(s: SimState, slot: number, kind: KickKind, curve: number, flags: number, zAim: number, ux: number): void {
   const a = s.attrs[slot]!;
-  const cm = LT.curveMulMin + (LT.curveMulMax - LT.curveMulMin) * attr01(a.curve);
+  let cm = LT.curveMulMin + (LT.curveMulMax - LT.curveMulMin) * attr01(a.curve);
+  // [FEEL-2 round 2] A human's curled shot closed down by the keeper has less curl (placedRoom, D-037): a full curl
+  // round a keeper rushing out from 8 m nearly always went in. From range (the flights FEEL-1 / FEEL-2 pin) full curl.
+  if ((kind === KickKind.SHOT_FINESSE || kind === KickKind.SHOT_TRIVELA) && humanOpenPlay(s, slot)) {
+    const room = placedRoom(s, s.players[slot]!.team, F[A_BX]!, F[A_BZ]!);
+    cm *= kind === KickKind.SHOT_FINESSE ? room : T_FEEL2.trivelaRoomMin + (1 - T_FEEL2.trivelaRoomMin) * room;
+  }
   const cv = fin(curve);
   const hasCurve = cv >= LT.curveDead || cv <= -LT.curveDead;
   let right = 0; // curl toward the right of travel, rad/s

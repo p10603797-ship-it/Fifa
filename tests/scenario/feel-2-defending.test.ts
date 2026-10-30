@@ -19,7 +19,8 @@ function grid(lv: Difficulty): GridSummary {
 }
 
 describe('FEEL-2: a side step against a CPU defender scales with the difficulty (multi-geometry grid)', () => {
-  // Measured (beaten): 81.3 / 89.8 / 80.5 / 56.4 / 39.9 / 37.2% (cc2c605: 67 / 61 / 48 / 47 / 43 / 46%; the first
+  // Measured (beaten): 81.3 / 89.8 / 80.5 / 53.2 / 41.8 / 38.7% (D-038 sold chances; D-035: 81.3 / 89.8 / 80.5 / 56.4 /
+  // 39.9 / 37.2%; cc2c605: 67 / 61 / 48 / 47 / 43 / 46%; the first
   // FEEL-2 commit: 65 / 56 / 57 / 58 / 60 / 60% with escorts). Beginner sits under Amateur: his 100-tick reaction delay
   // keeps him out of the duel in most scenes (he stands, and a standing body still blocks some steps).
   const bands: [Difficulty, number, number][] = [
@@ -38,7 +39,7 @@ describe('FEEL-2: a side step against a CPU defender scales with the difficulty 
       console.log(`FEEL-2 grid ${Difficulty[lv]}: beaten ${(100 * beat).toFixed(1)}% ${JSON.stringify(g)}`);
       expect(beat).toBeGreaterThanOrEqual(lo);
       expect(beat).toBeLessThanOrEqual(hi);
-      // Fouls 3 / 0 / 2 / 2 / 14 / 8 in 972 (cc2c605: 67 / 80 / 123 / 70 / 34 / 38; the first FEEL-2 commit up to 135,
+      // Fouls 3 / 0 / 2 / 4 / 14 / 8 in 972 (D-035 3 / 0 / 2 / 2 / 14 / 8; cc2c605: 67 / 80 / 123 / 70 / 34 / 38; the first FEEL-2 commit up to 135,
       // with reds and penalties from the shoulder challenge). No penalty, at most 2 red cards (DOGSO on an empty pitch).
       expect(g.fouls).toBeLessThanOrEqual(20);
       expect(g.pens).toBe(0);
@@ -59,4 +60,36 @@ describe('FEEL-2: a side step against a CPU defender scales with the difficulty 
     expect(RATE[Difficulty.PROFESSIONAL]!).toBeLessThan(RATE[Difficulty.SEMI_PRO]!);
     expect(RATE[Difficulty.SEMI_PRO]!).toBeLessThan(RATE[Difficulty.AMATEUR]!);
   }, 600_000);
+});
+
+/**
+ * [FEEL-2 round 2] A short side step (25 ticks of lateral stick, then straight on at goal), the FEEL-2 skeptics' round-2
+ * shape, on the same grid (972 scenes a level): D-035's bands held only for a step held while the dribbler closed
+ * (their own grid: Amateur 72%, Legend 24%). Legend's sold chance 0.04 -> 0.06 (World Class 0.12 -> 0.14, Professional
+ * 0.3 -> 0.28) puts Legend in its band for both shapes. Beginner is left out of this row: his 100-tick reaction delay
+ * keeps him standing, and a dribbler who steps for 0.4 s and then turns back at goal runs into him (64%).
+ */
+describe('FEEL-2 round 2: a short side step (25 ticks, then straight on)', () => {
+  const SHORT: GridSummary[] = [];
+  const short = (lv: Difficulty): GridSummary => (SHORT[lv] ??= sideStepGrid(lv, { stepTicks: 25 }));
+  // Measured (beaten): Amateur 92.0, Semi-Pro 82.4, Professional 51.3, World Class 35.3, Legend 31.0% (D-035's
+  // values: 92.0 / 82.3 / 54.2 / 32.7 / 28.2%).
+  const bands: [Difficulty, number, number][] = [
+    [Difficulty.AMATEUR, 0.8, 1],
+    [Difficulty.PROFESSIONAL, 0.45, 0.65],
+    [Difficulty.LEGEND, 0.29, 0.45],
+  ];
+  for (const [lv, lo, hi] of bands) {
+    it(`level ${Difficulty[lv]}: beaten ${Math.round(lo * 100)}-${Math.round(hi * 100)}%, no fouls spike, no penalty`, () => {
+      const g = short(lv);
+      const beat = g.beat / g.n;
+      console.log(`FEEL-2 short-step grid ${Difficulty[lv]}: beaten ${(100 * beat).toFixed(1)}% ${JSON.stringify(g)}`);
+      expect(beat).toBeGreaterThanOrEqual(lo);
+      expect(beat).toBeLessThanOrEqual(hi);
+      expect(g.fouls).toBeLessThanOrEqual(20);
+      expect(g.pens).toBe(0);
+      expect(g.minSep).toBeGreaterThan(0.68);
+      expect(g.maxJump).toBeLessThan(0.17);
+    }, 300_000);
+  }
 });

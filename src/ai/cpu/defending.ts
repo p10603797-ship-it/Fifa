@@ -71,7 +71,9 @@
  *       diagonal) is one deterministic draw (noise01, state in brain p1..p3): sold (T_FEEL2.duelSoldChance by level x
  *       the dribbler's dribbling / agility) he is wrong-footed for duelSoldTicks (goes the wrong way, no challenge, no
  *       chase), else he reads it for duelReadTicks (sprint-jockeys to where the ball crosses his line, stepping in by
- *       level) and may make the read tackle on the unexposed ball. Against a human every standing challenge is
+ *       level) and may make the read tackle on the unexposed ball (D-038: never as the last man within the DOGSO
+ *       distance; the window belongs to the defender who drew it, a cover defender the CPU switches to starts fresh).
+ *       Against a human every standing challenge is
  *       never from behind (duelMaxBehind); in the duel also never with the bodies meeting by mid-contact nor at a
  *       reckless closing speed (unless the ball is well clear), and no slide. Level or ahead and alongside a human
  *       running at pace, Professional up make the shoulder challenge (never from behind, never in our own area, never
@@ -163,8 +165,10 @@ export const CH_SHOULDER = 9, CH_READ = 10;
 /** [FEEL-2] The duel with a human dribbler this tick (duelState): 0 none, DUEL_SOLD, DUEL_READ; DUEL_DEBUG mirrors it
  *  per team for tests and probes (debug only, never read by the sim). */
 export const DUEL_SOLD = 1, DUEL_READ = 2;
-export const DUEL_DEBUG = { st0: 0, st1: 0, moves0: 0, moves1: 0 };
+export const DUEL_DEBUG = { st0: 0, st1: 0, moves0: 0, moves1: 0, sl0: -1, sl1: -1 };
 let duelSt = 0, duelDir = 0, duelEng = 0;
+/** [FEEL-2 round 2] brain.p3 packing of the duel window: until x DUEL_UNTIL_MUL + slot x 2 + side (slot < 32). */
+const DUEL_UNTIL_MUL = 64, DUEL_SLOT_MASK = 31;
 
 // ---------------------------------------------------------------- small helpers
 
@@ -560,9 +564,10 @@ function chooseDefender(
 
 /**
  * Through on goal: carrier within maxDist of our goal centre, not at a tight angle, not running away from goal, and no
- * outfield teammate covering the channel between him and the goal.
+ * outfield teammate covering the channel between him and the goal ([FEEL-2 round 2] other than `except`: with the
+ * challenger himself left out, "he is the last man", a foul by him would deny an obvious goal-scoring chance).
  */
-export function throughOnGoal(s: SimState, team: number, q: Readonly<PlayerState>, maxDist: number): boolean {
+export function throughOnGoal(s: SimState, team: number, q: Readonly<PlayerState>, maxDist: number, except = -1): boolean {
   const dir = s.teams[team]!.dir;
   const gx = -dir * HALF_LENGTH - q.x, gz = -q.z;
   const dGoal = Math.sqrt(gx * gx + gz * gz);
@@ -573,7 +578,7 @@ export function throughOnGoal(s: SimState, team: number, q: Readonly<PlayerState
   const first = teamFirstSlot(team);
   for (let i = first; i < first + PLAYERS_PER_TEAM; i++) {
     const c = s.players[i]!;
-    if (c.active !== 1 || c.isKeeper === 1) continue;
+    if (c.active !== 1 || c.isKeeper === 1 || i === except) continue;
     const rx = c.x - q.x, rz = c.z - q.z;
     const along = rx * ux + rz * uz;
     if (along <= 0 || along >= dGoal) continue;
@@ -662,15 +667,17 @@ function blockPlan(s: SimState, dir: number, p: Readonly<PlayerState>, q: Readon
  * (carrier.ts resets p1..p3 on any gap, setpieces.ts per restart): p1 = tick of the last engaged call (-1 once disengaged
  * with no window open; a gap re-initialises, and nothing is written until he engages),
  * p2 = the carrier's lateral velocity reference (m/s across g; follows a steady run at duelLatTrack per tick, so a
- * constant diagonal is no move), p3 = the open window: +(until x 2 + side) sold, -(until x 2 + side) read, 0 none
- * (side bit 1 = the step went +n, n = (-gz, gx)). A move is the lateral velocity changing by duelStepDelta from the
- * reference while engaged (goal-side within duelEngageDist, the carrier approaching at duelApproachSpeed); none is
- * looked for while a window is open, and a window is void once the ball has changed hands since it opened. Sets duelSt
- * (0, DUEL_SOLD, DUEL_READ) and duelDir (+1 / -1).
+ * constant diagonal is no move), p3 = the open window: +(until x 64 + slot x 2 + side) sold, -(...) read, 0 none
+ * (side bit 1 = the step went +n, n = (-gz, gx); slot = the defender who faced the step). A move is the lateral velocity
+ * changing by duelStepDelta from the reference while engaged (goal-side within duelEngageDist, the carrier approaching
+ * at duelApproachSpeed); none is looked for while a window is open, and a window is void once the ball has changed hands
+ * since it opened, or once the team's controlled defender is not the one who drew it ([FEEL-2 round 2, D-038] a cover
+ * defender the CPU switches to inherited "sold" for a step he never faced: no challenge right next to the dribbler).
+ * Sets duelSt (0, DUEL_SOLD, DUEL_READ) and duelDir (+1 / -1).
  */
 function duelState(
-  s: SimState, team: number, brain: CpuBrainState, q: Readonly<PlayerState>, gx: number, gz: number, cosG: number,
-  d: number,
+  s: SimState, team: number, brain: CpuBrainState, slot: number, q: Readonly<PlayerState>, gx: number, gz: number,
+  cosG: number, d: number,
 ): void {
   const F = T_FEEL2;
   duelSt = 0; duelDir = 0;
@@ -686,9 +693,9 @@ function duelState(
   const w = brain.p3;
   if (w !== 0) {
     const aw = w < 0 ? -w : w;
-    const until = Math.floor(aw / 2);
+    const until = Math.floor(aw / DUEL_UNTIL_MUL);
     const opened = until - (w > 0 ? F.duelSoldTicks : F.duelReadTicks);
-    if (t < until && t - s.ball.ownerT <= opened) {
+    if (t < until && t - s.ball.ownerT <= opened && ((aw >> 1) & DUEL_SLOT_MASK) === slot) {
       duelSt = w > 0 ? DUEL_SOLD : DUEL_READ;
       duelDir = (aw & 1) === 1 ? 1 : -1;
       // Sold: wrong-footed whichever way he goes on (a second step back is no rescue), until he is past or the window
@@ -715,7 +722,7 @@ function duelState(
   duelSt = sold ? DUEL_SOLD : DUEL_READ;
   duelDir = dl > 0 ? 1 : -1;
   const until = t + (sold ? F.duelSoldTicks : F.duelReadTicks);
-  brain.p3 = (sold ? 1 : -1) * (until * 2 + (duelDir > 0 ? 1 : 0));
+  brain.p3 = (sold ? 1 : -1) * (until * DUEL_UNTIL_MUL + slot * 2 + (duelDir > 0 ? 1 : 0));
   if (team === 0) DUEL_DEBUG.moves0++; else DUEL_DEBUG.moves1++;
 }
 
@@ -905,11 +912,11 @@ function defendCarrier(
   if (w > 0 && !hold) wantSprint = 1;
   // [FEEL-2] The duel with a human dribbler (duelState, D-035): sold by his side step, the defender leans the wrong way
   // (no challenge); reading it, he goes for where the ball crosses his line and may make the read tackle.
-  if (humanQ && !hold && s.match.phase === MatchPhase.IN_PLAY) duelState(s, team, brain, q, gx, gz, cosG, d);
+  if (humanQ && !hold && s.match.phase === MatchPhase.IN_PLAY) duelState(s, team, brain, slot, q, gx, gz, cosG, d);
   else { duelSt = 0; duelEng = 0; }
   // The duel context (coming at him, or a side step being played out): every challenge on the human is made safe there.
   const duelCtx = duelSt !== 0 || duelEng === 1;
-  if (team === 0) DUEL_DEBUG.st0 = duelSt; else DUEL_DEBUG.st1 = duelSt;
+  if (team === 0) { DUEL_DEBUG.st0 = duelSt; DUEL_DEBUG.sl0 = slot; } else { DUEL_DEBUG.st1 = duelSt; DUEL_DEBUG.sl1 = slot; }
   if (duelSt !== 0) {
     const b0 = s.ball;
     const nx = -gz, nz = gx;
@@ -1015,9 +1022,11 @@ function defendCarrier(
   const kind = tackleKind(s, p, carrier);
   // [FEEL-2] Reading a human dribbler's side step: the read tackle on his (unexposed) ball as it passes, ball-first and
   // never at a reckless closing speed (readTackleOk); in our own area with the box care of a careful tackle.
+  // [FEEL-2 round 2] Not as the last man within dogsoMaxGoalDist (a foul would be a straight red: Legend 4 reds in 72
+  // scenes 28 m out on the skeptics' grid); he keeps reading the step instead (D-038).
   if (duelSt === DUEL_READ && kind === ActionKind.STAND_TACKLE &&
     readTackleOk(s, p, q, levelValue(s, team, T_FEEL2.duelReadReach)) && lungePresented(s, p, q, L.blockPokeMargin) &&
-    (!inBox || boxClear(s, p, q))) {
+    (!inBox || boxClear(s, p, q)) && !throughOnGoal(s, team, q, T_FOUL_CALL.dogsoMaxGoalDist, slot)) {
     why(team, CH_READ); pressTackle(brain, lv); return;
   }
   // [FEEL-2] Level (or ahead) and alongside a human dribbler, the shoulder challenge (no exposed ball needed; SIM-14 makes

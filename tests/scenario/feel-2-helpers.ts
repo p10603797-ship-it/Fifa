@@ -11,12 +11,12 @@
  * after the dribbler got past his defender, or still on the ball at the end with the defender not in front of him (an
  * escort counts as a beat).
  */
-import { AssistLevel, AutoSwitch, Difficulty, MatchPhase } from '../../src/contracts/enums';
+import { AssistLevel, AutoSwitch, Difficulty, KickKind, MatchPhase } from '../../src/contracts/enums';
 import { EventType } from '../../src/contracts/events';
 import { Btn, type InputFrame } from '../../src/contracts/input';
 import type { SimState } from '../../src/contracts/state';
 import { T_PLAYER } from '../../src/contracts/tuning';
-import { DEFEND_DEBUG, DUEL_DEBUG } from '../../src/ai/cpu/defending';
+import { DEFEND_DEBUG, DUEL_DEBUG, DUEL_SOLD } from '../../src/ai/cpu/defending';
 import { makeScenario, runTicks } from '../harness/scenario';
 
 export const HS = 9;
@@ -67,6 +67,10 @@ export interface DuelCase {
   mag: number; at: number;
   /** Override the dribbler's dribbling / ballControl / agility (1..99). */
   skill?: number;
+  /** [FEEL-2 round 2] Leave both teams in place (no parking): the CPU may switch to a cover defender mid-duel. */
+  full?: boolean;
+  /** [FEEL-2 round 2] Side-step length, ticks (then straight on at goal); undefined = held to the end. */
+  stepTicks?: number;
 }
 
 export interface DuelResult {
@@ -76,12 +80,15 @@ export interface DuelResult {
   escort: number;
   /** Closest centre distance dribbler - defender (m) and largest one-tick jump of the defender in play (m). */
   minSep: number; maxJump: number;
+  /** [FEEL-2 round 2] Ticks the CPU's controlled defender was "sold" (DUEL_SOLD), and of those the ticks on a defender
+   *  other than the one who drew the window (a cover defender inheriting a feint he never faced). */
+  soldTicks: number; inheritedSold: number;
 }
 
 /** One duel scene (see the file header). */
 export function duel(c: DuelCase): DuelResult {
   const s = humanScene(c.level, c.seed, c.att);
-  parkAll(s, [c.att, c.def]);
+  if (c.full !== true) parkAll(s, [c.att, c.def]);
   let gx = GOAL_X - c.x0, gz = -c.z0;
   const gl = Math.hypot(gx, gz); gx /= gl; gz /= gl;
   const nx = -gz, nz = gx;
@@ -92,8 +99,10 @@ export function duel(c: DuelCase): DuelResult {
   d.x = c.x0 + gx * c.gap + nx * c.lat; d.z = c.z0 + gz * c.gap + nz * c.lat; d.vx = 0; d.vz = 0; d.fx = -gx; d.fz = -gz;
   const bx = c.x0 + gx * 0.5, bz = c.z0 + gz * 0.5;
   Object.assign(s.ball, { x: bx, y: 0.11, z: bz, px: bx, py: 0.11, pz: bz, vx: 0, vy: 0, vz: 0, owner: c.att, lastTouch: c.att, lastTouchTeam: 0, heldBy: -1 });
-  const r: DuelResult = { res: 'none', fouls: 0, cards: 0, reds: 0, pens: 0, escort: 0, minSep: 9, maxJump: 0 };
+  const r: DuelResult = { res: 'none', fouls: 0, cards: 0, reds: 0, pens: 0, escort: 0, minSep: 9, maxJump: 0, soldTicks: 0, inheritedSold: 0 };
   let escRun = 0, startT = -1, sideSign = 0, ox = d.x, oz = d.z, past = false;
+  let moves = DUEL_DEBUG.moves1, drew = -1;
+  DUEL_DEBUG.st1 = 0; DUEL_DEBUG.sl1 = -1;
   const dist = (x: number, z: number): number => Math.hypot(GOAL_X - x, z);
   runTicks(s, 420, (_t, st, out) => {
     const f = out[0]!; const q = st.players[c.att]!; const dd = st.players[c.def]!;
@@ -102,7 +111,8 @@ export function duel(c: DuelCase): DuelResult {
     const along = (dd.x - q.x) * ux + (dd.z - q.z) * uz;
     const latD = (dd.x - q.x) * vx + (dd.z - q.z) * vz;
     let side = 0;
-    if (c.move !== 'straight' && along < c.at && along > -1) {
+    if (c.move !== 'straight' && (along < c.at && along > -1 || startT >= 0 && c.stepTicks !== undefined) &&
+      !(startT >= 0 && c.stepTicks !== undefined && st.tick - startT >= c.stepTicks)) {
       if (startT < 0) { startT = st.tick; sideSign = latD >= 0 ? -1 : 1; }
       const el = st.tick - startT;
       if (c.move === 'away') side = latD >= 0 ? -1 : 1;
@@ -120,6 +130,8 @@ export function duel(c: DuelCase): DuelResult {
         if (e.type === EventType.FOUL) { foul = true; r.fouls++; if (e.d === 1) r.pens++; }
         if (e.type === EventType.CARD) { r.cards++; if (e.b === 2 || e.b === 3) r.reds++; }
       }
+      if (DUEL_DEBUG.moves1 !== moves) { moves = DUEL_DEBUG.moves1; if (DUEL_DEBUG.st1 === DUEL_SOLD) drew = DUEL_DEBUG.sl1; }
+      if (DUEL_DEBUG.st1 === DUEL_SOLD) { r.soldTicks++; if (DUEL_DEBUG.sl1 !== drew) r.inheritedSold++; }
       const q = st.players[c.att]!, dd = st.players[c.def]!;
       const sep = Math.hypot(q.x - dd.x, q.z - dd.z);
       if (sep < r.minSep) r.minSep = sep;
@@ -164,6 +176,8 @@ export const SETUPS: Readonly<Record<string, readonly Setup[]>> = {
 export interface GridOpts {
   seeds?: readonly number[]; lats?: readonly number[]; ats?: readonly number[]; styles?: readonly Style[];
   scens?: readonly string[]; skill?: number;
+  /** [FEEL-2 round 2] Side-step length, ticks, then straight on at goal (undefined: held while he closes). */
+  stepTicks?: number;
 }
 
 export interface GridSummary {
@@ -179,7 +193,7 @@ export function sideStepGrid(level: Difficulty, o: GridOpts = {}): GridSummary {
     const moves: Move[] = sc === 'fb' ? ['cutin', 'line', 'double'] : ['away', 'double', 'plus'];
     for (const style of o.styles ?? ['r1', 'sprint']) for (const b of SETUPS[sc]!) for (const seed of o.seeds ?? [21, 22, 23]) {
       for (const lat of o.lats ?? [-1, 0.7, 2]) for (const move of moves) for (const at of o.ats ?? [4.5, 7]) {
-        const r = duel({ ...b, level, seed, style, lat, move, mag: 0.6, at, skill: o.skill });
+        const r = duel({ ...b, level, seed, style, lat, move, mag: 0.6, at, skill: o.skill, stepTicks: o.stepTicks });
         g.n++;
         if (r.res === 'beat') g.beat++; else if (r.res === 'lost') g.lost++; else if (r.res === 'foul') g.foul++;
         g.fouls += r.fouls; g.cards += r.cards; g.reds += r.reds; g.pens += r.pens;
@@ -187,6 +201,23 @@ export function sideStepGrid(level: Difficulty, o: GridOpts = {}): GridSummary {
         if (r.minSep < g.minSep) g.minSep = r.minSep;
         if (r.maxJump > g.maxJump) g.maxJump = r.maxJump;
       }
+    }
+  }
+  return g;
+}
+
+/** [FEEL-2 round 2] Side steps with both teams left in place (no parking): the CPU switches to a cover defender in
+ *  some of them. Central setups (cb, box, mid), away / double / plus, R1 and sprint, three lateral offsets, from 4.5 m. */
+export interface FullSummary { n: number; beat: number; lost: number; fouls: number; soldTicks: number; inheritedSold: number; inheritedScenes: number }
+export function fullTeamSideSteps(level: Difficulty, seeds: readonly number[] = [31, 32]): FullSummary {
+  const g: FullSummary = { n: 0, beat: 0, lost: 0, fouls: 0, soldTicks: 0, inheritedSold: 0, inheritedScenes: 0 };
+  for (const sc of ['cb', 'box', 'mid']) for (const b of SETUPS[sc]!) for (const style of ['r1', 'sprint'] as const) {
+    for (const seed of seeds) for (const lat of [-1, 0.7, 2]) for (const move of ['away', 'double', 'plus'] as const) {
+      const r = duel({ ...b, level, seed, style, lat, move, mag: 0.6, at: 4.5, full: true });
+      g.n++;
+      if (r.res === 'beat') g.beat++; else if (r.res === 'lost') g.lost++;
+      g.fouls += r.fouls; g.soldTicks += r.soldTicks; g.inheritedSold += r.inheritedSold;
+      if (r.inheritedSold > 0) g.inheritedScenes++;
     }
   }
   return g;
@@ -369,30 +400,37 @@ export const HOLDS_B: readonly number[] = [22, 36];
  * Shot from (x, z) aiming at goal-line z = aimZ against the CPU's (team 1) keeper of `level` in goal, defenders parked.
  * Returns 'goal', 'saved' (keeper touched / held it), 'off' (wide / over / frame).
  */
-export function shotVsKeeper(style: KShot, x: number, z: number, aimZ: number, seed: number, shooter?: number, level = Difficulty.PROFESSIONAL, setKeeper = true, hold = HOLD): 'goal' | 'saved' | 'off' {
+export function shotVsKeeper(style: KShot, x: number, z: number, aimZ: number, seed: number, shooter?: number, level = Difficulty.PROFESSIONAL, setKeeper = true, hold = HOLD, runUp = 0): 'goal' | 'saved' | 'off' {
   const s = humanScene(level, seed, HS);
   parkAll(s, [HS]);
   const p = s.players[HS]!;
-  p.x = x; p.z = z; p.fx = 1; p.fz = 0; p.vx = 0; p.vz = 0;
+  // [FEEL-2 round 2] runUp > 0: he starts runUp m back and R1-dribbles at goal, pressing SHOOT on reaching x (the keeper
+  // reads the run and comes out; the FEEL-2 skeptics' running probe).
+  const sx = x - runUp;
+  p.x = sx; p.z = z; p.fx = 1; p.fz = 0; p.vx = 0; p.vz = 0;
   if (shooter !== undefined) { const a = s.attrs[HS]!; a.finishing = shooter; a.longShots = shooter; a.curve = shooter; a.shotPower = shooter; }
   const k = s.players[11]!;
   if (setKeeper) { k.x = 51.5; k.z = 0; k.vx = 0; k.vz = 0; k.fx = -1; k.fz = 0; }
-  Object.assign(s.ball, { x: x + 0.5, y: 0.11, z, px: x + 0.5, py: 0.11, pz: z, vx: 0, vy: 0, vz: 0, owner: HS, lastTouch: HS, lastTouchTeam: 0 });
-  const adx = GOAL_X - x, adz = aimZ - z;
-  let kicked = false, keeperTouched = false;
+  Object.assign(s.ball, { x: sx + 0.5, y: 0.11, z, px: sx + 0.5, py: 0.11, pz: z, vx: 0, vy: 0, vz: 0, owner: HS, lastTouch: HS, lastTouchTeam: 0 });
+  let kicked = false, keeperTouched = false, pressAt = runUp > 0 ? -1 : 1;
   let out = 'off' as 'goal' | 'saved' | 'off';
-  runTicks(s, 260, (tk, _st, o) => {
+  runTicks(s, 260 + (runUp > 0 ? 120 : 0), (tk, st, o) => {
     const f = o[0]!;
     if (kicked) return;
-    stick(f, adx, adz);
+    const q = st.players[HS]!;
+    if (runUp > 0) stick(f, GOAL_X - q.x, aimZ - q.z); else stick(f, GOAL_X - x, aimZ - z);
+    if (pressAt < 0) {
+      if (q.x < x) { f.buttons |= Btn.MOD_R; return; }
+      pressAt = tk;
+    }
     if (style === 'finesse') f.buttons |= Btn.MOD_R;
     if (style === 'power') f.buttons |= Btn.MOD_R | Btn.MOD_L;
     if (style === 'trivela') f.buttons |= Btn.SHIELD;
-    if (tk - 1 < hold) f.buttons |= Btn.SHOOT;
+    if (tk - pressAt < hold) f.buttons |= Btn.SHOOT;
   }, {
     until: (st, ev) => {
       for (const e of ev) {
-        if (e.type === EventType.KICK && e.a === HS) kicked = true;
+        if (e.type === EventType.KICK && e.a === HS && ((e.b >= KickKind.SHOT_NORMAL && e.b <= KickKind.SHOT_LOW_DRIVEN) || e.b === KickKind.SHOT_TRIVELA)) kicked = true;
         if (e.type === EventType.GOAL) { out = 'goal'; return true; }
         if (kicked && e.type === EventType.SAVE) keeperTouched = true;
       }
@@ -414,6 +452,21 @@ export function shotRate(style: KShot, seeds: readonly number[], shooter?: numbe
   const r = { n: 0, goals: 0, saved: 0, off: 0 };
   for (const [x, z] of SPOTS) for (const aim of AIMS) for (const seed of seeds) {
     const o = shotVsKeeper(style, x, z, aim, seed, shooter, Difficulty.PROFESSIONAL, setKeeper);
+    r.n++;
+    if (o === 'goal') r.goals++; else if (o === 'saved') r.saved++; else r.off++;
+  }
+  return r;
+}
+
+/** [FEEL-2 round 2] Probe R (the FEEL-2 skeptics' round-2 running probe): SPOTS_R at both corners (AIMS_R), struck at
+ *  the end of a 5 m R1 run (SHOOT 26 ticks), the keeper set on his line (he comes out at the runner) or where the
+ *  scenario puts him; `level` keeper. */
+export const SPOTS_R: readonly (readonly [number, number])[] = [...SPOTS, [28, 4], [40, -14]];
+export const AIMS_R: readonly number[] = [2.8, -2.8, 2.0, -2.0];
+export function shotRateRun(style: KShot, seeds: readonly number[], shooter?: number, setKeeper = true, level = Difficulty.PROFESSIONAL, runUp = 5): ShotTally {
+  const r = { n: 0, goals: 0, saved: 0, off: 0 };
+  for (const [x, z] of SPOTS_R) for (const aim of AIMS_R) for (const seed of seeds) {
+    const o = shotVsKeeper(style, x, z, aim, seed, shooter, level, setKeeper, 26, runUp);
     r.n++;
     if (o === 'goal') r.goals++; else if (o === 'saved') r.saved++; else r.off++;
   }

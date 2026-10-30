@@ -6291,8 +6291,10 @@ export const T_FEEL2 = {
   /** Each move gets one deterministic draw (noise01, no RNG stream): sold (wrong-footed, no challenge of any kind) for
    *  duelSoldTicks with this chance by level (x the dribbler factor), else he reads it for duelReadTicks (a new step in
    *  a read window is a new move; none is looked for while sold). [D-035: by level against the FEEL-2 skeptics'
-   *  multi-geometry grid: beaten 81 / 90 / 81 / 56 / 40 / 37%] */
-  duelSoldChance: [0.95, 0.9, 0.6, 0.3, 0.12, 0.04] as readonly number[],
+   *  multi-geometry grid: beaten 81 / 90 / 81 / 56 / 40 / 37%] [D-038: Professional 0.3 -> 0.28, World Class 0.12 ->
+   *  0.14, Legend 0.04 -> 0.06: a short side step (25 ticks, then straight on) beat Legend 24-28% (band 30-45); now 31%
+   *  short, 39% held, Professional 51 / 53%] */
+  duelSoldChance: [0.95, 0.9, 0.6, 0.28, 0.14, 0.06] as readonly number[],
   duelSoldTicks: 50,
   duelReadTicks: 60,
   /** Sold: he goes the wrong way to duelSoldLean m beyond the ball's line on the far side from the dribbler's step (by
@@ -6346,14 +6348,25 @@ export const T_FEEL2 = {
   // ---- shot types (SIM-11 shot.ts; D-034, D-036). A HUMAN-controlled shooter in open play only: penalties, shoot-outs
   // and free kicks (struck in their restart phase), explicit targets and the CPU keep the calibrated T_SHOT / T_FEEL.
   /** Assisted finesse placement (the placed shot): a stick ray at least finesseSnapFrom m off the goal centre places it
-   *  finesseInset m inside that post, exactly (the raw ray is not blended back in). [D-036: 0.35 / 1.8 -> 0.5 / 1.2: at
-   *  0.35 a finesse to the corner went wide 8% of the time; from 1.2 m a stick half-way to the post places it too, so
-   *  the finesse is the best shot at any aim, not only at the implementer's 2.4 / 3.0 m aims] */
+   *  toward finesseInset m inside that post (the raw ray, kept inside that, is the other end: placedRoom below decides
+   *  how far; with full room exactly there). [D-036: 0.35 / 1.8 -> 0.5 / 1.2: at 0.35 a finesse to the corner went
+   *  wide 8% of the time; from 1.2 m a stick half-way to the post places it too, so the finesse is the best shot at any
+   *  aim, not only at the implementer's 2.4 / 3.0 m aims] */
   finesseInset: 0.5,
   finesseSnapFrom: 1.2,
   /** The same for a human's trivela, m (it starts inside and bends out to the placed corner). */
   trivelaSnapFrom: 1.2,
   trivelaInset: 0.45,
+  /** [FEEL-2 round 2] A human's placed shot closed down by the keeper (shot.ts placedRoom, D-037): its placement toward
+   *  the corner (finesseInset / trivelaInset, from the stick's own ray) and its curl scale from 1 with the keeper this
+   *  far from the ball or more ... m. 13: a set keeper from the edge of the box (15-21 m) leaves full room. */
+  placedKeeperFar: 13,
+  /** ... to 0 with him this near or nearer (a straight side-foot where the stick points), m. 7: a keeper rushing out at a
+   *  runner (8 m at the strike) took the finesse from 79% (normal 36%) to 46% (D-037). */
+  placedKeeperNear: 7,
+  /** The trivela keeps this share of its placement and curl with no room (placedRoom 0), 0..1: with the finesse's full
+   *  fade it fell to 27% v 35% for a normal shot from a run; 0.5: 37.9 v 35.4% (D-037). */
+  trivelaRoomMin: 0.5,
   /** A human's finesse: speed x (T_SHOT.finesseSpeedMul 0.78 for the CPU) and curl spin, rad/s (T_SHOT.finesseSpin 11):
    *  still slower than a normal shot (23.4 v 24.1 m/s from 22 m), bending ~4.6 m. [D-036: 0.92 / 13.5 -> 0.97 / 14.2:
    *  the best shot for a good shooter on both probe sets (52.0 v 39.2% for a normal shot, n = 696)] */
@@ -6369,6 +6382,7 @@ export const T_FEEL2 = {
   humanTrivelaErrMul: 0.7,
   humanTrivelaErrSlope: 1.0,
   /** A human's power shot error x (CPU: T_SHOT_KICK.errMulPower 1.1, never used by the CPU in open play): about a
-   *  normal shot's scoring rate, not twice it (52% v 26% against a set keeper), still 30 m/s and straight. */
-  humanPowerErrMul: 3.0,
+   *  normal shot's scoring rate, not twice it (52% v 26% against a set keeper), still 30 m/s and straight. [D-037: 3 ->
+   *  4: it scored normal + 7..12 on the skeptics' probes; now 36.4 v 39.2% (A + B), 33.6 v 35.4% from a run] */
+  humanPowerErrMul: 4.0,
 } as const;

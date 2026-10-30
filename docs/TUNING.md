@@ -2159,7 +2159,7 @@ balance are the FEEL-1 tree's. Measured with scripted pad input through the real
 |---|---|---|---|---|
 | `T_FEEL2` | `duelGoalSideCos`, `duelEngageDist`, `duelApproachSpeed` | (jockey*: 0.5, 6 m, 3 m/s) | 0.5, 7 m, 2.5 m/s | The duel (defendCarrier duelState) engages a goal-side controlled defender within 7 m of a human coming at our goal. The D-033 jockey positioning is gone: the QF-14 / QF-16 positioning stays, the duel overrides it only while a side step is played out. |
 | `T_FEEL2` | `duelStepDelta`, `duelLatTrack` | (jockeyStepLatSpeed 1.2 m/s, a draw every 30 ticks) | 1.6 m/s, 0.08 / tick | A side step is a change of the carrier's lateral velocity by 1.6 m/s from a reference that follows a steady run: a constant diagonal is never a move (0 draws in 324 diagonal scenes; D-033 re-drew every 30 ticks and reversed the defender mid-chase). |
-| `T_FEEL2` | `duelSoldChance` | (jockeySoldChance 0.9 / 0.8 / 0.6 / 0.3 / 0.2 / 0.15) | 0.95 / 0.9 / 0.6 / 0.3 / 0.12 / 0.04 | One draw per move by level (Beginner .. Legend): beaten 81 / 90 / 81 / 56 / 40 / 37% over the grid below. Professional 0.27: 53% (lateral offsets -2 / 0 / 1.3 m and steps from 5 / 8 m: 66% at 0.3); Legend 0.03-0.05 moves it 1-2 points (its beats are mostly read duels lost to the R1 dribbler's second step: R1 52%, sprint 22%). |
+| `T_FEEL2` | `duelSoldChance` | (jockeySoldChance 0.9 / 0.8 / 0.6 / 0.3 / 0.2 / 0.15) | 0.95 / 0.9 / 0.6 / 0.28 / 0.14 / 0.06 (D-038; D-035 0.3 / 0.12 / 0.04 at the top three) | One draw per move by level (Beginner .. Legend): beaten 81 / 90 / 81 / 53 / 42 / 39% over the grid below (D-035: 81 / 90 / 81 / 56 / 40 / 37%). [D-038] A short step (25 ticks, then straight on) beat D-035's Legend 28% on this grid and 24% on the round-2 skeptics' own; now 31 / 27%, Professional 51 / 50%. Professional 0.27: 53% (lateral offsets -2 / 0 / 1.3 m and steps from 5 / 8 m: 66% at 0.3); Legend 0.03-0.05 moves it 1-2 points (its beats are mostly read duels lost to the R1 dribbler's second step: R1 52%, sprint 22%). |
 | `T_FEEL2` | `duelSoldTicks`, `duelSoldLean` | (0.25 s lean) | 50 ticks, 2.2 / 2 / 1.6 / 1.2 / 1.2 / 1.2 m | Sold: wrong-footed for 50 ticks, he goes the wrong way to 1.2-2.2 m beyond the ball's line on the far side from the step (already further: planted), no challenge, no slide, no chase. 24 ticks and ending when he was beaten let him recover and catch the dribbler (Amateur sold scenes 66% beaten); a lean from where he stands ran him 4 m the wrong way (a glitch). |
 | `T_FEEL2` | `duelReadTicks`, `duelReadLeadMax`, `duelReadStepIn` | (jockeyRead 0.3, jockeyLeadMax 0.6 s) | 60 ticks, 0.8 s, 0 / 0 / 0 / 0.2 / 0.3 / 0.4 | Read: he sprint-jockeys to where the ball crosses his line (full lead) and from Professional up steps in (Legend 42 -> 37% beaten); a standoff instead (giving ground) was worse (46%); 30 ticks ended the read before the step reached him. |
 | `T_FEEL2` | `duelReadReach` | (tackleReachFrac 1 .. 0.6) | 0.8 / 0.85 / 0.9 / 0.95 / 1 / 1 | Read tackle on the unexposed ball: within this x standReach at mid-contact, ball-first (lungePresented) and safe (below). |
@@ -2168,11 +2168,13 @@ balance are the FEEL-1 tree's. Measured with scripted pad input through the real
 | `T_FEEL2` | `duelSkillRef`, `duelSkillSlope`, `duelSkillMin` / `Max` | (jockeySkill*) | 75, 0.8, 0.35 / 1.6 | x (1 + 0.8 x (mean(dribbling, agility) - 75) / 50) on the sold chance: a 90-rated dribbler beats Professional / Legend 73 / 44%, a 35-rated one 19 / 9%. |
 | `T_FEEL2` | `shoulderChance`, `shoulderWindow` | 0 / 0 / 0 / 0.5 / 0.6 / 0.75 per 45 ticks | 0 / 0 / 0 / 0.35 / 0.45 / 0.55 per 45 | Level and alongside a human at pace. 134 shoulders in 160 Legend chase scenes before, 26% won. |
 | `T_FEEL2` | `shoulderMaxBehind`, `shoulderMaxClosing`, `shoulderMinSpeed`, `shoulderNoBoxFrom`, `shoulderCooldown` | (0.25 on the press-time geometry) | 0 predicted at the contact, 3 m/s, 6 m/s, Professional, 90 ticks | Never from behind at the contact (33 of 134 Legend shoulders resolved from behind: reds, penalties), not in our own area, not at a carrier through on goal (DOGSO), not at a jogger, then no challenge for 90 ticks. The D-033 run to get alongside (`alongside*`) is gone: the old contain branch capped it, and the defender escorted the dribbler 2-4 s. |
-| `T_FEEL2` | `finesseInset`, `finesseSnapFrom` | 0.35 m, 1.8 m | 0.5 m, 1.2 m | The placed finesse: no longer blended back toward the raw stick ray (at 0.35 a stick in the corner went wide 8-12%); from 1.2 m a stick half-way to the post places it too. |
+| `T_FEEL2` | `finesseInset`, `finesseSnapFrom` | 0.35 m, 1.8 m | 0.5 m, 1.2 m | The placed finesse: no longer blended back toward the raw stick ray (at 0.35 a stick in the corner went wide 8-12%); from 1.2 m a stick half-way to the post places it too. [D-037] How far toward that corner (from the stick's own ray, kept inside it) is the keeper's room below. |
+| `T_FEEL2` | `placedKeeperFar`, `placedKeeperNear` | - (D-036: always the exact corner, full curl) | 13 m, 7 m | [D-037] A human's finesse / trivela closed down by the keeper (shot.ts placedRoom): placement toward the corner and curl x 1 with the keeper 13 m or more from the ball, x 0 at 7 m or nearer (a straight side-foot where the stick points). The exact corner plus full curl round a keeper rushing out at a runner scored 79% v 36% for a normal shot (Legend keeper 50 v 10%). 6 / 13: run 53%; 7 / 14: standing finesse only normal + 6; 8 / 14: normal + 3-4 everywhere. A full-curl / no-placement finesse from a run still scored 58% (curl alone), a distance-to-goal curl scale did not separate the run from standing shots (both 14-21 m). |
+| `T_FEEL2` | `trivelaRoomMin` | - | 0.5 | [D-037] The trivela keeps half its placement and curl with no room (0: 27.0 v 35.7% from a run; 0.3: 32.5; 0.5: 38.1; 0.7: 43.3%). |
 | `T_FEEL2` | `trivelaInset`, `trivelaSnapFrom` | (`T_SHOT.assistInset` 0.55), 1.8 m | 0.45 m, 1.2 m | The placed trivela (it starts inside and bends out to the corner). 0.38: 35% (wide 8-13%). |
 | `T_FEEL2` | `humanFinesseSpeedMul`, `humanFinesseSpin` | 0.92, 13.5 | 0.97, 14.2 rad/s | 23.4 m/s (normal 24.1), bend 4.6 m. At 0.92 the finesse scored about a normal shot on the skeptics' probe (36 v 37.5%). |
 | `T_FEEL2` | `humanTrivelaSpeedMul`, `humanTrivelaSpin`, `humanTrivelaErrMul`, `humanTrivelaErrSlope` | 0.95, 10.8, 1.35 flat | 1.02, 11.3, 0.7 + 1.0 x (1 - accuracy) | Trivela 42.0 v normal 39.2% for a top finisher (at 1.0 / 0.85: 36.3%; 1.0 / 0.7: 37.9%; 1.03 / 0.85: 38.4%); a poor shooter (40) 15.5 v 23.1%, wide 26 v 15%. Bend 3.5 m the other way (11.3: at 1.02 pace 10.8 bent 3.3 m). |
-| `T_FEEL2` | `humanPowerErrMul` | 3.0 | 3.0 | Kept: power 41.2 v normal 39.2%. Open play only now: a power penalty is 93% again (65-69% with it). |
+| `T_FEEL2` | `humanPowerErrMul` | 3.0 | 4.0 (D-037; D-036 3.0) | D-036: power 41.2 v normal 39.2%, but normal + 7..12 on the round-2 skeptics' probes. 3.5 / 4 / 5 (their probe standing, from a run; probe A, B with seeds 4-12 / 71-73 subsets): 36.5 / 36.5 / 34.5, 40.9 / 36.1 / 31.7, 44 / 42 / 40.5, 34.2 / 33.3 / 30.1% (normal 23.8, 35.7, 42.0, 37.5%); wide for a top finisher 10-16%. Open play only: a power penalty is 93% (65-69% with it). |
 
 ### FEEL-2 measurements (D-035 / D-036, final tree)
 
@@ -2232,3 +2234,45 @@ unfinished, as on cc2c605). Ladder `--matches 200` seeds 1 and 2 (pooled over 40
 v Amateur 74.0%, Professional v Semi-Pro 67.3% (seed 2 alone 64.5%), World Class v Professional 68.5%, Legend v World
 Class 75.8%. Balance `--matches 200` seeds 1-4 (pooled over 800): top-bottom 81.6% wins (seed 4 alone 77.0%), equal
 55.7% points, mirror 50.1% points.
+
+### FEEL-2 round 2 (D-037 shots, D-038 defending)
+
+The second skeptic round's probes (scripts kept out of the repo; the named tests carry their scenes): a running shot
+probe (a 5 m R1 run into the shot, the keeper set on his line and coming out at the runner, where the scenario puts him,
+or 48.5 m), a short side step (25 ticks of lateral stick, then straight on at goal) on 7 new geometries with feints, and
+full-team side steps (nobody parked, so the CPU switches to cover defenders).
+
+Shots, slot 9 (finishing 95, curve 78) against a Professional keeper. The skeptics' probe (7 spots, stick 2.8 / 2.0 m off
+centre, SHOOT 26 ticks, seeds 201-205, three keeper positions, 420 a kind):
+
+| Kind | Standing D-036 -> now | From a 5 m run D-036 -> now | Slot 10 standing now | Legend keeper standing now | Poor shooter (40) standing now, wide |
+|---|---|---|---|---|---|
+| Normal | 24.0 -> 24.0% | 35.0 -> 35.0% | 24.3% | 12.6% | 17.6%, 5% |
+| Finesse | 44.0 -> 36.9% | 79.0 -> 45.5% | 32.6% | 15.7% | 17.9%, 7% |
+| Power | 37.3 -> 33.3% | 40.9 -> 36.7% | 29.0% | 17.9% | 20.7%, 20% |
+| Trivela | 31.3 -> 28.8% | 46.4 -> 39.0% | 27.6% | 12.4% | 14.5%, 14% |
+
+FEEL-2 probes A + B (standing, 696 a kind): normal 39.2, finesse 48.4, power 36.4, trivela 42.7% (D-036: 39.2 / 52.0 /
+41.2 / 42.0%). Probe R (feel-2-shots: a 5 m R1 run, the five spots plus (28, 4) and (40, -14), seeds 41-45, set and
+scenario keeper, 280 a kind): normal 35.4, finesse 46.4, power 33.6, trivela 37.9% (D-036 finesse 80.4%); Legend keeper
+7.5 / 4.6 / 14.3 / 6.4% (the skeptics' Legend run: finesse 50 v normal 10% on D-036). Flights from range are unchanged
+(the keeper on his line leaves full room): finesse 23.4 m/s bending 4.6 m, trivela 24.6 m/s 3.5 m the other way.
+
+Defending (human dribbler, beaten %, Beginner .. Legend). The FEEL-2 grid with the held step: 81.3 / 89.8 / 80.5 / 53.2 /
+41.8 / 38.7 (D-035 81.3 / 89.8 / 80.5 / 56.4 / 39.9 / 37.2); with a 25-tick step: 63.9 / 92.0 / 82.4 / 51.3 / 35.3 / 31.0
+(D-035 63.9 / 92.0 / 82.3 / 54.2 / 32.7 / 28.2). The skeptics' short-step grid (7 geometries, feints, 1008 scenes):
+82.5 / 72.0 / 65.1 / 50.2 / 47.3 / 26.9 (D-035 82.5 / 72.0 / 65.1 / 50.8 / 47.2 / 24.4); the earlier skeptics' unseen
+geometry (`defrun`, seeds 41-42, 576 scenes) Professional 67.0, World Class 57.1, Legend 46.4. Their Legend fouls 22 ->
+18, reds 10 -> 7 (the read tackle as the last man 28 m out is gone; the 7 left are QF-13 slides before any step, as on
+cc2c605). Full teams (216 side-step scenes a level, feel-2-duel-switch): "sold" ticks on a defender who did not face the
+step 2311 / 995 / 1 at Amateur / Professional / Legend -> 0.
+
+Final runs on this tree (bot v bot bit-identical to f798d8d and cc2c605: 16-match soak hashes equal, and every number
+below equals the FEEL-1 / D-035 final runs): soak 500 Professional PASS, goals 2.99, shots 15.20, possession (side with
+more) 56.73%, home 50.73%, pass completion 78.99%, fouls 10.61, offsides 0.18, blow-outs 1.40%, 0 exceptions / invariant
+failures / watchdogs, determinism PASS. Fuzz 60 `--enforce all` (seed default): PASS, 60 + 15 rematches, 16 unfinished.
+Fuzz 60 `--seed 3`: FAIL on #57's rematch only (a human-input World Class match lost 0-7: seven celebrations and kick-offs
+run it past the harness's tick cap, `defaultMaxTicks` 1.3 x regulation + allowance; 0 exceptions / invariant failures /
+watchdogs, determinism PASS); cc2c605 fails the same seed on #33 (watchdog RESTART_BLOCKED), so the seed-3 run has no
+clean baseline and the cap is left as it is. Ladder seeds 1 and 2 (400 a pair): 74.3 / 74.0 / 67.3 (seed 2 alone 64.5) /
+68.5 / 75.8%. Balance seeds 1-4 (800): top-bottom 81.6% (seed 4 alone 77.0), equal 55.7% points, mirror 50.1% points.
