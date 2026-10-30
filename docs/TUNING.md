@@ -2276,3 +2276,19 @@ run it past the harness's tick cap, `defaultMaxTicks` 1.3 x regulation + allowan
 watchdogs, determinism PASS); cc2c605 fails the same seed on #33 (watchdog RESTART_BLOCKED), so the seed-3 run has no
 clean baseline and the cap is left as it is. Ladder seeds 1 and 2 (400 a pair): 74.3 / 74.0 / 67.3 (seed 2 alone 64.5) /
 68.5 / 75.8%. Balance seeds 1-4 (800): top-bottom 81.6% (seed 4 alone 77.0), equal 55.7% points, mirror 50.1% points.
+
+## FEEL-2C (fuzz seed 3 failures: CPU take-over of a restart, harness tick limit)
+
+No new gameplay constant. D-039 reuses existing rows: a restart handed to the CPU (HAND_TO_CPU) gets
+`T_RESTART.cpuTakeTimeoutTicks` (240) from the hand-off, plus `T_RESTART_COMMON.swapRunMaxTicks - actT` while a newly
+chosen free-kick taker still runs in; a shoot-out kicker handed over gets `T_SHOOTOUT.cpuTimeoutTicks` (240) from the
+hand-off. The headless runner (tools, not gameplay) extends its tick limit per goal by `T_RULES.goalSequenceMaxTicks +
+T_RULES.phaseMaxTicks[KICK_OFF]` (1620, at most 16 goals, not in practice or Shoot-out mode) and per shoot-out kick by
+`restartSetupTicks + restartTimeoutTicks + T_SHOOTOUT.defaultGraceTicks + flightMaxTicks + resultTicks` (1400, at most
+80 kicks); `defaultMaxTicks` is unchanged. Bot games are bit-identical (no hand-off ever happens there), and a larger
+limit only changes runs that used to stop at the old one (a soak PASS has none unfinished).
+
+Fuzz `--enforce all` on this tree: seed 3 (60) PASS (was FAIL on #57's rematch), seed 4 (60) PASS, seed 5 (60) PASS,
+seed 11 (200) PASS (its first run, with a first cut of the allowance that also credited practice goals, timed out on
+four Penalties-practice jobs and stopped two idle-human shoot-outs at kick 17; both fixed, see D-039). 0 exceptions,
+0 invariant failures, 0 watchdogs, determinism PASS in every run.

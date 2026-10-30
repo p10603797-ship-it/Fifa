@@ -862,6 +862,26 @@ function adoptPhase(s: SimState): void {
   m.restart.taker = pickRestartTaker(s, -1);
 }
 
+/**
+ * [FEEL-2C, D-039] Side `side` was just handed to its CPU (Command.HAND_TO_CPU, a pad disconnect) during its own
+ * restart, after ready and before the Default fell due: the CPU gets its own take window (cpuTakeTimeoutTicks, as at
+ * a CPU side's ready) from now, plus what is left of a newly chosen free-kick taker's run-in. The human's 12 s were
+ * mostly gone (fuzz seed 3 #33: 31 ticks left, a taker 10 m away), so the timeout fell due the tick that taker reached
+ * the spot, before the CPU could act, and logged "CPU never acted" (WATCHDOG RESTART_BLOCKED). Never shortens it.
+ */
+export function restartHandedToCpu(s: SimState, side: number): void {
+  const m = s.match;
+  const r = m.restart;
+  if (!isRestartPhase(m.phase) || r.team !== side || r.ready !== 1 || r.taken === 1 || r.timeoutT <= 0) return;
+  let w = T_RESTART.cpuTakeTimeoutTicks;
+  const t = r.taker;
+  if (t >= 0 && t < NUM_SLOTS) {
+    const p = s.players[t]!;
+    if (takerRunning(p)) w += T_RESTART_COMMON.swapRunMaxTicks - p.actT;
+  }
+  if (r.timeoutT < w) r.timeoutT = w;
+}
+
 function becomeReady(s: SimState): void {
   const r = s.match.restart;
   if (!isValidTaker(s, r.taker) || isDown(s.players[r.taker]!)) {

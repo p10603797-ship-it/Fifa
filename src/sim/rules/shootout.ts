@@ -399,6 +399,22 @@ function beginKick(s: SimState, ev: EventSink): void {
   }
 }
 
+/**
+ * [FEEL-2C, D-039] Side `side` was just handed to its CPU (Command.HAND_TO_CPU, a pad disconnect) while its kicker
+ * aims: the aim clock (subT, which aimTick reads against the CPU limit from now on) starts again, so the CPU gets its own
+ * cpuTimeoutTicks window (TAI-13 kicks after ~2 s). A human who had aimed for 6 s or more (cpuTimeoutTicks +
+ * defaultGraceTicks) otherwise got the forced safety-net kick (it can miss) and a WATCHDOG RESTART_BLOCKED the tick he
+ * handed over, and one between 4 and 6 s got the Default at once on the human's own aim.
+ */
+export function shootoutHandedToCpu(s: SimState, side: number): void {
+  const m = s.match;
+  const so = m.shootout;
+  if (m.phase !== MatchPhase.SHOOT_OUT || so.active !== 1 || so.sub !== ShootoutSub.AIM) return;
+  if (kickingTeam(so) !== side || m.restart.taken === 1) return;
+  so.subT = 0;
+  m.restart.timeoutT = LT.cpuTimeoutTicks;
+}
+
 function beginAim(s: SimState, ev: EventSink): void {
   const so = s.match.shootout;
   const r = s.match.restart;

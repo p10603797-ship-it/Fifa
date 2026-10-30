@@ -5,6 +5,8 @@
 import { CPU_CONTROLLER_BASE, MAX_HUMANS } from '../../contracts/constants';
 import { AssistLevel, AutoSwitch, ControllerKind } from '../../contracts/enums';
 import type { SimState } from '../../contracts/state';
+import { restartHandedToCpu } from '../rules/restart';
+import { shootoutHandedToCpu } from '../rules/shootout';
 import { clearCharge } from './resolveShared';
 
 /** Remove human controller `c` from play; the side's CPU brain takes over unless another human still plays it. */
@@ -43,4 +45,7 @@ export function handToCpu(s: SimState, c: number): void {
   const brain = s.teams[side]!.cpu;
   brain.active = 1;
   brain.level = s.config.difficulty;
+  // [FEEL-2C] A restart or shoot-out kick of this side under way: the CPU gets its own take window (D-039).
+  restartHandedToCpu(s, side);
+  shootoutHandedToCpu(s, side);
 }

@@ -11,7 +11,9 @@ import type { MatchConfig, SimState } from '../../src/contracts/state';
 import { hashHex } from '../../src/sim/core/hash';
 import { INVARIANT_SETS, type InvariantName } from '../../src/sim/debug/invariants';
 import { playReplay, type Replay } from '../../src/sim/replay';
-import { defaultMaxTicks, runMatch, type InputsFn, type MatchStats, type RunException, type RunMatchResult } from '../headless';
+import {
+  defaultMaxTicks, goalAllowanceFor, runMatch, shootoutKickAllowanceFor, type InputsFn, type MatchStats, type RunException, type RunMatchResult,
+} from '../headless';
 import { createHostile, type HostileGen, type HostileKind } from './hostile';
 
 export type EnforceSet = 'core' | 'all';
@@ -159,6 +161,8 @@ export function runJob(job: Job, ctx: JobContext): MatchReport {
     config: job.config,
     inputs: plan ? fuzzInputs(plan, 0) : undefined,
     maxTicks: quitting ? plan.quitAt : job.maxTicks ?? defaultMaxTicks(job.config),
+    goalAllowanceTicks: goalAllowance(job, quitting),
+    shootoutKickAllowanceTicks: kickAllowance(job, quitting),
     checker: 'all',
     fastCutscenes: job.fastCutscenes,
     record: true,
@@ -173,7 +177,10 @@ export function runJob(job: Job, ctx: JobContext): MatchReport {
     // Quit and rematch: same settings, new seed (as session.restart does), then play the rematch again from a
     // clean start of the same worker and compare hashes (module state leaking between matches = stale state).
     const config: MatchConfig = { ...job.config, seed: plan.rematchSeed >>> 0 };
-    const opts = { config, maxTicks: job.maxTicks ?? defaultMaxTicks(config), checker: 'all' as const, fastCutscenes: job.fastCutscenes };
+    const opts = {
+      config, maxTicks: job.maxTicks ?? defaultMaxTicks(config), goalAllowanceTicks: goalAllowance(job, false),
+      shootoutKickAllowanceTicks: kickAllowance(job, false), checker: 'all' as const, fastCutscenes: job.fastCutscenes,
+    };
     const second = runMatch({ ...opts, inputs: fuzzInputs(plan, 0x7e3a), record: true });
     const rerun = runMatch({ ...opts, inputs: fuzzInputs(plan, 0x7e3a), checker: 'none' });
     const rs = summarize(second, job.enforce);
@@ -201,6 +208,20 @@ export function runJob(job: Job, ctx: JobContext): MatchReport {
   };
 }
 
+/**
+ * [FEEL-2C, D-039] Per-goal tick allowance of a run: goalAllowanceFor(config) for a full match at the default limit
+ * (0 in practice and Shoot-out mode), 0 for the first part of a quit-and-rematch job (it stops exactly at its quit
+ * tick) or an explicit job.maxTicks.
+ */
+function goalAllowance(job: Job, stopped: boolean): number {
+  return stopped || job.maxTicks !== undefined ? 0 : goalAllowanceFor(job.config);
+}
+
+/** [FEEL-2C, D-039] Per-shoot-out-kick tick allowance of a run, under the same conditions as goalAllowance. */
+function kickAllowance(job: Job, stopped: boolean): number {
+  return stopped || job.maxTicks !== undefined ? 0 : shootoutKickAllowanceFor(job.config);
+}
+
 /** Ticks the first part of a job runs (its quit tick for quit-and-rematch fuzz jobs). */
 function firstPartTicks(job: Job): number {
   return job.fuzz && job.fuzz.quitAt > 0 ? job.fuzz.quitAt : job.maxTicks ?? defaultMaxTicks(job.config);
@@ -208,9 +229,11 @@ function firstPartTicks(job: Job): number {
 
 /** Determinism job: run the match recording a replay, then play the replay back after a JSON round trip. */
 function runDeterminismJob(job: Job): MatchReport {
+  const quits = job.fuzz !== undefined && job.fuzz.quitAt > 0;
   const r = runMatch({
     config: job.config, inputs: job.fuzz ? fuzzInputs(job.fuzz, 0) : undefined, maxTicks: firstPartTicks(job),
-    checker: 'none', fastCutscenes: job.fastCutscenes, record: true,
+    goalAllowanceTicks: goalAllowance(job, quits), shootoutKickAllowanceTicks: kickAllowance(job, quits), checker: 'none',
+    fastCutscenes: job.fastCutscenes, record: true,
   });
   const sum = summarize(r, job.enforce);
   let replayCheck: NonNullable<MatchReport['replayCheck']>;

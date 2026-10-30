@@ -14,8 +14,9 @@ import {
 } from '../src/contracts/enums';
 import { EventType, type EventBuffer } from '../src/contracts/events';
 import { Btn, clearInputFrame, createInputFrame, type InputFrame } from '../src/contracts/input';
-import { createSimState, type MatchConfig, type SimState } from '../src/contracts/state';
+import { createSimState, MAX_SHOOTOUT_KICKS, type MatchConfig, type SimState } from '../src/contracts/state';
 import { CUTSCENE_PHASES } from '../src/contracts/transitions';
+import { T_RULES, T_SHOOTOUT } from '../src/contracts/tuning';
 import { createEventBuffer } from '../src/sim/core/events';
 import { hashState } from '../src/sim/core/hash';
 import {
@@ -36,6 +37,18 @@ export interface RunMatchOptions {
   inputs?: InputsFn;
   /** Tick limit (default defaultMaxTicks(config)). */
   maxTicks?: number;
+  /**
+   * [FEEL-2C, D-039] Extra ticks of limit per goal scored so far in the match, for at most GOAL_ALLOWANCE_MAX_GOALS
+   * goals (0 = none, the default). Full-match soak / fuzz runs pass goalAllowanceFor(config): every goal stops the clock
+   * for its cut-scenes and the kick-off that follows.
+   */
+  goalAllowanceTicks?: number;
+  /**
+   * [FEEL-2C, D-039] Extra ticks of limit per shoot-out kick taken (SHOOTOUT_KICK events), for at most
+   * 2 x MAX_SHOOTOUT_KICKS kicks (0 = none, the default). Full-match soak / fuzz runs pass
+   * shootoutKickAllowanceFor(config).
+   */
+  shootoutKickAllowanceTicks?: number;
   /** Invariant set checked every tick (default 'core'). */
   checker?: CheckerMode;
   /** Feed Btn.SKIP edges + Command.SKIP during cut-scene phases (bot-v-bot soak). */
@@ -124,6 +137,39 @@ const SHOOTOUT_ALLOWANCE_TICKS = 14 * 12 * 60;
 /** Practice modes have no clock: run this long by default. */
 const PRACTICE_TICKS = 3 * 60 * 60;
 
+/**
+ * [FEEL-2C, D-039] Most ticks one goal can add to a match off the clock: its goal -> celebration -> replay sequence
+ * (capped at T_RULES.goalSequenceMaxTicks) plus the kick-off that follows (a non-clock phase, at most
+ * T_RULES.phaseMaxTicks[KICK_OFF] before the phase watchdog fires). Fuzz seed 3 #57's rematch: 0-7 with SKIP held
+ * (no press edge, so nothing skipped) reached POST_MATCH at t=22545, 225 ticks past defaultMaxTicks (22320).
+ */
+export const GOAL_ALLOWANCE_TICKS = T_RULES.goalSequenceMaxTicks + T_RULES.phaseMaxTicks[MatchPhase.KICK_OFF]!;
+/** At most this many goals extend the limit, so the runner still stops a match whose clock never ends it. */
+export const GOAL_ALLOWANCE_MAX_GOALS = 16;
+
+/**
+ * [FEEL-2C, D-039] Most ticks one shoot-out kick can take: SETUP (restartSetupTicks), AIM up to a human kicker's
+ * timeout plus the grace before the forced kick, the flight (flightMaxTicks) and RESULT (resultTicks) = 1400. The
+ * shoot-out itself ends after at most MAX_SHOOTOUT_KICKS each (then by lot). Fuzz seed 11 #72 / #121 (Shoot-out mode, both
+ * humans idle: every kick waits the 12 s timeout, ~957 ticks, and no idle keeper dives) reached kick 17 at the fixed
+ * limit (16704: 14 kicks of 12 s + 30% + allowance).
+ */
+export const SHOOTOUT_KICK_ALLOWANCE_TICKS = T_RULES.restartSetupTicks + T_RULES.restartTimeoutTicks +
+  T_SHOOTOUT.defaultGraceTicks + T_SHOOTOUT.flightMaxTicks + T_SHOOTOUT.resultTicks;
+
+/** Per-kick shoot-out allowance for a full match of `config` (0 in practice, which has no shoot-out). */
+export function shootoutKickAllowanceFor(config: MatchConfig): number {
+  return config.mode === ModeId.PRACTICE ? 0 : SHOOTOUT_KICK_ALLOWANCE_TICKS;
+}
+
+/**
+ * Per-goal allowance for a full match of `config`: GOAL_ALLOWANCE_TICKS for a match with a clock, 0 for practice
+ * (no clock: its goals come every few seconds for ever, PRACTICE_TICKS is the whole run) and Shoot-out mode.
+ */
+export function goalAllowanceFor(config: MatchConfig): number {
+  return config.mode === ModeId.PRACTICE || config.startPhase === MatchPhase.SHOOT_OUT ? 0 : GOAL_ALLOWANCE_TICKS;
+}
+
 /** Default tick limit: regulation (+ extra time and shoot-out for cup rules) + 30% + cut-scene allowance. */
 export function defaultMaxTicks(config: MatchConfig): number {
   if (config.mode === ModeId.PRACTICE) return PRACTICE_TICKS;
@@ -171,14 +217,16 @@ function errorInfo(err: unknown, tick: number, where: string): RunException {
 
 /**
  * Run one match headless. Deterministic for the same config and input script. Stops at POST_MATCH or after
- * maxTicks steps, counted by the runner itself, so a sim that fails to advance s.tick (or moves it backwards) still
- * terminates; with a checker on, every step that does not advance s.tick by exactly one is also reported as a
- * 'clock' invariant failure (the checker alone would silently re-baseline on it).
+ * maxTicks steps (+ the goal / shoot-out kick allowances), counted by the runner itself, so a sim that fails to advance
+ * s.tick (or moves it backwards) still terminates; with a checker on, every step that does not advance s.tick by
+ * exactly one is also reported as a 'clock' invariant failure (the checker alone would silently re-baseline on it).
  */
 export function runMatch(opts: RunMatchOptions): RunMatchResult {
   const t0 = performance.now();
   const config = opts.config;
   const maxTicks = opts.maxTicks ?? defaultMaxTicks(config);
+  const perGoal = opts.goalAllowanceTicks ?? 0;
+  const perKick = opts.shootoutKickAllowanceTicks ?? 0;
   const mode = opts.checker ?? 'core';
   const messageLimit = opts.messageLimit ?? 20;
   const checker: InvariantChecker | null = mode === 'none' ? null : createInvariantChecker(mode, { messageLimit });
@@ -213,7 +261,8 @@ export function runMatch(opts: RunMatchOptions): RunMatchResult {
 
   let where = 'inputs';
   try {
-    while (!exception && ran < maxTicks && s.tick < maxTicks && s.match.phase !== MatchPhase.POST_MATCH) {
+    let limit = maxTicks;
+    while (!exception && ran < limit && s.tick < limit && s.match.phase !== MatchPhase.POST_MATCH) {
       where = 'inputs';
       clearInputFrame(frames[0]!);
       clearInputFrame(frames[1]!);
@@ -332,6 +381,12 @@ export function runMatch(opts: RunMatchOptions): RunMatchResult {
       if (opts.onTick) {
         where = 'onTick';
         if (opts.onTick(s, events) === true) break;
+      }
+      if (perGoal > 0 || perKick > 0) {
+        const goals = s.teams[0]!.goals + s.teams[1]!.goals;
+        const kicks = eventCounts[EventType.SHOOTOUT_KICK]!;
+        limit = maxTicks + perGoal * (goals < GOAL_ALLOWANCE_MAX_GOALS ? goals : GOAL_ALLOWANCE_MAX_GOALS) +
+          perKick * (kicks < 2 * MAX_SHOOTOUT_KICKS ? kicks : 2 * MAX_SHOOTOUT_KICKS);
       }
     }
   } catch (err) {
