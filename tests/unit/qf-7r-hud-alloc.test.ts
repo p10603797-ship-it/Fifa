@@ -13,6 +13,14 @@
  * The power bar, shown only while a human charges a kick, projects his player twice a frame through the renderer's
  * CameraProjector.pitchToScreen(x, y, z, out) (src/contracts/input.ts): six numbers that are boxed when the call is not
  * inlined (96 B), plus the bar's transform string when it moves. Bounded here at that.
+ *
+ * [FEEL-2D] Regression for: after FEEL-2 the charging window failed (49 allocations per 1000 frames, 118 B per charging
+ * frame). Not a cold path (the probe replays the measured match first; see its comment on why that covers every path
+ * of the window whatever the match flow) but real allocation that the new match flow exposed: the radar rebuilt its
+ * sprites on every settings write (a set-piece hint's use count), a set-piece card was rebuilt on every use, the power
+ * bar built a translate3d string on every move (positions are now cached `${n}px` strings in --pbx / --pby), and the
+ * player panel rebuilt its strings on every switch. Now 5 per 1000 frames and 96 B (the six boxed numbers). Unit
+ * regressions: tests/unit/qf-7r-hud-alloc-feel2d.test.ts.
  */
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
@@ -30,17 +38,19 @@ describe('QF-7R HUD allocation per frame', () => {
     expect(r.status, r.stderr).toBe(0);
     const res = JSON.parse(r.stdout.trim().split('\n').pop()!) as {
       perFrame: number; chargingPerFrame: number; powerPerChargingFrame: number; chargingFrames: number; top: [string, number][];
+      topCharging: [string, number][];
       allocsPerKFrame: number; chargingAllocsPerKFrame: number;
     };
     console.log(`QF-7R HUD bytes per frame: ${JSON.stringify(res)}`);
     // Anything allocated every frame adds >= 16 B; every redraw of the radar (20 Hz at 120 Hz frames) >= 2.7 B.
     expect(res.perFrame, JSON.stringify(res.top)).toBeLessThan(4);
-    expect(res.chargingPerFrame, 'everything but the power bar while charging').toBeLessThan(4);
+    expect(res.chargingPerFrame, `everything but the power bar while charging: ${JSON.stringify(res.topCharging)}`).toBeLessThan(4);
     // [QF-7R] And by count, whatever the size: one allocation per radar redraw is 167 per 1000 frames (20 Hz on a 120 Hz
     // display), every frame 1000; event-time code (toasts, set-piece hints) 10-20.
     expect(res.allocsPerKFrame, JSON.stringify(res.top)).toBeLessThan(40);
-    expect(res.chargingAllocsPerKFrame, 'everything but the power bar while charging').toBeLessThan(40);
+    expect(res.chargingAllocsPerKFrame, `everything but the power bar while charging: ${JSON.stringify(res.topCharging)}`).toBeLessThan(40);
     expect(res.chargingFrames).toBeGreaterThan(100);
-    expect(res.powerPerChargingFrame, 'power bar: the projector\'s six numbers + its transform string').toBeLessThan(6 * 16 + 16);
+    expect(res.powerPerChargingFrame, `power bar: the projector's six numbers + its position strings: ${JSON.stringify(res.topCharging)}`)
+      .toBeLessThan(6 * 16 + 16);
   }, 450_000);
 });

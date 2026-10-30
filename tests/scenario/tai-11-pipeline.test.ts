@@ -144,8 +144,11 @@ describe('TAI-11 pipeline', () => {
       // first or closes recklessly, so a few presses fewer at Beginner (3 exposed presses in 12 scenes; was > 3).
       // [FEEL-2 round 2] 24 scenes a level (seeds 1-24, was 1-12) so the bound has margin: measured 5 / 13 / 10
       // (Beginner, Professional, Legend); cc2c605's > 3 in 12 scenes is the same rate.
+      // [FEEL-2D] (D-042) In the duel the rash tackle wants the ball first too, and no tackle on a human is made with
+      // the bodies meeting by mid-contact: Beginner's exposed presses here were mostly rash lunges into the jogger's
+      // body (5 -> 1 in 24 scenes); Professional / Legend unchanged in kind.
       console.log(`TAI-11 exposed presses level ${lv}: ${ages.length}`);
-      expect(ages.length, `level ${lv}`).toBeGreaterThanOrEqual(3);
+      expect(ages.length, `level ${lv}`).toBeGreaterThanOrEqual(lv === Difficulty.BEGINNER ? 1 : 3);
       // Between-touches presses never come before the level's timing (only skill / first-touch windows count from
       // their own start, and rash lunges need no exposure at all, so the bound is checked on exposed presses).
       for (const a of ages) expect(a).toBeGreaterThanOrEqual(T_LEVEL.tackleTimingTicks[lv]!);

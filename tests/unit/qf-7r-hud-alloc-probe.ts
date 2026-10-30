@@ -95,6 +95,18 @@ async function window(press: number): Promise<{ bytes: number; count: number; po
   // (a toast kind, a set-piece hint) is warm when measured. Continuing the previous window's match instead warmed a
   // different stretch: whatever first ran in the measured window was charged with its tier-up (unoptimised double
   // arithmetic, lazy compilation, ~2.5 B per frame when FEEL-1 reshaped the match), not with a per-frame allocation.
+  // [FEEL-2D] This holds whatever the match flow (no tick or event list to keep in step with the sim): the measured
+  // run replays ticks WARM..WARM+TICKS of the first warm-up run. HUD state that carries over between runs only
+  // shrinks what the measured run does: a set-piece card shows for the first HINT_TUNING.uses uses of its restart kind
+  // (settings.setPieceHintsSeen, shared by every run here), so a card shown in the measured run was shown at the same
+  // tick of the first warm-up run, then with fewer uses counted. The set-piece card cache and the power bar's pixel
+  // strings outlive a match, so they were filled there too (the player panel's names are per match: the measured run
+  // builds those of players first controlled after tick WARM, a few strings each). What a path then allocates in the
+  // window is its real event-time cost: FEEL-2 put the human's first throw-in of the charging match after tick WARM
+  // (a card and its settings write in the window) and kept his player moving while charging, which is how 49
+  // allocations per 1000 frames and 118 B per charging frame came out (radar sprites rebuilt on any settings write, a
+  // card rebuilt per use, a translate3d string per power-bar move, player-panel strings per switch); none was a cold
+  // path.
   curr = initMatch(cfg);
   prev = cloneState(curr);
   hud.setMatch(curr, CLUBS);

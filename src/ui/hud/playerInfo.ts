@@ -9,6 +9,9 @@
  * changes, the bar when stamina moves by a whole percent, the low / critical state when it crosses a threshold. The
  * panels hug the radar (or the screen centre when the radar is off) at the bottom, clear of the stick zone corner and
  * the button cluster.
+ *
+ * [FEEL-2D] The name and the panel's aria-label of each squad member are built once per match (on the first switch to
+ * him) and cached by [team][roster index]: switching back to a player writes cached strings and allocates nothing.
  */
 import type { AppContext, FrameInfo, HudPart } from '../../contracts/app';
 import type { Club } from '../../contracts/data';
@@ -110,9 +113,23 @@ function makePanel(human: number): Panel {
   return { el, num, name, fill, hidden: true, slot: -1, roster: -1, team: -1, step: -1, level: 0 };
 }
 
+/** [FEEL-2D] Per-match string cache, by team then roster index ('' = not built yet: a built string is never empty). */
+interface LabelCache {
+  /** HUD (upper-case short) names. */
+  name: [string[], string[]];
+  /** aria-label per human: "Player 1: 7 NAME". */
+  label: [[string[], string[]], [string[], string[]]];
+}
+
+function sizeCache(c: string[], n: number): void {
+  c.length = 0;
+  for (let i = 0; i < n; i++) c.push('');
+}
+
 export function createPlayerInfo(): HudPart {
   let root: HTMLElement | null = null;
   const panels: Panel[] = [];
+  const cache: LabelCache = { name: [[], []], label: [[[], []], [[], []]] };
   let unbindLarge: (() => void) | null = null;
   let unPref: (() => void) | null = null;
   let radarOn = true;
@@ -158,9 +175,14 @@ export function createPlayerInfo(): HudPart {
       if (typeof window !== 'undefined') window.addEventListener('resize', onWindowResize);
     },
     setMatch(state: ReadonlySimState, clubs: readonly Club[]) {
-      void state;
       void clubs;
       resetPanels();
+      for (let t = 0; t < 2; t++) {
+        const n = state.squads[t]?.length ?? 0;
+        sizeCache(cache.name[t]!, n);
+        sizeCache(cache.label[0]![t]!, n);
+        sizeCache(cache.label[1]![t]!, n);
+      }
     },
     update(state: ReadonlySimState, frame: FrameInfo, projector: CameraProjector | null) {
       void frame;
@@ -182,9 +204,22 @@ export function createPlayerInfo(): HudPart {
           pn.team = p.team;
           const d = state.squads[p.team]?.[p.rosterIdx];
           pn.num.textContent = d ? numStr(d.shirt) : '';
-          const nm = rosterName(state, p.team, p.rosterIdx);
+          const names = p.team === 0 || p.team === 1 ? cache.name[p.team] : undefined;
+          const labels = names ? cache.label[hIdx === 0 ? 0 : 1][p.team as 0 | 1] : undefined;
+          const r = p.rosterIdx;
+          const cached = names !== undefined && r >= 0 && r < names.length;
+          let nm = cached ? names[r]! : '';
+          if (nm === '') {
+            nm = rosterName(state, p.team, r);
+            if (cached) names[r] = nm;
+          }
           pn.name.textContent = nm;
-          pn.el.setAttribute('aria-label', `Player ${hIdx + 1}: ${d ? `${d.shirt} ` : ''}${nm}`);
+          let label = cached ? labels![r]! : '';
+          if (label === '') {
+            label = `Player ${hIdx + 1}: ${d ? `${d.shirt} ` : ''}${nm}`;
+            if (cached) labels![r] = label;
+          }
+          pn.el.setAttribute('aria-label', label);
         }
         const st = p.stamina;
         const step = staminaStep(st);

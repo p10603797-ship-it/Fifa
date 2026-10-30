@@ -24,10 +24,12 @@ const CPU = 3;
 
 /**
  * Carrier at (cx, cz) running at the goal at 2 m/s, his last touch `ballAhead` m ahead of him (exposed); the defender
- * `defAhead` m in front of him, goal-side, facing him.
+ * `defAhead` m in front of him, goal-side, facing him. [FEEL-2D] A bot carrier (the penalties above were bot matches):
+ * at a human carrier no tackle is made with the bodies meeting by mid-contact at all (D-042), so the scene with his
+ * body in reach is no longer tackled in midfield either.
  */
 function scene(cx: number, cz: number, level: Difficulty, seed: number, ballAhead: number, defAhead: number): SimState {
-  const s = makeScenario({ phase: MatchPhase.IN_PLAY, humans: [{ side: 0, slot: C }], seed, config: { difficulty: level } });
+  const s = makeScenario({ phase: MatchPhase.IN_PLAY, humans: [], seed, config: { difficulty: level } });
   for (let i = 0; i < 22; i++) {
     const p = s.players[i]!;
     const k = i % 11;

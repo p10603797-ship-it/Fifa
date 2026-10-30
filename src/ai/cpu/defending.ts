@@ -78,6 +78,9 @@
  *       reckless closing speed (unless the ball is well clear), and no slide. Level or ahead and alongside a human
  *       running at pace, Professional up make the shoulder challenge (never from behind, never in our own area, never
  *       at a carrier through on goal; a cooldown after it).
+ *       [FEEL-2D] (D-042) In the duel context the rash tackle and rash lunge want the ball first too and no slide is
+ *       made; blocking a human who jogs at him is the duel context; and no tackle on an exposed ball nor rash lunge at
+ *       a human carrier has the bodies meeting by mid-contact, in the duel or not.
  *     - Slide (LOB press) only when goal-side, the ball loose-ish (between touches, beyond standing reach but within
  *       slide reach) in our half, one draw per window; from behind only for a carrier through on goal in our third
  *       with a tiny chance (slideBehindChance x decisionNoise).
@@ -681,7 +684,7 @@ function duelState(
 ): void {
   const F = T_FEEL2;
   duelSt = 0; duelDir = 0;
-  duelEng = cosG >= F.duelGoalSideCos && d <= F.duelEngageDist && q.vx * gx + q.vz * gz >= F.duelApproachSpeed ? 1 : 0;
+  duelEng = duelEngaged(q, gx, gz, cosG, d);
   const t = s.tick;
   const latV = q.vx * -gz + q.vz * gx;
   if (brain.p1 !== t - 1) {
@@ -724,6 +727,13 @@ function duelState(
   const until = t + (sold ? F.duelSoldTicks : F.duelReadTicks);
   brain.p3 = (sold ? 1 : -1) * (until * DUEL_UNTIL_MUL + slot * 2 + (duelDir > 0 ? 1 : 0));
   if (team === 0) DUEL_DEBUG.moves0++; else DUEL_DEBUG.moves1++;
+}
+
+/** [FEEL-2] Engaged in the duel (duelState): goal-side within duelEngageDist of a human coming at our goal at
+ *  duelApproachSpeed or more. 1 / 0. Pure. */
+function duelEngaged(q: Readonly<PlayerState>, gx: number, gz: number, cosG: number, d: number): number {
+  const F = T_FEEL2;
+  return cosG >= F.duelGoalSideCos && d <= F.duelEngageDist && q.vx * gx + q.vz * gz >= F.duelApproachSpeed ? 1 : 0;
 }
 
 /** [FEEL-2] lungeContact scratch: [0] ball distance from him at mid-contact, [1] closing speed at the contact, [2] RUL-09
@@ -785,14 +795,18 @@ function lungeContact(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerS
 /** [FEEL-2] A standing challenge on a human carrier now (lungeContact): not from behind him (fromBehind at most
  *  duelMaxBehind); in a duel also not with the bodies meeting by mid-contact, nor at a reckless closing speed unless the
  *  ball is well clear of his body. */
-function safeOnHuman(s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState>, duel: boolean): boolean {
+function safeOnHuman(
+  s: SimState, p: Readonly<PlayerState>, q: Readonly<PlayerState>, duel: boolean, bodyGap = duel,
+): boolean {
   lungeContact(s, p, q);
   // Never through his back. In a duel (coming at him) also never with the bodies meeting by mid-contact (SIM-14 counts
   // centres within 2 radii + bodyMargin as a contact, the ball first or not), and at a reckless closing speed only for a
   // ball well clear of his body (the bodies still duelClearSep apart at mid-contact: the ball is won before they meet).
+  // [FEEL-2D] bodyGap: the bodies-meeting test outside the duel too (the tackles on an exposed ball and the rash lunge,
+  // D-042); the still / held / poke challenges are made at body contact on purpose (QF-14 / QF-16) and keep it to the duel.
   if (!(LC[2]! <= T_FEEL2.duelMaxBehind)) return false;
-  return !duel || (LC[3]! >= 2 * T_PLAYER.bodyRadius + T_TACKLE_PLAY.bodyMargin + T_FEEL2.duelBodyGap &&
-    (LC[1]! <= T_FEEL2.duelMaxClosing || LC[4]! >= T_FEEL2.duelClearSep));
+  if (bodyGap && !(LC[3]! >= 2 * T_PLAYER.bodyRadius + T_TACKLE_PLAY.bodyMargin + T_FEEL2.duelBodyGap)) return false;
+  return !duel || LC[1]! <= T_FEEL2.duelMaxClosing || LC[4]! >= T_FEEL2.duelClearSep;
 }
 
 /**
@@ -913,7 +927,13 @@ function defendCarrier(
   // [FEEL-2] The duel with a human dribbler (duelState, D-035): sold by his side step, the defender leans the wrong way
   // (no challenge); reading it, he goes for where the ball crosses his line and may make the read tackle.
   if (humanQ && !hold && s.match.phase === MatchPhase.IN_PLAY) duelState(s, team, brain, slot, q, gx, gz, cosG, d);
-  else { duelSt = 0; duelEng = 0; }
+  else {
+    // [FEEL-2D] Blocking a human who jogs at him (QF-16: blocked up to blockJogSpeed) is the duel context too: no window
+    // and no draw (duelState is not run), but every challenge on him is made safe (a poke or rash lunge at a human
+    // running into the blocker at 4.6 m/s closed at 7-8 m/s: reckless, reds as the last man; D-042).
+    duelSt = 0;
+    duelEng = humanQ && hold && s.match.phase === MatchPhase.IN_PLAY ? duelEngaged(q, gx, gz, cosG, d) : 0;
+  }
   // The duel context (coming at him, or a side step being played out): every challenge on the human is made safe there.
   const duelCtx = duelSt !== 0 || duelEng === 1;
   if (team === 0) { DUEL_DEBUG.st0 = duelSt; DUEL_DEBUG.sl0 = slot; } else { DUEL_DEBUG.st1 = duelSt; DUEL_DEBUG.sl1 = slot; }
@@ -1050,6 +1070,10 @@ function defendCarrier(
         // [QF-16 skeptic] A rash tackle at a human carrier still wants the ball not hidden behind his body (ballHidden,
         // as the rash lunge below wants it ball-first): a Semi-Pro defender hacked a human strafing across him 8-9 times
         // in 8 scenes with no ball won. Bot carriers unchanged.
+        // [FEEL-2D] In the duel context (duelCtx) the rash tackle also wants the ball first from where the wind-up and
+        // lunge take him (lungePresented, `first` below), as the careful one: rash in its timing (no wellTimed), not
+        // through his body. safeOnHuman checks the closing speed and the bodies' centres, not that the dribbler's body
+        // (crossing in front of him on a burst after a stop) enters the tackle before the ball (D-042).
         const rash = noise01(seed, who, expKey * 4 + 1) < noisy && (!humanQ || !ballHidden(s, p, q));
         // [QF-13 skeptic] In our own area a careful tackle also wants the ball clear of the carrier's body (boxClear), at
         // the levels whose quick careful tackles gave away the penalties (T_LEVEL.boxBodyClear: World Class, Legend).
@@ -1065,7 +1089,11 @@ function defendCarrier(
         // [FEEL-2] Against a human carrier never from behind, and in the duel never at a reckless closing speed nor with
         // the bodies meeting (safeOnHuman): a lunge at a dribbler running at him was a yellow card even when it won the
         // ball first; he lets him run into him instead (SIM-06).
-        if ((rash || (wellTimed(s, p, q) && careful && first)) && (!humanQ || safeOnHuman(s, p, q, duelCtx))) { why(team, rash ? CH_RASH : CH_CAREFUL); pressTackle(brain, lv); return; }
+        // [FEEL-2D] And against a human carrier, in the duel or not, never with the bodies meeting by mid-contact
+        // (safeOnHuman bodyGap, D-042): the duel context ends when he slows under duelApproachSpeed or a window closes,
+        // with the defender still body to body with him (0.8 m), and the tackle there met his body first (Semi-Pro 9 of
+        // its 13 fouls in 720 duels with the rest of this fix, Legend 18 of 18).
+        if (((rash && (!duelCtx || first)) || (wellTimed(s, p, q) && careful && first)) && (!humanQ || safeOnHuman(s, p, q, duelCtx, true))) { why(team, rash ? CH_RASH : CH_CAREFUL); pressTackle(brain, lv); return; }
       }
     } else if (dBall <= T_TACKLE.standReach && goalSide) {
       // [QF-14 resume] Patience with a carrier standing on the ball: he never exposes it (no touch, no turn), so a
@@ -1100,8 +1128,10 @@ function defendCarrier(
       // [QF-16] Never into a shielding carrier's back, nor at a ball his body hides from us (not ball-first now): a
       // lunge nobody could win the ball with is a foul (a carrier shielding for 10 s was fouled 2-7 times and never
       // robbed at every level up to World Class; a strafer in front of a Professional defender 9 times in 80 s).
+      // [FEEL-2D] At a human carrier never with the bodies meeting by mid-contact, and in the duel context ball-first
+      // through the wind-up and lunge (lungePresented), as the rash tackle (D-042).
       if (noise01(seed, who, bucket * 4 + 2) < noisy * L.rashLungeChance && q.shielding !== 1 && ballFirstAt(s, p, q, 0, 0) &&
-        (!humanQ || safeOnHuman(s, p, q, duelCtx))) {
+        (!humanQ || (safeOnHuman(s, p, q, duelCtx, true) && (!duelCtx || lungePresented(s, p, q, L.blockPokeMargin))))) {
         why(team, CH_LUNGE); pressTackle(brain, lv); return;
       }
     }
@@ -1109,8 +1139,10 @@ function defendCarrier(
 
   // Slide: goal-side, the ball loose-ish (between touches), beyond standing reach, in our half and urgent (a quick
   // carrier or our final third), one draw per window; from behind only for a carrier through on goal, rarely.
-  // [FEEL-2] Not in a duel with a human dribbler: the read is a standing challenge (or none).
-  if (goalLineDist > L.slideZoneDist || duelSt !== 0) return;
+  // [FEEL-2] Not in a duel with a human dribbler: the read is a standing challenge (or none). [FEEL-2D] Nor in the duel
+  // context before any step (duelEng: a human coming at him, e.g. bursting again after a stop, which starts no window):
+  // a slide at a dribbler running at him meets his body.
+  if (goalLineDist > L.slideZoneDist || duelCtx) return;
   exposure(s, q);
   if (expOn !== 1 || expSkill === 1 || expAge < lv.tackleTimingTicks) return;
   if (!(dBall > T_TACKLE.standReach && dBall <= T_TACKLE.slideReach * L.slideReachFrac)) return;

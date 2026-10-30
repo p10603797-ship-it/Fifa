@@ -190,6 +190,9 @@ export function createRadar(): HudPart {
   let p2 = '#3ed1f6';
   let clubsRef: readonly Club[] = [];
   let wornCache: [number, number] | null = null;
+  /** [FEEL-2D] Dot fill / outline of the worn shirts, resolved with them once per match (kitHex / luminance allocate). */
+  const wornFill: [string, string] = ['', ''];
+  const wornStroke: [string, string] = ['', ''];
   let lastState: ReadonlySimState | null = null;
 
   function syncHidden(): void {
@@ -257,26 +260,42 @@ export function createRadar(): HudPart {
     box(5.5, 18.32);
   }
 
+  /**
+   * Resolve the dot colours (settings: high-contrast kits, colour-blind markers). [FEEL-2D] Runs on every settings
+   * write (the subscription in mount), most of them unrelated (a set-piece hint's use count, a volume slider): the
+   * colours of the worn shirts are resolved once per match, and the six sprites are rebuilt (canvas work and ~80
+   * allocations) and the radar redrawn only when a colour or the marker shape actually changed.
+   */
   function setColours(state: ReadonlySimState): void {
     const s = ctxRef?.settings.get();
     const hc = !!s?.accessibility?.highContrastKits;
-    squaresAway = !!s?.accessibility?.colourBlindMarkers;
+    const squares = !!s?.accessibility?.colourBlindMarkers;
     // [QF-12] The shirts the players wear (clash check, fallback kits), not the requested kit slots. Resolved once per
     // match (setMatch clears the cache): settings changes (volume sliders) re-colour without redoing the clash check.
-    if (!hc && !wornCache) wornCache = wornShirts(state, clubsRef);
-    const worn = hc ? null : wornCache;
-    for (let t = 0; t < 2; t++) {
-      if (hc || !worn) {
-        fill[t] = t === 0 ? '#f7f0ee' : '#fbc547';
-        stroke[t] = 'rgba(7,7,13,.9)';
-      } else {
-        const shirt = worn[t]!;
-        fill[t] = kitHex(shirt);
-        stroke[t] = luminance(shirt) < 0.09 ? 'rgba(247,240,238,.85)' : 'rgba(7,7,13,.9)';
+    if (!hc && !wornCache) {
+      wornCache = wornShirts(state, clubsRef);
+      if (wornCache) {
+        for (let t = 0; t < 2; t++) {
+          const shirt = wornCache[t]!;
+          wornFill[t] = kitHex(shirt);
+          wornStroke[t] = luminance(shirt) < 0.09 ? 'rgba(247,240,238,.85)' : 'rgba(7,7,13,.9)';
+        }
       }
     }
-    spritesDirty = true;
-    dirty = true;
+    const worn = !hc && wornCache !== null;
+    let changed = false;
+    for (let t = 0; t < 2; t++) {
+      const f = worn ? wornFill[t]! : t === 0 ? '#f7f0ee' : '#fbc547';
+      const k = worn ? wornStroke[t]! : 'rgba(7,7,13,.9)';
+      if (f !== fill[t] || k !== stroke[t]) {
+        fill[t] = f;
+        stroke[t] = k;
+        changed = true;
+      }
+    }
+    if (changed) spritesDirty = true;
+    if (changed || squares !== squaresAway) dirty = true;
+    squaresAway = squares;
   }
 
   /**

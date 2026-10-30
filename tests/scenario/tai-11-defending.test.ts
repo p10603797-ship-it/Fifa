@@ -34,12 +34,14 @@ interface SceneOpts {
   ball?: { dx: number; dz: number; vx?: number; vz?: number };
   tick?: number;
   seed?: number;
+  /** [FEEL-2D] A bot carrier (no human on team 0): the generic TAI-11 mechanism, without the human-only duel safety. */
+  bot?: boolean;
 }
 
 /** Quiet IN_PLAY scene: everyone else parked far up the pitch (x = -45), keepers on their lines. */
 function scene(o: SceneOpts): SimState {
   const s = makeScenario({
-    phase: MatchPhase.IN_PLAY, humans: [{ side: 0, slot: C }], seed: o.seed ?? 11,
+    phase: MatchPhase.IN_PLAY, humans: o.bot ? [] : [{ side: 0, slot: C }], seed: o.seed ?? 11,
     config: { difficulty: o.level ?? Difficulty.PROFESSIONAL },
   });
   for (let i = 0; i < 22; i++) {
@@ -302,10 +304,12 @@ describe('TAI-11 tackle timing', () => {
 
   it('a careful CPU waits when the ball will be back at the carrier\'s feet by contact; a noisy draw lunges anyway', () => {
     // Ball exposed now but coming back to the carrier quickly (it rolls toward him).
-    let careful = 0, lunged = 0;
+    // [FEEL-2D] A bot carrier: a human running at the defender is in the duel context, where the rash tackle wants the
+    // ball first too (D-042; the human case is the last loop below).
+    let careful = 0, lunged = 0, human = 0;
     for (let seed = 1; seed <= 400; seed++) {
       const s = scene({
-        level: Difficulty.BEGINNER, seed, c: { x: 30, z: 0, vx: 4, fx: 1 }, d: { x: 32.6, z: 0 }, ball: { dx: 0.9, dz: 0, vx: 0 },
+        level: Difficulty.BEGINNER, seed, bot: true, c: { x: 30, z: 0, vx: 4, fx: 1 }, d: { x: 32.6, z: 0 }, ball: { dx: 0.9, dz: 0, vx: 0 },
       });
       s.players[C]!.lastTouchTick = s.tick - 30;
       const rash = noise01(seed, 64 + C, (s.tick - 30) * 4 + 1) < T_LEVEL.decisionNoise[0]!;
@@ -316,6 +320,16 @@ describe('TAI-11 tackle timing', () => {
     expect(lunged / 400).toBeGreaterThan(T_LEVEL.decisionNoise[0]! - 0.08);
     expect(lunged / 400).toBeLessThan(T_LEVEL.decisionNoise[0]! + 0.08);
     expect(careful).toBeGreaterThan(0);
+    // [FEEL-2D] The same scene with a human dribbler: the rash draw no longer lunges into his body (2f7a87d: the
+    // decisionNoise share of the 400 did).
+    for (let seed = 1; seed <= 400; seed++) {
+      const s = scene({
+        level: Difficulty.BEGINNER, seed, c: { x: 30, z: 0, vx: 4, fx: 1 }, d: { x: 32.6, z: 0 }, ball: { dx: 0.9, dz: 0, vx: 0 },
+      });
+      s.players[C]!.lastTouchTick = s.tick - 30;
+      if (has(think(s), Btn.SHOOT)) human++;
+    }
+    expect(human).toBe(0);
   });
 
   it('occasional fouls: rash lunges at a carrier with the ball at his feet scale with decision noise', () => {
@@ -358,12 +372,14 @@ describe('TAI-11 tackle timing', () => {
 
 describe('TAI-11 slides', () => {
   /** Carrier through on goal at speed with the ball pushed ahead; the defender `rel` relative to the carrier. */
-  function slideScene(lv: Difficulty, seed: number, k: number, behind: boolean): SimState {
+  // [FEEL-2D] Goal-side scenes have a bot carrier by default: a human running at a goal-side defender is in the duel
+  // context, where no slide is made (D-042; checked in the first test below).
+  function slideScene(lv: Difficulty, seed: number, k: number, behind: boolean, bot = !behind): SimState {
     // [QF-13] Outside the penalty area (x < 36): inside it the CPU makes no slides (T_CPU.defendBoxSlideMul).
     const cx = 28 + (k % 7), cz = ((k * 7) % 9) - 4;
     // Ball 1 m ahead of the carrier; the defender 2.0 .. 2.8 m from it (beyond standing reach, inside slide reach).
     const d = behind ? { x: cx - 1.0 - (k % 5) * 0.2, z: cz + ((k % 3) - 1) * 0.3 } : { x: cx + 3.2 + (k % 4) * 0.15, z: cz + ((k % 3) - 1) * 0.4 };
-    const s = scene({ level: lv, seed, c: { x: cx, z: cz, vx: 7, fx: 1 }, d, ball: { dx: 1.0, dz: 0, vx: 8 } });
+    const s = scene({ level: lv, seed, bot, c: { x: cx, z: cz, vx: 7, fx: 1 }, d, ball: { dx: 1.0, dz: 0, vx: 8 } });
     s.players[C]!.lastTouchTick = s.tick - 25 - (k % 50);
     return s;
   }
@@ -389,6 +405,12 @@ describe('TAI-11 slides', () => {
     expect(rates[`${Difficulty.LEGEND}-false`]!).toBeGreaterThan(rates[`${Difficulty.LEGEND}-true`]! * 3);
     expect(rates[`${Difficulty.LEGEND}-false`]!).toBeGreaterThan(L.slideChance - 0.04);
     expect(rates[`${Difficulty.LEGEND}-false`]!).toBeLessThan(L.slideChance + 0.04);
+    // [FEEL-2D] A human through on goal at speed at a goal-side defender: no slide (2f7a87d: slideChance of them).
+    let human = 0;
+    for (const lv of [Difficulty.BEGINNER, Difficulty.SEMI_PRO, Difficulty.LEGEND]) {
+      for (let k = 0; k < 500; k++) if (has(think(slideScene(lv, 1 + (k % 13), k, false, false)), Btn.LOB)) human++;
+    }
+    expect(human).toBe(0);
   });
 
   it('no slide from behind when a teammate covers, when the carrier is not through, or in the opponent half', () => {

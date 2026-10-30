@@ -18,6 +18,8 @@
  * One card element top centre, below the toast lane (toasts.ts TOAST_LANE_PX), so it never covers the scoreboard,
  * the touch controls or the safe areas. DOM writes only when the card content changes (a numeric content key is
  * compared every frame; the card is rebuilt on change) or when it shows / hides (class: transform + opacity).
+ * [FEEL-2D] A set-piece card's nodes are kept by content (restart kind, taking / saving, device, P1 / P2 tag): the next
+ * use of that restart reuses them instead of building the card again (~125 allocations per build).
  */
 import type { AppContext, FrameInfo, HudPart } from '../../contracts/app';
 import type { Club } from '../../contracts/data';
@@ -203,6 +205,23 @@ export function hintTarget(s: ReadonlySimState, kind: RestartKind, team: number,
   return out;
 }
 
+/** A built card: its children and the card attributes they go with. */
+interface BuiltCard {
+  readonly parts: readonly HTMLElement[];
+  readonly kind: string;
+  readonly device: ControlDevice;
+  readonly label: string;
+}
+
+/** The P1 / P2 tag of a set-piece card (index 0: none, one human in the match). */
+const WHO_TAG: readonly string[] = ['', 'P1', 'P2'];
+const DEVICE_INDEX: Readonly<Record<ControlDevice, number>> = { touch: 0, pad: 1, keyboard: 2 };
+
+/** [FEEL-2D] Cache key of a set-piece card: content key (KEY_SET_PIECE..KEY_TUTORIAL), device kind and family, tag. Pure. */
+export function setPieceCardKey(contentKey: number, dev: DeviceSpec, who: number): number {
+  return ((contentKey * 4 + (DEVICE_INDEX[dev.kind] ?? 3)) * 8 + (dev.family & 7)) * 4 + who;
+}
+
 /** Buttons whose press dismisses a set-piece card (taking the kick). */
 const ACTION_MASK = Btn.PASS | Btn.SHOOT | Btn.LOB | Btn.THROUGH;
 
@@ -267,6 +286,8 @@ export function createHints(): HudPart {
   let hintHuman = -1;
   let hintDevice: DeviceSpec | null = null;
   const target: HintTarget = { human: -1, taking: true };
+  /** [FEEL-2D] Set-piece cards built so far, by setPieceCardKey (static content: kept across matches). */
+  const setPieceCards = new Map<number, BuiltCard>();
   // tutorial state
   let tracker: TutorialTracker | null = null;
   let tutDevice: DeviceSpec | null = null;
@@ -282,8 +303,8 @@ export function createHints(): HudPart {
     card.classList.toggle('is-on', on);
   }
 
-  function buildCard(eyebrow: string, title: string, count: string, dev: DeviceSpec, lines: DeviceLines | null, foot: string, kind: string, progress: boolean): void {
-    if (!card) return;
+  function buildCard(eyebrow: string, title: string, count: string, dev: DeviceSpec, lines: DeviceLines | null, foot: string, kind: string, progress: boolean): BuiltCard | null {
+    if (!card) return null;
     const linesEl = h('div', { class: 'hh-lines', testId: 'hint-lines' });
     if (lines) renderHintLines(linesEl, dev, linesFor(lines, dev));
     const head = h('div', { class: 'hh-head' }, h('span', { class: 'hh-eyebrow', text: eyebrow, testId: 'hint-eyebrow' }),
@@ -297,12 +318,18 @@ export function createHints(): HudPart {
       parts.push(h('div', { class: 'hh-progress' }, progressBar));
     }
     parts.push(h('div', { class: 'hh-foot', text: foot }));
-    card.replaceChildren(...parts);
+    const built: BuiltCard = { parts, kind, device: dev.kind, label: `${eyebrow} ${title}`.trim() };
+    applyCard(built);
+    return built;
+  }
+
+  function applyCard(c: BuiltCard): void {
+    if (!card) return;
+    card.replaceChildren(...c.parts);
     // [QF-7R] Attributes only when they change (each write is a style recalculation of the card).
-    if (card.dataset.kind !== kind) card.dataset.kind = kind;
-    if (card.dataset.device !== dev.kind) card.dataset.device = dev.kind;
-    const label = `${eyebrow} ${title}`.trim();
-    if (card.getAttribute('aria-label') !== label) card.setAttribute('aria-label', label);
+    if (card.dataset.kind !== c.kind) card.dataset.kind = c.kind;
+    if (card.dataset.device !== c.device) card.dataset.device = c.device;
+    if (card.getAttribute('aria-label') !== c.label) card.setAttribute('aria-label', c.label);
   }
 
   function dismissSetPiece(): void {
@@ -356,8 +383,17 @@ export function createHints(): HudPart {
     if (key >= KEY_SET_PIECE && key < KEY_TUTORIAL && hintDevice) {
       const spec = hintTaking ? SET_PIECE_HINTS[hintKind] : PENALTY_SAVE_HINT;
       if (!spec) return;
-      const who = practice || !ctxRef ? '' : humansInMatch() > 1 ? `P${hintHuman + 1}` : '';
-      buildCard('SET PIECE', spec.title, who, hintDevice, spec.lines, '', 'setpiece', false);
+      const who = practice || !ctxRef || humansInMatch() <= 1 ? 0 : hintHuman === 0 ? 1 : 2;
+      const ck = setPieceCardKey(key, hintDevice, who);
+      const hit = setPieceCards.get(ck);
+      if (hit) {
+        progressBar = null;
+        shownProgress = -1;
+        applyCard(hit);
+        return;
+      }
+      const built = buildCard('SET PIECE', spec.title, WHO_TAG[who]!, hintDevice, spec.lines, '', 'setpiece', false);
+      if (built) setPieceCards.set(ck, built);
       return;
     }
     if (!tutDevice || !tracker) return;
@@ -531,6 +567,7 @@ export function createHints(): HudPart {
       unbindLarge = null;
       root?.remove();
       root = card = progressBar = null;
+      setPieceCards.clear();
       ctxRef = null;
       tracker = null;
       if (activeTutorial === tutorialHandle) activeTutorial = null;

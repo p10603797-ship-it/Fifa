@@ -5,9 +5,13 @@
  * renderer's CameraProjector (pitchToScreen of the player at ANCHOR_Y m), filled by ctrl.power (transform: scaleX).
  * On release it fades out holding the final value.
  *
- * Writes only on change: position as a translate3d in whole pixels when the projected anchor moves, the fill when the
- * power moves by a whole percent, the shown state when charging starts or stops. Everything animates with transform
- * and opacity only. No projector (renderer not loaded) or a point behind the camera hides the bar.
+ * Writes only on change: position in whole pixels when the projected anchor moves, the fill when the power moves by a
+ * whole percent, the shown state when charging starts or stops. Everything animates with transform and opacity only.
+ * No projector (renderer not loaded) or a point behind the camera hides the bar.
+ *
+ * [FEEL-2D] The position is two CSS custom properties (--pbx / --pby) that the bar's translate3d reads, each set to a
+ * cached `${n}px` string (pxStr): a charging player usually runs, so the bar moves nearly every frame, and building a
+ * `translate3d(...)` string per move was a per-frame allocation while charging (tests/unit/qf-7r-hud-alloc.test.ts).
  */
 import type { AppContext, FrameInfo, HudPart } from '../../contracts/app';
 import type { Club } from '../../contracts/data';
@@ -43,6 +47,7 @@ const CSS = `
 .hud-pb { position:absolute; left: 0; top: 0; width: calc(${POWER_BAR_TUNING.width}px * var(--hs));
   height: calc(${POWER_BAR_TUNING.height}px * var(--hs)); box-sizing: border-box; padding: 1px; border-radius: 5px;
   background: rgba(7,7,13,.78); border: 1px solid var(--hairline-strong); opacity: 0;
+  transform: translate3d(var(--pbx, 0px), var(--pby, 0px), 0);
   transition: opacity 160ms var(--ease, ease-out); will-change: transform, opacity; }
 .hud-pb.is-on { opacity: 1; transition-duration: 60ms; }
 .hud-pb .pb-fill { width: 100%; height: 100%; border-radius: 3px; transform-origin: 0 50%; transform: scaleX(0); will-change: transform; }
@@ -75,6 +80,25 @@ export function powerBarPosition(
   out.x = Math.round(x);
   out.y = Math.round(y);
   return out;
+}
+
+/**
+ * [FEEL-2D] Cached `${n}px` strings for whole pixels 0..PX_CACHE-1 (filled on first use: a few hundred columns and rows
+ * in a match, never per frame). Positions are clamped inside the viewport, so beyond 8K-wide screens only.
+ */
+const PX_CACHE = 8192;
+const pxCache: (string | undefined)[] = new Array<string | undefined>(PX_CACHE).fill(undefined);
+
+/** `${n}px` for a whole pixel count, cached in 0..PX_CACHE-1. */
+export function pxStr(n: number): string {
+  if (n >= 0 && n < PX_CACHE) {
+    const c = pxCache[n];
+    if (c !== undefined) return c;
+    const str = `${n}px`;
+    pxCache[n] = str;
+    return str;
+  }
+  return `${n}px`;
 }
 
 const FILL_STR: readonly string[] = Array.from({ length: POWER_BAR_TUNING.steps + 1 }, (_, i) => `scaleX(${i / POWER_BAR_TUNING.steps})`);
@@ -153,10 +177,13 @@ export function createPowerBar(): HudPart {
         const vw = typeof window !== 'undefined' ? window.innerWidth : 1180;
         const vh = typeof window !== 'undefined' ? window.innerHeight : 820;
         powerBarPosition(ax, ay, vw, vh, T.width * hs, T.height * hs, markerPx + T.lift * hs, T.edge, pos);
-        if (pos.x !== b.x || pos.y !== b.y) {
+        if (pos.x !== b.x) {
           b.x = pos.x;
+          b.el.style.setProperty('--pbx', pxStr(pos.x));
+        }
+        if (pos.y !== b.y) {
           b.y = pos.y;
-          b.el.style.transform = `translate3d(${pos.x}px, ${pos.y}px, 0)`;
+          b.el.style.setProperty('--pby', pxStr(pos.y));
         }
         const step = powerStep(c.power);
         if (step !== b.step) {

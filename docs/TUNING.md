@@ -2311,3 +2311,31 @@ determinism PASS. Ladder `--matches 200` seeds 1 and 2 (pooled over 400): 74.3 /
 68.5 / 75.8%. Balance `--matches 200` seeds 1-4 (pooled over 800): top-bottom 81.6% (seed 4 alone 77.0), equal 55.6%
 points, mirror 50.1% points. Fuzz 60 `--enforce all`: seed 3 PASS (60 + 14 rematches), seed 6 PASS (60 + 13), 0
 exceptions / invariant failures / watchdogs, determinism PASS.
+
+## FEEL-2D (CPU fouls on a human dribbler by level, D-042)
+
+No new gameplay constant. D-042 reuses the FEEL-2 rows: in the duel context (a human coming at the defender within
+`T_FEEL2.duelEngageDist` at `duelApproachSpeed` or more, or a side step's window open) the rash tackle and the rash
+lunge want the ball first (lungePresented with `T_DEFENDING.blockPokeMargin`, as the careful tackle) and no slide is
+made; blocking a human who jogs at the defender counts as the duel context; and a careful / rash tackle or rash lunge at
+a human carrier never has the bodies meeting by mid-contact (2 x `T_PLAYER.bodyRadius` + `T_TACKLE_PLAY.bodyMargin` +
+`T_FEEL2.duelBodyGap`), in the duel or not. Human carriers only: bot v bot is bit-identical (16-match soak seed 1 hashes
+equal to 2f7a87d), so the section 7 bands, the ladder and the balance are the FEEL-2C final runs'.
+
+Fouls by a CPU defender on a human dribbler, Beginner .. Legend (the FEEL-2 skeptic's duel probe: 4 geometries, defender
+9-13 m ahead and -1.5 / 0.3 / 1.6 m to the side, R1 / sprint / jog, drag-back, late step, zig-zag, stop-and-go, wide):
+
+| Probe | 2f7a87d | Now |
+|---|---|---|
+| Skeptic's duels, seeds 41-42 (360 a level) | 4 / 2 / 21 / 8 / 12 / 9 | 3 / 2 / 2 / 0 / 2 / 2 |
+| Same, seeds 41-44 (720 a level) | 6 / 6 / 38 / 20 / 21 / 22 | 3 / 4 / 3 / 2 / 5 / 7 |
+| Same, beaten % (720) | 66.4 / 52.9 / 43.3 / 41.7 / 38.6 / 34.6 | 66.4 / 54.0 / 48.9 / 46.7 / 42.1 / 34.7 |
+| Stop-and-go only (feel-2d test, Amateur / Semi-Pro / Professional, 72) | 2 / 14 / 5 | 2 / 1 / 0 |
+| FEEL-2 grid beaten % (972) | 81.3 / 89.8 / 80.5 / 53.2 / 41.8 / 38.7 | 81.8 / 89.8 / 81.4 / 53.9 / 42.2 / 38.6 |
+| FEEL-2 grid fouls (972) | 3 / 0 / 2 / 4 / 14 / 8 | 2 / 0 / 1 / 0 / 2 / 0 |
+
+On 2f7a87d Semi-Pro's fouls were rash tackles into a stop-and-go burst (the dribbler crossing in front of the defender met
+the tackle body first: 18 of 38), slides at him, careful tackles at 0.8 m once a read window closed and pokes / rash
+lunges while blocking a human jogging at 4.6 m/s; Semi-Pro is the first level whose tackle timing (8 ticks) fits a
+sprinting human's touch interval while its decision noise is still high, and it reads 40% of the steps where Amateur is
+sold. FEEL-2 grid escorts over 1.5 s unchanged (9 / 0 / 5 / 2 / 0 / 1).
