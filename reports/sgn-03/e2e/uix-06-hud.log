@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/uix-06-hud.spec.ts:24:3 › UIX-06 scoreboard, clock, toasts › scoreboard and toasts update on scripted events, idle frames write nothing, layout clear at 3 aspects (26.1s)
+
+  1 passed (27.9s)

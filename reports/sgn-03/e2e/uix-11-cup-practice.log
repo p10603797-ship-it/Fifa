@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/uix-11-cup-practice.spec.ts:98:3 › UIX-11 cup and practice › cup by touch: draw, bracket, simulated tie, persistence, play / quit / result; layouts (14.7s)
+  ✓  2 [chromium-ipad] › tests/e2e/uix-11-cup-practice.spec.ts:224:3 › UIX-11 cup and practice › keyboard alone: cup draw and practice start (6.2s)
+  ✓  3 [chromium-ipad] › tests/e2e/uix-11-cup-practice.spec.ts:265:3 › UIX-11 cup and practice › practice entries start the right sessions by touch; Tutorial opens the tutorial (13.5s)
+
+  3 passed (36.4s)

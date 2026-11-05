@@ -307,11 +307,21 @@ test.describe('REVIEW FND-05 adversarial', () => {
     await page.evaluate(() => {
       const p = (window as unknown as W).__pads[0]!;
       p.buttons[2]!.pressed = false; p.buttons[2]!.value = 0;
-      p.axes[0] = -1;
     });
+    // [SGN-03 harness] The press that wakes the pad is also a game press (button 2 = PASS): next to the ball after the
+    // kick-off the controlled player passes, and the kick action holds him ~33 ticks (traced: act KICK to actT 33, then
+    // 0.38 m/s per 3 ticks of acceleration), so a 45-tick window from the press measured 0.25 m. Drive from a free
+    // player in open play.
+    await page.waitForFunction(() => {
+      const s = window.__dotkick!.ctx.session.getState()!;
+      const slot = s.ctrl[0]!.slot;
+      return s.match.phase === 2 && slot >= 0 && s.players[slot]!.act === 0 && s.ball.owner !== slot;
+    }, null, { timeout: 30_000 });
+    await page.evaluate(() => { (window as unknown as W).__pads[0]!.axes[0] = -1; });
     const a = await controlled(page);
     await waitTicks(page, a.tick, 45);
     const b = await controlled(page);
+    expect(b.slot, 'same controlled player').toBe(a.slot);
     expect(a.x - b.x).toBeGreaterThan(0.8);
     await page.evaluate(() => {
       const w = window as unknown as W;

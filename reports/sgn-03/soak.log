@@ -1,0 +1,50 @@
+
+> dotkick@0.1.0 soak
+> tsx tools/soak.ts --matches 2000 --workers 3 --enforce all --json reports/sgn-03/soak.json
+
+DotKick soak: 2000 match(es), 3 worker(s), seed 1, enforce all, 4-minute halves
+  [100/2002] 98.0 s, last #98 ok
+  [200/2002] 181.5 s, last #198 ok
+  [300/2002] 261.5 s, last #298 ok
+  [400/2002] 344.5 s, last #398 ok
+  [500/2002] 427.5 s, last #497 ok
+  [600/2002] 510.1 s, last #598 ok
+  [700/2002] 593.3 s, last #698 ok
+  [800/2002] 673.5 s, last #798 ok
+  [900/2002] 752.4 s, last #898 ok
+  [1000/2002] 837.8 s, last #999 ok
+  [1100/2002] 919.8 s, last #1098 ok
+  [1200/2002] 1001.5 s, last #1198 ok
+  [1300/2002] 1084.4 s, last #1298 ok
+  [1400/2002] 1163.4 s, last #1398 ok
+  [1500/2002] 1243.0 s, last #1498 ok
+  [1600/2002] 1327.5 s, last #1598 ok
+  [1700/2002] 1411.0 s, last #1697 ok
+  [1800/2002] 1496.6 s, last #1798 ok
+  [1900/2002] 1583.4 s, last #1898 ok
+  [2000/2002] 1675.0 s, last #1998 ok
+  [2002/2002] 1680.2 s, last #2001 ok
+  ticks 62490355 (avg 31245/match), finished 2000/2000, sim 0.0600 ms/tick avg (max 126.82), invariant checks 0.0171 ms/tick
+  exceptions 0, invariant failures enforced(all) 0 / all 0
+  watchdogs 0, unfinished 0, events dropped 0
+  determinism: PASS (seed 3860608494)
+    same seed twice (batch run vs recorded run): 18af1f31 == 18af1f31
+    same seed again after another match in the same worker: 18af1f31 == 18af1f31
+    replay (JSON round trip) plays back identically: 18af1f31 over 31864 ticks
+  statistics bands (finished matches, Professional only):
+  PASS goals per match: 2.92 (band 2-3.6, n=326)
+  PASS shots per match: 15.24 (band 14-26, n=326)
+  PASS possession per match, side with more of the ball: 57.18% (band 40-60%, n=326, 234/326 matches inside 40-60)
+  PASS possession home side: 49.81% (band 40-60%, n=326, home/away bias)
+  PASS pass completion: 78.84% (band 70-88%, n=326, 52405/66466)
+  PASS fouls per match: 10.64 (band 6-16, n=277, fouls on)
+  PASS offsides per match: 0.17 (band 0-6, n=281, offside on)
+  PASS blow-outs (5+ goal margin): 4.29% (band 0-5% (upper exclusive), n=326, 14 match(es))
+  failures: none
+RESULT: PASS in 1680.2 s
+  json report: reports/sgn-03/soak.json
+
+real	28m0.941s
+user	83m19.479s
+sys	0m39.127s
+EXIT 0

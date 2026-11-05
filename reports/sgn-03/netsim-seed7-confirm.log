@@ -1,0 +1,6 @@
+$ npx tsx tools/netsim.ts --halves 2 --latency 80 --jitter 20 --loss 0.05 --seed 7
+netsim OK: finished true hashesEqual true framesEqual true goals 0-1 virtual 269.6 s wall 4.1 s
+  host:  ticks 16168 stalls 3 (after warmup 0, max 0 ms; max overall 167 ms) desyncs 0 resyncs 0 delay 8..8 (final 8) rtt 204±52 ms resends 7 holds 1 (1 ticks, adv -0.30)
+  guest: ticks 16168 stalls 18 (after warmup 11, max 33 ms; max overall 83 ms) desyncs 0 resyncs 0 delay 8..8 (final 8) rtt 192±38 ms resends 18 holds 1 (2 ticks, adv 0.27)
+  link: inputs dropped 1649/32363, reliable retransmits 158
+EXIT 0

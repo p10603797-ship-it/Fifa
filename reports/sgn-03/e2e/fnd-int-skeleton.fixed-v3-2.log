@@ -1,0 +1,37 @@
+
+Running 1 test using 1 worker
+
+  ✘  1 [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:352:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors (2.0m)
+
+
+  1) [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:352:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors › restart: a fresh match that renders and takes input 
+
+    Error: player at rest after release: slot 10 (9.80, -2.27) t504 phase 2 owner -1 act 0 near 0.7 -> slot 10 (9.61, -2.16) t531 phase 2 owner -1 act 0 near 0.7
+
+    [2mexpect([22m[31mreceived[39m[2m).[22mtoBeLessThan[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: < [32m0.2[39m
+    Received:   [31m0.22451648006253896[39m
+
+      577 |         () => page.keyboard.down('ArrowRight'), () => page.keyboard.up('ArrowRight'));
+      578 |       expect(during.x - before.x, `key +x: ${fmt(before)} -> ${fmt(during)}`).toBeGreaterThan(1.5);
+    > 579 |       expect(Math.hypot(b.x - a.x, b.z - a.z), `player at rest after release: ${fmt(a)} -> ${fmt(b)}`).toBeLessThan(0.2);
+          |                                                                                                        ^
+      580 |     });
+      581 |
+      582 |     await test.step('quit: back to the main menu with the match released; a second Kick-Off works', async () => {
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:579:104
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:551:5
+
+    Error Context: test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:352:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors 

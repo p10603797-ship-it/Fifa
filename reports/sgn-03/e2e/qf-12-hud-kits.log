@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/qf-12-hud-kits.spec.ts:32:1 › scoreboard kit chips show the kits the players wear when the requested kits clash, also after high contrast is switched on (15.8s)
+
+  1 passed (19.8s)

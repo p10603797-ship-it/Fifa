@@ -1,0 +1,190 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "qf-12-menu-paths.spec.ts",
+      "file": "qf-12-menu-paths.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "QF-12 menu paths",
+          "file": "qf-12-menu-paths.spec.ts",
+          "line": 84,
+          "column": 6,
+          "specs": [
+            {
+              "title": "controller alone: cup tie and every pause page, practice restart and quit, tutorial, shoot-out flow, diagnostics",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 420000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 43671,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:30:15.624Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "88b0d3c5a142f3a691fd-3da9e5808bc53c7d7d5e",
+              "file": "qf-12-menu-paths.spec.ts",
+              "line": 85,
+              "column": 3
+            },
+            {
+              "title": "touch alone: cup tie and every pause page, practice restart and quit, tutorial, shoot-out flow, diagnostics",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 420000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 36545,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:30:59.424Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "88b0d3c5a142f3a691fd-b8e9e8d916a4238dfb0d",
+              "file": "qf-12-menu-paths.spec.ts",
+              "line": 169,
+              "column": 3
+            },
+            {
+              "title": "controller alone: Play now to full time (half-time Continue), Change teams opens team select, Back to main",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 300000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 65336,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:31:35.980Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "88b0d3c5a142f3a691fd-05f486b275e1d3c83693",
+              "file": "qf-12-menu-paths.spec.ts",
+              "line": 243,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T00:30:13.833Z",
+    "duration": 147739.559,
+    "expected": 3,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

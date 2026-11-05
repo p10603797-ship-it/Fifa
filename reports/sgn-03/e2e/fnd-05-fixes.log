@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/fnd-05-fixes.spec.ts:59:3 › FND-05 fixes › no WebGL2: message in the canvas layer; touch PAUSE and the pause menu stay above it and work (3.7s)
+  ✓  2 [chromium-ipad] › tests/e2e/fnd-05-fixes.spec.ts:103:3 › FND-05 fixes › renderer bound to the SettingsStore: tier and fixed resolution scale chosen mid-match apply (23.7s)
+  ✓  3 [chromium-ipad] › tests/e2e/fnd-05-fixes.spec.ts:140:3 › FND-05 fixes › keyboard: D + ArrowRight held, ArrowRight released -> still running right (27.3s)
+
+  3 passed (56.5s)

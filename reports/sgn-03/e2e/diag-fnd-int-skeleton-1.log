@@ -1,0 +1,40 @@
+
+Running 1 test using 1 worker
+
+  ✘  1 [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:290:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors (1.3m)
+
+
+  1) [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:290:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors 
+
+    Error: player at rest after release: slot 6 (14.84, -8.76) t798 phase 2 owner 6 -> slot 6 (15.24, -8.59) t822 phase 2 owner 6
+
+    [2mexpect([22m[31mreceived[39m[2m).[22mtoBeLessThan[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: < [32m0.2[39m
+    Received:   [31m0.43379791404472806[39m
+
+      101 |   await holdFor(page, a.tick, 15, 0);
+      102 |   const b = await controlled(page);
+    > 103 |   expect(Math.hypot(b.x - a.x, b.z - a.z), `player at rest after release: ${fmt(a)} -> ${fmt(b)}`).toBeLessThan(0.2);
+          |                                                                                                    ^
+      104 | }
+      105 |
+      106 | async function touch(cdp: CDPSession, type: 'touchStart' | 'touchMove' | 'touchEnd', x: number, y: number): Promise<void> {
+        at expectStops (/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:103:100)
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:470:7
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:458:5
+
+    Error: apiRequestContext._wrapApiCall: ENOENT: no such file or directory, open '/home/user/Fifa/test-results/.playwright-artifacts-0/traces/bb4ebc5dd3f76a3de7de-e050a065f6e9684f856b.trace'
+
+    Error Context: test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:290:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors 

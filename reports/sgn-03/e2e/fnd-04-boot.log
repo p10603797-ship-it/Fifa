@@ -1,0 +1,11 @@
+
+Running 6 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/fnd-04-boot.spec.ts:59:3 › FND-04 app shell › boot, kick-off, pause, quit and a second match with zero console errors or warnings (22.7s)
+  ✓  2 [chromium-ipad] › tests/e2e/fnd-04-boot.spec.ts:125:3 › FND-04 app shell › hidden page pauses, shows the pause menu on return and never fast-forwards (11.6s)
+  ✓  3 [chromium-ipad] › tests/e2e/fnd-04-boot.spec.ts:147:3 › FND-04 app shell › portrait shows the rotate card and pauses; landscape keeps the pause menu (9.8s)
+  ✓  4 [chromium-ipad] › tests/e2e/fnd-04-boot.spec.ts:163:3 › FND-04 app shell › every menu screen opens and Back returns, by touch and by keyboard (2.8s)
+  ✓  5 [chromium-ipad] › tests/e2e/fnd-04-boot.spec.ts:190:3 › FND-04 app shell › keyboard alone: one press = one action through splash, main, pause menu and quit (8.6s)
+  ✓  6 [chromium-ipad] › tests/e2e/fnd-04-boot.spec.ts:223:3 › FND-04 app shell › runs when manifest, service worker and icons are missing (9.2s)
+
+  6 passed (1.1m)

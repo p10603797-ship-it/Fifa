@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/net-07-online.spec.ts:30:3 › NET-07 online screens › create, join and ready by touch: both pages reach the same match (14.6s)
+  ✓  2 [chromium-ipad] › tests/e2e/net-07-online.spec.ts:87:3 › NET-07 online screens › every failure has a plain-language screen with Try again and Back (25.3s)
+  ✓  3 [chromium-ipad] › tests/e2e/net-07-online.spec.ts:139:3 › NET-07 online screens › controller alone: join keypad, error and Back with the focus ring; a share link joins by itself (6.7s)
+
+  3 passed (48.7s)

@@ -1,0 +1,193 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "fnd-int-skeleton.spec.ts",
+      "file": "fnd-int-skeleton.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "FND-INT walking skeleton",
+          "file": "fnd-int-skeleton.spec.ts",
+          "line": 287,
+          "column": 6,
+          "specs": [
+            {
+              "title": "boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 420000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 51602,
+                      "error": {
+                        "message": "Error: player at rest after release\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.2\u001b[39m\nReceived:   \u001b[31m51.98627198254767\u001b[39m",
+                        "stack": "Error: player at rest after release\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.2\u001b[39m\nReceived:   \u001b[31m51.98627198254767\u001b[39m\n    at expectStops (/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:101:76)\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:453:7\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:442:5",
+                        "location": {
+                          "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                          "column": 76,
+                          "line": 101
+                        },
+                        "snippet": "   99 |   await holdFor(page, a.tick, 15, 0);\n  100 |   const b = await controlled(page);\n> 101 |   expect(Math.hypot(b.x - a.x, b.z - a.z), 'player at rest after release').toBeLessThan(0.2);\n      |                                                                            ^\n  102 | }\n  103 |\n  104 | async function touch(cdp: CDPSession, type: 'touchStart' | 'touchMove' | 'touchEnd', x: number, y: number): Promise<void> {"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                            "column": 76,
+                            "line": 101
+                          },
+                          "message": "Error: player at rest after release\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.2\u001b[39m\nReceived:   \u001b[31m51.98627198254767\u001b[39m\n\n   99 |   await holdFor(page, a.tick, 15, 0);\n  100 |   const b = await controlled(page);\n> 101 |   expect(Math.hypot(b.x - a.x, b.z - a.z), 'player at rest after release').toBeLessThan(0.2);\n      |                                                                            ^\n  102 | }\n  103 |\n  104 | async function touch(cdp: CDPSession, type: 'touchStart' | 'touchMove' | 'touchEnd', x: number, y: number): Promise<void> {\n    at expectStops (/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:101:76)\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:453:7\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:442:5"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "steps": [
+                        {
+                          "title": "boot -> splash -> main",
+                          "duration": 1316
+                        },
+                        {
+                          "title": "Kick-Off -> loading -> match with the default setup",
+                          "duration": 11935
+                        },
+                        {
+                          "title": "screenshot of the match at 1180 x 820 -> reports/skeleton.png",
+                          "duration": 3059
+                        },
+                        {
+                          "title": "render probes: pitch, 22 capsules, ball, broadcast camera",
+                          "duration": 12257
+                        },
+                        {
+                          "title": "keyboard: holding D moves the controlled player toward +x, release stops",
+                          "duration": 9739
+                        },
+                        {
+                          "title": "touch: an upward drag in the left half moves the player toward -z, lift stops",
+                          "duration": 11806,
+                          "error": {
+                            "message": "Error: player at rest after release\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.2\u001b[39m\nReceived:   \u001b[31m51.98627198254767\u001b[39m",
+                            "stack": "Error: player at rest after release\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.2\u001b[39m\nReceived:   \u001b[31m51.98627198254767\u001b[39m\n    at expectStops (/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:101:76)\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:453:7\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:442:5",
+                            "location": {
+                              "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                              "column": 76,
+                              "line": 101
+                            },
+                            "snippet": "   99 |   await holdFor(page, a.tick, 15, 0);\n  100 |   const b = await controlled(page);\n> 101 |   expect(Math.hypot(b.x - a.x, b.z - a.z), 'player at rest after release').toBeLessThan(0.2);\n      |                                                                            ^\n  102 | }\n  103 |\n  104 | async function touch(cdp: CDPSession, type: 'touchStart' | 'touchMove' | 'touchEnd', x: number, y: number): Promise<void> {"
+                          }
+                        }
+                      ],
+                      "startTime": "2026-11-04T23:51:34.632Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/user/Fifa/test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/home/user/Fifa/test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                        "column": 76,
+                        "line": 101
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "bb4ebc5dd3f76a3de7de-e050a065f6e9684f856b",
+              "file": "fnd-int-skeleton.spec.ts",
+              "line": 288,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-04T23:51:32.942Z",
+    "duration": 54860.83,
+    "expected": 0,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

@@ -1,0 +1,181 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "sgn-05-network.spec.ts",
+      "file": "sgn-05-network.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "SGN-05 runtime network",
+          "file": "sgn-05-network.spec.ts",
+          "line": 100,
+          "column": 6,
+          "specs": [
+            {
+              "title": "shipped page: licence notices inside, no tracker, analytics, font CDN, API key or dev-only package",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 340,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:58:41.614Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "3cbe91e3f20675db8516-1bf5e9b6b34d0689bfd4",
+              "file": "sgn-05-network.spec.ts",
+              "line": 114,
+              "column": 3
+            },
+            {
+              "title": "every offline path stays inside the page origin; only Create room reaches out, to the PeerJS broker",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 600000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 104600,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "[sgn-05] booted and installed at 1.5 s, 10 requests\n"
+                        },
+                        {
+                          "text": "[sgn-05] settings and credits at 4.0 s, 10 requests\n"
+                        },
+                        {
+                          "text": "[sgn-05] match loaded at 11.3 s, 10 requests\n"
+                        },
+                        {
+                          "text": "[sgn-05] full match at 73.2 s, 10 requests\n"
+                        },
+                        {
+                          "text": "[sgn-05] practice and tutorial at 99.1 s, 10 requests\n"
+                        },
+                        {
+                          "text": "[sgn-05] offline reload at 100.2 s, 13 requests\n"
+                        },
+                        {
+                          "text": "[sgn-05] offline paths: 13 http requests, all to http://localhost:4503: / /icons/apple-touch-icon-180.png /icons/icon-192.png /icons/icon-32.png /icons/icon-512.png /icons/icon-maskable-512.png /manifest.webmanifest /sw.js\n"
+                        },
+                        {
+                          "text": "[sgn-05] Create room contacted: 0.peerjs.com (0 requests, 1 sockets)\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:58:42.043Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "3cbe91e3f20675db8516-2fd9934e17c24ec25e41",
+              "file": "sgn-05-network.spec.ts",
+              "line": 133,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T00:58:39.924Z",
+    "duration": 107061.228,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

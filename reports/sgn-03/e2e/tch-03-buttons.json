@@ -1,0 +1,232 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "tch-03-buttons.spec.ts",
+      "file": "tch-03-buttons.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "TCH-03 harness: real touches through the pointer manager into the attack cluster",
+          "file": "tch-03-buttons.spec.ts",
+          "line": 39,
+          "column": 6,
+          "specs": [
+            {
+              "title": "swipes in all four directions on every attack button are recognised at 24 pt; 18 pt is no swipe",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2139,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T01:06:26.265Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "a5e88f09c201d35f09ce-764e44fa5ec9a70d31f2",
+              "file": "tch-03-buttons.spec.ts",
+              "line": 60,
+              "column": 3
+            },
+            {
+              "title": "hold: HOLD and the 250 ms hint come from the frame loop; a slow slide off keeps the hold; touchCancel releases",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4542,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T01:06:28.560Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "a5e88f09c201d35f09ce-32239996fcb240823f3b",
+              "file": "tch-03-buttons.spec.ts",
+              "line": 95,
+              "column": 3
+            },
+            {
+              "title": "double tap, five simultaneous touches, and the attack set yields in DEFENCE mode",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 376,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T01:06:33.114Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "a5e88f09c201d35f09ce-a1fc6b72072c1bda79fd",
+              "file": "tch-03-buttons.spec.ts",
+              "line": 128,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "TCH-03 in the real app",
+          "file": "tch-03-buttons.spec.ts",
+          "line": 165,
+          "column": 6,
+          "specs": [
+            {
+              "title": "pressed state within one frame of the touch-down (sync and next rAF), kept while the thumb slides off",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 40902,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T01:06:33.502Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "a5e88f09c201d35f09ce-a0e6d95855197f21727f",
+              "file": "tch-03-buttons.spec.ts",
+              "line": 166,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T01:06:23.870Z",
+    "duration": 50644.418000000005,
+    "expected": 4,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

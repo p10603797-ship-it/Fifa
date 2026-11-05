@@ -1,0 +1,8 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:352:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors (5.1m)
+
+  Slow test file: [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts (5.1m)
+  Consider running tests from slow files in parallel. See: https://playwright.dev/docs/test-parallel
+  1 passed (5.1m)

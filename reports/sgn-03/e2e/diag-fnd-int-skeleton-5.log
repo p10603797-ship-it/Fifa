@@ -1,0 +1,42 @@
+
+Running 1 test using 1 worker
+
+  ✘  1 [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:394:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors (2.4m)
+
+
+  1) [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:394:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors › quit: back to the main menu with the match released; a second Kick-Off works 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByTestId('main-kickoff')
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for getByTestId('main-kickoff')[22m
+
+
+      559 |       await expect(page.getByTestId('pause-menu')).toBeVisible();
+      560 |       await page.getByTestId('pause-quit').tap();
+    > 561 |       await expect(page.getByTestId('main-kickoff')).toBeVisible();
+          |                                                      ^
+      562 |       const gone = await page.evaluate(() => {
+      563 |         const ctx = window.__dotkick!.ctx;
+      564 |         return {
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:561:54
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:557:5
+
+    Error Context: test-results-sgn03-diag/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results-sgn03-diag/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results-sgn03-diag/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:394:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors 

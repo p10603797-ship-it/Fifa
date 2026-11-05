@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/qf-17-halftime.spec.ts:18:1 › QF-17 half time over the mounted match screen: the overlay built ahead is the one shown, the match screen is never remounted (28.1s)
+
+  1 passed (29.9s)

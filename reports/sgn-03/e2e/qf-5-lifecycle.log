@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/qf-5-lifecycle.spec.ts:38:3 › QF-5 lifecycle › audio: quick hide/show comes back without a tap; a match right after the unlock is fully pre-rendered (9.8s)
+  ✓  2 [chromium-ipad] › tests/e2e/qf-5-lifecycle.spec.ts:70:3 › QF-5 lifecycle › storage blocked (localStorage throws, IndexedDB never opens): boots, plays, pauses and quits (17.2s)
+  ✓  3 [chromium-ipad] › tests/e2e/qf-5-lifecycle.spec.ts:101:3 › QF-5 lifecycle › a new deploy fetched online is not offered as an update of itself; offline then boots that build (8.1s)
+
+  3 passed (36.9s)

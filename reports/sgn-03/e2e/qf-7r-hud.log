@@ -1,0 +1,7 @@
+
+Running 1 test using 1 worker
+
+QF-7R HUD DOM writes: {"frames":1517,"seconds":30,"mutations":240,"perSecond":[["[sb-clock] characterData",6.1],["div.dk-tbtn @data-btn",0.4],["span.dk-tbtn-label childList",0.4],["div.dk-tbtn @class",0.3],["[pi-p1-fill] @style",0.1],["span.dk-tbtn-cap childList",0.1],["[hud-toast] @class",0.1],["[sb-score] characterData",0],["[toast-title] childList",0],["span.ht-code childList",0],["[toast-line] childList",0],["[toast-minute] childList",0],["span.ht-chip @style",0],["[hud-toast] @data-kind",0],["[hud-toast] @aria-label",0]]}
+  ✓  1 [chromium-ipad] › tests/e2e/qf-7r-hud.spec.ts:119:1 › HUD and touch controls write the DOM only on change during live play (40.8s)
+
+  1 passed (42.9s)

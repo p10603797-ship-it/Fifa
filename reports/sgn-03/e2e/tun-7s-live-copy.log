@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/tun-7s-live-copy.spec.ts:17:1 › live match: prev is an exact unshared copy one tick behind curr (22.8s)
+
+  1 passed (24.6s)

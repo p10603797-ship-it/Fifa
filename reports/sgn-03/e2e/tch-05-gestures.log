@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/tch-05-gestures.spec.ts:121:1 › a swipe on the pitch produces one SWIPE gesture event and never moves the stick (2.9s)
+  ✓  2 [chromium-ipad] › tests/e2e/tch-05-gestures.spec.ts:142:1 › a tap on the pitch produces one TAP after the double-tap window (timer path) (3.3s)
+  ✓  3 [chromium-ipad] › tests/e2e/tch-05-gestures.spec.ts:155:1 › a real touch dragged across the pitch never activates the stick (4.2s)
+
+  3 passed (21.3s)

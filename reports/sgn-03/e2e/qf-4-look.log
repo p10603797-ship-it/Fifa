@@ -1,0 +1,8 @@
+
+Running 2 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/qf-4-look.spec.ts:77:3 › QF-4 look: HUD layout, resize / rotation, budgets per scene › HUD clear of the touch controls at 1180x820, 4:3, 16:10 and 19.5:9; rotation and resize keep the camera aspect (54.4s)
+QF-4 scenes {"kickoff":{"calls":20,"tris":46756,"texMB":6.03,"textures":6,"gpuTextures":6,"geometries":21,"phase":1,"shot":0},"openplay":{"calls":20,"tris":46756,"texMB":6.03,"textures":6,"gpuTextures":6,"geometries":21,"phase":2,"shot":0},"corner-setup":{"calls":20,"tris":46756,"texMB":6.03,"textures":6,"gpuTextures":6,"geometries":21,"phase":5,"shot":0},"corner-view":{"calls":20,"tris":46756,"texMB":6.03,"textures":6,"gpuTextures":6,"geometries":21,"phase":5,"shot":2},"goal-kick":{"calls":20,"tris":46756,"texMB":6.03,"textures":6,"gpuTextures":6,"geometries":21,"phase":4,"shot":1},"free-kick":{"calls":20,"tris":46756,"texMB":6.03,"textures":6,"gpuTextures":6,"geometries":21,"phase":6,"shot":1},"goal":{"calls":22,"tris":46758,"texMB":6.03,"textures":6,"gpuTextures":6,"geometries":23,"phase":8,"shot":0},"replay":{"calls":22,"tris":46758,"texMB":6.03,"textures":6,"gpuTextures":6,"geometries":23,"phase":10,"shot":4},"night":{"calls":21,"tris":46764,"texMB":6.03,"textures":6,"gpuTextures":6,"geometries":24,"phase":2,"shot":0}}
+  ✓  2 [chromium-ipad] › tests/e2e/qf-4-look.spec.ts:205:3 › QF-4 look: HUD layout, resize / rotation, budgets per scene › budgets per scene (draw calls, triangles, texture memory) and set-piece camera screenshots (1.4m)
+
+  2 passed (2.4m)

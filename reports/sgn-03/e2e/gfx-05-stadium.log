@@ -1,0 +1,7 @@
+
+Running 1 test using 1 worker
+
+GFX-05 frames: {"day":{"drawCalls":20,"triangles":46756,"stadiumCalls":5,"stadiumTris":4630,"topLuma":94.59264770989587,"midLuma":110.8492226911375,"mid":[73.51533516537442,140.4093385023064,56.56013838453234]},"dayFar":{"drawCalls":18,"triangles":46586,"stadiumCalls":5,"stadiumTris":4630,"topLuma":148.01965457899462,"midLuma":93.96995117283345,"mid":[114.6622583177937,85.92494356659142,81.12275493178919]},"aerial":{"drawCalls":20,"triangles":46756,"stadiumCalls":5,"stadiumTris":4630,"topLuma":91.63704034078496,"midLuma":102.6656784031799,"mid":[83.4413828638728,117.73594072038473,75.48866424575523]},"night":{"drawCalls":21,"triangles":46764,"stadiumCalls":6,"stadiumTris":4638,"topLuma":59.029550595888246,"midLuma":95.17487788301109,"mid":[59.656492295612914,121.4602267150849,52.986259691824515]},"nightFar":{"drawCalls":19,"triangles":46594,"stadiumCalls":6,"stadiumTris":4638,"topLuma":25.498246413747903,"midLuma":46.97339807635686,"mid":[56.498331534007264,42.64589262930611,44.27419275689469]}}
+  ✓  1 [chromium-ipad] › tests/e2e/gfx-05-stadium.spec.ts:107:3 › GFX-05 stadium › day and floodlit night: stands, boards, sky and floodlights within budget; night darker (31.6s)
+
+  1 passed (33.5s)

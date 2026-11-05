@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/uix-04-side-select.spec.ts:39:3 › UIX-04 side select › touch + mocked pad: own-device moves, P1/P2 by assignment order, max two, right bindings (3.4s)
+  ✓  2 [chromium-ipad] › tests/e2e/uix-04-side-select.spec.ts:119:3 › UIX-04 side select › two pads (Play a Friend): P1 and P2 on opposite sides; same-side co-op allowed (2.7s)
+  ✓  3 [chromium-ipad] › tests/e2e/uix-04-side-select.spec.ts:165:3 › UIX-04 side select › layout at iPad landscape, 4:3 and 21:9 (3.5s)
+
+  3 passed (11.3s)

@@ -1,0 +1,7 @@
+
+Running 2 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/pad-02-mapper.spec.ts:187:1 › mocked pad: every quick tap reaches the sim once, Options pauses once per press, the left stick moves P1 (3.9s)
+  ✓  2 [chromium-ipad] › tests/e2e/pad-02-mapper.spec.ts:230:1 › two pads: a non-standard pad joins mid-run and is read through its saved remap; nothing crosses to pad 1 (1.8s)
+
+  2 passed (7.8s)

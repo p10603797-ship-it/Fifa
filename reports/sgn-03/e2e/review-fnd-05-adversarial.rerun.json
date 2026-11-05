@@ -1,0 +1,429 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "review-fnd-05-adversarial.spec.ts",
+      "file": "review-fnd-05-adversarial.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "REVIEW FND-05 adversarial",
+          "file": "review-fnd-05-adversarial.spec.ts",
+          "line": 89,
+          "column": 6,
+          "specs": [
+            {
+              "title": "no WebGL2: the unavailable message is shown but does not cover the pause menu or the touch PAUSE button",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3232,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:53:51.173Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "59afcf6270c245fb7606-84d2b9ba62fb364aec1e",
+              "file": "review-fnd-05-adversarial.spec.ts",
+              "line": 90,
+              "column": 3
+            },
+            {
+              "title": "quit and restart twice: one overlay, no leaked window/document listeners, input still works",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 41018,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:53:54.509Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "59afcf6270c245fb7606-ead3441706024f757347",
+              "file": "review-fnd-05-adversarial.spec.ts",
+              "line": 120,
+              "column": 3
+            },
+            {
+              "title": "visibility change mid-match while holding D and the touch stick: everything released, nothing stuck after resume",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 22062,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:54:35.546Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "59afcf6270c245fb7606-68d8e1493b400a5ecc95",
+              "file": "review-fnd-05-adversarial.spec.ts",
+              "line": 198,
+              "column": 3
+            },
+            {
+              "title": "resize mid-match (4:3 and 21:9): cluster relayouts inside the viewport and still responds; camera follows",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 31550,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:54:57.618Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "59afcf6270c245fb7606-d791cd886220308d013d",
+              "file": "review-fnd-05-adversarial.spec.ts",
+              "line": 242,
+              "column": 3
+            },
+            {
+              "title": "pad: disconnect mid-hold stops the player; reconnect at a new index keeps the binding and drives it again",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 26239,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeGreaterThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: > \u001b[32m0.8\u001b[39m\nReceived:   \u001b[31m0.24880952380952426\u001b[39m",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeGreaterThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: > \u001b[32m0.8\u001b[39m\nReceived:   \u001b[31m0.24880952380952426\u001b[39m\n    at /home/user/Fifa/tests/e2e/review-fnd-05-adversarial.spec.ts:315:23",
+                        "location": {
+                          "file": "/home/user/Fifa/tests/e2e/review-fnd-05-adversarial.spec.ts",
+                          "column": 23,
+                          "line": 315
+                        },
+                        "snippet": "  313 |     await waitTicks(page, a.tick, 45);\n  314 |     const b = await controlled(page);\n> 315 |     expect(a.x - b.x).toBeGreaterThan(0.8);\n      |                       ^\n  316 |     await page.evaluate(() => {\n  317 |       const w = window as unknown as W;\n  318 |       w.__pads[0]!.connected = false;"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/user/Fifa/tests/e2e/review-fnd-05-adversarial.spec.ts",
+                            "column": 23,
+                            "line": 315
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeGreaterThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: > \u001b[32m0.8\u001b[39m\nReceived:   \u001b[31m0.24880952380952426\u001b[39m\n\n  313 |     await waitTicks(page, a.tick, 45);\n  314 |     const b = await controlled(page);\n> 315 |     expect(a.x - b.x).toBeGreaterThan(0.8);\n      |                       ^\n  316 |     await page.evaluate(() => {\n  317 |       const w = window as unknown as W;\n  318 |       w.__pads[0]!.connected = false;\n    at /home/user/Fifa/tests/e2e/review-fnd-05-adversarial.spec.ts:315:23"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:55:29.182Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/user/Fifa/test-results/review-fnd-05-adversarial--10a35-binding-and-drives-it-again-chromium-ipad/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/home/user/Fifa/test-results/review-fnd-05-adversarial--10a35-binding-and-drives-it-again-chromium-ipad/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/user/Fifa/tests/e2e/review-fnd-05-adversarial.spec.ts",
+                        "column": 23,
+                        "line": 315
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "59afcf6270c245fb7606-6202097e013319fc19d7",
+              "file": "review-fnd-05-adversarial.spec.ts",
+              "line": 287,
+              "column": 3
+            },
+            {
+              "title": "blocked storage and no service worker: the match starts and touch input works with zero console errors",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 24546,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:55:57.096Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "59afcf6270c245fb7606-0368bc9c4d6514eecf96",
+              "file": "review-fnd-05-adversarial.spec.ts",
+              "line": 356,
+              "column": 3
+            },
+            {
+              "title": "multi-touch: stick and SPRINT held together; lifting one keeps the other (no stolen touches)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 18265,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:56:21.740Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "59afcf6270c245fb7606-5b4bb2cac65ebefa5bfa",
+              "file": "review-fnd-05-adversarial.spec.ts",
+              "line": 375,
+              "column": 3
+            },
+            {
+              "title": "graphics settings changed in a running session reach the renderer (fixed resolution scale)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 14086,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:56:40.023Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "59afcf6270c245fb7606-01d7f99cecbd281fb2c6",
+              "file": "review-fnd-05-adversarial.spec.ts",
+              "line": 405,
+              "column": 3
+            },
+            {
+              "title": "Escape and the touch PAUSE button pause exactly once; the touch layer ignores touches while paused",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 15149,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:56:54.141Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "59afcf6270c245fb7606-1f421c2143b69d400775",
+              "file": "review-fnd-05-adversarial.spec.ts",
+              "line": 421,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T00:53:49.449Z",
+    "duration": 200001.721,
+    "expected": 8,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

@@ -1,0 +1,32 @@
+
+Running 1 test using 1 worker
+
+t246 x-0.61 vx-0.15 act1 actT24 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t249 x-0.61 vx0.00 act1 actT27 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t252 x-0.62 vx-0.25 act1 actT30 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t255 x-0.65 vx-0.63 act1 actT33 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t258 x-0.69 vx-1.01 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t261 x-0.75 vx-1.39 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t264 x-0.84 vx-1.77 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t267 x-0.94 vx-2.15 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t270 x-1.06 vx-2.52 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t273 x-1.20 vx-2.90 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t276 x-1.35 vx-3.28 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t279 x-1.53 vx-3.66 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t282 x-1.73 vx-4.04 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t285 x-1.94 vx-4.42 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t288 x-2.17 vx-4.80 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t291 x-2.43 vx-5.17 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t294 x-2.69 vx-5.45 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t297 x-2.97 vx-5.45 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t300 x-3.24 vx-5.45 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t303 x-3.51 vx-5.45 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t306 x-3.78 vx-5.45 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t309 x-4.06 vx-5.45 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t312 x-4.33 vx-5.45 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t315 x-4.60 vx-5.45 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t318 x-4.87 vx-5.45 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+t321 x-5.15 vx-5.45 act0 actT0 ph2 own-1 ctrl{"kind":1,"side":0,"assist":0,"autoSwitch":0,"fastPower":0,"slot":10,"buttons":0,"prevButtons":0,"holdT":[0,0,0,0,0,0,0,0],"pressTick":[-1,-1,223,-1,-1,-1,-1,-1
+  ✓  1 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:287:3 › REVIEW FND-05 adversarial › pad: disconnect mid-hold stops the player; reconnect at a new index keeps the binding and drives it again (40.9s)
+
+  1 passed (43.3s)

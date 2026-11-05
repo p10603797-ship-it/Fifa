@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/pad-01-devices.spec.ts:49:1 › pads join on a press, are labelled in press order, and a bound pad reconnecting at a new index keeps its id (1.7s)
+
+  1 passed (3.5s)

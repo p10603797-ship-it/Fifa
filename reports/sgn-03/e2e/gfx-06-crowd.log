@@ -1,0 +1,7 @@
+
+Running 1 test using 1 worker
+
+GFX-06: {"broadcast":{"drawCalls":20,"triangles":46756,"changed":0,"crowd":{"instances":7600,"triangles":15200,"drawCalls":1,"excitement":0,"levels":[0,0,0,0,0,0,0,0,0]}},"idle":{"drawCalls":18,"triangles":46586,"changed":0,"crowd":{"instances":7600,"triangles":15200,"drawCalls":1,"excitement":0,"levels":[0,0,0,0,0,0,0,0,0]}},"goal":{"drawCalls":18,"triangles":46586,"changed":0.29506877916973717,"crowd":{"instances":7600,"triangles":15200,"drawCalls":1,"excitement":0.9695659632763839,"levels":[0,0,0,1,0,0.5,0,1,0]}},"later":{"drawCalls":20,"triangles":46756,"changed":0.9983787767133383,"crowd":{"instances":7600,"triangles":15200,"drawCalls":1,"excitement":0.9958812010199758,"levels":[0,0,0,1,0,0.5,0,1,0]}}}
+  ✓  1 [chromium-ipad] › tests/e2e/gfx-06-crowd.spec.ts:99:3 › GFX-06 crowd › instanced crowd in the stands, then a GOAL: the scoring side jumps and cheers (31.4s)
+
+  1 passed (33.2s)

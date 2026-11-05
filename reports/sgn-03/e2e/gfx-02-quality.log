@@ -1,0 +1,8 @@
+
+Running 1 test using 1 worker
+
+GFX-02 startup test: {"samples":7,"kept":7,"medianMs":318.9000000000233,"tier":1,"conclusive":true,"aborted":false,"warmupMs":1205.100000000035,"elapsedMs":3478.3000000000466} -> tier 1
+GFX-02 after play: fps 20.0 scale 0.7 changes 1 tier 1
+  ✓  1 [chromium-ipad] › tests/e2e/gfx-02-quality.spec.ts:81:3 › GFX-02 quality › AUTO startup test during loading; settings tier and fixed scale apply mid-match; dynamic scale stays in bounds (42.4s)
+
+  1 passed (44.9s)

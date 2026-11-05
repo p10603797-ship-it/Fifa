@@ -1,0 +1,9 @@
+
+Running 4 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/tch-07-touch-input.spec.ts:58:3 › TCH-07 createTouchInput with real touches › glitch: stuck sprint or stick after pointercancel; the pressed state shows within the same frame (554ms)
+  ✓  2 [chromium-ipad] › tests/e2e/tch-07-touch-input.spec.ts:87:3 › TCH-07 createTouchInput with real touches › glitch: button swipe read as a pitch gesture - a swipe up from PASS is a lob press, never a gesture (545ms)
+  ✓  3 [chromium-ipad] › tests/e2e/tch-07-touch-input.spec.ts:105:3 › TCH-07 createTouchInput with real touches › five simultaneous touches; blur releases everything; a late lift re-presses nothing; PAUSE pauses (576ms)
+  ✓  4 [chromium-ipad] › tests/e2e/tch-07-touch-input.spec.ts:132:3 › TCH-07 createTouchInput with real touches › cut-scene (HIDDEN): a tap anywhere on the pitch skips (444ms)
+
+  4 passed (4.2s)

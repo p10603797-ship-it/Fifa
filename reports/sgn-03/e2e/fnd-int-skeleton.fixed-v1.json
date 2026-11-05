@@ -1,0 +1,189 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "fnd-int-skeleton.spec.ts",
+      "file": "fnd-int-skeleton.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "FND-INT walking skeleton",
+          "file": "fnd-int-skeleton.spec.ts",
+          "line": 341,
+          "column": 6,
+          "specs": [
+            {
+              "title": "boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 420000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 65408,
+                      "error": {
+                        "message": "Error: key +x: slot 4 (-4.05, -23.56) t753 phase 2 owner 16 -> slot 4 (-3.86, -23.21) t819 phase 2 owner 16\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeGreaterThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: > \u001b[32m1.5\u001b[39m\nReceived:   \u001b[31m0.1949609982914584\u001b[39m",
+                        "stack": "Error: key +x: slot 4 (-4.05, -23.56) t753 phase 2 owner 16 -> slot 4 (-3.86, -23.21) t819 phase 2 owner 16\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeGreaterThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: > \u001b[32m1.5\u001b[39m\nReceived:   \u001b[31m0.1949609982914584\u001b[39m\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:488:79\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:484:5",
+                        "location": {
+                          "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                          "column": 79,
+                          "line": 488
+                        },
+                        "snippet": "  486 |         () => page.keyboard.down('KeyD'), () => page.keyboard.up('KeyD'));\n  487 |       expect(during.slot).toBe(before.slot);\n> 488 |       expect(during.x - before.x, `key +x: ${fmt(before)} -> ${fmt(during)}`).toBeGreaterThan(1.5);\n      |                                                                               ^\n  489 |       expect(Math.abs(during.z - before.z)).toBeLessThan(1);\n  490 |       expect(Math.hypot(b.x - a.x, b.z - a.z), `player at rest after release: ${fmt(a)} -> ${fmt(b)}`).toBeLessThan(0.2);\n  491 |     });"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                            "column": 79,
+                            "line": 488
+                          },
+                          "message": "Error: key +x: slot 4 (-4.05, -23.56) t753 phase 2 owner 16 -> slot 4 (-3.86, -23.21) t819 phase 2 owner 16\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeGreaterThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: > \u001b[32m1.5\u001b[39m\nReceived:   \u001b[31m0.1949609982914584\u001b[39m\n\n  486 |         () => page.keyboard.down('KeyD'), () => page.keyboard.up('KeyD'));\n  487 |       expect(during.slot).toBe(before.slot);\n> 488 |       expect(during.x - before.x, `key +x: ${fmt(before)} -> ${fmt(during)}`).toBeGreaterThan(1.5);\n      |                                                                               ^\n  489 |       expect(Math.abs(during.z - before.z)).toBeLessThan(1);\n  490 |       expect(Math.hypot(b.x - a.x, b.z - a.z), `player at rest after release: ${fmt(a)} -> ${fmt(b)}`).toBeLessThan(0.2);\n  491 |     });\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:488:79\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:484:5"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "steps": [
+                        {
+                          "title": "boot -> splash -> main",
+                          "duration": 1115
+                        },
+                        {
+                          "title": "Kick-Off -> loading -> match with the default setup",
+                          "duration": 10876
+                        },
+                        {
+                          "title": "screenshot of the match at 1180 x 820 -> reports/skeleton.png",
+                          "duration": 2953
+                        },
+                        {
+                          "title": "render probes: pitch, 22 capsules, ball, broadcast camera",
+                          "duration": 11254
+                        },
+                        {
+                          "title": "keyboard: holding D moves the controlled player toward +x, release stops",
+                          "duration": 36963,
+                          "error": {
+                            "message": "Error: key +x: slot 4 (-4.05, -23.56) t753 phase 2 owner 16 -> slot 4 (-3.86, -23.21) t819 phase 2 owner 16\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeGreaterThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: > \u001b[32m1.5\u001b[39m\nReceived:   \u001b[31m0.1949609982914584\u001b[39m",
+                            "stack": "Error: key +x: slot 4 (-4.05, -23.56) t753 phase 2 owner 16 -> slot 4 (-3.86, -23.21) t819 phase 2 owner 16\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeGreaterThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: > \u001b[32m1.5\u001b[39m\nReceived:   \u001b[31m0.1949609982914584\u001b[39m\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:488:79\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:484:5",
+                            "location": {
+                              "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                              "column": 79,
+                              "line": 488
+                            },
+                            "snippet": "  486 |         () => page.keyboard.down('KeyD'), () => page.keyboard.up('KeyD'));\n  487 |       expect(during.slot).toBe(before.slot);\n> 488 |       expect(during.x - before.x, `key +x: ${fmt(before)} -> ${fmt(during)}`).toBeGreaterThan(1.5);\n      |                                                                               ^\n  489 |       expect(Math.abs(during.z - before.z)).toBeLessThan(1);\n  490 |       expect(Math.hypot(b.x - a.x, b.z - a.z), `player at rest after release: ${fmt(a)} -> ${fmt(b)}`).toBeLessThan(0.2);\n  491 |     });"
+                          }
+                        }
+                      ],
+                      "startTime": "2026-11-05T01:16:05.145Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/user/Fifa/test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/home/user/Fifa/test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                        "column": 79,
+                        "line": 488
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "bb4ebc5dd3f76a3de7de-e050a065f6e9684f856b",
+              "file": "fnd-int-skeleton.spec.ts",
+              "line": 342,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T01:16:03.499Z",
+    "duration": 69263.746,
+    "expected": 0,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

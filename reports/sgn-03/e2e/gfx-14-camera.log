@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/gfx-14-camera.spec.ts:90:3 › GFX-14 broadcast camera › framing at midfield, near each box, the near corner and a high ball (screenshots) (36.6s)
+
+  1 passed (38.5s)

@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/pad-05-rightstick.spec.ts:117:1 › mocked pad right stick: skill patterns relative to facing, flicks with direction, no skill from aiming (6.3s)
+
+  1 passed (8.2s)

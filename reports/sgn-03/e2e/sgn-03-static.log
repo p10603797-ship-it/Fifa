@@ -1,0 +1,7 @@
+
+Running 1 test using 1 worker
+
+static: served index.html only; match reached tick 102; same-origin paths / /sw.js
+  ✓  1 [chromium-ipad] › tests/e2e/sgn-03-static.spec.ts:32:1 › dist/index.html alone, from a plain static server (python http.server), boots and plays a match with zero console errors (17.9s)
+
+  1 passed (20.0s)

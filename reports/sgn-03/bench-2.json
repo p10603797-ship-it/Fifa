@@ -1,0 +1,97 @@
+{
+ "throttle": 4,
+ "result": {
+  "game": "DotKick 0.1.0",
+  "seed": 42,
+  "seconds": 517.246,
+  "frames": 1800,
+  "avgFps": 3.4799689122777173,
+  "low1Fps": 2.6798874447273455,
+  "low01Fps": 2.5003125390674015,
+  "longestFrameMs": 400,
+  "simMsAvg": 0.7394074074254819,
+  "simMsMax": 6.199999999254942,
+  "simMsP99": 3.900000000372529,
+  "simFramesOverBudget": 13,
+  "ticks": 5400,
+  "renderMsAvg": 5.0926666666360365,
+  "renderMsMax": 25.5,
+  "drawCallsAvg": 20.143333333333334,
+  "drawCallsMax": 22,
+  "trianglesAvg": 46777.573333333334,
+  "trianglesMax": 46924,
+  "resolutionScale": 0.6,
+  "qualityTier": 1,
+  "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+  "screen": "1180x820@2",
+  "checks": [
+   {
+    "name": "average fps",
+    "value": 3.4799689122777173,
+    "limit": 58,
+    "kind": "min",
+    "pass": false,
+    "proxy": false
+   },
+   {
+    "name": "1% low fps",
+    "value": 2.6798874447273455,
+    "limit": 50,
+    "kind": "min",
+    "pass": false,
+    "proxy": false
+   },
+   {
+    "name": "longest frame ms",
+    "value": 400,
+    "limit": 33,
+    "kind": "max",
+    "pass": false,
+    "proxy": false
+   },
+   {
+    "name": "sim + AI ms/tick avg",
+    "value": 0.7394074074254819,
+    "limit": 2.5,
+    "kind": "max",
+    "pass": true,
+    "proxy": true
+   },
+   {
+    "name": "sim + AI ms/tick p99 of frame worst",
+    "value": 3.900000000372529,
+    "limit": 4,
+    "kind": "max",
+    "pass": true,
+    "proxy": true
+   },
+   {
+    "name": "sim + AI ms/tick worst",
+    "value": 6.199999999254942,
+    "limit": 4,
+    "kind": "max",
+    "pass": false,
+    "proxy": false
+   },
+   {
+    "name": "draw calls (max)",
+    "value": 22,
+    "limit": 80,
+    "kind": "max",
+    "pass": true,
+    "proxy": true
+   },
+   {
+    "name": "triangles (max)",
+    "value": 46924,
+    "limit": 200000,
+    "kind": "max",
+    "pass": true,
+    "proxy": true
+   }
+  ],
+  "pass": false,
+  "proxyPass": true
+ },
+ "errors": []
+}

@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/pad-04-sequences.spec.ts:105:1 › mocked pad D-pad: sequences, HUD pending state, interleaved buttons, real-time window, corner context (3.7s)
+
+  1 passed (5.8s)

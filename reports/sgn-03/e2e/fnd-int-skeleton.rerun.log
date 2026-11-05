@@ -1,0 +1,38 @@
+
+Running 1 test using 1 worker
+
+  ✘  1 [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:288:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors (51.6s)
+
+
+  1) [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:288:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors › touch: an upward drag in the left half moves the player toward -z, lift stops 
+
+    Error: player at rest after release
+
+    [2mexpect([22m[31mreceived[39m[2m).[22mtoBeLessThan[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: < [32m0.2[39m
+    Received:   [31m51.98627198254767[39m
+
+       99 |   await holdFor(page, a.tick, 15, 0);
+      100 |   const b = await controlled(page);
+    > 101 |   expect(Math.hypot(b.x - a.x, b.z - a.z), 'player at rest after release').toBeLessThan(0.2);
+          |                                                                            ^
+      102 | }
+      103 |
+      104 | async function touch(cdp: CDPSession, type: 'touchStart' | 'touchMove' | 'touchEnd', x: number, y: number): Promise<void> {
+        at expectStops (/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:101:76)
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:453:7
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:442:5
+
+    Error Context: test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:288:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors 

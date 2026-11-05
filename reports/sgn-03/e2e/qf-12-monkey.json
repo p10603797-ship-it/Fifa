@@ -1,0 +1,167 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "qf-12-monkey.spec.ts",
+      "file": "qf-12-monkey.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "monkey seed 11: random touch, key and pad actions over every screen, zero console errors or warnings",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 420000,
+              "annotations": [
+                {
+                  "type": "visited",
+                  "description": "{\"splash\":1,\"main\":12,\"mode-setup\":19,\"team-select\":29,\"match\":4,\"diagnostics\":7,\"settings\":14}"
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "chromium-ipad",
+              "projectName": "chromium-ipad",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 37115,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-05T00:32:44.651Z",
+                  "annotations": [
+                    {
+                      "type": "visited",
+                      "description": "{\"splash\":1,\"main\":12,\"mode-setup\":19,\"team-select\":29,\"match\":4,\"diagnostics\":7,\"settings\":14}"
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8a98effc013bb9599cbd-b8eea97340fa563b5f7b",
+          "file": "qf-12-monkey.spec.ts",
+          "line": 89,
+          "column": 3
+        },
+        {
+          "title": "monkey seed 12: random touch, key and pad actions over every screen, zero console errors or warnings",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 420000,
+              "annotations": [
+                {
+                  "type": "visited",
+                  "description": "{\"splash\":1,\"main\":11,\"diagnostics\":2,\"mode-setup\":31,\"team-select\":37,\"side-select\":1,\"practice\":1}"
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "chromium-ipad",
+              "projectName": "chromium-ipad",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 28850,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-05T00:33:21.921Z",
+                  "annotations": [
+                    {
+                      "type": "visited",
+                      "description": "{\"splash\":1,\"main\":11,\"diagnostics\":2,\"mode-setup\":31,\"team-select\":37,\"side-select\":1,\"practice\":1}"
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8a98effc013bb9599cbd-f6b941c3adb03184f0bb",
+          "file": "qf-12-monkey.spec.ts",
+          "line": 89,
+          "column": 3
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T00:32:42.931Z",
+    "duration": 68041.606,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

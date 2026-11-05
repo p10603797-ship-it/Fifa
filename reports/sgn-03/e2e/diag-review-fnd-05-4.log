@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:347:3 › REVIEW FND-05 adversarial › pad: disconnect mid-hold stops the player; reconnect at a new index keeps the binding and drives it again (42.5s)
+
+  1 passed (44.4s)

@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/uix-12-tutorial.spec.ts:52:3 › UIX-12 tutorial and control hints › tutorial advances on performed actions; set-piece hints show for the first three uses only (47.9s)
+
+  1 passed (49.7s)

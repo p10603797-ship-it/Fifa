@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/plt-02-ipados.spec.ts:35:3 › PLT-02 iPadOS hardening › resize mid-hold releases the stick; portrait pauses behind the rotate screen; landscape waits for the player (23.1s)
+  ✓  2 [chromium-ipad] › tests/e2e/plt-02-ipados.spec.ts:73:3 › PLT-02 iPadOS hardening › a window below the minimum playable size says so and pauses (12.4s)
+  ✓  3 [chromium-ipad] › tests/e2e/plt-02-ipados.spec.ts:87:3 › PLT-02 iPadOS hardening › a synthetic pinch never zooms; safe-area and viewport variables are applied (2.4s)
+
+  3 passed (39.9s)

@@ -1,0 +1,15 @@
+
+Running 2 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/sgn-05-network.spec.ts:114:3 › SGN-05 runtime network › shipped page: licence notices inside, no tracker, analytics, font CDN, API key or dev-only package (340ms)
+[sgn-05] booted and installed at 1.5 s, 10 requests
+[sgn-05] settings and credits at 4.0 s, 10 requests
+[sgn-05] match loaded at 11.3 s, 10 requests
+[sgn-05] full match at 73.2 s, 10 requests
+[sgn-05] practice and tutorial at 99.1 s, 10 requests
+[sgn-05] offline reload at 100.2 s, 13 requests
+[sgn-05] offline paths: 13 http requests, all to http://localhost:4503: / /icons/apple-touch-icon-180.png /icons/icon-192.png /icons/icon-32.png /icons/icon-512.png /icons/icon-maskable-512.png /manifest.webmanifest /sw.js
+[sgn-05] Create room contacted: 0.peerjs.com (0 requests, 1 sockets)
+  ✓  2 [chromium-ipad] › tests/e2e/sgn-05-network.spec.ts:133:3 › SGN-05 runtime network › every offline path stays inside the page origin; only Create room reaches out, to the PeerJS broker (1.7m)
+
+  2 passed (1.8m)

@@ -1,0 +1,164 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "sgn-03-determinism.spec.ts",
+      "file": "sgn-03-determinism.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "SGN-03 determinism in Chromium",
+          "file": "sgn-03-determinism.spec.ts",
+          "line": 129,
+          "column": 6,
+          "specs": [
+            {
+              "title": "same seed and inputs give the same hash across 3 runs for 10 configs, and each plays back identically in Node",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 900000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 44433,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "config 0 seed 1 diff 3: hash@2400 7547e8e7 x3 (ticks 2400/2402/2402); Node: final hash 7547e8e7 (recorded 7547e8e7): IDENTICAL\nconfig 1 seed 7 diff 0: hash@2400 4a8c80a7 x3 (ticks 2400/2402/2400); Node: final hash 4a8c80a7 (recorded 4a8c80a7): IDENTICAL\nconfig 2 seed 42 diff 1: hash@2400 22c49c18 x3 (ticks 2402/2402/2400); Node: final hash 3372dfb4 (recorded 3372dfb4): IDENTICAL\nconfig 3 seed 919 diff 2: hash@2400 99083d07 x3 (ticks 2400/2401/2402); Node: final hash 99083d07 (recorded 99083d07): IDENTICAL\nconfig 4 seed 2027 diff 4: hash@2400 0decd335 x3 (ticks 2400/2401/2402); Node: final hash 0decd335 (recorded 0decd335): IDENTICAL\nconfig 5 seed 31337 diff 5: hash@2400 cd5d1f1b x3 (ticks 2400/2400/2401); Node: final hash cd5d1f1b (recorded cd5d1f1b): IDENTICAL\nconfig 6 seed 123456 diff 3: hash@2400 ff145d94 x3 (ticks 2402/2400/2401); Node: final hash 54901fc8 (recorded 54901fc8): IDENTICAL\nconfig 7 seed 4000000000 diff 5: hash@2400 3d174ac3 x3 (ticks 2400/2400/2402); Node: final hash 3d174ac3 (recorded 3d174ac3): IDENTICAL\nconfig 8 seed 65535 diff 0: hash@2400 0cf0fa85 x3 (ticks 2402/2402/2402); Node: final hash ab95465d (recorded ab95465d): IDENTICAL\nconfig 9 seed 8 diff 4: hash@2400 a40a893c x3 (ticks 2400/2400/2402); Node: final hash a40a893c (recorded a40a893c): IDENTICAL\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:57:12.532Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "5a0f4194f70d67d85873-8353609dd7bd574fb2e5",
+              "file": "sgn-03-determinism.spec.ts",
+              "line": 132,
+              "column": 3
+            },
+            {
+              "title": "a saved replay with keyboard input plays back identically after a page reload",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 900000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 20148,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "keyboard replay: 1500 ticks, 3720 non-zero input ints, final 8a3bbbdc; after reload: matched; Node: final hash 8a3bbbdc (recorded 8a3bbbdc): IDENTICAL\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:57:57.075Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "5a0f4194f70d67d85873-a6aeb36dc02cebbdb509",
+              "file": "sgn-03-determinism.spec.ts",
+              "line": 165,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T00:57:10.666Z",
+    "duration": 66681.177,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

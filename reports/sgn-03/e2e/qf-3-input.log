@@ -1,0 +1,9 @@
+
+Running 4 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/qf-3-input.spec.ts:40:3 › QF-3 QA-30 menus › controller alone: settings tabs (L1 / R1), controls editor, remap, cup, practice, diagnostics, friend; Circle always backs out (9.1s)
+  ✓  2 [chromium-ipad] › tests/e2e/qf-3-input.spec.ts:83:3 › QF-3 QA-30 menus › touch alone: the same screens by taps, the controls editor drags a control, Back by touch everywhere (2.7s)
+  ✓  3 [chromium-ipad] › tests/e2e/qf-3-input.spec.ts:162:3 › QF-3 in-match touch fixes › FIX-06: swipe hints around a held BIG button stay inside the viewport (22.2s)
+  ✓  4 [chromium-ipad] › tests/e2e/qf-3-input.spec.ts:191:3 › QF-3 in-match touch fixes › FIX-07: a keyboard driving the touch player's side hides the touch controls; the next screen touch shows them (24.2s)
+
+  4 passed (1.0m)

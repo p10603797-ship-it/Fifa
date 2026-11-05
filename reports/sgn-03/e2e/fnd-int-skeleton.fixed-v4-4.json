@@ -1,0 +1,168 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "fnd-int-skeleton.spec.ts",
+      "file": "fnd-int-skeleton.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "FND-INT walking skeleton",
+          "file": "fnd-int-skeleton.spec.ts",
+          "line": 351,
+          "column": 6,
+          "specs": [
+            {
+              "title": "boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 420000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 304366,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "steps": [
+                        {
+                          "title": "boot -> splash -> main",
+                          "duration": 1108
+                        },
+                        {
+                          "title": "Kick-Off -> loading -> match with the default setup",
+                          "duration": 11135
+                        },
+                        {
+                          "title": "screenshot of the match at 1180 x 820 -> reports/skeleton.png",
+                          "duration": 2883
+                        },
+                        {
+                          "title": "render probes: pitch, 22 capsules, ball, broadcast camera",
+                          "duration": 11224
+                        },
+                        {
+                          "title": "keyboard: holding D moves the controlled player toward +x, release stops",
+                          "duration": 31402
+                        },
+                        {
+                          "title": "touch: an upward drag in the left half moves the player toward -z, lift stops",
+                          "duration": 26074
+                        },
+                        {
+                          "title": "mocked gamepad: joins on a button press, left stick moves the player toward -x",
+                          "duration": 50473
+                        },
+                        {
+                          "title": "pause: Escape and the touch PAUSE button freeze the sim; Resume continues",
+                          "duration": 7716
+                        },
+                        {
+                          "title": "restart: a fresh match that renders and takes input",
+                          "duration": 28563
+                        },
+                        {
+                          "title": "quit: back to the main menu with the match released; a second Kick-Off works",
+                          "duration": 133670
+                        },
+                        {
+                          "title": "zero console errors and zero reported app errors",
+                          "duration": 15
+                        }
+                      ],
+                      "startTime": "2026-11-05T01:51:35.603Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "bb4ebc5dd3f76a3de7de-e050a065f6e9684f856b",
+              "file": "fnd-int-skeleton.spec.ts",
+              "line": 352,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T01:51:33.967Z",
+    "duration": 306498.954,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

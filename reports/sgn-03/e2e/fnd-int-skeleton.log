@@ -1,0 +1,35 @@
+
+Running 1 test using 1 worker
+
+  ✘  1 [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:288:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors (1.1m)
+
+
+  1) [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:288:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors › mocked gamepad: joins on a button press, left stick moves the player toward -x 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBeGreaterThan[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: > [32m1.5[39m
+    Received:   [31m0.9641369047619044[39m
+
+      464 |       const during = await controlled(page);
+      465 |       await setPad(page, 'pad.axes[0] = 0;');
+    > 466 |       expect(before.x - during.x).toBeGreaterThan(1.5);
+          |                                   ^
+      467 |       expect(Math.abs(during.z - before.z)).toBeLessThan(1);
+      468 |       await expectStops(page);
+      469 |     });
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:466:35
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:456:5
+
+    Error Context: test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:288:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors 

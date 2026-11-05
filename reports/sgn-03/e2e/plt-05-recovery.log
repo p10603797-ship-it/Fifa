@@ -1,0 +1,9 @@
+
+Running 4 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/plt-05-recovery.spec.ts:28:3 › PLT-05 recovery, diagnostics and debug overlay › a thrown error during a match pauses to the recovery screen; Resume and Restart work (14.2s)
+  ✓  2 [chromium-ipad] › tests/e2e/plt-05-recovery.spec.ts:67:3 › PLT-05 recovery, diagnostics and debug overlay › debug overlay toggles with the backquote key and shows live numbers (16.8s)
+  ✓  3 [chromium-ipad] › tests/e2e/plt-05-recovery.spec.ts:84:3 › PLT-05 recovery, diagnostics and debug overlay › input tester shows a mocked pad and touch points (2.3s)
+  ✓  4 [chromium-ipad] › tests/e2e/plt-05-recovery.spec.ts:155:3 › PLT-05 recovery, diagnostics and debug overlay › replay save and load round trip: the saved match plays back to the same hash (31.0s)
+
+  4 passed (1.1m)

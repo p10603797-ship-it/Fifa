@@ -1,0 +1,235 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "int-c-live.spec.ts",
+      "file": "int-c-live.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "INT-C live match render integration",
+          "file": "int-c-live.spec.ts",
+          "line": 268,
+          "column": 6,
+          "specs": [
+            {
+              "title": "scenes, budgets, cameras and animation contact in a CPU v CPU match (screenshots)",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 480000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 113136,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m8\u001b[39m\nReceived: \u001b[31m4\u001b[39m",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m8\u001b[39m\nReceived: \u001b[31m4\u001b[39m\n    at /home/user/Fifa/tests/e2e/int-c-live.spec.ts:381:24",
+                        "location": {
+                          "file": "/home/user/Fifa/tests/e2e/int-c-live.spec.ts",
+                          "column": 24,
+                          "line": 381
+                        },
+                        "snippet": "  379 |     await h.run(240, PHASE.GOAL, 0, 99, true, 50);\n  380 |     const goal = await scene('goal', 2);\n> 381 |     expect(goal.phase).toBe(PHASE.GOAL);\n      |                        ^\n  382 |     await h.run(1500, PHASE.REPLAY, 0, 99, false);\n  383 |     await h.play(10);\n  384 |     const rs = await scene('replay-side', 2);"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/user/Fifa/tests/e2e/int-c-live.spec.ts",
+                            "column": 24,
+                            "line": 381
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m8\u001b[39m\nReceived: \u001b[31m4\u001b[39m\n\n  379 |     await h.run(240, PHASE.GOAL, 0, 99, true, 50);\n  380 |     const goal = await scene('goal', 2);\n> 381 |     expect(goal.phase).toBe(PHASE.GOAL);\n      |                        ^\n  382 |     await h.run(1500, PHASE.REPLAY, 0, 99, false);\n  383 |     await h.play(10);\n  384 |     const rs = await scene('replay-side', 2);\n    at /home/user/Fifa/tests/e2e/int-c-live.spec.ts:381:24"
+                        }
+                      ],
+                      "stdout": [
+                        {
+                          "text": "match ready in 11 s\n"
+                        },
+                        {
+                          "text": "[t] establishing: steps 0.6 s, screenshot 0.3 s\n"
+                        },
+                        {
+                          "text": "[t] kickoff: steps 2.1 s, screenshot 0.9 s\n"
+                        },
+                        {
+                          "text": "anim {\"kicks\":0,\"contactMedian\":-1,\"contactMax\":-1,\"groundedFrames\":2519,\"slipP50\":0.045,\"stationaryShare\":0.742}\n"
+                        },
+                        {
+                          "text": "[t] openplay: steps 28.6 s, screenshot 0.2 s\n"
+                        },
+                        {
+                          "text": "[t] attack: steps 0.1 s, screenshot 0.7 s\n"
+                        },
+                        {
+                          "text": "[t] corner-award: steps 8.9 s, screenshot 0.2 s\n"
+                        },
+                        {
+                          "text": "[t] corner-setup: steps 6.9 s, screenshot 0.7 s\n"
+                        },
+                        {
+                          "text": "[t] corner-taken: steps 1.7 s, screenshot 0.2 s\n"
+                        },
+                        {
+                          "text": "[t] goal-kick: steps 8.8 s, screenshot 0.8 s\n"
+                        },
+                        {
+                          "text": "[t] free-kick: steps 9.2 s, screenshot 0.7 s\n"
+                        },
+                        {
+                          "text": "[t] goal: steps 28.7 s, screenshot 0.5 s\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:22:52.431Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/user/Fifa/test-results/int-c-live-INT-C-live-matc-1fb41-PU-v-CPU-match-screenshots--chromium-ipad/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/home/user/Fifa/test-results/int-c-live-INT-C-live-matc-1fb41-PU-v-CPU-match-screenshots--chromium-ipad/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/user/Fifa/tests/e2e/int-c-live.spec.ts",
+                        "column": 24,
+                        "line": 381
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "0fb4192192f01f2b3c27-b1d55dca67bb04a7b34d",
+              "file": "int-c-live.spec.ts",
+              "line": 269,
+              "column": 3
+            },
+            {
+              "title": "night match at the QUALITY tier (MSAA context, shadow map), then a WebGL context loss and restore",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 300000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 36074,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "night QUALITY {\"msPerFrame\":1.4,\"tick\":283,\"phase\":2,\"bx\":-1.23,\"by\":0.11,\"bz\":1.74,\"sx\":483,\"sy\":416,\"calls\":31,\"tris\":95742,\"tier\":3,\"scale\":0.75,\"shot\":0,\"camX\":-0.09}\n"
+                        },
+                        {
+                          "text": "after restore {\"msPerFrame\":2.8,\"tick\":316,\"phase\":2,\"bx\":-2.11,\"by\":0.11,\"bz\":5.22,\"sx\":579,\"sy\":440,\"calls\":31,\"tris\":95742,\"tier\":3,\"scale\":0.75,\"shot\":0,\"camX\":-1.34}\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-11-05T00:24:47.401Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "0fb4192192f01f2b3c27-4a10d5d8ab372d39d50c",
+              "file": "int-c-live.spec.ts",
+              "line": 404,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T00:22:50.759Z",
+    "duration": 152906.008,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

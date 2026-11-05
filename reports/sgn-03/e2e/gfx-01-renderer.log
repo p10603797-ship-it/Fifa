@@ -1,0 +1,10 @@
+
+Running 2 tests using 1 worker
+
+[gfx-01] spans {"4x3":{"xSpan":40.32381541405583,"ySpan":0.8387264421809238},"16x10":{"xSpan":48.33672321180246,"ySpan":0.8394027497334552},"21x9":{"xSpan":69.37986818762275,"ySpan":0.8348027543759776},"ipad":{"xSpan":42.83176480286982,"ySpan":0.83105730569614}}
+  ✓  1 [chromium-ipad] › tests/e2e/gfx-01-renderer.spec.ts:172:3 › GFX-01 renderer › resize across 4:3, 16:10, 21:9 keeps rendering; buffer = CSS x DPR x 0.75; framing; stats readable (34.0s)
+[gfx-01] before {"drawCalls":20,"triangles":46756,"textures":6,"geometries":19,"resolutionScale":0.75,"qualityTier":1} after {"drawCalls":20,"triangles":46756,"textures":6,"geometries":19,"resolutionScale":0.75,"qualityTier":1}
+[gfx-01] image diff {"mad":0,"changed":0} luma {"mean":105.48994868866352,"std":23.200635875011596} -> {"mean":105.48994868866352,"std":23.200635875011596}
+  ✓  2 [chromium-ipad] › tests/e2e/gfx-01-renderer.spec.ts:240:3 › GFX-01 renderer › context loss pauses; restore rebuilds and the same frame draws with all objects; resume from the pause menu (27.8s)
+
+  2 passed (1.1m)

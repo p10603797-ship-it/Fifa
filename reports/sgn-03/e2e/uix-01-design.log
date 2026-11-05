@@ -1,0 +1,13 @@
+
+Running 8 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/uix-01-design.spec.ts:146:3 › UIX-01 Dot design system › fonts are inlined as data URIs, loaded, and used by the UI (1.2s)
+  ✓  2 [chromium-ipad] › tests/e2e/uix-01-design.spec.ts:190:3 › UIX-01 Dot design system › dot field: animates behind the menus at <= 30 fps, follows focus, and stops completely in a match (20.4s)
+  ✓  3 [chromium-ipad] › tests/e2e/uix-01-design.spec.ts:259:3 › UIX-01 Dot design system › dot field draw cost stays small (script time per drawn frame, fastest of 6 batches, software Chromium) (1.0s)
+  ✓  4 [chromium-ipad] › tests/e2e/uix-01-design.spec.ts:287:3 › UIX-01 Dot design system › components work by touch alone (5.0s)
+  ✓  5 [chromium-ipad] › tests/e2e/uix-01-design.spec.ts:346:3 › UIX-01 Dot design system › components work by keyboard (controller) alone, with a visible focus ring (3.3s)
+  ✓  6 [chromium-ipad] › tests/e2e/uix-01-design.spec.ts:434:5 › UIX-01 Dot design system › screenshots: main menu and gallery at ipad-1180x820 (3.1s)
+  ✓  7 [chromium-ipad] › tests/e2e/uix-01-design.spec.ts:434:5 › UIX-01 Dot design system › screenshots: main menu and gallery at 4x3-1024x768 (3.1s)
+  ✓  8 [chromium-ipad] › tests/e2e/uix-01-design.spec.ts:434:5 › UIX-01 Dot design system › screenshots: main menu and gallery at 21x9-1260x540 (3.0s)
+
+  8 passed (42.6s)

@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/gfx-03-pitch.spec.ts:176:3 › GFX-03 pitch › broadcast view: stripes, lines where the constants put them, far touchline >= 2 px and unbroken; day and night (31.3s)
+
+  1 passed (33.6s)

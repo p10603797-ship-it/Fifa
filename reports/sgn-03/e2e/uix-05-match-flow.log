@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/uix-05-match-flow.spec.ts:64:3 › UIX-05 mode setup, match settings and loading › touch alone: full Kick-Off path reaches a match with the chosen settings applied (14.1s)
+  ✓  2 [chromium-ipad] › tests/e2e/uix-05-match-flow.spec.ts:130:3 › UIX-05 mode setup, match settings and loading › controller alone: full Kick-Off path by D-pad, controller tips while loading, match bound to the pad (14.5s)
+  ✓  3 [chromium-ipad] › tests/e2e/uix-05-match-flow.spec.ts:201:3 › UIX-05 mode setup, match settings and loading › friend online, shoot-out options, and layout of mode setup, match settings and loading (6.1s)
+
+  3 passed (36.8s)

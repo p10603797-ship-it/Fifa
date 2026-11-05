@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/int-b-settings.spec.ts:36:3 › INT-B settings live and after reload › mirror, larger HUD, volume, camera and assist apply live and survive a reload (36.5s)
+
+  1 passed (38.9s)

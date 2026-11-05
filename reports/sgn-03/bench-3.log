@@ -1,0 +1,23 @@
+load before run 3: 0.76 3.08 3.86 1/119 25830
+bench: http://127.0.0.1:45759/index.html?bench=1&benchSeconds=90 (CPU throttle 4x, 90 s window)
+DotKick 0.1.0 benchmark - seed 42 - FAIL
+measured 541.4 s, 1800 frames, 5400 ticks
+fps avg 3.3, 1% low 2.4, 0.1% low 2.1, longest frame 499.9 ms
+sim ms/tick avg 0.761 p99 4.500 worst 9.600 (29 frame(s) with a tick over 4 ms); render ms avg 5.15 worst 30.70
+draw calls avg 20.1 max 22; triangles avg 46778 max 46924
+resolution scale 0.60, quality tier 1, screen 1180x820@2
+device Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36
+FAIL average fps: 3.32 (>= 58)
+FAIL 1% low fps: 2.39 (>= 50)
+FAIL longest frame ms: 499.90 (<= 33)
+PASS sim + AI ms/tick avg: 0.76 (<= 2.5) [proxy gate]
+FAIL sim + AI ms/tick p99 of frame worst: 4.50 (<= 4) [proxy gate]
+FAIL sim + AI ms/tick worst: 9.60 (<= 4)
+PASS draw calls (max): 22.00 (<= 80) [proxy gate]
+PASS triangles (max): 46924.00 (<= 200000) [proxy gate]
+bench proxy gate (sim, draw calls, triangles; fps informational under 4x throttling): FAIL
+
+real	9m54.829s
+user	0m7.562s
+sys	0m1.706s
+EXIT 1

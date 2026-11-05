@@ -1,0 +1,7 @@
+
+Running 2 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/qf-6-online.spec.ts:24:1 › glitch: both sides waiting forever — a friend held with the link up: waiting pill, then the not-responding card; Finish against CPU tells the friend (1.4m)
+  ✓  2 [chromium-ipad] › tests/e2e/qf-6-online.spec.ts:74:1 › quitting the full-time screen leaves the room: the friend who went back to the room sees the seat free again (1.2m)
+
+  2 passed (2.6m)

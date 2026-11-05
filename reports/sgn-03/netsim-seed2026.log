@@ -1,0 +1,8 @@
+netsim OK: finished true hashesEqual true framesEqual true goals 0-0 virtual 272.7 s wall 4.0 s
+  host:  ticks 16352 stalls 5 (after warmup 1, max 17 ms; max overall 150 ms) desyncs 0 resyncs 0 delay 8..8 (final 8) rtt 212±54 ms resends 8 holds 2 (2 ticks, adv -0.22)
+  guest: ticks 16352 stalls 15 (after warmup 8, max 17 ms; max overall 100 ms) desyncs 0 resyncs 0 delay 8..8 (final 8) rtt 253±106 ms resends 17 holds 1 (2 ticks, adv 0.21)
+  link: inputs dropped 1665/32731, reliable retransmits 168
+
+real	0m4.654s
+user	0m8.483s
+sys	0m0.348s

@@ -44,7 +44,7 @@ const MOCK_PAD_SCRIPT = `
 `;
 
 interface MockPad { buttons: { pressed: boolean; value: number }[]; axes: number[] }
-interface Controlled { slot: number; x: number; z: number; tick: number }
+interface Controlled { slot: number; x: number; z: number; tick: number; phase: number; owner: number; act: number; near: number }
 type Rgb = [number, number, number];
 
 function collectConsole(page: Page): string[] {
@@ -67,9 +67,17 @@ async function controlled(page: Page): Promise<Controlled> {
     const s = window.__dotkick!.ctx.session.getState()!;
     const slot = s.ctrl[0]!.slot;
     const p = s.players[slot]!;
-    return { slot, x: p.x, z: p.z, tick: s.tick };
+    let near = 1e9;
+    for (let i = 0; i < s.players.length; i++) {
+      if (i === slot) continue;
+      const q = s.players[i]!;
+      near = Math.min(near, Math.hypot(q.x - p.x, q.z - p.z));
+    }
+    return { slot, x: p.x, z: p.z, tick: s.tick, phase: s.match.phase, owner: s.ball.owner, act: p.act, near };
   });
 }
+
+const fmt = (c: Controlled): string => `slot ${c.slot} (${c.x.toFixed(2)}, ${c.z.toFixed(2)}) t${c.tick} phase ${c.phase} owner ${c.owner} act ${c.act} near ${c.near.toFixed(1)}`;
 
 /** Wait until the match screen shows a loaded, ticking match with a controlled player. */
 async function waitMatchRunning(page: Page, minTick = 10): Promise<void> {
@@ -92,13 +100,69 @@ async function holdFor(page: Page, startTick: number, ticks = 60, ms = 1000): Pr
   await page.waitForFunction((t) => (window.__dotkick!.ctx.session.getState()?.tick ?? -1) >= t, startTick + ticks, { timeout: 60_000 });
 }
 
-/** The controlled player comes to rest after an input is released (no stuck input). */
-async function expectStops(page: Page): Promise<void> {
+/** The controlled player comes to rest after an input is released (no stuck input): two samples 15 ticks apart, 45 ticks after the release. */
+async function restSamples(page: Page): Promise<[Controlled, Controlled]> {
   await holdFor(page, await tick(page), 45, 300);
   const a = await controlled(page);
   await holdFor(page, a.tick, 15, 0);
-  const b = await controlled(page);
-  expect(Math.hypot(b.x - a.x, b.z - a.z), 'player at rest after release').toBeLessThan(0.2);
+  return [a, await controlled(page)];
+}
+
+/**
+ * [SGN-03 harness] The open-play input steps run in a live match against the CPU: the controlled player's teammates
+ * pass to him (and the FEEL-1 receiving magnet makes him collect it, D-028), control moves to whoever of his team
+ * wins the ball (the keeper too, who then waits for his human), the ball goes out for a restart, an opponent
+ * challenges him, he is in an action or a body stands next to him. Then "moves with the input" / "at rest after
+ * release" measure the ball or the restart, not the input path. So each attempt presses, holds, releases and samples.
+ * The movement check counts only when before and during are the same player in open play (IN_PLAY), not on the ball,
+ * out of any action by the second sample, with nobody within 1.5 m at the start; the rest check only when its two
+ * samples are one player (any one: a stuck input would drive whoever is controlled) in open play, off the ball, in no
+ * action and with nobody within 1.5 m (a body contact pushes him). Up to 8 attempts; the first clean movement and the first clean rest are returned and asserted by the
+ * test; no clean sample at all fails the test with every sample in the message.
+ */
+async function cleanInputAttempt(
+  page: Page, name: string, press: () => Promise<void>, release: () => Promise<void>,
+): Promise<{ before: Controlled; during: Controlled; rest: [Controlled, Controlled] }> {
+  const seen: string[] = [];
+  const free = (c: Controlled, slot: number): boolean => c.slot === slot && c.phase === 2 && c.owner !== c.slot;
+  // Movement also needs room: a body within 1.5 m at the start (SIM-14 contact, a challenge) can hold him up.
+  const roomy = (c: Controlled): boolean => c.near > 1.5;
+  let move: [Controlled, Controlled] | null = null;
+  let rest: [Controlled, Controlled] | null = null;
+  for (let attempt = 0; attempt < 8 && !(move && rest); attempt++) {
+    await forceOpenPlay(page);
+    let before = await controlled(page);
+    if (before.owner === before.slot) {
+      // He has the ball (a keeper holding it waits for his human): pass it away (keyboard J), then start clean.
+      await page.keyboard.press('KeyJ');
+      await holdFor(page, before.tick, 60, 300);
+      await forceOpenPlay(page);
+      before = await controlled(page);
+    }
+    await press();
+    await holdFor(page, before.tick);
+    const during = await controlled(page);
+    await release();
+    const r = await restSamples(page);
+    if (!move && free(before, before.slot) && roomy(before) && free(during, before.slot) && during.act === 0) move = [before, during];
+    if (!rest && free(r[0], r[0].slot) && free(r[1], r[0].slot) && r[0].act === 0 && r[1].act === 0 && roomy(r[0]) && roomy(r[1])) rest = r;
+    seen.push(`attempt ${attempt}: ${[before, during, ...r].map(fmt).join(' | ')}`);
+  }
+  if (!move || !rest) {
+    throw new Error(`${name}: no clean ${move ? 'rest' : 'movement'} sample (on the ball, restart or switch every time):\n${seen.join('\n')}`);
+  }
+  return { before: move[0], during: move[1], rest };
+}
+
+/** Wait for open play; a pending restart is taken at once by the sim's own timeout (as the kick-off step does). */
+async function forceOpenPlay(page: Page): Promise<void> {
+  await page.waitForFunction(() => {
+    const st = (window.__dotkick!.ctx.session as unknown as { runtime(): { curr: { match: { phase: number; restart: Record<string, number> } } } | null }).runtime()?.curr;
+    if (!st) return false;
+    const r = st.match.restart;
+    if (st.match.phase >= 1 && st.match.phase <= 7 && r.ready === 1 && r.taken === 0) r.timeoutT = 1;
+    return st.match.phase === 2;
+  }, null, { timeout: 60_000, polling: 100 });
 }
 
 async function touch(cdp: CDPSession, type: 'touchStart' | 'touchMove' | 'touchEnd', x: number, y: number): Promise<void> {
@@ -428,29 +492,26 @@ test.describe('FND-INT walking skeleton', () => {
     });
 
     await test.step('keyboard: holding D moves the controlled player toward +x, release stops', async () => {
-      const before = await controlled(page);
-      await page.keyboard.down('KeyD');
-      await holdFor(page, before.tick);
-      const during = await controlled(page);
-      await page.keyboard.up('KeyD');
+      const { before, during, rest: [a, b] } = await cleanInputAttempt(page, 'keyboard D',
+        () => page.keyboard.down('KeyD'), () => page.keyboard.up('KeyD'));
       expect(during.slot).toBe(before.slot);
-      expect(during.x - before.x).toBeGreaterThan(1.5);
+      expect(during.x - before.x, `key +x: ${fmt(before)} -> ${fmt(during)}`).toBeGreaterThan(1.5);
       expect(Math.abs(during.z - before.z)).toBeLessThan(1);
-      await expectStops(page);
+      expect(Math.hypot(b.x - a.x, b.z - a.z), `player at rest after release: ${fmt(a)} -> ${fmt(b)}`).toBeLessThan(0.2);
     });
 
     await test.step('touch: an upward drag in the left half moves the player toward -z, lift stops', async () => {
-      const before = await controlled(page);
-      await touch(cdp, 'touchStart', 280, 620);
-      for (let i = 1; i <= 6; i++) await touch(cdp, 'touchMove', 280, 620 - i * 20);
-      await expect(page.locator('#touch .dk-stick.is-active')).toHaveCount(1);
-      await holdFor(page, before.tick);
-      const during = await controlled(page);
-      await touch(cdp, 'touchEnd', 280, 500);
-      await expect(page.locator('#touch .dk-stick.is-active')).toHaveCount(0);
-      expect(during.z - before.z).toBeLessThan(-1.5);
+      const { before, during, rest: [a, b] } = await cleanInputAttempt(page, 'touch drag', async () => {
+        await touch(cdp, 'touchStart', 280, 620);
+        for (let i = 1; i <= 6; i++) await touch(cdp, 'touchMove', 280, 620 - i * 20);
+        await expect(page.locator('#touch .dk-stick.is-active')).toHaveCount(1);
+      }, async () => {
+        await touch(cdp, 'touchEnd', 280, 500);
+        await expect(page.locator('#touch .dk-stick.is-active')).toHaveCount(0);
+      });
+      expect(during.z - before.z, `touch -z: ${fmt(before)} -> ${fmt(during)}`).toBeLessThan(-1.5);
       expect(Math.abs(during.x - before.x)).toBeLessThan(1);
-      await expectStops(page);
+      expect(Math.hypot(b.x - a.x, b.z - a.z), `player at rest after release: ${fmt(a)} -> ${fmt(b)}`).toBeLessThan(0.2);
     });
 
     await test.step('mocked gamepad: joins on a button press, left stick moves the player toward -x', async () => {
@@ -458,14 +519,11 @@ test.describe('FND-INT walking skeleton', () => {
       await setPad(page, 'pad.buttons[2].pressed = true; pad.buttons[2].value = 1;');
       await page.waitForFunction(() => window.__dotkick!.ctx.devices.list().some((d) => d.kind === 'pad'), null, { timeout: 15_000 });
       await setPad(page, 'pad.buttons[2].pressed = false; pad.buttons[2].value = 0;');
-      const before = await controlled(page);
-      await setPad(page, 'pad.axes[0] = -1;');
-      await holdFor(page, before.tick);
-      const during = await controlled(page);
-      await setPad(page, 'pad.axes[0] = 0;');
-      expect(before.x - during.x).toBeGreaterThan(1.5);
+      const { before, during, rest: [a, b] } = await cleanInputAttempt(page, 'pad left stick',
+        () => setPad(page, 'pad.axes[0] = -1;'), () => setPad(page, 'pad.axes[0] = 0;'));
+      expect(before.x - during.x, `pad -x: ${fmt(before)} -> ${fmt(during)}`).toBeGreaterThan(1.5);
       expect(Math.abs(during.z - before.z)).toBeLessThan(1);
-      await expectStops(page);
+      expect(Math.hypot(b.x - a.x, b.z - a.z), `player at rest after release: ${fmt(a)} -> ${fmt(b)}`).toBeLessThan(0.2);
     });
 
     await test.step('pause: Escape and the touch PAUSE button freeze the sim; Resume continues', async () => {
@@ -513,19 +571,19 @@ test.describe('FND-INT walking skeleton', () => {
       expect(after.screens).toBe(1);
       await expect(page.getByTestId('pause-menu')).toBeHidden();
       expect((await page.evaluate(() => window.__dotkickRendererStats!())).drawCalls).toBeGreaterThan(3);
-      const before = await controlled(page);
-      await page.keyboard.down('ArrowRight');
-      await holdFor(page, before.tick);
-      const during = await controlled(page);
-      await page.keyboard.up('ArrowRight');
-      expect(during.x - before.x).toBeGreaterThan(1.5);
-      await expectStops(page);
+      // [SGN-03 harness] The fresh match opens with PRE_MATCH and the kick-off set-up (players walk to their spots,
+      // the stick does not drive them): the input check runs in open play, like the steps above.
+      const { before, during, rest: [a, b] } = await cleanInputAttempt(page, 'keyboard ArrowRight after restart',
+        () => page.keyboard.down('ArrowRight'), () => page.keyboard.up('ArrowRight'));
+      expect(during.x - before.x, `key +x: ${fmt(before)} -> ${fmt(during)}`).toBeGreaterThan(1.5);
+      expect(Math.hypot(b.x - a.x, b.z - a.z), `player at rest after release: ${fmt(a)} -> ${fmt(b)}`).toBeLessThan(0.2);
     });
 
     await test.step('quit: back to the main menu with the match released; a second Kick-Off works', async () => {
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('pause-menu')).toBeVisible();
       await page.getByTestId('pause-quit').tap();
+      await page.getByTestId('pause-quit-confirm').tap(); // [SGN-03 harness] UIX-08 quit confirmation (INT-B), as fnd-04-boot
       await expect(page.getByTestId('main-kickoff')).toBeVisible();
       const gone = await page.evaluate(() => {
         const ctx = window.__dotkick!.ctx;
@@ -543,14 +601,13 @@ test.describe('FND-INT walking skeleton', () => {
       await page.getByTestId('main-kickoff').tap();
       await waitMatchRunning(page, 5);
       await expect(page.locator('#touch .dk-touch')).toHaveCount(1);
-      const before = await controlled(page);
-      await page.keyboard.down('KeyA');
-      await holdFor(page, before.tick, 40, 500);
-      const during = await controlled(page);
-      await page.keyboard.up('KeyA');
-      expect(before.x - during.x).toBeGreaterThan(0.8);
+      // [SGN-03 harness] In open play (the fresh match opens with PRE_MATCH and the kick-off set-up).
+      const { before, during } = await cleanInputAttempt(page, 'keyboard A in the second match',
+        () => page.keyboard.down('KeyA'), () => page.keyboard.up('KeyA'));
+      expect(before.x - during.x, `key -x: ${fmt(before)} -> ${fmt(during)}`).toBeGreaterThan(0.8);
       await page.keyboard.press('Escape');
       await page.getByTestId('pause-quit').tap();
+      await page.getByTestId('pause-quit-confirm').tap(); // [SGN-03 harness] UIX-08 quit confirmation (INT-B), as fnd-04-boot
       await expect(page.getByTestId('main-kickoff')).toBeVisible();
     });
 

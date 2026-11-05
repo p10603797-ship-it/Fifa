@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/gfx-16-replay.spec.ts:33:3 › GFX-16 goal replay › a scripted goal replays from two angles and can be skipped (screenshots) (33.4s)
+
+  1 passed (35.5s)

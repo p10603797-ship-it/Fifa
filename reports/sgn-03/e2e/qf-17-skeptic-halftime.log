@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/qf-17-skeptic-halftime.spec.ts:17:1 › QF-17 skeptic: settings visit keeps the half-time screen built ahead; the covered match screen hides its pause button (25.3s)
+
+  1 passed (27.1s)

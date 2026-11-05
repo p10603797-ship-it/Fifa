@@ -1,0 +1,7 @@
+
+Running 2 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/gfx-08-kits.spec.ts:69:3 › GFX-08 kit atlas on WebGL2 › torsos wear the resolved kits: shirt colour, outlined back number, keepers, mips at distance, crests (2.7s)
+  ✓  2 [chromium-ipad] › tests/e2e/gfx-08-kits.spec.ts:131:3 › GFX-08 kits in the real app › kick-off: both teams on the pitch in their resolved kits, no console errors (14.9s)
+
+  2 passed (21.5s)

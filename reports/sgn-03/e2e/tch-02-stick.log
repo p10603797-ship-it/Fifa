@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/tch-02-stick.spec.ts:104:1 › drag in the left half: stick appears where the thumb lands, base drags along past 1.4 radii, player moves; release stops him (20.8s)
+  ✓  2 [chromium-ipad] › tests/e2e/tch-02-stick.spec.ts:128:1 › pointercancel mid-drag releases the stick and stops the player (glitch: stuck stick after pointercancel) (11.0s)
+  ✓  3 [chromium-ipad] › tests/e2e/tch-02-stick.spec.ts:143:1 › a touch-down within 24 pt of the bottom edge never starts the stick (4.1s)
+
+  3 passed (1.4m)

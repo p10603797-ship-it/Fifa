@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/uix-03-team-select.spec.ts:19:3 › UIX-03 team and kit select › touch alone: pick clubs and kits, clash result shown, selection reaches side select (3.5s)
+  ✓  2 [chromium-ipad] › tests/e2e/uix-03-team-select.spec.ts:85:3 › UIX-03 team and kit select › keyboard alone and controller alone: browse, pick, switch side, continue (3.0s)
+  ✓  3 [chromium-ipad] › tests/e2e/uix-03-team-select.spec.ts:140:3 › UIX-03 team and kit select › layout at iPad landscape, 4:3 and 21:9 (2.9s)
+
+  3 passed (11.3s)

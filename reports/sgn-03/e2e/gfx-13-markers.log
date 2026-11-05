@@ -1,0 +1,7 @@
+
+Running 1 test using 1 worker
+
+GFX-13 frame: 22 draw calls, 47150 triangles (aids off: 20)
+  ✓  1 [chromium-ipad] › tests/e2e/gfx-13-markers.spec.ts:191:3 › GFX-13 ball, shadows and on-pitch aids › markers, rings, power bar, landing target, colour-blind labels and off-screen arrows (screenshots) (34.2s)
+
+  1 passed (36.2s)

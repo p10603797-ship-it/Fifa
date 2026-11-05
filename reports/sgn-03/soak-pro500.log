@@ -1,0 +1,46 @@
+DotKick soak: 500 match(es), 3 worker(s), seed 2026, enforce all, 4-minute halves
+  [25/502] 28.5 s, last #23 ok
+  [50/502] 48.0 s, last #48 ok
+  [75/502] 69.3 s, last #73 ok
+  [100/502] 88.7 s, last #98 ok
+  [125/502] 109.6 s, last #123 ok
+  [150/502] 128.9 s, last #148 ok
+  [175/502] 150.4 s, last #173 ok
+  [200/502] 169.7 s, last #198 ok
+  [225/502] 189.9 s, last #223 ok
+  [250/502] 209.5 s, last #248 ok
+  [275/502] 228.7 s, last #273 ok
+  [300/502] 249.3 s, last #298 ok
+  [325/502] 268.0 s, last #323 ok
+  [350/502] 288.5 s, last #348 ok
+  [375/502] 307.4 s, last #373 ok
+  [400/502] 327.9 s, last #398 ok
+  [425/502] 346.8 s, last #423 ok
+  [450/502] 366.2 s, last #448 ok
+  [475/502] 385.9 s, last #473 ok
+  [500/502] 406.1 s, last #498 ok
+  [502/502] 410.0 s, last #501 ok
+  ticks 15677872 (avg 31356/match), finished 500/500, sim 0.0588 ms/tick avg (max 30.98), invariant checks 0.0153 ms/tick
+  exceptions 0, invariant failures enforced(all) 0 / all 0
+  watchdogs 0, unfinished 0, events dropped 0
+  determinism: PASS (seed 1451371088)
+    same seed twice (batch run vs recorded run): 349a9873 == 349a9873
+    same seed again after another match in the same worker: 349a9873 == 349a9873
+    replay (JSON round trip) plays back identically: 349a9873 over 41412 ticks
+  statistics bands (finished matches, Professional only):
+  PASS goals per match: 3.08 (band 2-3.6, n=500)
+  PASS shots per match: 15.24 (band 14-26, n=500)
+  PASS possession per match, side with more of the ball: 57.26% (band 40-60%, n=500, 362/500 matches inside 40-60)
+  PASS possession home side: 49.02% (band 40-60%, n=500, home/away bias)
+  PASS pass completion: 78.73% (band 70-88%, n=500, 80038/101661)
+  PASS fouls per match: 10.64 (band 6-16, n=433, fouls on)
+  PASS offsides per match: 0.18 (band 0-6, n=428, offside on)
+  PASS blow-outs (5+ goal margin): 4.40% (band 0-5% (upper exclusive), n=500, 22 match(es))
+  failures: none
+RESULT: PASS in 410.0 s
+  json report: reports/sgn-03/soak-pro500.json
+
+real	6m50.740s
+user	20m37.401s
+sys	0m9.448s
+EXIT 0

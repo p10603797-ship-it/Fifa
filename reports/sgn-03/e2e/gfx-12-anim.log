@@ -1,0 +1,8 @@
+
+Running 2 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/gfx-12-anim.spec.ts:93:3 › GFX-09..12 animation › [GFX-09][GFX-10][GFX-11] pose gallery: run cycle, kicks, dives, slide and celebrations (13.4s)
+GFX-12 live: {"worst":0.4217975297195927,"worstAt":"slot 5 joint 12 frame 102 act 0","frames":240,"ticks":239,"moving":1773}
+  ✓  2 [chromium-ipad] › tests/e2e/gfx-12-anim.spec.ts:140:3 › GFX-09..12 animation › [GFX-12] live play at 60 Hz: poses blend, no joint pops (1.0m)
+
+  2 passed (1.3m)

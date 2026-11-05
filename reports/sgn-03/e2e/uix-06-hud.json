@@ -1,0 +1,156 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "uix-06-hud.spec.ts",
+      "file": "uix-06-hud.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "UIX-06 scoreboard, clock, toasts",
+          "file": "uix-06-hud.spec.ts",
+          "line": 23,
+          "column": 6,
+          "specs": [
+            {
+              "title": "scoreboard and toasts update on scripted events, idle frames write nothing, layout clear at 3 aspects",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 240000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 26053,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "steps": [
+                        {
+                          "title": "scoreboard: codes, kit chips, score, running clock",
+                          "duration": 5023
+                        },
+                        {
+                          "title": "idle frames: zero DOM writes",
+                          "duration": 500
+                        },
+                        {
+                          "title": "goal: score and GOAL toast with scorer and minute",
+                          "duration": 637
+                        },
+                        {
+                          "title": "queued toasts: card, substitution, offside follow the goal one at a time",
+                          "duration": 206
+                        },
+                        {
+                          "title": "added time and the extra-time label",
+                          "duration": 204
+                        },
+                        {
+                          "title": "larger HUD setting scales the scoreboard",
+                          "duration": 503
+                        },
+                        {
+                          "title": "layout at 1180 x 820, 4:3 and 21:9 (normal and larger HUD): nothing overlaps",
+                          "duration": 4295
+                        },
+                        {
+                          "title": "live play: DOM writes stay rare (clock seconds, stamina percent)",
+                          "duration": 6143
+                        }
+                      ],
+                      "startTime": "2026-11-05T01:11:02.527Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4de105f7b28490f43fce-a9a95fde03003e6f753e",
+              "file": "uix-06-hud.spec.ts",
+              "line": 24,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T01:11:00.911Z",
+    "duration": 27885.628,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

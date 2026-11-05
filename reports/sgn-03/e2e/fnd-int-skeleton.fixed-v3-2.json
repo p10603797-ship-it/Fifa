@@ -1,0 +1,205 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "fnd-int-skeleton.spec.ts",
+      "file": "fnd-int-skeleton.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "FND-INT walking skeleton",
+          "file": "fnd-int-skeleton.spec.ts",
+          "line": 351,
+          "column": 6,
+          "specs": [
+            {
+              "title": "boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 420000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 117315,
+                      "error": {
+                        "message": "Error: player at rest after release: slot 10 (9.80, -2.27) t504 phase 2 owner -1 act 0 near 0.7 -> slot 10 (9.61, -2.16) t531 phase 2 owner -1 act 0 near 0.7\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.2\u001b[39m\nReceived:   \u001b[31m0.22451648006253896\u001b[39m",
+                        "stack": "Error: player at rest after release: slot 10 (9.80, -2.27) t504 phase 2 owner -1 act 0 near 0.7 -> slot 10 (9.61, -2.16) t531 phase 2 owner -1 act 0 near 0.7\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.2\u001b[39m\nReceived:   \u001b[31m0.22451648006253896\u001b[39m\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:579:104\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:551:5",
+                        "location": {
+                          "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                          "column": 104,
+                          "line": 579
+                        },
+                        "snippet": "  577 |         () => page.keyboard.down('ArrowRight'), () => page.keyboard.up('ArrowRight'));\n  578 |       expect(during.x - before.x, `key +x: ${fmt(before)} -> ${fmt(during)}`).toBeGreaterThan(1.5);\n> 579 |       expect(Math.hypot(b.x - a.x, b.z - a.z), `player at rest after release: ${fmt(a)} -> ${fmt(b)}`).toBeLessThan(0.2);\n      |                                                                                                        ^\n  580 |     });\n  581 |\n  582 |     await test.step('quit: back to the main menu with the match released; a second Kick-Off works', async () => {"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                            "column": 104,
+                            "line": 579
+                          },
+                          "message": "Error: player at rest after release: slot 10 (9.80, -2.27) t504 phase 2 owner -1 act 0 near 0.7 -> slot 10 (9.61, -2.16) t531 phase 2 owner -1 act 0 near 0.7\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.2\u001b[39m\nReceived:   \u001b[31m0.22451648006253896\u001b[39m\n\n  577 |         () => page.keyboard.down('ArrowRight'), () => page.keyboard.up('ArrowRight'));\n  578 |       expect(during.x - before.x, `key +x: ${fmt(before)} -> ${fmt(during)}`).toBeGreaterThan(1.5);\n> 579 |       expect(Math.hypot(b.x - a.x, b.z - a.z), `player at rest after release: ${fmt(a)} -> ${fmt(b)}`).toBeLessThan(0.2);\n      |                                                                                                        ^\n  580 |     });\n  581 |\n  582 |     await test.step('quit: back to the main menu with the match released; a second Kick-Off works', async () => {\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:579:104\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:551:5"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "steps": [
+                        {
+                          "title": "boot -> splash -> main",
+                          "duration": 1123
+                        },
+                        {
+                          "title": "Kick-Off -> loading -> match with the default setup",
+                          "duration": 10758
+                        },
+                        {
+                          "title": "screenshot of the match at 1180 x 820 -> reports/skeleton.png",
+                          "duration": 2608
+                        },
+                        {
+                          "title": "render probes: pitch, 22 capsules, ball, broadcast camera",
+                          "duration": 11199
+                        },
+                        {
+                          "title": "keyboard: holding D moves the controlled player toward +x, release stops",
+                          "duration": 9894
+                        },
+                        {
+                          "title": "touch: an upward drag in the left half moves the player toward -z, lift stops",
+                          "duration": 12699
+                        },
+                        {
+                          "title": "mocked gamepad: joins on a button press, left stick moves the player toward -x",
+                          "duration": 11111
+                        },
+                        {
+                          "title": "pause: Escape and the touch PAUSE button freeze the sim; Resume continues",
+                          "duration": 7832
+                        },
+                        {
+                          "title": "restart: a fresh match that renders and takes input",
+                          "duration": 46652,
+                          "error": {
+                            "message": "Error: player at rest after release: slot 10 (9.80, -2.27) t504 phase 2 owner -1 act 0 near 0.7 -> slot 10 (9.61, -2.16) t531 phase 2 owner -1 act 0 near 0.7\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.2\u001b[39m\nReceived:   \u001b[31m0.22451648006253896\u001b[39m",
+                            "stack": "Error: player at rest after release: slot 10 (9.80, -2.27) t504 phase 2 owner -1 act 0 near 0.7 -> slot 10 (9.61, -2.16) t531 phase 2 owner -1 act 0 near 0.7\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.2\u001b[39m\nReceived:   \u001b[31m0.22451648006253896\u001b[39m\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:579:104\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:551:5",
+                            "location": {
+                              "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                              "column": 104,
+                              "line": 579
+                            },
+                            "snippet": "  577 |         () => page.keyboard.down('ArrowRight'), () => page.keyboard.up('ArrowRight'));\n  578 |       expect(during.x - before.x, `key +x: ${fmt(before)} -> ${fmt(during)}`).toBeGreaterThan(1.5);\n> 579 |       expect(Math.hypot(b.x - a.x, b.z - a.z), `player at rest after release: ${fmt(a)} -> ${fmt(b)}`).toBeLessThan(0.2);\n      |                                                                                                        ^\n  580 |     });\n  581 |\n  582 |     await test.step('quit: back to the main menu with the match released; a second Kick-Off works', async () => {"
+                          }
+                        }
+                      ],
+                      "startTime": "2026-11-05T01:37:31.363Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/user/Fifa/test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/home/user/Fifa/test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                        "column": 104,
+                        "line": 579
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "bb4ebc5dd3f76a3de7de-e050a065f6e9684f856b",
+              "file": "fnd-int-skeleton.spec.ts",
+              "line": 352,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T01:37:29.726Z",
+    "duration": 122558.173,
+    "expected": 0,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

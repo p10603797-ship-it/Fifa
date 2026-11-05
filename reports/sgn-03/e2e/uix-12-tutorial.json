@@ -1,0 +1,148 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "uix-12-tutorial.spec.ts",
+      "file": "uix-12-tutorial.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "UIX-12 tutorial and control hints",
+          "file": "uix-12-tutorial.spec.ts",
+          "line": 51,
+          "column": 6,
+          "specs": [
+            {
+              "title": "tutorial advances on performed actions; set-piece hints show for the first three uses only",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 300000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 47865,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "steps": [
+                        {
+                          "title": "tutorial screen by touch: nine steps for the touch controls",
+                          "duration": 1352
+                        },
+                        {
+                          "title": "keyboard only: the device follows, the focus ring moves, a step is selected, Start",
+                          "duration": 7262
+                        },
+                        {
+                          "title": "practice match: coach card; move and sprint complete from real input, pass from its event",
+                          "duration": 35156
+                        },
+                        {
+                          "title": "quitting the practice returns to the tutorial with the steps done",
+                          "duration": 120
+                        },
+                        {
+                          "title": "set-piece hints: the first three corners show a card, the fourth does not",
+                          "duration": 2647
+                        },
+                        {
+                          "title": "a card is dismissed by the action; a penalty against the human shows the saving hint",
+                          "duration": 251
+                        }
+                      ],
+                      "startTime": "2026-11-05T01:14:56.119Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ab3e26fc838f7801fa0a-931acea0e2a425621ef1",
+              "file": "uix-12-tutorial.spec.ts",
+              "line": 52,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T01:14:54.518Z",
+    "duration": 49683.699,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/pad-07-remap.spec.ts:47:1 › PAD-07 remap screen: a non-standard pad walks every action and the remap is saved (4.7s)
+
+  1 passed (6.6s)

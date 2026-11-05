@@ -1,0 +1,12 @@
+
+Running 7 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/fnd-05-skeleton.spec.ts:78:3 › FND-05 skeleton › match renders: 22 capsules, ball, broadcast camera, sane draw calls (15.3s)
+  ✓  2 [chromium-ipad] › tests/e2e/fnd-05-skeleton.spec.ts:105:3 › FND-05 skeleton › keyboard: holding D for 1 s moves the controlled player toward +x (31.1s)
+  ✓  3 [chromium-ipad] › tests/e2e/fnd-05-skeleton.spec.ts:125:3 › FND-05 skeleton › touch: a drag in the left half moves the player; pointer release stops it (30.3s)
+  ✓  4 [chromium-ipad] › tests/e2e/fnd-05-skeleton.spec.ts:150:3 › FND-05 skeleton › controller: a mocked pad joins after a button press and moves the player (27.6s)
+  ✓  5 [chromium-ipad] › tests/e2e/fnd-05-skeleton.spec.ts:181:3 › FND-05 skeleton › touch: pointercancel and window blur release a held stick and sprint (no stuck input) (25.9s)
+  ✓  6 [chromium-ipad] › tests/e2e/fnd-05-skeleton.spec.ts:217:3 › FND-05 skeleton › menus: keyboard focus navigation shows a ring, Enter confirms, Escape goes back (1.4s)
+  ✓  7 [chromium-ipad] › tests/e2e/fnd-05-skeleton.spec.ts:241:3 › FND-05 skeleton › WebGL context loss pauses the match; after restore the scene draws again (12.6s)
+
+  7 passed (2.6m)

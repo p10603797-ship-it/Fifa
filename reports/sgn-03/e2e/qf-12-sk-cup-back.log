@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/qf-12-sk-cup-back.spec.ts:23:1 › controller alone: Back on a finished cup tie's final screen returns to the cup with the result card (10.7s)
+
+  1 passed (12.6s)

@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/int-08-online.spec.ts:25:1 › online 1v1 end to end: share link, lockstep match, mirrored pause, rejoin window, finish against CPU (1.6m)
+
+  1 passed (1.7m)

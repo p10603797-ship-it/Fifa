@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/uix-07-hud.spec.ts:24:3 › UIX-07 radar, player name and stamina, power bar › radar redraws at <= 20 Hz, stamina drains while sprinting, power bar while holding PASS (53.7s)
+
+  1 passed (55.7s)

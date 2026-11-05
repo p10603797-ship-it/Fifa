@@ -1,0 +1,25 @@
+
+Running 2 tests using 1 worker
+
+match ready in 9 s
+[t] establishing: steps 0 s, screenshot 0.7 s
+[t] kickoff: steps 1.4 s, screenshot 0.5 s
+anim {"kicks":0,"contactMedian":-1,"contactMax":-1,"groundedFrames":2524,"slipP50":0.045,"stationaryShare":0.745}
+[t] openplay: steps 29.1 s, screenshot 0.2 s
+[t] attack: steps 0.1 s, screenshot 0.7 s
+[t] corner-award: steps 7.6 s, screenshot 0.6 s
+[t] corner-setup: steps 6.9 s, screenshot 0.7 s
+[t] corner-taken: steps 1.4 s, screenshot 0.6 s
+[t] goal-kick: steps 8.4 s, screenshot 0.7 s
+[t] free-kick: steps 8.6 s, screenshot 0.7 s
+[t] goal: steps 36.5 s, screenshot 0.5 s
+[t] replay-side: steps 1.3 s, screenshot 0.5 s
+[t] replay-goal: steps 6.7 s, screenshot 0.3 s
+[t] kickoff-after-goal: steps 1.5 s, screenshot 0.5 s
+INT-C scenes {"establishing":{"msPerFrame":1.8,"tick":16,"phase":0,"bx":0,"by":0.11,"bz":0,"sx":590,"sy":408,"calls":20,"tris":46756,"tier":1,"scale":0.75,"shot":3,"camX":-21.39},"kickoff":{"msPerFrame":1.1,"tick":134,"phase":1,"bx":0,"by":0.11,"bz":0,"sx":509,"sy":408,"calls":20,"tris":46756,"tier":1,"scale":0.75,"shot":0,"camX":0},"anim":{"kicks":0,"contactMedian":-1,"contactMax":-1,"groundedFrames":2524,"slipP50":0.045,"stationaryShare":0.745},"openplay":{"msPerFrame":1.4,"tick":425,"phase":2,"bx":9.39,"by":0.11,"bz":-2.13,"sx":505,"sy":398,"calls":20,"tris":46756,"tier":1,"scale":0.8,"shot":0,"camX":5.72},"attack":{"msPerFrame":1.7,"tick":827,"phase":2,"bx":30.3,"by":0.11,"bz":-16.98,"sx":514,"sy":385,"calls":20,"tris":46756,"tier":1,"scale":0.8,"shot":0,"camX":21.09},"corner-award":{"msPerFrame":1,"tick":897,"phase":5,"bx":52,"by":0.11,"bz":33.5,"sx":418,"sy":574,"calls":20,"tris":46756,"tier":1,"scale":0.8,"shot":2,"camX":57.39},"corner-setup":{"msPerFrame":1.1,"tick":940,"phase":5,"bx":52,"by":0.11,"bz":33.5,"sx":418,"sy":574,"calls":20,"tris":46756,"tier":1,"scale":0.8,"shot":2,"camX":57.39},"corner-taken":{"msPerFrame":1.5,"tick":1065,"phase":2,"bx":51.23,"by":1.8,"bz":28.76,"sx":525,"sy":428,"calls":21,"tris":46924,"tier":1,"scale":0.8,"shot":0,"camX":32},"goal-kick":{"msPerFrame":1,"tick":1138,"phase":4,"bx":47,"by":0.11,"bz":-4.58,"sx":472,"sy":623,"calls":20,"tris":46756,"tier":1,"scale":0.85,"shot":1,"camX":54.13},"free-kick":{"msPerFrame":1.1,"tick":1262,"phase":6,"bx":26,"by":0.11,"bz":4.7,"sx":714,"sy":558,"calls":20,"tris":46756,"tier":1,"scale":0.85,"shot":1,"camX":18.93},"goal":{"msPerFrame":1.2,"tick":2260,"phase":8,"bx":53.15,"by":0.36,"bz":3.15,"sx":793,"sy":397,"calls":22,"tris":46758,"tier":1,"scale":0.6,"shot":0,"camX":31.93},"replay-side":{"msPerFrame":1.8,"tick":2569,"phase":10,"bx":53.3,"by":0.11,"bz":3.07,"sx":1208,"sy":603,"calls":22,"tris":46758,"tier":1,"scale":0.6,"shot":4,"camX":42.04},"replay-goal":{"msPerFrame":1.3,"tick":2722,"phase":10,"bx":53.3,"by":0.11,"bz":3.07,"sx":-385,"sy":1172,"calls":22,"tris":46758,"tier":1,"scale":0.6,"shot":5,"camX":57.5},"kickoff-after-goal":{"msPerFrame":0.9,"tick":2990,"phase":1,"bx":0,"by":0.11,"bz":0,"sx":509,"sy":408,"calls":21,"tris":46756,"tier":1,"scale":0.6,"shot":0,"camX":0}}
+  ✓  1 [chromium-ipad] › tests/e2e/int-c-live.spec.ts:269:3 › INT-C live match render integration › scenes, budgets, cameras and animation contact in a CPU v CPU match (screenshots) (2.1m)
+night QUALITY {"msPerFrame":2.2,"tick":283,"phase":2,"bx":-1.23,"by":0.11,"bz":1.74,"sx":483,"sy":416,"calls":31,"tris":95742,"tier":3,"scale":0.75,"shot":0,"camX":-0.09}
+after restore {"msPerFrame":2.5,"tick":316,"phase":2,"bx":-2.11,"by":0.11,"bz":5.22,"sx":579,"sy":440,"calls":31,"tris":95742,"tier":3,"scale":0.75,"shot":0,"camX":-1.34}
+  ✓  2 [chromium-ipad] › tests/e2e/int-c-live.spec.ts:411:3 › INT-C live match render integration › night match at the QUALITY tier (MSAA context, shadow map), then a WebGL context loss and restore (36.1s)
+
+  2 passed (2.7m)

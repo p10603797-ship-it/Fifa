@@ -1,0 +1,48 @@
+
+Running 1 test using 1 worker
+
+match ready in 9 s
+[t] establishing: steps 0 s, screenshot 0.8 s
+[t] kickoff: steps 1.8 s, screenshot 0.7 s
+anim {"kicks":0,"contactMedian":-1,"contactMax":-1,"groundedFrames":2524,"slipP50":0.045,"stationaryShare":0.745}
+[t] openplay: steps 30.3 s, screenshot 1 s
+[t] attack: steps 0.1 s, screenshot 1 s
+[t] corner-award: steps 10.6 s, screenshot 0.2 s
+[t] corner-setup: steps 8.2 s, screenshot 0.9 s
+[t] corner-taken: steps 1.8 s, screenshot 0.9 s
+[t] goal-kick: steps 12.8 s, screenshot 0.2 s
+[t] free-kick: steps 11.1 s, screenshot 0.9 s
+SGN03-TRACE
+t1835 ph6 ball(47.34,0.11,4.31) v(0.0,0.0,0.0) own-1 held-1 lt9 gk(51.50,-3.39) act0
+[t] goal: steps 33.4 s, screenshot 0.6 s
+  ✘  1 [chromium-ipad] › tests/e2e/int-c-live.spec.ts:283:3 › INT-C live match render integration › scenes, budgets, cameras and animation contact in a CPU v CPU match (screenshots) (2.1m)
+
+
+  1) [chromium-ipad] › tests/e2e/int-c-live.spec.ts:283:3 › INT-C live match render integration › scenes, budgets, cameras and animation contact in a CPU v CPU match (screenshots) 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m8[39m
+    Received: [31m4[39m
+
+      394 |     await h.run(240, PHASE.GOAL, 0, 99, true, 50);
+      395 |     const goal = await scene('goal', 2);
+    > 396 |     expect(goal.phase).toBe(PHASE.GOAL);
+          |                        ^
+      397 |     await h.run(1500, PHASE.REPLAY, 0, 99, false);
+      398 |     await h.play(10);
+      399 |     const rs = await scene('replay-side', 2);
+        at /home/user/Fifa/tests/e2e/int-c-live.spec.ts:396:24
+
+    Error Context: test-results-sgn03-diag/int-c-live-INT-C-live-matc-1fb41-PU-v-CPU-match-screenshots--chromium-ipad/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results-sgn03-diag/int-c-live-INT-C-live-matc-1fb41-PU-v-CPU-match-screenshots--chromium-ipad/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results-sgn03-diag/int-c-live-INT-C-live-matc-1fb41-PU-v-CPU-match-screenshots--chromium-ipad/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium-ipad] › tests/e2e/int-c-live.spec.ts:283:3 › INT-C live match render integration › scenes, budgets, cameras and animation contact in a CPU v CPU match (screenshots) 

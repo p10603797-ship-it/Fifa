@@ -1,0 +1,19 @@
+size-check: index.html 2407.8 KB raw, 821.5 KB gzip, 677.8 KB brotli (budget 4096.0 KB gzip)
+size-check:   three             834.7 KB code    160.2 KB gzip  budget 1100 KB 
+size-check:   src/sim           819.6 KB code    205.4 KB gzip  budget 1100 KB 
+size-check:   src/render        455.1 KB code    124.0 KB gzip  budget 650 KB 
+size-check:   src/ui            443.1 KB code    116.9 KB gzip  budget 650 KB 
+size-check:   src/ai            314.8 KB code     82.3 KB gzip  budget 450 KB 
+size-check:   src/input         265.6 KB code     69.3 KB gzip  budget 350 KB 
+size-check:   peerjs            157.5 KB code     32.1 KB gzip  budget 350 KB 
+size-check:   src/data          143.2 KB code     26.2 KB gzip  budget 250 KB 
+size-check:   src/contracts     113.0 KB code     32.9 KB gzip  budget 160 KB 
+size-check:   fonts             108.4 KB code     81.0 KB gzip  budget 160 KB 
+size-check:   src/net           106.6 KB code     27.8 KB gzip  budget 200 KB 
+size-check:   src/platform       85.6 KB code     24.3 KB gzip  budget 150 KB 
+size-check:   src/audio          77.7 KB code     20.7 KB gzip  budget 150 KB 
+size-check:   other              57.5 KB code     11.8 KB gzip  budget 150 KB 
+size-check:   src/app            49.8 KB code     13.8 KB gzip  budget 80 KB 
+size-check:   src/modes          38.5 KB code     10.6 KB gzip  budget 120 KB 
+size-check: wrote the Bundle section of /home/user/Fifa/docs/PERF_REPORT.md
+size-check: PASS

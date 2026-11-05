@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/int-b-pad-match.spec.ts:82:3 › INT-B controller only › full Kick-Off match by pad: menus, play, Options pause, half-time, full-time, quit (1.7m)
+  ✓  2 [chromium-ipad] › tests/e2e/int-b-pad-match.spec.ts:135:3 › INT-B controller only › touch controls hide while the same human's pad drives and return on the next screen touch (19.7s)
+  ✓  3 [chromium-ipad] › tests/e2e/int-b-pad-match.spec.ts:159:3 › INT-B controller only › PAD-03 in the app: unplug -> card -> reconnect resumes; hand to touch; hand to CPU (1.5m)
+
+  3 passed (3.6m)

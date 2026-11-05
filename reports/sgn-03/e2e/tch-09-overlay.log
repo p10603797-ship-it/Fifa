@@ -1,0 +1,10 @@
+
+Running 5 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/tch-09-overlay.spec.ts:66:3 › TCH-09 touch overlay with real touches › pressed state: in the DOM inside the pointerdown task and painted by the next animation frame (616ms)
+  ✓  2 [chromium-ipad] › tests/e2e/tch-09-overlay.spec.ts:95:3 › TCH-09 touch overlay with real touches › labels swap with possession; a held thumb keeps its label until it lifts (493ms)
+  ✓  3 [chromium-ipad] › tests/e2e/tch-09-overlay.spec.ts:113:3 › TCH-09 touch overlay with real touches › hides while the mocked pad drives the side and returns on the next screen touch (1.2s)
+  ✓  4 [chromium-ipad] › tests/e2e/tch-09-overlay.spec.ts:132:3 › TCH-09 touch overlay with real touches › layout: inside the safe area, 24 pt clear of the edges and off the HUD at 4:3, 16:10 and 21:9 (639ms)
+  ✓  5 [chromium-ipad] › tests/e2e/tch-09-overlay.spec.ts:171:3 › TCH-09 touch overlay with real touches › no layout thrash: a stick drag and held buttons cause no layout per frame and write the DOM only on change (2.4s)
+
+  5 passed (7.6s)

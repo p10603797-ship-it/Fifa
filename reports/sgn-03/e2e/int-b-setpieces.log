@@ -1,0 +1,7 @@
+
+Running 2 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/int-b-setpieces.spec.ts:135:3 › INT-B set pieces end to end › touch: free kick (preview dots), corner, penalty by swipes from the ball; throw-in by PASS (2.2m)
+  ✓  2 [chromium-ipad] › tests/e2e/int-b-setpieces.spec.ts:176:3 › INT-B set pieces end to end › controller: free kick, corner, penalty with stick aim + held button (power bar); throw-in by Cross (2.0m)
+
+  2 passed (4.2m)

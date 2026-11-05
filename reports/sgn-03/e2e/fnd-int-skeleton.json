@@ -1,0 +1,197 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "fnd-int-skeleton.spec.ts",
+      "file": "fnd-int-skeleton.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "FND-INT walking skeleton",
+          "file": "fnd-int-skeleton.spec.ts",
+          "line": 287,
+          "column": 6,
+          "specs": [
+            {
+              "title": "boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 420000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-ipad",
+                  "projectName": "chromium-ipad",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 63209,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeGreaterThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: > \u001b[32m1.5\u001b[39m\nReceived:   \u001b[31m0.9641369047619044\u001b[39m",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeGreaterThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: > \u001b[32m1.5\u001b[39m\nReceived:   \u001b[31m0.9641369047619044\u001b[39m\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:466:35\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:456:5",
+                        "location": {
+                          "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                          "column": 35,
+                          "line": 466
+                        },
+                        "snippet": "  464 |       const during = await controlled(page);\n  465 |       await setPad(page, 'pad.axes[0] = 0;');\n> 466 |       expect(before.x - during.x).toBeGreaterThan(1.5);\n      |                                   ^\n  467 |       expect(Math.abs(during.z - before.z)).toBeLessThan(1);\n  468 |       await expectStops(page);\n  469 |     });"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                            "column": 35,
+                            "line": 466
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeGreaterThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: > \u001b[32m1.5\u001b[39m\nReceived:   \u001b[31m0.9641369047619044\u001b[39m\n\n  464 |       const during = await controlled(page);\n  465 |       await setPad(page, 'pad.axes[0] = 0;');\n> 466 |       expect(before.x - during.x).toBeGreaterThan(1.5);\n      |                                   ^\n  467 |       expect(Math.abs(during.z - before.z)).toBeLessThan(1);\n  468 |       await expectStops(page);\n  469 |     });\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:466:35\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:456:5"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "steps": [
+                        {
+                          "title": "boot -> splash -> main",
+                          "duration": 1070
+                        },
+                        {
+                          "title": "Kick-Off -> loading -> match with the default setup",
+                          "duration": 11822
+                        },
+                        {
+                          "title": "screenshot of the match at 1180 x 820 -> reports/skeleton.png",
+                          "duration": 5574
+                        },
+                        {
+                          "title": "render probes: pitch, 22 capsules, ball, broadcast camera",
+                          "duration": 13199
+                        },
+                        {
+                          "title": "keyboard: holding D moves the controlled player toward +x, release stops",
+                          "duration": 10324
+                        },
+                        {
+                          "title": "touch: an upward drag in the left half moves the player toward -z, lift stops",
+                          "duration": 12266
+                        },
+                        {
+                          "title": "mocked gamepad: joins on a button press, left stick moves the player toward -x",
+                          "duration": 6952,
+                          "error": {
+                            "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeGreaterThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: > \u001b[32m1.5\u001b[39m\nReceived:   \u001b[31m0.9641369047619044\u001b[39m",
+                            "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeGreaterThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: > \u001b[32m1.5\u001b[39m\nReceived:   \u001b[31m0.9641369047619044\u001b[39m\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:466:35\n    at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:456:5",
+                            "location": {
+                              "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                              "column": 35,
+                              "line": 466
+                            },
+                            "snippet": "  464 |       const during = await controlled(page);\n  465 |       await setPad(page, 'pad.axes[0] = 0;');\n> 466 |       expect(before.x - during.x).toBeGreaterThan(1.5);\n      |                                   ^\n  467 |       expect(Math.abs(during.z - before.z)).toBeLessThan(1);\n  468 |       await expectStops(page);\n  469 |     });"
+                          }
+                        }
+                      ],
+                      "startTime": "2026-11-04T23:50:26.581Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/user/Fifa/test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/home/user/Fifa/test-results/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts",
+                        "column": 35,
+                        "line": 466
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "bb4ebc5dd3f76a3de7de-e050a065f6e9684f856b",
+              "file": "fnd-int-skeleton.spec.ts",
+              "line": 288,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-04T23:50:24.720Z",
+    "duration": 66994.746,
+    "expected": 0,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "config": {
+    "configFile": "/home/user/Fifa/playwright.config.ts",
+    "rootDir": "/home/user/Fifa/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/home/user/Fifa/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-ipad",
+        "name": "chromium-ipad",
+        "testDir": "/home/user/Fifa/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite preview --port 4503 --strictPort --outDir dist-e2e/sgn-03",
+      "port": 4503,
+      "reuseExistingServer": false,
+      "timeout": 60000
+    }
+  },
+  "suites": [
+    {
+      "title": "qf-7r-hud.spec.ts",
+      "file": "qf-7r-hud.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "HUD and touch controls write the DOM only on change during live play",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 180000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium-ipad",
+              "projectName": "chromium-ipad",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 40827,
+                  "errors": [],
+                  "stdout": [
+                    {
+                      "text": "QF-7R HUD DOM writes: {\"frames\":1517,\"seconds\":30,\"mutations\":240,\"perSecond\":[[\"[sb-clock] characterData\",6.1],[\"div.dk-tbtn @data-btn\",0.4],[\"span.dk-tbtn-label childList\",0.4],[\"div.dk-tbtn @class\",0.3],[\"[pi-p1-fill] @style\",0.1],[\"span.dk-tbtn-cap childList\",0.1],[\"[hud-toast] @class\",0.1],[\"[sb-score] characterData\",0],[\"[toast-title] childList\",0],[\"span.ht-code childList\",0],[\"[toast-line] childList\",0],[\"[toast-minute] childList\",0],[\"span.ht-chip @style\",0],[\"[hud-toast] @data-kind\",0],[\"[hud-toast] @aria-label\",0]]}\n"
+                    }
+                  ],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-05T00:46:11.556Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "66348933faaafcc6efa6-1c63bda79b51ea593508",
+          "file": "qf-7r-hud.spec.ts",
+          "line": 119,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T00:46:09.657Z",
+    "duration": 42922.567,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

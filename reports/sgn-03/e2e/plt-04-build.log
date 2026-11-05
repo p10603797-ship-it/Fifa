@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/plt-04-build.spec.ts:42:3 › PLT-04 single-file build › index.html served alone boots to the main menu with zero console errors (2.9s)
+  ✓  2 [chromium-ipad] › tests/e2e/plt-04-build.spec.ts:61:3 › PLT-04 single-file build › the size budget gate passes on this build (5.2s)
+  ✓  3 [chromium-ipad] › tests/e2e/plt-04-build.spec.ts:69:3 › PLT-04 single-file build › startup with ~20 Mbit/s throttling: splash and main menu times (2.6s)
+
+  3 passed (12.8s)

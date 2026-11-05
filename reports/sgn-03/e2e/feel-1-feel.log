@@ -1,0 +1,8 @@
+
+Running 1 test using 1 worker
+
+FEEL-1 e2e sprint dribble: {"mean":1.271560558897006,"max":1.3748452604353998,"lost":0,"speed":9.078673469387773}
+FEEL-1 e2e R1 dribble: {"mean":0.7231967158007293,"max":0.7646702254369108,"lost":0,"speed":7.868183673469389}
+  ✓  1 [chromium-ipad] › tests/e2e/feel-1-feel.spec.ts:86:3 › FEEL-1 in a real match › sprint dribble a stride ahead, R1 tight, L2 + Circle trivela, receiving magnet, assisted pass (1.4m)
+
+  1 passed (1.5m)

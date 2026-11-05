@@ -1,0 +1,52 @@
+
+> dotkick@0.1.0 verify
+> npm run typecheck && npm run lint && vitest run && npm run soak:short
+
+
+> dotkick@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.json
+
+
+> dotkick@0.1.0 lint
+> eslint .
+
+
+ RUN  v5.0.4 /home/user/Fifa
+
+
+ Test Files  543 passed (543)
+      Tests  7473 passed | 1 skipped (7474)
+   Start at  22:32:11
+   Duration  1329.53s (tests 82%, import 16%, transform 2%)
+
+    Isolate  543 workers spawned · ~152ms startup each (spawn + environment, per file)
+             at least ~41.14s faster with isolate: false — reuses workers across files instead of one per file
+
+
+> dotkick@0.1.0 soak:short
+> tsx tools/soak.ts --matches 10 --short
+
+DotKick soak: 10 match(es), 4 worker(s), seed 1, enforce core, 2-minute halves (short)
+  ticks 154683 (avg 15468/match), finished 10/10, sim 0.2409 ms/tick avg (max 37.52), invariant checks 0.0387 ms/tick
+  exceptions 0, invariant failures enforced(core) 0 / all 0
+  watchdogs 0, unfinished 0, events dropped 0
+  determinism: PASS (seed 3860608494)
+    same seed twice (batch run vs recorded run): 27ca208c == 27ca208c
+    same seed again after another match in the same worker: 27ca208c == 27ca208c
+    replay (JSON round trip) plays back identically: 27ca208c over 16154 ticks
+  statistics bands (finished matches) [reported, not enforced]:
+  FAIL goals per match: 1.60 (band 2-3.6, n=10)
+  FAIL shots per match: 5.80 (band 14-26, n=10)
+  PASS possession per match, side with more of the ball: 58.20% (band 40-60%, n=10, 7/10 matches inside 40-60)
+  PASS possession home side: 51.07% (band 40-60%, n=10, home/away bias)
+  PASS pass completion: 76.16% (band 70-88%, n=10, 607/797)
+  FAIL fouls per match: 5.00 (band 6-16, n=9, fouls on)
+  PASS offsides per match: 0.00 (band 0-6, n=10, offside on)
+  PASS blow-outs (5+ goal margin): 0.00% (band 0-5% (upper exclusive), n=10, 0 match(es))
+  failures: none
+RESULT: PASS in 17.4 s (bands not enforced)
+
+real	23m47.709s
+user	55m43.510s
+sys	1m23.921s
+EXIT 0

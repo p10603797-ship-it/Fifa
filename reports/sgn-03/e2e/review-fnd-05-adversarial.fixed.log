@@ -1,0 +1,14 @@
+
+Running 9 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:90:3 › REVIEW FND-05 adversarial › no WebGL2: the unavailable message is shown but does not cover the pause menu or the touch PAUSE button (3.2s)
+  ✓  2 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:120:3 › REVIEW FND-05 adversarial › quit and restart twice: one overlay, no leaked window/document listeners, input still works (41.0s)
+  ✓  3 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:198:3 › REVIEW FND-05 adversarial › visibility change mid-match while holding D and the touch stick: everything released, nothing stuck after resume (22.6s)
+  ✓  4 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:242:3 › REVIEW FND-05 adversarial › resize mid-match (4:3 and 21:9): cluster relayouts inside the viewport and still responds; camera follows (34.1s)
+  ✓  5 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:287:3 › REVIEW FND-05 adversarial › pad: disconnect mid-hold stops the player; reconnect at a new index keeps the binding and drives it again (31.9s)
+  ✓  6 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:366:3 › REVIEW FND-05 adversarial › blocked storage and no service worker: the match starts and touch input works with zero console errors (24.3s)
+  ✓  7 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:385:3 › REVIEW FND-05 adversarial › multi-touch: stick and SPRINT held together; lifting one keeps the other (no stolen touches) (17.9s)
+  ✓  8 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:415:3 › REVIEW FND-05 adversarial › graphics settings changed in a running session reach the renderer (fixed resolution scale) (14.6s)
+  ✓  9 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:431:3 › REVIEW FND-05 adversarial › Escape and the touch PAUSE button pause exactly once; the touch layer ignores touches while paused (15.4s)
+
+  9 passed (3.5m)

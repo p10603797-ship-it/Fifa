@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/gfx-07-players.spec.ts:128:3 › GFX-07 player model › part model: budgets, region colours, back numbers, poses, sent-off hidden; screenshots (19.3s)
+
+  1 passed (21.3s)

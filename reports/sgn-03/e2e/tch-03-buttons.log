@@ -1,0 +1,9 @@
+
+Running 4 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/tch-03-buttons.spec.ts:60:3 › TCH-03 harness: real touches through the pointer manager into the attack cluster › swipes in all four directions on every attack button are recognised at 24 pt; 18 pt is no swipe (2.1s)
+  ✓  2 [chromium-ipad] › tests/e2e/tch-03-buttons.spec.ts:95:3 › TCH-03 harness: real touches through the pointer manager into the attack cluster › hold: HOLD and the 250 ms hint come from the frame loop; a slow slide off keeps the hold; touchCancel releases (4.5s)
+  ✓  3 [chromium-ipad] › tests/e2e/tch-03-buttons.spec.ts:128:3 › TCH-03 harness: real touches through the pointer manager into the attack cluster › double tap, five simultaneous touches, and the attack set yields in DEFENCE mode (376ms)
+  ✓  4 [chromium-ipad] › tests/e2e/tch-03-buttons.spec.ts:166:3 › TCH-03 in the real app › pressed state within one frame of the touch-down (sync and next rAF), kept while the thumb slides off (40.9s)
+
+  4 passed (50.6s)

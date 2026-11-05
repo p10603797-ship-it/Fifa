@@ -1,0 +1,7 @@
+
+Running 2 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/tch-06-setpiece.spec.ts:58:3 › TCH-06 set-piece swipe with real touches › a free-kick swipe from the ball previews the flight while dragging and shoots at the lift (1.1s)
+  ✓  2 [chromium-ipad] › tests/e2e/tch-06-setpiece.spec.ts:98:3 › TCH-06 set-piece swipe with real touches › glitch: stuck preview after pointercancel - the drag is dropped with its preview and nothing is kicked (839ms)
+
+  2 passed (4.5s)

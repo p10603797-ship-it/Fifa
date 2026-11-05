@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/aud-05-menus.spec.ts:48:3 › AUD-05 menu sounds › splash START, CONFIRM on keyboard navigation, debounced key repeat, menus pool, no errors (1.3s)
+
+  1 passed (3.0s)

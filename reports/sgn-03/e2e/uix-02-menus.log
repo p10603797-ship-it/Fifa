@@ -1,0 +1,15 @@
+
+Running 9 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/uix-02-menus.spec.ts:176:3 › UIX-02 splash and main menu › touch alone: tap anywhere starts; every entry opens its screen and Back returns (3.3s)
+  ✓  2 [chromium-ipad] › tests/e2e/uix-02-menus.spec.ts:208:3 › UIX-02 splash and main menu › keyboard alone: any key starts without leaking; arrows walk a sensible order; Enter opens, Escape returns (4.0s)
+  ✓  3 [chromium-ipad] › tests/e2e/uix-02-menus.spec.ts:277:3 › UIX-02 splash and main menu › keyboard alone at 4:3 and 21:9: the same focus order reaches every entry, ring on screen (2.9s)
+  ✓  4 [chromium-ipad] › tests/e2e/uix-02-menus.spec.ts:317:3 › UIX-02 splash and main menu › controller alone: a button outside the menu map starts; D-pad, Cross and Circle drive the menu (3.0s)
+  ✓  5 [chromium-ipad] › tests/e2e/uix-02-menus.spec.ts:358:3 › UIX-02 splash and main menu › controller alone: Cross and Options also start, once (the press does not reach the main menu) (2.0s)
+[uix-02] splash -> running match in 6833 ms (2 taps, software WebGL)
+  ✓  6 [chromium-ipad] › tests/e2e/uix-02-menus.spec.ts:376:3 › UIX-02 splash and main menu › quick play: tap to start and Play now reach a running match within a few seconds (9.6s)
+  ✓  7 [chromium-ipad] › tests/e2e/uix-02-menus.spec.ts:402:3 › UIX-02 splash and main menu › layout at iPad, 4:3 and 21:9: controls >= 60 pt, inside the viewport, no overlaps (6.4s)
+  ✓  8 [chromium-ipad] › tests/e2e/uix-02-menus.spec.ts:438:3 › UIX-02 on an iPad in a Safari tab › Add to Home Screen hint shows once; Play full screen requests full screen and starts (1.9s)
+  ✓  9 [chromium-ipad] › tests/e2e/uix-02-menus.spec.ts:470:3 › UIX-02 on an iPad in a Safari tab › Home Screen app (standalone): no hint and no full-screen button (918ms)
+
+  9 passed (36.3s)

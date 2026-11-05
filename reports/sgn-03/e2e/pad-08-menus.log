@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/pad-08-menus.spec.ts:108:3 › PAD-08 menus by keyboard alone and by controller alone › keyboard only: splash -> main -> Settings -> Back (Escape and K), visible ring, sensible order (2.9s)
+  ✓  2 [chromium-ipad] › tests/e2e/pad-08-menus.spec.ts:136:3 › PAD-08 menus by keyboard alone and by controller alone › controller only: Cross starts, D-pad and stick move, Cross confirms, Circle goes back (3.1s)
+  ✓  3 [chromium-ipad] › tests/e2e/pad-08-menus.spec.ts:182:3 › PAD-08 menus by keyboard alone and by controller alone › real DOM: group wrap, slider adjust without a native double step, tabs, recovery after removal (2.0s)
+
+  3 passed (9.9s)

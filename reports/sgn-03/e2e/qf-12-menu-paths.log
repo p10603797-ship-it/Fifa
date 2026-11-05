@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/qf-12-menu-paths.spec.ts:85:3 › QF-12 menu paths › controller alone: cup tie and every pause page, practice restart and quit, tutorial, shoot-out flow, diagnostics (43.7s)
+  ✓  2 [chromium-ipad] › tests/e2e/qf-12-menu-paths.spec.ts:169:3 › QF-12 menu paths › touch alone: cup tie and every pause page, practice restart and quit, tutorial, shoot-out flow, diagnostics (36.5s)
+  ✓  3 [chromium-ipad] › tests/e2e/qf-12-menu-paths.spec.ts:243:3 › QF-12 menu paths › controller alone: Play now to full time (half-time Continue), Change teams opens team select, Back to main (1.1m)
+
+  3 passed (2.5m)

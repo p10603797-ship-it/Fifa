@@ -1,0 +1,41 @@
+
+> dotkick@0.1.0 fuzz
+> tsx tools/fuzz.ts --matches 500 --workers 3 --enforce all --json reports/sgn-03/fuzz.json
+
+DotKick fuzz: 500 match(es), 3 worker(s), seed 1, enforce all, up to 2-minute halves
+  [25/502] 25.8 s, last #23 ok
+  [50/502] 45.5 s, last #48 ok
+  [75/502] 59.3 s, last #74 ok
+  [100/502] 75.4 s, last #98 ok
+  [125/502] 90.5 s, last #122 ok
+  [150/502] 106.4 s, last #147 ok
+  [175/502] 122.1 s, last #172 ok
+  [200/502] 135.8 s, last #197 ok
+  [225/502] 151.6 s, last #224 ok
+  [250/502] 165.8 s, last #245 ok
+  [275/502] 182.2 s, last #273 ok
+  [300/502] 195.5 s, last #298 ok
+  [325/502] 208.6 s, last #321 ok
+  [350/502] 221.9 s, last #350 ok
+  [375/502] 234.6 s, last #372 ok
+  [400/502] 249.1 s, last #397 ok
+  [425/502] 262.6 s, last #424 ok
+  [450/502] 275.3 s, last #447 ok
+  [475/502] 287.1 s, last #474 ok
+  [500/502] 298.8 s, last #496 ok
+  [502/502] 300.7 s, last #0 ok
+  runs 500 + 122 rematch(es), ticks 8648542, finished 486, sim 0.0580 ms/tick avg (max 29.06)
+  exceptions 0, invariant failures enforced(all) 0 / all 0
+  watchdogs 0, unfinished 136, events dropped 0
+  determinism: PASS (fuzz #0 p1-home gens commands/neutral mode 0)
+    same seed twice (batch run vs recorded run): ff10cdd4 == ff10cdd4
+    same seed again after another match in the same worker: ff10cdd4 == ff10cdd4
+    replay (JSON round trip) plays back identically: ff10cdd4 over 15500 ticks
+  failures: none
+RESULT: PASS in 300.7 s
+  json report: reports/sgn-03/fuzz.json
+
+real	5m1.461s
+user	15m34.639s
+sys	0m8.431s
+EXIT 0

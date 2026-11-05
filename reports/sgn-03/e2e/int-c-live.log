@@ -1,0 +1,50 @@
+
+Running 2 tests using 1 worker
+
+match ready in 11 s
+[t] establishing: steps 0.6 s, screenshot 0.3 s
+[t] kickoff: steps 2.1 s, screenshot 0.9 s
+anim {"kicks":0,"contactMedian":-1,"contactMax":-1,"groundedFrames":2510,"slipP50":0.045,"stationaryShare":0.746}
+[t] openplay: steps 35.4 s, screenshot 1 s
+[t] attack: steps 0.2 s, screenshot 1.1 s
+[t] corner-award: steps 11.3 s, screenshot 1.1 s
+[t] corner-setup: steps 8.7 s, screenshot 0.8 s
+[t] corner-taken: steps 1.9 s, screenshot 0.8 s
+[t] goal-kick: steps 13.3 s, screenshot 0.3 s
+[t] free-kick: steps 13.1 s, screenshot 0.3 s
+[t] goal: steps 37.9 s, screenshot 0.8 s
+  ✘  1 [chromium-ipad] › tests/e2e/int-c-live.spec.ts:351:3 › INT-C live match render integration › scenes, budgets, cameras and animation contact in a CPU v CPU match (screenshots) (2.4m)
+night QUALITY {"msPerFrame":2.1,"tick":283,"phase":2,"bx":-1.23,"by":0.11,"bz":1.74,"sx":484,"sy":416,"calls":31,"tris":95742,"tier":3,"scale":0.75,"shot":0,"camX":-0.09}
+after restore {"msPerFrame":2.6,"tick":316,"phase":2,"bx":-2.11,"by":0.11,"bz":5.22,"sx":581,"sy":440,"calls":31,"tris":95742,"tier":3,"scale":0.75,"shot":0,"camX":-1.34}
+  ✓  2 [chromium-ipad] › tests/e2e/int-c-live.spec.ts:488:3 › INT-C live match render integration › night match at the QUALITY tier (MSAA context, shadow map), then a WebGL context loss and restore (50.4s)
+
+
+  1) [chromium-ipad] › tests/e2e/int-c-live.spec.ts:351:3 › INT-C live match render integration › scenes, budgets, cameras and animation contact in a CPU v CPU match (screenshots) 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m8[39m
+    Received: [31m4[39m
+
+      379 |     await h.run(240, PHASE.GOAL, 0, 99, true, 50);
+      380 |     const goal = await scene('goal', 2);
+    > 381 |     expect(goal.phase).toBe(PHASE.GOAL);
+          |                        ^
+      382 |     await h.run(1500, PHASE.REPLAY, 0, 99, false);
+      383 |     await h.play(10);
+      384 |     const rs = await scene('replay-side', 2);
+        at /home/user/Fifa/tests/e2e/int-c-live.spec.ts:381:24
+
+    Error Context: test-results/int-c-live-INT-C-live-matc-1fb41-PU-v-CPU-match-screenshots--chromium-ipad/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/int-c-live-INT-C-live-matc-1fb41-PU-v-CPU-match-screenshots--chromium-ipad/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/int-c-live-INT-C-live-matc-1fb41-PU-v-CPU-match-screenshots--chromium-ipad/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium-ipad] › tests/e2e/int-c-live.spec.ts:351:3 › INT-C live match render integration › scenes, budgets, cameras and animation contact in a CPU v CPU match (screenshots) 
+  1 passed (3.3m)

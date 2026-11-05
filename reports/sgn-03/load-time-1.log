@@ -1,0 +1,7 @@
+load 0.76 3.23 3.90
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/plt-04-build.spec.ts:69:3 › PLT-04 single-file build › startup with ~20 Mbit/s throttling: splash and main menu times (2.3s)
+
+  1 passed (4.1s)

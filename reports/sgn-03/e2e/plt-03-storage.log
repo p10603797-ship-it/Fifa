@@ -1,0 +1,7 @@
+
+Running 2 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/plt-03-storage.spec.ts:28:1 › a burst of settings changes is flushed on reload; corrupt settings are backed up (1.9s)
+  ✓  2 [chromium-ipad] › tests/e2e/plt-03-storage.spec.ts:64:1 › large progress (a replay) persists in IndexedDB across reloads and is cleared by clearProgress (1.7s)
+
+  2 passed (5.5s)

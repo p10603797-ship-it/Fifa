@@ -1,0 +1,37 @@
+
+Running 1 test using 1 worker
+
+  ✘  1 [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:327:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors (1.9m)
+
+
+  1) [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:327:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors › touch: an upward drag in the left half moves the player toward -z, lift stops 
+
+    Error: touch drag: no clean attempt (player on the ball, restart or switch in every one):
+    attempt 0: slot 9 (0.59, 8.69) t417 phase 2 owner 21 | slot 9 (0.59, 3.80) t519 phase 2 owner -1 | slot 0 (-50.19, 1.93) t597 phase 2 owner 0 | slot 0 (-50.19, 1.93) t624 phase 2 owner 0
+    attempt 1: slot 0 (-50.19, 1.93) t645 phase 2 owner 0 | slot 0 (-50.19, -0.77) t759 phase 2 owner 0 | slot 0 (-50.19, -1.44) t837 phase 2 owner 0 | slot 0 (-50.19, -1.44) t864 phase 2 owner 0
+    attempt 2: slot 0 (-50.19, -1.44) t885 phase 2 owner 0 | slot 3 (-42.52, -6.79) t999 phase 2 owner 3 | slot 3 (-42.52, -7.99) t1074 phase 2 owner 3 | slot 3 (-42.52, -7.99) t1101 phase 2 owner 3
+    attempt 3: slot 7 (-35.48, -13.80) t1122 phase 6 owner -1 | slot 7 (-42.46, -7.78) t1236 phase 6 owner -1 | slot 7 (-42.52, -6.09) t1314 phase 6 owner -1 | slot 7 (-42.52, -6.09) t1341 phase 6 owner -1
+
+      127 |     seen.push(`attempt ${attempt}: ${all.map(fmt).join(' | ')}`);
+      128 |   }
+    > 129 |   throw new Error(`${name}: no clean attempt (player on the ball, restart or switch in every one):\n${seen.join('\n')}`);
+          |         ^
+      130 | }
+      131 |
+      132 | /** Wait for open play; a pending restart is taken at once by the sim's own timeout (as the kick-off step does). */
+        at cleanInputAttempt (/home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:129:9)
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:479:48
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:478:5
+
+    Error Context: test-results-sgn03-diag/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results-sgn03-diag/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results-sgn03-diag/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:327:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors 

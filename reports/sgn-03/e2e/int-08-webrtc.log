@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/int-08-webrtc.spec.ts:52:1 › real WebRTC through a local PeerServer: room, join, lobby, lockstep match (40.7s)
+
+  1 passed (44.3s)

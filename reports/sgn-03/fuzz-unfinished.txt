@@ -1,0 +1,8 @@
+SGN-03 fuzz 500: what "unfinished 136" counts (derived from reports/sgn-03/fuzz.json + tools/lib/report.ts totals)
+totals.unfinished counts every run (primary + rematch) with finished=false: 500 primaries + 122 rematches = 622 runs, 486 finished.
+  112 primary runs carry a planned quit@<tick> (quit-and-rematch jobs; runMatch maxTicks = quitAt, judge(stopped=true) by design)
+   21 primary runs are mode 5 PRACTICE with no quit (practice has no full time; configs.ts expectFinish=false; run to the 10800-tick cap)
+    3 rematches of practice quit jobs (#236, #309, #419; rematch is practice again, 10800 ticks)
+  ----
+  136 = all expected: no run with expectFinish=true and no quit ended unfinished (0 "unfinished:" failure reasons; failures: none).
+Of the 122 quit jobs, 10 primaries finished before their quit tick (e.g. short shoot-outs), so 112 not 122.

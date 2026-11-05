@@ -1,0 +1,43 @@
+
+Running 9 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:90:3 › REVIEW FND-05 adversarial › no WebGL2: the unavailable message is shown but does not cover the pause menu or the touch PAUSE button (3.0s)
+  ✓  2 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:120:3 › REVIEW FND-05 adversarial › quit and restart twice: one overlay, no leaked window/document listeners, input still works (40.0s)
+  ✓  3 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:198:3 › REVIEW FND-05 adversarial › visibility change mid-match while holding D and the touch stick: everything released, nothing stuck after resume (22.0s)
+  ✓  4 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:242:3 › REVIEW FND-05 adversarial › resize mid-match (4:3 and 21:9): cluster relayouts inside the viewport and still responds; camera follows (33.8s)
+  ✘  5 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:287:3 › REVIEW FND-05 adversarial › pad: disconnect mid-hold stops the player; reconnect at a new index keeps the binding and drives it again (26.2s)
+  ✓  6 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:356:3 › REVIEW FND-05 adversarial › blocked storage and no service worker: the match starts and touch input works with zero console errors (23.8s)
+  ✓  7 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:375:3 › REVIEW FND-05 adversarial › multi-touch: stick and SPRINT held together; lifting one keeps the other (no stolen touches) (19.3s)
+  ✓  8 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:405:3 › REVIEW FND-05 adversarial › graphics settings changed in a running session reach the renderer (fixed resolution scale) (14.4s)
+  ✓  9 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:421:3 › REVIEW FND-05 adversarial › Escape and the touch PAUSE button pause exactly once; the touch layer ignores touches while paused (13.9s)
+
+
+  1) [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:287:3 › REVIEW FND-05 adversarial › pad: disconnect mid-hold stops the player; reconnect at a new index keeps the binding and drives it again 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBeGreaterThan[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: > [32m0.8[39m
+    Received:   [31m0.24880952380952426[39m
+
+      313 |     await waitTicks(page, a.tick, 45);
+      314 |     const b = await controlled(page);
+    > 315 |     expect(a.x - b.x).toBeGreaterThan(0.8);
+          |                       ^
+      316 |     await page.evaluate(() => {
+      317 |       const w = window as unknown as W;
+      318 |       w.__pads[0]!.connected = false;
+        at /home/user/Fifa/tests/e2e/review-fnd-05-adversarial.spec.ts:315:23
+
+    Error Context: test-results/review-fnd-05-adversarial--10a35-binding-and-drives-it-again-chromium-ipad/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/review-fnd-05-adversarial--10a35-binding-and-drives-it-again-chromium-ipad/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/review-fnd-05-adversarial--10a35-binding-and-drives-it-again-chromium-ipad/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:287:3 › REVIEW FND-05 adversarial › pad: disconnect mid-hold stops the player; reconnect at a new index keeps the binding and drives it again 
+  8 passed (3.3m)

@@ -1,0 +1,7 @@
+
+Running 2 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/aud-01-engine.spec.ts:40:3 › AUD-01 audio engine › unlock on tap, pre-render, voice cap, suspend on hidden and resume on visible, no errors (3.3s)
+  ✓  2 [chromium-ipad] › tests/e2e/aud-01-engine.spec.ts:99:3 › AUD-01 audio engine › pause menu ducks the crowd and stops one-shots; hidden mid-match suspends, return resumes; no errors (14.1s)
+
+  2 passed (20.0s)

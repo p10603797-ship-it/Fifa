@@ -1,0 +1,9 @@
+
+Running 1 test using 1 worker
+
+GFX-04 close-up: 20 frame draw calls, 851 colours, 26256 white px
+GFX-04 ripple: diff 12.38 changed 12.12% (noise 160 ms 2.66%, 1.6 s 5.56%)
+GFX-04 after: diff 5.88 changed 5.67%
+  ✓  1 [chromium-ipad] › tests/e2e/gfx-04-goals.spec.ts:162:3 › GFX-04 goals and nets › goal close-up: frame, see-through net, ripple on NET, shake on POST, broadcast view (screenshots) (25.1s)
+
+  1 passed (26.9s)

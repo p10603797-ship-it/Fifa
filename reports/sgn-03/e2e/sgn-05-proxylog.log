@@ -1,0 +1,29 @@
+
+Running 1 test using 1 worker
+
+[sgn-05b] booted by pad, worker installed at 1.6 s, 10 proxied
+[sgn-05b] friend match at 64.6 s, 10 proxied
+[sgn-05b] cup tie at 128.9 s, 10 proxied
+[sgn-05b] shoot-out at 152.0 s, 10 proxied
+[sgn-05b] offline steps: 10 proxied requests, all to the app: / /icons/apple-touch-icon-180.png /icons/icon-192.png /icons/icon-32.png /icons/icon-512.png /icons/icon-maskable-512.png /manifest.webmanifest /sw.js
+[sgn-05b] share link: 1 RTCPeerConnection constructed (PeerJS feature probe), 0 setLocalDescription
+[sgn-05b] offline tab at 180.6 s, 16 proxied
+[sgn-05b] online steps contacted: 0.peerjs.com
+[sgn-05b] NetLog: 14 distinct URL strings; foreign: 0
+  http://localhost:4503/
+  http://localhost http://localhost
+  http://localhost:4503
+  http://localhost:4503/sw.js
+  http://localhost:4503/manifest.webmanifest
+  http://localhost:4503/icons/icon-192.png
+  http://localhost:4503/icons/icon-512.png
+  http://localhost:4503/icons/icon-maskable-512.png
+  http://localhost:4503/icons/apple-touch-icon-180.png
+  http://localhost:4503/icons/icon-32.png
+  https://0.peerjs.com/peerjs/id?ts=17938405837980.6160074855211903&version=1.5.5
+  https://0.peerjs.com
+  http://localhost:4503/?room=K7QWMZ
+  https://0.peerjs.com/peerjs/id?ts=17938405883940.9481225849176931&version=1.5.5
+  ✓  1 [chromium-ipad] › tests/e2e/sgn-05-proxylog.spec.ts:168:3 › SGN-05 network audit through a logging proxy and the NetLog › only the online 1v1 steps leave the page origin, and only to the PeerJS broker (3.0m)
+
+  1 passed (3.1m)

@@ -1,0 +1,36 @@
+
+Running 1 test using 1 worker
+
+  ✘  1 [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:287:3 › REVIEW FND-05 adversarial › pad: disconnect mid-hold stops the player; reconnect at a new index keeps the binding and drives it again (31.6s)
+
+
+  1) [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:287:3 › REVIEW FND-05 adversarial › pad: disconnect mid-hold stops the player; reconnect at a new index keeps the binding and drives it again 
+
+    Error: DIAG a {"slot":9,"x":-4.2582730098927835,"z":7.6786782477119395,"tick":252} b {"slot":9,"x":-4.507082533702308,"z":7.6786782477119395,"tick":303} phase 2 owner 21 slot 9 act 0 v(-2.99,0.00) ball(-10.8,1.9)
+
+    [2mexpect([22m[31mreceived[39m[2m).[22mtoBeGreaterThan[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: > [32m0.8[39m
+    Received:   [31m0.24880952380952426[39m
+
+      318 |       return `phase ${s.match.phase} owner ${s.ball.owner} slot ${s.ctrl[0]!.slot} act ${p.act} v(${p.vx.toFixed(2)},${p.vz.toFixed(2)}) ball(${s.ball.x.toFixed(1)},${s.ball.z.toFixed(1)})`;
+      319 |     });
+    > 320 |     expect(a.x - b.x, `DIAG a ${JSON.stringify(a)} b ${JSON.stringify(b)} ${diag}`).toBeGreaterThan(0.8);
+          |                                                                                     ^
+      321 |     await page.evaluate(() => {
+      322 |       const w = window as unknown as W;
+      323 |       w.__pads[0]!.connected = false;
+        at /home/user/Fifa/tests/e2e/review-fnd-05-adversarial.spec.ts:320:85
+
+    Error Context: test-results-sgn03-diag/review-fnd-05-adversarial--10a35-binding-and-drives-it-again-chromium-ipad/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results-sgn03-diag/review-fnd-05-adversarial--10a35-binding-and-drives-it-again-chromium-ipad/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results-sgn03-diag/review-fnd-05-adversarial--10a35-binding-and-drives-it-again-chromium-ipad/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium-ipad] › tests/e2e/review-fnd-05-adversarial.spec.ts:287:3 › REVIEW FND-05 adversarial › pad: disconnect mid-hold stops the player; reconnect at a new index keeps the binding and drives it again 

@@ -1,0 +1,12 @@
+
+Running 1 test using 1 worker
+
+[int-b touch] match loaded at 9.8 s
+[int-b touch] touch-play at 48.8 s
+[int-b touch] touch-pause at 66.6 s
+[int-b touch] touch-half-time at 92.6 s
+[int-b touch] touch-full-time at 129.2 s
+[int-b touch] main at 132.8 s
+  ✓  1 [chromium-ipad] › tests/e2e/int-b-touch-match.spec.ts:65:3 › INT-B touch only › full Kick-Off match by touch: menus, play, pause, half-time, full-time, rematch, quit (2.2m)
+
+  1 passed (2.2m)

@@ -373,8 +373,15 @@ test.describe('INT-C live match render integration', () => {
     expect(fk.shot).toBe(SHOT.BEHIND_TAKER);
 
     // Goal + replay: 6 s of play drawn every third tick feed the replay ring, then the shot, the goal, both angles.
-    await h.run(6000, PHASE.IN_PLAY, 0, 99, false);
-    await h.run(360, -1, 99, 0, true, 50);
+    // [SGN-03 harness] The shot is poked into open play: if the 6 s lead-in ends in a restart (a foul or the ball out:
+    // on the FEEL-2 tree this match is at a free kick then), the sim resets the poked ball for the restart and no goal
+    // follows. So play on to open play and take the 6 s lead-in again, until it ends in open play.
+    let lead: Res = { phase: -1 };
+    for (let attempt = 0; attempt < 6 && lead.phase !== PHASE.IN_PLAY; attempt++) {
+      await h.run(6000, PHASE.IN_PLAY, 0, 99, false);
+      lead = await h.run(360, -1, 99, 0, true, 50);
+    }
+    expect(lead.phase, 'the lead-in to the scripted goal ends in open play').toBe(PHASE.IN_PLAY);
     await h.goal();
     await h.run(240, PHASE.GOAL, 0, 99, true, 50);
     const goal = await scene('goal', 2);

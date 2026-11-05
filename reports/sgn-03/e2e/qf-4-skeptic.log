@@ -1,0 +1,8 @@
+
+Running 2 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/qf-4-skeptic.spec.ts:56:3 › QF-4 skeptic: larger HUD layout, texture memory across matches › larger HUD at 4:3, 1180x820 and 19.5:9, touch controls normal and mirrored: nothing overlaps, all inside the viewport (32.1s)
+QF-4 skeptic texture runs: [{"gpuTextures":6,"geometries":21,"counted":6,"mb":6.028646469116211,"calls":20,"phase":2},{"gpuTextures":6,"geometries":22,"counted":6,"mb":6.028646469116211,"calls":21,"phase":2},{"gpuTextures":6,"geometries":22,"counted":6,"mb":6.028646469116211,"calls":20,"phase":14},{"gpuTextures":6,"geometries":22,"counted":6,"mb":6.028646469116211,"calls":20,"phase":14}]
+  ✓  2 [chromium-ipad] › tests/e2e/qf-4-skeptic.spec.ts:110:3 › QF-4 skeptic: larger HUD layout, texture memory across matches › three matches in a row (other clubs, kits, night, a shoot-out) leave no GPU textures or geometries behind (2.3m)
+
+  2 passed (2.9m)

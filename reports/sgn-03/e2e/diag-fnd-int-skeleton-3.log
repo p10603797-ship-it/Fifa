@@ -1,0 +1,37 @@
+
+Running 1 test using 1 worker
+
+  ✘  1 [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:333:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors (1.7m)
+
+
+  1) [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:333:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors › restart: a fresh match that renders and takes input 
+
+    Error: key +x: slot 9 (-3.32, 5.85) t54 phase 0 owner -1 -> slot 9 (-4.94, 8.69) t120 phase 1 owner -1
+
+    [2mexpect([22m[31mreceived[39m[2m).[22mtoBeGreaterThan[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: > [32m1.5[39m
+    Received:   [31m-1.616370664128167[39m
+
+      558 |       const during = await controlled(page);
+      559 |       await page.keyboard.up('ArrowRight');
+    > 560 |       expect(during.x - before.x, `key +x: ${fmt(before)} -> ${fmt(during)}`).toBeGreaterThan(1.5);
+          |                                                                               ^
+      561 |       await expectStops(page);
+      562 |     });
+      563 |
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:560:79
+        at /home/user/Fifa/tests/e2e/fnd-int-skeleton.spec.ts:532:5
+
+    Error Context: test-results-sgn03-diag/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results-sgn03-diag/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results-sgn03-diag/fnd-int-skeleton-FND-INT-w-ae1b5-start-quit-with-zero-errors-chromium-ipad/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium-ipad] › tests/e2e/fnd-int-skeleton.spec.ts:333:3 › FND-INT walking skeleton › boot -> Kick-Off -> render, keyboard/touch/pad input, pause, restart, quit with zero errors 

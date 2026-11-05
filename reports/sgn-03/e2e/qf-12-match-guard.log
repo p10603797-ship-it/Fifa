@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/qf-12-match-guard.spec.ts:27:1 › pause menu > settings: tutorial start, data reset, benchmark and replay load refuse while a match is in progress; the match stays and resumes (18.7s)
+
+  1 passed (20.7s)

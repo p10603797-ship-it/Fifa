@@ -1,0 +1,10 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium-ipad] › tests/e2e/int-b-modes.spec.ts:68:3 › INT-B local modes › same-iPad 1v1: pad vs pad and touch vs pad, no crosstalk, only the pauser resumes, full time, Change Teams (2.4m)
+  ✓  2 [chromium-ipad] › tests/e2e/int-b-modes.spec.ts:196:3 › INT-B local modes › cup tie, practice free play and tutorial reach their end screens (1.5m)
+  ✓  3 [chromium-ipad] › tests/e2e/int-b-modes.spec.ts:274:3 › INT-B local modes › shoot-out: straight to penalties, the human kicks by touch swipe, to the final screen with the score (1.2m)
+
+  Slow test file: [chromium-ipad] › tests/e2e/int-b-modes.spec.ts (5.2m)
+  Consider running tests from slow files in parallel. See: https://playwright.dev/docs/test-parallel
+  3 passed (5.2m)

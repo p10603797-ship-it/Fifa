@@ -1,0 +1,21 @@
+
+Running 16 tests using 1 worker
+
+  ✓   1 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:98:3 › REVIEW FND-04 adversarial › recovery Resume after the final whistle does not strand the player on a finished match (9.6s)
+  ✓   2 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:125:3 › REVIEW FND-04 adversarial › recovery Resume during half-time returns to the half-time screen (11.8s)
+  ✓   3 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:142:3 › REVIEW FND-04 adversarial › square window: the rotate card and the pause state agree (10.0s)
+  ✓   4 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:155:3 › REVIEW FND-04 adversarial › a refused resume while the window is too small does not leave a false "Only Player 0" message (9.2s)
+  ✓   5 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:168:3 › REVIEW FND-04 adversarial › quit and restart twice: no leaked listeners, overlays, screens or styles (23.8s)
+  ✓   6 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:221:3 › REVIEW FND-04 adversarial › blocked localStorage (SecurityError on access) boots, plays and quits with no errors (9.2s)
+  ✓   7 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:244:3 › REVIEW FND-04 adversarial › quota-full localStorage (every setItem throws) boots and keeps settings in memory (8.6s)
+  ✓   8 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:259:3 › REVIEW FND-04 adversarial › corrupt and out-of-range stored settings never reach the recovery screen (9.8s)
+  ✓   9 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:293:3 › REVIEW FND-04 adversarial › hidden page during loading: the match opens paused with the pause menu and never ticks while hidden (8.3s)
+  ✓  10 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:327:3 › REVIEW FND-04 adversarial › bfcache pagehide -> pageshow pauses, restarts the loop and shows the pause menu (9.9s)
+  ✓  11 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:342:3 › REVIEW FND-04 adversarial › pointercancel and window blur mid-hold release the stick (no stuck movement) (29.6s)
+  ✓  12 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:378:3 › REVIEW FND-04 adversarial › resize storm mid-match keeps ticking; too-small pauses and recovers to the pause menu (23.2s)
+  ✓  13 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:397:3 › REVIEW FND-04 adversarial › WebGL context loss pauses; after restore the match resumes from the pause menu (11.4s)
+  ✓  14 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:421:3 › REVIEW FND-04 adversarial › phase flow: half-time Continue sends SKIP; full-time Rematch gets a new seed; Change teams then Back (17.7s)
+  ✓  15 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:473:3 › REVIEW FND-04 adversarial › every visible control on core screens is at least 60 px in both dimensions (9.3s)
+  ✓  16 [chromium-ipad] › tests/e2e/review-fnd-04-adversarial.spec.ts:507:3 › REVIEW FND-04 adversarial › Escape on the loading screen cancels cleanly; the pending load never opens a match (9.1s)
+
+  16 passed (3.6m)
