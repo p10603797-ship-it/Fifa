@@ -267,7 +267,7 @@ Safari, Firefox or real hardware; only Chromium exists in this container, D-003 
 | Draw calls 80 or fewer | 22 (Performance), 24 (Balanced), 33 (Quality) | PASS |
 | Triangles 200,000 or fewer | 46,924 / 56,502 / 95,742 | PASS |
 | No steady heap growth | +0.03 MB in 20 s after 19 minutes (first SGN-04 run) | PASS |
-| No garbage-collection pause over 4 ms | Chromium at 1x: two early-match major GCs of 5.0-6.2 ms; after 19 minutes 1.6 ms (first SGN-04 run, an earlier tree; not re-measured); JavaScriptCore needs the device | FAIL in Chromium (V8); iPad NVH |
+| No garbage-collection pause over 4 ms | Re-measured on the final tree (`tests/perf/sgn-04-bench.ts --mode cpu --throttle 1 --nodraw`, 20 s): 108 minor GCs (41 ms total), 2 early-match major GCs of 4.8-5.0 ms (max 4.99 ms; earlier tree 5.0-6.2 ms); no frame interval over 16.8 ms, 1% low 59.5 fps, heap 13.4 -> 15.3 MB; JavaScriptCore needs the device | FAIL in Chromium (V8); iPad NVH |
 | All targets still met after a 20-minute match | 19 minutes fast-forwarded, then 60.0 fps, 1 % low 59.5, heap flat (proxy) | PASS (proxy) |
 | Instancing; one atlas; cheap shading; no shadow maps or post at default | draw calls 20-22; gfx-02-quality | PASS |
 | Render at 0.75, dynamic 0.6-1.0 with hysteresis | `T_QUALITY.resScaleInitial 0.75`; scale test 0.60 floor to 1.00 in 8 steps, no oscillation | PASS |
@@ -333,8 +333,8 @@ Safari, Firefox or real hardware; only Chromium exists in this container, D-003 
   average, draw-call and triangle budgets pass with wide margins). D-027 records it as measured; BRIEF §13's final gate
   is the iPad benchmark, so DoD 6 closes only with the user's device result.
 - **The 3 FAIL rows are 2 findings**: DoD 6a and §13 "4 ms worst case" are the same proxy measurement; §13 "no GC pause
-  over 4 ms" fails in Chromium (two early-match V8 major GCs of 5.0-6.2 ms at 1x, from the first SGN-04 run on an
-  earlier tree, not re-measured), and only JavaScriptCore on the iPad can settle it. Neither is a match-state, input
+  over 4 ms" fails in Chromium by under 1 ms (two early-match V8 major GCs, max 4.99 ms at 1x, re-measured on the final
+  tree; no frame interval over 16.8 ms, so no visible hitch), and only JavaScriptCore on the iPad can settle it. Neither is a match-state, input
   or stability defect, and the campaign and this audit found **0 product defects**.
 - **24 of the PASS rows pass in Chromium or the container** with a device half still open (Safari gestures, real
   pads, install, Low Power Mode, real WebRTC, process memory); together with the 6 NVH rows and the RE-SCOPED WebKit
