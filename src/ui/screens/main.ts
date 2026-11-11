@@ -16,6 +16,8 @@
  *   Settings                -> 'settings'                                      [main-settings]
  *   Diagnostics             -> 'diagnostics'                                   [main-diagnostics]
  * Back returns here from each (router history); the main menu is the root, so Back on it does nothing.
+ * [NET-FIX-2] While a new build waits to be applied (platform/pwa.ts updateReady), the top bar shows "Update ready, tap
+ * to reload" [main-update]: tapping it activates the new build and reloads (the menu has no match to lose).
  *
  * Focus (controller / keyboard): Play now has the initial focus; coming back from a screen, the entry that opened
  * it has it instead. The mode list is a vertical focus group that wraps; Right or Down from Play now enters the list
@@ -30,6 +32,7 @@ import { Difficulty, KitSlot, ModeId } from '../../contracts/enums';
 import type { Settings } from '../../contracts/settings';
 import { defaultSetup } from '../../modes/setup';
 import { resolveKits } from '../../render/kits';
+import { applyUpdate, onUpdateReady, updateReady } from '../../platform/pwa';
 import { createButton, h, injectStyle } from '../components';
 import { attachDotField, sharedDotField } from '../dotfield';
 
@@ -190,6 +193,8 @@ const CSS = `
 .main-utils .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); }
 .main-utils svg { width: 20px; height: 20px; flex: none; }
 .btn.main-diag { font-size: var(--fs-sm); font-weight: 500; color: var(--text-3); border-color: transparent; min-width: var(--target); padding: 0 var(--space-4); }
+.btn.main-update { font-size: var(--fs-sm); padding: 0 var(--space-4); }
+.btn.main-update[hidden] { display: none; }
 .main-version { font: 400 var(--fs-xs) / 1 var(--font-num); font-variant-numeric: tabular-nums; color: var(--text-3); }
 
 .main-left { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
@@ -309,11 +314,20 @@ export function createMainScreen(): Screen {
       const diagBtn = createButton(diagEntry.label, open(diagEntry), {
         testId: diagEntry.testId, ctx, variant: 'ghost', extraClass: 'main-diag', autofocus: focusId === diagEntry.testId,
       });
+      // [NET-FIX-2] A new build waiting to be applied: one tap reloads into it (shown / hidden as it becomes ready).
+      const updateBtn = createButton('Update ready, tap to reload', () => {
+        updateBtn.disabled = true;
+        if (!applyUpdate()) updateBtn.hidden = true;
+      }, { testId: 'main-update', ctx, variant: 'primary', extraClass: 'main-update' });
+      updateBtn.hidden = !updateReady();
+      const offUpdate = onUpdateReady(() => {
+        updateBtn.hidden = !updateReady();
+      });
       const top = h(
         'header',
         { class: 'main-top' },
         h('div', { class: 'main-brand' }, h('div', { class: 'main-dot' }), h('h1', { class: 'ui-title', text: GAME_NAME, testId: 'main-title' })),
-        h('div', { class: 'main-utils' }, h('span', { class: 'main-version', text: `v${GAME_VERSION}` }), diagBtn, settingsBtn),
+        h('div', { class: 'main-utils' }, updateBtn, h('span', { class: 'main-version', text: `v${GAME_VERSION}` }), diagBtn, settingsBtn),
       );
 
       // Quick match card.
@@ -374,6 +388,7 @@ export function createMainScreen(): Screen {
 
       cleanup = () => {
         offAction();
+        offUpdate();
       };
     },
     unmount() {

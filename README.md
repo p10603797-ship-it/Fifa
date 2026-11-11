@@ -243,7 +243,9 @@ Good to know:
 
 - The Home Screen app keeps its own settings and progress, separate from the Safari tab.
 - When a new version is published, the game shows an **Update available** message with a **Reload** button the
-  next time it is opened online.
+  next time it is opened online or comes back to the screen. Until you take it, the main menu shows **Update ready,
+  tap to reload**; if you leave the app on the main menu, it switches to the new version by itself the next time you
+  come back to it (never during a match or in an online room).
 - In a Safari tab you can tap **Play full screen** on the start screen; the Home Screen app is always full screen.
 - The game plays in landscape. In portrait it pauses and asks you to turn the iPad. In a small window (Split View,
   Slide Over, Stage Manager) it pauses and asks for a larger window.
@@ -330,6 +332,13 @@ networks share one public address between many phones), a guest or office Wi-Fi,
 The screen then says the devices could not reach each other directly. Quick fixes:
 
 - Put both devices on the **same Wi-Fi**, or connect one device to the other's **phone hotspot**.
+- **Already on the same Wi-Fi?** Tap **Try local-network mode** on the friend's screen (or, on the host's room screen,
+  turn on **Local-network mode** before the friend joins again). Safari hides each device's local network address
+  unless the page may use the microphone, and some home routers then keep two iPads from finding each other, so
+  Safari asks for the microphone. It is opened only for that connection attempt (at most 30 seconds for the friend,
+  2 minutes for the host), closed as soon as the link opens or fails, and nothing is recorded or sent. You can say
+  no; the normal **Try again** still works. One device in this mode is usually enough. When the room screen says
+  **A friend tried to join, but your devices could not connect**, the host can turn it on from there.
 - **Settings > Diagnostics > Copy report** shows what was tried: lines starting `[net] ice` list the address types each
   device found (`host` = local network, `srflx` = public address, `relay` = a relay server) and the stage that failed.
 
@@ -674,7 +683,8 @@ Private Browsing (and some blocked-storage settings) keeps settings only until t
 shows the storage status. The Home Screen app and the Safari tab keep separate settings.
 
 **It says "Update available".**
-A newer version has been published. Tap **Reload** to switch to it now, or ignore it and get it next time.
+A newer version has been published. Tap **Reload** to switch to it now, or later **Update ready, tap to reload** on
+the main menu. Returning to the app while it is on the main menu also switches to it.
 
 **Online 1v1 problems** (the game explains each one on screen)
 
@@ -686,6 +696,8 @@ A newer version has been published. Tap **Reload** to switch to it now, or ignor
 | Version mismatch | You run different versions. Both reload the page (accept **Update available**) and try again. |
 | Connection blocked by the network | The devices could not reach each other directly (often different networks, such as mobile data, or school, office and hotel networks). Use the same Wi-Fi, or one player's phone hotspot; the game's publisher can add a relay (section 7, "If online does not connect / adding a relay"). |
 | Could not reach the relay | A relay is set up but this device could not reach it. Use the same Wi-Fi or a hotspot, and check the relay settings (section 7). |
+| Your network blocked the connection | Both devices look like they are on the same network (usually the same Wi-Fi), but it did not let them talk directly. Tap **Try local-network mode**, use one phone's hotspot, or ask for a relay (section 7). |
+| A friend tried to join, but your devices could not connect (host) | Shown on the room screen until dismissed or a friend connects, with the step that failed. On the same Wi-Fi, turn on **Local-network mode** there and ask your friend to join again. |
 | Your friend left or the connection dropped | The game waits 20 seconds for a rejoin, then offers to finish against the CPU or end the match. |
 
 **Something went wrong** (a recovery screen appears).
@@ -712,6 +724,9 @@ Results** button. The on-device script is [docs/DEVICE_CHECKLIST.md](docs/DEVICE
 - **Peer-to-peer play shows each player's IP address to the other** (and to the matchmaking, STUN and any relay
   servers). An IP address can reveal your rough location and your internet provider. **Share room codes and links
   only with people you know.**
+- **Local-network mode** (only when you tap it) opens the microphone only for that connection attempt and closes it
+  as soon as the link opens or fails; nothing is recorded or sent, and nothing is remembered. While it is on, the other
+  device also sees this device's local network address (such as 192.168.1.20).
 
 ---
 

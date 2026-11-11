@@ -104,6 +104,12 @@ on both screens. If the connection pauses, a small waiting indicator shows and p
 shows a plain-language message. If it fails, write down the exact message and whether both devices were on the same
 Wi-Fi; then try again with both on the same Wi-Fi or on a phone hotspot.
 
+If the two devices are on the same Wi-Fi and the joining side says the network blocked the connection, tap
+**Try local-network mode** and allow the microphone (on the host, the **Local-network mode** toggle does the same). Then:
+**Settings > Diagnostics > Copy report** on the device that allowed it, and note the `host addresses` line (it should
+say `local ip` after the tap). Once the match runs, listen: the game sound must play at its normal volume through the
+iPad's speaker, not quietly or from the earpiece.
+
 ## Results sheet (copy, fill in, paste back)
 
 ```text
@@ -117,6 +123,7 @@ Game address:                     Game version (Settings > Diagnostics):
 5. Controller + disconnect PASS / FAIL   controller model:          notes:
 6. Offline                 PASS / FAIL   notes:
 7. Online match            PASS / FAIL   second device:             same Wi-Fi? yes / no   notes:
+   Local-network mode      used? yes / no   connected? yes / no   host addresses:          sound normal? yes / no
 
 Anything else that looked wrong (where, what you did, what happened):
 

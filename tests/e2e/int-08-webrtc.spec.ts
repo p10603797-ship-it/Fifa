@@ -282,6 +282,10 @@ async function blockedNoRelay(context: BrowserContext): Promise<void> {
     await expect(b.getByTestId('net-error-body')).toContainText('mobile data');
     await expect(b.getByTestId('net-error-body')).toContainText('same Wi-Fi');
     await expect(b.getByTestId('net-error-body')).toContainText('add a relay');
+    // [NET-FIX-2] It is not known whether the two are on the same Wi-Fi: the advice fits both, and local-network mode
+    // is offered first (tests/e2e/net-fix-2-local.spec.ts uses it).
+    await expect(b.getByTestId('net-error-body')).toContainText('Already on the same Wi-Fi? Try local-network mode.');
+    await expect(b.getByTestId('net-local-retry')).toHaveText('Try local-network mode');
     await expect(b.getByTestId('net-retry')).toBeVisible();
     const report = await diag(b);
     expect(report).toMatch(/\[net\] ice failed at (ice|signalling): local host.*0 ICE server\(s\), no TURN/);

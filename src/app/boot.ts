@@ -391,7 +391,13 @@ export function boot(): AppHandle {
 
   // [QF-5] The update toast waits while a match is being played or loading (it would cover the scoreboard and catch
   // touches).
-  const swOptions = { diagnostics, isBusy: () => isPlayBusy(sess, router) };
+  // [NET-FIX-2] A ready update is applied by itself when the page comes back to the foreground on the main menu or the
+  // splash (nothing to lose there: no match, no online room).
+  const swOptions = {
+    diagnostics,
+    isBusy: () => isPlayBusy(sess, router),
+    canReloadNow: () => !sess.active && !sess.loading && (router.current === 'main' || router.current === 'splash'),
+  };
   if (document.readyState === 'complete') void registerServiceWorker(swOptions);
   else listen(window, 'load', () => void registerServiceWorker(swOptions), { once: true });
 

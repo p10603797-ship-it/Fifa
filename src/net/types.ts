@@ -100,6 +100,22 @@ export type TransportEvent =
   /** One raw round-trip sample from the transport's ping meter (every NetConfig.pingIntervalMs). */
   | { type: 'rtt'; sampleMs: number };
 
+/**
+ * [NET-FIX-2] Where an opening connection is (the online screen's "connecting" progress line):
+ *  - 'broker'     registering with the matchmaking server (and, before it, waiting for the optional relay config);
+ *  - 'dialling'   the guest dialled the host: the two devices try to reach each other (directly, or through a relay);
+ *  - 'handshake'  the channels opened: the versions are being compared.
+ */
+export type ConnectStage = 'broker' | 'dialling' | 'handshake';
+
+export interface ConnectProgress {
+  stage: ConnectStage;
+  /** This stage gives up after this many ms from when the progress was reported (its timeout). */
+  timeoutMs: number;
+  /** A TURN relay is in the ICE server list (the 'dialling' stage may go through it). */
+  relay: boolean;
+}
+
 /** One peer-to-peer connection (PeerJS in transport.ts, in-memory pair in memoryTransport.ts for tests). */
 export interface NetTransport {
   readonly state: TransportState;
@@ -114,6 +130,10 @@ export interface NetTransport {
    * before any, and absent on transports without WebRTC (in-memory, test fakes).
    */
   readonly ice?: IceReport | null;
+  /** [NET-FIX-2] The latest connection progress (null before open() and on transports that do not report it). */
+  readonly progress?: ConnectProgress | null;
+  /** [NET-FIX-2] Subscribe to connection progress (optional: in-memory transports have none). */
+  onProgress?(fn: (progress: ConnectProgress) => void): () => void;
   /**
    * Host a room (peer id = NetConfig.peerPrefix + code) or join one. Resolves once both channels are open and the
    * versions agree; rejects with an Error whose message is a NetErrorReason. No network use before this call.

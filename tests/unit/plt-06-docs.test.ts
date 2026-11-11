@@ -311,6 +311,15 @@ describe('PLT-06 docs/DEVICE_CHECKLIST.md', () => {
     }
   });
 
+  it('NET-FIX-2 the online step checks local-network mode on the iPad: the host addresses line and normal game sound after the microphone', () => {
+    const online = section(checklist, /^## 7\. One online match/);
+    expect(online).toContain('**Try local-network mode**');
+    expect(online).toContain('`host addresses`');
+    expect(online).toContain('`local ip`');
+    expect(online).toMatch(/normal volume through the\s+iPad's speaker/);
+    expect(checklist).toMatch(/Local-network mode +used\? yes \/ no .*sound normal\? yes \/ no/);
+  });
+
   it('PLT-06 the benchmark pass line quotes the real BENCH_BUDGETS', () => {
     const bench = section(checklist, /^## 2\. Benchmark/);
     expect(bench).toContain(`average ${BENCH_BUDGETS.avgFps} fps`);

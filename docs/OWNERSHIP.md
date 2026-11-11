@@ -231,6 +231,7 @@ cover `src/app/**` (FND-04, then the INT wave; the entry point `src/main.ts` goe
 | `src/audio/dsp.ts` | AUD-02..05 | synthesis toolkit for the sound modules |
 | `src/net/packet.ts` | NET-02 | wire codecs and `NET_PROTOCOL_VERSION` |
 | `src/net/relay.ts`, `src/net/ice.ts` | NET-FIX (D-044) | optional runtime TURN relay (`relay.json`) and connection-stage ICE diagnostics |
+| `src/net/localMode.ts` | NET-FIX-2 (D-045) | local-network mode: the microphone held for one connection attempt so same-Wi-Fi devices see each other's local address |
 | `src/platform/info.ts` | PLT-02 | platform detection (iPad, standalone, fullscreen, safe areas) |
 | `src/platform/licences.ts` | QF-5 | credits and licence notice at run time (reads the comment `tools/postbuild.mjs` writes) |
 | `src/render/anim/poseMath.ts` | GFX-09..12 | pose maths shared by the animation modules |

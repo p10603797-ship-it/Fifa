@@ -356,7 +356,10 @@ const SDP_LOCAL = 'v=0\r\na=candidate:1 1 udp 2122260223 192.168.1.20 54400 typ 
 const SDP_REMOTE = 'v=0\r\na=candidate:9 1 udp 2122260223 abcd.local 50000 typ host\r\n';
 
 function snap(over: Partial<IceSnapshot>): IceSnapshot {
-  return { local: ['host', 'srflx'], remote: ['host'], gathering: 'complete', ice: 'failed', signaling: 'stable', remoteDescription: true, ...over };
+  return {
+    local: ['host', 'srflx'], remote: ['host'], gathering: 'complete', ice: 'failed', signaling: 'stable', remoteDescription: true,
+    localHost: 'none', remoteHost: 'none', sameNetwork: null, ...over,
+  };
 }
 
 describe('NET-FIX connection-stage diagnostics', () => {
@@ -408,7 +411,10 @@ describe('NET-FIX connection-stage diagnostics', () => {
     pc.iceConnectionState = 'closed';
     pc.signalingState = 'closed';
     const s = probe.snapshot();
-    expect(s).toEqual({ local: ['host', 'srflx'], remote: ['host'], gathering: 'complete', ice: 'failed', signaling: 'stable', remoteDescription: true });
+    expect(s).toEqual({
+      local: ['host', 'srflx'], remote: ['host'], gathering: 'complete', ice: 'failed', signaling: 'stable', remoteDescription: true,
+      localHost: 'ip', remoteHost: 'mdns', sameNetwork: null, // [NET-FIX-2] no srflx from the other side: unknown
+    });
     expect(failedStage(s)).toBe('ice');
     probe.dispose();
     expect(Object.values(listeners).every((l) => l.length === 0)).toBe(true);
@@ -456,7 +462,8 @@ describe('NET-FIX blocked screen text', () => {
       expect(t.title.length).toBeGreaterThan(5);
       expect(t.body).toMatch(/\.$/);
       expect(`${t.title} ${t.body}`).not.toMatch(/ICE|WebRTC|TURN|STUN|srflx|candidate|null|undefined/);
-      expect(t.body).toMatch(/same Wi-Fi/);
+      // [NET-FIX-2] Every variant points to a way out on a shared Wi-Fi: local-network mode.
+      expect(t.body).toMatch(/local-network mode/);
     }
   });
 });

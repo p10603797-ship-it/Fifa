@@ -192,7 +192,11 @@ describe('NET-FIX connection-stage diagnostics', () => {
     await s.run(2100);
     expect(await failed).toBe('blocked');
     expect(guest.ice).toMatchObject({ stage: 'ice', local: ['host', 'srflx'], remote: ['srflx'], ice: 'checking', relayConfigured: false, servers: 3 });
-    expect(s.lines.some((l) => /^\[net\] ice failed at ice: local host\+srflx, remote srflx, .*no TURN \(data channels did not open\)$/.test(l))).toBe(true);
+    // [NET-FIX-2] Real host addresses on this side, none from the other; different public addresses: "same network no".
+    expect(guest.ice).toMatchObject({ localHost: 'ip', remoteHost: 'none', sameNetwork: false });
+    expect(s.lines.some((l) => /^\[net\] ice failed at ice: local host\+srflx, remote srflx, .*no TURN, host addresses local ip remote none, same network no \(data channels did not open\)$/.test(l))).toBe(true);
+    // The addresses themselves are never logged.
+    expect(s.lines.join('\n')).not.toMatch(/81\.2\.3\.4|100\.64\.0\.9|192\.168\.1\.2/);
     // The host saw the failed guest too.
     expect(host.ice?.stage).toBe('ice');
     expect(s.lines.filter((l) => l.includes('a guest could not connect')).length).toBe(1);

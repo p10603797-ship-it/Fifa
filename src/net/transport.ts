@@ -36,6 +36,13 @@
  *     alone, deps.checkIceServers). Each link watches the RTCPeerConnections of its channels
  *     (src/net/ice.ts, events only): when the channels do not open, the candidate types found on both sides and the
  *     failing stage go to the diagnostics log (deps.log) and to `transport.ice`; on success, the pair in use.
+ *  8. [NET-FIX-2, D-045] Progress: `progress` / onProgress() report the stage an opening connection is in ('broker',
+ *     'dialling', 'handshake') with that stage's timeout, for the online screen's connecting line (events only).
+ *     Resume: when the page becomes visible again (deps.onVisible, default document 'visibilitychange') while the Peer
+ *     is disconnected from the broker but not destroyed (iOS drops the WebSocket of a page in the background), the
+ *     transport calls peer.reconnect() at once, once per return (a pending broker retry is replaced by it), so a host
+ *     who switched apps for a moment keeps the room. Build id: '$hello' carries deps.build as `b` (information only,
+ *     logged "peer build ..."; the protocol version alone decides).
  *
  * Tests inject `createPeer` (a fake Peer / DataConnection pair, no network) and `timers` (a manual clock).
  */
@@ -43,12 +50,12 @@ import { createRttMeter, type RttMeter } from './adaptive';
 import type { NetConfig } from './config';
 import { createIceProbe, describeIce, failedStage, type IceProbe, type IceReport } from './ice';
 import {
-  createControlCodec, createEmitter, CTRL_BUSY, CTRL_FULL, CTRL_HELLO, decodeInputPacket, encodeInputPacket, MAX_BUSY_MS,
-  NET_PROTOCOL_VERSION, netError, type ControlCodec,
+  cleanBuildId, createControlCodec, createEmitter, CTRL_BUSY, CTRL_FULL, CTRL_HELLO, decodeInputPacket, encodeInputPacket,
+  MAX_BUSY_MS, NET_PROTOCOL_VERSION, netError, type ControlCodec,
 } from './packet';
 import { browserIceServerCheck, hasTurn, mergeIceServers, type IceServerCheck } from './relay';
 import type {
-  ControlMessage, InputPacket, NetErrorReason, NetRole, NetTransport, TransportEvent, TransportState,
+  ConnectProgress, ConnectStage, ControlMessage, InputPacket, NetErrorReason, NetRole, NetTransport, TransportEvent, TransportState,
 } from './types';
 
 export type { ControlMessage, InputPacket, NetErrorReason, NetRole, NetTransport, TransportEvent, TransportState } from './types';
@@ -118,6 +125,23 @@ export interface PeerTransportDeps {
   checkIceServers?: IceServerCheck | null;
   /** Diagnostics log (ICE candidate types, the failing stage). */
   log?: (kind: string, message: string, data?: unknown) => void;
+  /** [NET-FIX-2] This build's id, sent in '$hello' as information (the other side logs "peer build ..."). */
+  build?: string;
+  /**
+   * [NET-FIX-2] Subscribe to "the page became visible again"; returns the unsubscribe. Default: document
+   * 'visibilitychange' to 'visible' (none outside a browser). null = never.
+   */
+  onVisible?: ((fn: () => void) => () => void) | null;
+}
+
+/** Default deps.onVisible: document 'visibilitychange' to 'visible' (nothing outside a browser). */
+function documentOnVisible(fn: () => void): () => void {
+  if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return () => undefined;
+  const h = (): void => {
+    if (document.visibilityState === 'visible') fn();
+  };
+  document.addEventListener('visibilitychange', h);
+  return () => document.removeEventListener('visibilitychange', h);
 }
 
 /** Longest wait for deps.extraIceServers before the Peer is created without them, ms (two 3 s fetches + margin). */
@@ -192,6 +216,8 @@ interface Link {
   /** ICE diagnostics of this link's RTCPeerConnections. */
   probe: IceProbe;
   iceReported: boolean;
+  /** The other side's build id was logged (once per link). */
+  buildLogged: boolean;
 }
 
 type Wait = { resolve: () => void; reject: (e: Error) => void };
@@ -202,6 +228,10 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
   const timers = deps.timers ?? defaultTimers;
   const version = deps.version ?? NET_PROTOCOL_VERSION;
   const log = deps.log;
+  const build = deps.build ? cleanBuildId(deps.build) : null;
+  const progressEvents = createEmitter<ConnectProgress>();
+  let progress: ConnectProgress | null = null;
+  let offVisible: (() => void) | null = null;
   /** The ICE servers handed to the Peer (known once startPeer resolved the extra servers). */
   let iceServers: readonly RTCIceServer[] = config.iceServers ?? [];
   let lastIce: IceReport | null = null;
@@ -336,7 +366,34 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     }
   }
 
+  /** [NET-FIX-2] Report the stage an opening connection is in (the online screen's progress line). */
+  function setProgress(stage: ConnectStage, timeoutMs: number): void {
+    const p: ConnectProgress = { stage, timeoutMs: Math.max(0, timeoutMs), relay: hasTurn(iceServers) };
+    progress = p;
+    progressEvents.emit(p);
+  }
+
+  /**
+   * [NET-FIX-2] The page is visible again: a Peer that lost the broker while in the background (iOS closes its
+   * WebSocket) re-registers now, once per return, instead of waiting for a retry timer that was frozen in the
+   * background. A destroyed Peer, or one still connected, is left alone.
+   */
+  function onPageVisible(): void {
+    if (closed || state === 'failed' || state === 'idle') return;
+    const p = peer;
+    if (!p || p.destroyed || !p.disconnected) return;
+    retryTimer = clear(retryTimer);
+    log?.('net', 'page visible again: reconnecting to the matchmaking server');
+    try {
+      p.reconnect();
+    } catch {
+      scheduleBrokerRetry();
+    }
+  }
+
   function teardown(): void {
+    offVisible?.();
+    offVisible = null;
     brokerTimer = clear(brokerTimer);
     pingTimer = clear(pingTimer);
     retryTimer = clear(retryTimer);
@@ -406,6 +463,11 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     const msg = l.codec.decode(raw);
     if (!msg) return;
     if (msg.type === CTRL_HELLO) {
+      if (!l.buildLogged) {
+        l.buildLogged = true;
+        const b = cleanBuildId(msg.b);
+        log?.('net', `peer build ${b ?? 'unknown (older build)'}${build ? `, this build ${build}` : ''}`);
+      }
       if (l.established) return;
       if (msg.v !== version) {
         sendHello(l);
@@ -440,7 +502,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
   function sendHello(l: Link): void {
     if (l.helloSent) return;
     l.helloSent = true;
-    sendControl(l, { type: CTRL_HELLO, v: version });
+    sendControl(l, build ? { type: CTRL_HELLO, v: version, b: build } : { type: CTRL_HELLO, v: version });
   }
 
   function channelOpened(l: Link): void {
@@ -453,6 +515,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
       if (role === 'guest') failAttempt('version-mismatch', 'no handshake');
       else dropLink(l);
     }, config.handshakeTimeoutMs);
+    if (role === 'guest') setProgress('handshake', config.handshakeTimeoutMs);
     sendHello(l);
   }
 
@@ -491,7 +554,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
   function newLink(peerId: string): Link {
     const l: Link = {
       peerId, control: null, inputs: null, controlOpen: false, inputsOpen: false, helloSent: false, established: false,
-      dead: false, codec: createControlCodec(), timer: null, probe: createIceProbe(), iceReported: false,
+      dead: false, codec: createControlCodec(), timer: null, probe: createIceProbe(), iceReported: false, buildLogged: false,
     };
     l.timer = timers.setTimeout(() => {
       l.timer = null;
@@ -553,6 +616,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     if (link) dropLink(link); // a previous attempt must not fail this one with its timers
     const l = newLink(targetId);
     link = l;
+    setProgress('dialling', config.connectTimeoutMs);
     try {
       attach(l, peer.connect(targetId, { label: 'control', reliable: true, serialization: 'raw' }));
       attach(l, peer.connect(targetId, { label: 'inputs', reliable: false, serialization: 'raw' }));
@@ -614,6 +678,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
       brokerTimer = null;
       if (!brokerOpen) fail('broker-unreachable', 'broker timeout');
     }, config.brokerTimeoutMs);
+    setProgress('broker', config.brokerTimeoutMs);
   }
 
   /** deps.extraIceServers, or [] on rejection / no answer within RELAY_WAIT_MS. */
@@ -695,6 +760,8 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     get rtt() { return meter.rttMs; },
     get jitter() { return meter.jitterMs; },
     get ice() { return lastIce; },
+    get progress() { return progress; },
+    onProgress: (fn) => progressEvents.on(fn),
     open(r, code) {
       if (state !== 'idle') return Promise.reject(new Error('open() called twice'));
       role = r;
@@ -703,7 +770,17 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
       const p = new Promise<void>((resolve, reject) => {
         openWait = { resolve, reject };
       });
+      const visible = deps.onVisible === undefined ? documentOnVisible : deps.onVisible;
+      if (visible) {
+        try {
+          offVisible = visible(onPageVisible);
+        } catch {
+          offVisible = null;
+        }
+      }
       if (!deps.extraIceServers) armBrokerTimer();
+      // Waiting for the relay config first: the broker's own timeout starts after it (at most RELAY_WAIT_MS).
+      else setProgress('broker', RELAY_WAIT_MS + config.brokerTimeoutMs);
       void startPeer();
       return p;
     },
@@ -730,6 +807,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
               brokerTimer = null;
               if (state === 'connecting' && !link) failAttempt('broker-unreachable', 'broker timeout on rejoin');
             }, config.brokerTimeoutMs);
+            setProgress('broker', config.brokerTimeoutMs);
           } catch {
             state = 'closed';
             settle(netError('broker-unreachable'));

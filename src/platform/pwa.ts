@@ -23,6 +23,13 @@
  * - [QF-5] Reload always does something: when the offered worker moved on while the toast waited (another tab
  *   activated it, so it already controls this page and no controllerchange will come; or a newer deploy replaced it),
  *   accepting reloads at once, or activates the worker that waits now and reloads on its controllerchange.
+ * - [NET-FIX-2] A new build reaches an open iPad promptly. The browser checks sw.js when the page registers it (every
+ *   load) and the page checks again when it becomes visible (above). An iPad Home Screen app is rarely relaunched and
+ *   has no reload button, and the toast ends after LOCAL_TUNING.updateToastMs: the waiting update used to stay unused
+ *   until the app was killed. Now an offered update stays "ready" (updateReady / onUpdateReady / applyUpdate) until
+ *   it is applied: the main menu shows "Update ready, tap to reload", and when the page becomes visible again with an
+ *   update ready while the app is on the menus (RegisterOptions.canReloadNow, boot: the main menu or the splash, no
+ *   match) it reloads into the new build once, by itself. Never during a match, the online lobby or any other screen.
  */
 import type { Diagnostics } from '../contracts/app';
 import { showToast } from '../ui/components';
@@ -49,6 +56,88 @@ export interface RegisterOptions {
    * covers the scoreboard or catches a touch meant for the game, and a stray tap never reloads away a live match.
    */
   isBusy?(): boolean;
+  /**
+   * [NET-FIX-2] True when reloading would lose nothing (the main menu, no match, no online room): a ready update is
+   * then applied by itself when the page becomes visible again. Absent = never by itself.
+   */
+  canReloadNow?(): boolean;
+}
+
+// ---------------------------------------------------------------- [NET-FIX-2] "update ready" (until applied)
+
+let readyAccept: (() => void) | null = null;
+const readyListeners: (() => void)[] = [];
+
+function readyChanged(): void {
+  for (const fn of readyListeners.slice()) {
+    try {
+      fn();
+    } catch {
+      /* a listener never breaks the update flow */
+    }
+  }
+}
+
+/** True while an offered update waits to be applied (the menu shows "Update ready, tap to reload"). */
+export function updateReady(): boolean {
+  return readyAccept !== null;
+}
+
+/** Apply the ready update (activate it and reload); false when none is ready. */
+export function applyUpdate(): boolean {
+  const a = readyAccept;
+  if (!a) return false;
+  readyAccept = null;
+  readyChanged();
+  a();
+  return true;
+}
+
+/** Called whenever updateReady() changes; returns the unsubscribe. */
+export function onUpdateReady(fn: () => void): () => void {
+  readyListeners.push(fn);
+  return () => {
+    const i = readyListeners.indexOf(fn);
+    if (i >= 0) readyListeners.splice(i, 1);
+  };
+}
+
+/** Set (or clear, null) the ready update's accept function. Exported for tests; registerServiceWorker sets it. */
+export function setUpdateReady(accept: (() => void) | null): void {
+  readyAccept = accept;
+  readyChanged();
+}
+
+/**
+ * [NET-FIX-2] Wrap an update's accept so it runs once, whichever way it is accepted (toast, menu, or by itself), and
+ * keep it ready until then. Returns the wrapped accept.
+ */
+export function holdUpdate(accept: () => void): () => void {
+  let done = false;
+  const once = (): void => {
+    if (done) return;
+    done = true;
+    if (readyAccept === once) setUpdateReady(null);
+    accept();
+  };
+  setUpdateReady(once);
+  return once;
+}
+
+/**
+ * [NET-FIX-2] The page became visible again: apply a ready update when reloading loses nothing. True when it did.
+ */
+export function applyUpdateIfIdle(canReloadNow: (() => boolean) | undefined, log?: (m: string) => void): boolean {
+  if (!updateReady() || !canReloadNow) return false;
+  let idle: boolean;
+  try {
+    idle = canReloadNow();
+  } catch {
+    idle = false;
+  }
+  if (!idle) return false;
+  log?.('update ready and the app is on the menu: reloading into the new version');
+  return applyUpdate();
 }
 
 /** Minimal worker / registration / container shapes (Node tests pass fakes). */
@@ -350,7 +439,13 @@ export function showUpdateToast(accept: () => void): HTMLElement {
 declare global {
   interface Window {
     /** PWA state for tests and diagnostics. */
-    __dotkickPwa?: { registration: ServiceWorkerRegistration; readonly updateOffered: boolean; checkForUpdate(): Promise<void> };
+    __dotkickPwa?: {
+      registration: ServiceWorkerRegistration;
+      readonly updateOffered: boolean;
+      /** [NET-FIX-2] An offered update waits to be applied. */
+      readonly updateReady: boolean;
+      checkForUpdate(): Promise<void>;
+    };
   }
 }
 
@@ -386,21 +481,23 @@ export async function registerServiceWorker(opts: RegisterOptions = {}): Promise
     return null;
   }
   try {
+    const prompt = opts.onUpdateAvailable ?? ((accept: () => void) => {
+      const isBusy = opts.isBusy;
+      if (!isBusy) {
+        showUpdateToast(accept);
+        return;
+      }
+      gateUpdatePrompt(accept, {
+        show: showUpdateToast, isBusy,
+        setTimeout: (fn, ms) => setTimeout(fn, ms),
+        clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+      });
+    });
     const watcher = watchForUpdates(reg as unknown as RegistrationLike, {
       container: navigator.serviceWorker as unknown as ContainerLike,
       reload: () => location.reload(),
-      onUpdateAvailable: opts.onUpdateAvailable ?? ((accept) => {
-        const isBusy = opts.isBusy;
-        if (!isBusy) {
-          showUpdateToast(accept);
-          return;
-        }
-        gateUpdatePrompt(accept, {
-          show: showUpdateToast, isBusy,
-          setTimeout: (fn, ms) => setTimeout(fn, ms),
-          clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
-        });
-      }),
+      // [NET-FIX-2] The update stays ready after the toast ends (the menu offers it; a return to the menu applies it).
+      onUpdateAvailable: (accept) => prompt(holdUpdate(accept)),
       log: (m) => log(m),
       pageBuild: pageBuildId(),
       buildOf: (w) => askWorkerBuild(w),
@@ -417,10 +514,13 @@ export async function registerServiceWorker(opts: RegisterOptions = {}): Promise
     };
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible') return;
+      if (applyUpdateIfIdle(opts.canReloadNow, (m) => log(m))) return;
       if (performance.now() - lastCheck < LOCAL_TUNING.updateCheckMs) return;
       void checkForUpdate();
     });
-    window.__dotkickPwa = { registration: reg, get updateOffered() { return watcher.offered; }, checkForUpdate };
+    window.__dotkickPwa = {
+      registration: reg, get updateOffered() { return watcher.offered; }, get updateReady() { return updateReady(); }, checkForUpdate,
+    };
     void navigator.serviceWorker.ready.then(() => log('offline copy ready'), () => undefined);
   } catch (err) {
     log('update flow unavailable', String(err));

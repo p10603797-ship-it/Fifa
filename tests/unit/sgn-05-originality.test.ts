@@ -206,7 +206,11 @@ describe('SGN-05 item 3: audio', () => {
     expect(audio.length).toBeGreaterThanOrEqual(5);
     for (const p of SRC_FILES) {
       const t = srcText(p);
-      expect(t, rel(p)).not.toMatch(/decodeAudioData|new Audio\(|HTMLAudioElement|createMediaElementSource|createMediaStreamSource|getUserMedia/);
+      expect(t, rel(p)).not.toMatch(/decodeAudioData|new Audio\(|HTMLAudioElement|createMediaElementSource|createMediaStreamSource/);
+      // [NET-FIX-2, D-045] The microphone is opened in one place only, local-network mode (src/net/localMode.ts), to let
+      // two same-Wi-Fi devices see each other's local address; its stream is never played, recorded or sent.
+      if (rel(p) !== 'src/net/localMode.ts') expect(t, rel(p)).not.toMatch(/getUserMedia/);
+      else expect(t, rel(p)).not.toMatch(/MediaRecorder|addTrack|addStream|AudioContext|getAudioTracks|srcObject/);
       expect(t, rel(p)).not.toMatch(/['"`][^'"`]*\.(mp3|wav|ogg|m4a|aac|flac|opus|mid)['"`]/i);
     }
     for (const p of audio) expect(srcText(p), rel(p)).not.toMatch(/\bfetch\(|XMLHttpRequest|import\(/);

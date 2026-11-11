@@ -13,10 +13,19 @@
  *    pair of them could reach each other: different networks without a relay), 'channel' (ICE connected, the data
  *    channels still did not open).
  * On success it logs, once, the candidate pair in use (getStats): a direct link or a relay.
+ *
+ * [NET-FIX-2, D-045] The snapshot also says, without any address leaving the probe:
+ *  - what kind of host candidates each side offered: real local IP addresses ('ip'), only mDNS names ('mdns': what
+ *    Safari offers unless the page holds a microphone or camera grant, src/net/localMode.ts), both, or none;
+ *  - whether the two sides share a public address (sameNetwork): the srflx addresses this device gathered compared
+ *    with the srflx candidates the other side sent, inside the page. Only the boolean is kept in the snapshot, logged
+ *    or shown; null when either side has no srflx candidate (no STUN answer, or nothing arrived).
  */
 
 export type CandidateType = 'host' | 'srflx' | 'prflx' | 'relay';
 export type IceStage = 'signalling' | 'gathering' | 'ice' | 'channel';
+/** What host candidates a side offered: real IP addresses, mDNS names only, both, or none. */
+export type HostKind = 'none' | 'mdns' | 'ip' | 'ip+mdns';
 
 const TYPES: readonly CandidateType[] = ['host', 'srflx', 'prflx', 'relay'];
 
@@ -33,6 +42,15 @@ export interface IceSnapshot {
   signaling: string;
   /** The other side's offer / answer arrived. */
   remoteDescription: boolean;
+  /** [NET-FIX-2] Host candidates this device offered (real IP, mDNS names only...). */
+  localHost: HostKind;
+  /** [NET-FIX-2] Host candidates the other device sent. */
+  remoteHost: HostKind;
+  /**
+   * [NET-FIX-2] Both sides have the same public (srflx) address: very likely the same network (same Wi-Fi). null when
+   * unknown. The addresses themselves never leave the probe.
+   */
+  sameNetwork: boolean | null;
 }
 
 /** What the transport records about the last link (failure or success). */
@@ -62,6 +80,56 @@ export function candidateTypesFromSdp(sdp: string | null | undefined): Candidate
   return sortTypes(out);
 }
 
+const CANDIDATE_RE = /^(?:a=)?candidate:\S+ \d+ \S+ \d+ (\S+) \d+ typ (host|srflx|prflx|relay)\b/;
+
+/** Address field and type of one candidate line (with or without 'a='), or null. Pure. */
+function parseCandidate(line: string): { address: string; type: CandidateType } | null {
+  const m = CANDIDATE_RE.exec(line);
+  return m ? { address: m[1]!, type: m[2] as CandidateType } : null;
+}
+
+/** True for an mDNS host name (WebRTC hides local addresses behind '<uuid>.local'). Pure. */
+export function isMdnsAddress(address: string): boolean {
+  return /\.local\.?$/i.test(address);
+}
+
+/** Kind of host candidates from flags. Pure. */
+export function hostKindOf(ip: boolean, mdns: boolean): HostKind {
+  return ip && mdns ? 'ip+mdns' : ip ? 'ip' : mdns ? 'mdns' : 'none';
+}
+
+/** Same public address on both sides (any srflx address in common); null when either side has none. Pure. */
+export function sameNetworkOf(local: ReadonlySet<string>, remote: ReadonlySet<string>): boolean | null {
+  if (local.size === 0 || remote.size === 0) return null;
+  for (const a of local) if (remote.has(a)) return true;
+  return false;
+}
+
+/** Collects host-candidate kinds and srflx addresses of one side (the addresses stay inside the probe). */
+interface SideAddrs {
+  hostIp: boolean;
+  hostMdns: boolean;
+  srflx: Set<string>;
+}
+
+function noteCandidate(side: SideAddrs, address: string, type: CandidateType): void {
+  if (!address) return;
+  if (type === 'host') {
+    if (isMdnsAddress(address)) side.hostMdns = true;
+    else side.hostIp = true;
+  } else if (type === 'srflx' && side.srflx.size < 16) {
+    side.srflx.add(address.toLowerCase());
+  }
+}
+
+function noteSdp(side: SideAddrs, sdp: string | null | undefined): void {
+  if (typeof sdp !== 'string' || sdp.indexOf('a=candidate:') < 0) return;
+  for (const line of sdp.split(/\r?\n/)) {
+    const c = line.startsWith('a=candidate:') ? parseCandidate(line) : null;
+    if (c) noteCandidate(side, c.address, c.type);
+  }
+}
+
 function sortTypes(s: Iterable<CandidateType>): CandidateType[] {
   const set = new Set(s);
   return TYPES.filter((t) => set.has(t));
@@ -80,8 +148,11 @@ export function failedStage(s: IceSnapshot): IceStage {
 export function describeIce(r: IceReport): string {
   const types = (t: readonly string[]): string => (t.length ? t.join('+') : 'none');
   const head = r.stage ? `failed at ${r.stage}` : 'connected';
+  const hosts = (r.localHost && r.localHost !== 'none') || (r.remoteHost && r.remoteHost !== 'none')
+    ? `, host addresses local ${r.localHost ?? 'none'} remote ${r.remoteHost ?? 'none'}` : '';
+  const same = r.sameNetwork === true ? ', same network yes' : r.sameNetwork === false ? ', same network no' : '';
   return `ice ${head}: local ${types(r.local)}, remote ${types(r.remote)}, ice ${r.ice || '-'}, gathering ${r.gathering || '-'}, `
-    + `signalling ${r.signaling || '-'}, ${r.servers} ICE server(s)${r.relayConfigured ? ' incl. TURN' : ', no TURN'}`;
+    + `signalling ${r.signaling || '-'}, ${r.servers} ICE server(s)${r.relayConfigured ? ' incl. TURN' : ', no TURN'}${hosts}${same}`;
 }
 
 /** The subset of RTCPeerConnection the probe reads. */
@@ -121,13 +192,19 @@ export function createIceProbe(): IceProbe {
   const pcs: PeerConnectionLike[] = [];
   const local = new Set<CandidateType>();
   const remote = new Set<CandidateType>();
+  const localAddrs: SideAddrs = { hostIp: false, hostMdns: false, srflx: new Set() };
+  const remoteAddrs: SideAddrs = { hostIp: false, hostMdns: false, srflx: new Set() };
   const last = { gathering: '', ice: '', signaling: '', remoteDescription: false };
   const offs: (() => void)[] = [];
 
   function read(pc: PeerConnectionLike): void {
     try {
-      for (const t of candidateTypesFromSdp(pc.localDescription?.sdp)) local.add(t);
-      for (const t of candidateTypesFromSdp(pc.remoteDescription?.sdp)) remote.add(t);
+      const ls = pc.localDescription?.sdp;
+      const rs = pc.remoteDescription?.sdp;
+      for (const t of candidateTypesFromSdp(ls)) local.add(t);
+      for (const t of candidateTypesFromSdp(rs)) remote.add(t);
+      noteSdp(localAddrs, ls);
+      noteSdp(remoteAddrs, rs);
       if (pc.remoteDescription) last.remoteDescription = true;
     } catch {
       /* a closed connection may throw on access */
@@ -159,9 +236,14 @@ export function createIceProbe(): IceProbe {
       const pc = peerConnectionOf(conn);
       if (!pc || pcs.includes(pc) || typeof pc.addEventListener !== 'function') return;
       pcs.push(pc);
-      const onCandidate = (e: { candidate?: { type?: string | null; candidate?: string } | null }): void => {
-        const t = candidateTypeOf(e?.candidate ?? null);
-        if (t) local.add(t);
+      const onCandidate = (e: { candidate?: { type?: string | null; candidate?: string; address?: string | null } | null }): void => {
+        const c = e?.candidate ?? null;
+        const t = candidateTypeOf(c);
+        if (!t) return;
+        local.add(t);
+        const addr = typeof c?.address === 'string' && c.address ? c.address
+          : typeof c?.candidate === 'string' ? parseCandidate(c.candidate)?.address ?? '' : '';
+        noteCandidate(localAddrs, addr, t);
       };
       const onState = (): void => {
         read(pc);
@@ -182,7 +264,12 @@ export function createIceProbe(): IceProbe {
     snapshot() {
       for (const pc of pcs) read(pc);
       states();
-      return { local: sortTypes(local), remote: sortTypes(remote), ...last };
+      return {
+        local: sortTypes(local), remote: sortTypes(remote), ...last,
+        localHost: hostKindOf(localAddrs.hostIp, localAddrs.hostMdns),
+        remoteHost: hostKindOf(remoteAddrs.hostIp, remoteAddrs.hostMdns),
+        sameNetwork: sameNetworkOf(localAddrs.srflx, remoteAddrs.srflx),
+      };
     },
     async selectedPair() {
       const pc = pcs[0];
@@ -219,6 +306,8 @@ export function createIceProbe(): IceProbe {
       for (const o of offs) o();
       offs.length = 0;
       pcs.length = 0;
+      localAddrs.srflx.clear();
+      remoteAddrs.srflx.clear();
     },
   };
 }

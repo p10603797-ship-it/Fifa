@@ -3,6 +3,8 @@
  * No network, no timers: pure functions and small objects, safe to import anywhere inside src/net.
  *
  *  - NET_PROTOCOL_VERSION: compared in the '$hello' handshake (different builds refuse to play: 'version-mismatch').
+ *    [NET-FIX-2] '$hello' may also carry `b`, the sender's build id (information only, logged as "peer build ..."; an
+ *    old peer without it, or a different build with the same protocol version, still connects). cleanBuildId reads it.
  *  - packSenderFrame / unpackSenderFrame: one human's InputFrame <-> FRAME_INTS int16 values, encoded exactly like
  *    packFrames (src/sim/core/serialize.ts) encodes one human (bitfields as uint16, other fields clamped to int16).
  *  - encodeInputPacket / decodeInputPacket: InputPacket <-> bytes (24-byte header + sparse frames: per frame a 3-byte
@@ -52,6 +54,16 @@ export const CTRL_PONG = '$pong';
 export const CTRL_BUSY = '$busy';
 /** Longest silence grace a '$busy' may ask for, ms. */
 export const MAX_BUSY_MS = 60_000;
+
+/**
+ * [NET-FIX-2] A build id received from the other side, safe to log: printable ASCII only, at most 64 characters;
+ * null when absent or not a string (old builds send none). Pure.
+ */
+export function cleanBuildId(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.replace(/[^\x21-\x7e]/g, '').slice(0, 64);
+  return s ? s : null;
+}
 
 // ---------------------------------------------------------------- frames
 

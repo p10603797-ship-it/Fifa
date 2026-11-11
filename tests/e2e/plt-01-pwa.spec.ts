@@ -2,6 +2,9 @@
  * [PLT-01] PWA end to end: after the first load the game reloads and boots offline from the service worker cache;
  * a new sw.js build shows "Update available", and Reload activates it. (index.html alone, without sw.js, manifest
  * and icons: tests/e2e/plt-04-build.spec.ts.)
+ * [NET-FIX-2, D-045] An offered update stays ready: the main menu shows "Update ready, tap to reload" (tapping it
+ * reloads into the new build), and returning to the page while it is on the main menu applies it by itself, while a
+ * return to any other screen does not.
  * Build first:  npx vite build --outDir dist-e2e/plt --emptyOutDir && node tools/postbuild.mjs dist-e2e/plt
  * Run:          PW_DIST=dist-e2e/plt PW_PORT=4205 npx playwright test tests/e2e/plt-01-pwa.spec.ts
  */
@@ -94,4 +97,72 @@ test.describe('PLT-01 PWA', () => {
       writeFileSync(SW_PATH, original);
     }
   });
+
+  test('[NET-FIX-2] the update stays ready: the menu offers it; a return to the menu applies it, a return elsewhere does not', async ({ page }) => {
+    const original = readFileSync(SW_PATH, 'utf8');
+    const next = 'netfix2-update-ready';
+    try {
+      await page.goto('/');
+      await waitForController(page);
+      writeFileSync(SW_PATH, original.replace(/^(const BUILD = )'[^']*'/m, `$1'${next}'`));
+      await page.evaluate(() => window.__dotkickPwa!.checkForUpdate());
+      await expect(page.getByTestId('pwa-update')).toBeVisible({ timeout: 20_000 });
+      expect(await page.evaluate(() => window.__dotkickPwa!.updateReady)).toBe(true);
+      await page.getByTestId('splash-start').tap();
+      await expect(page.getByTestId('main-update')).toBeVisible();
+      await expect(page.getByTestId('main-update')).toHaveText('Update ready, tap to reload');
+      // The page goes to the background and comes back on another screen: nothing happens.
+      await page.evaluate(() => {
+        (window as unknown as { __stillHere: boolean }).__stillHere = true;
+      });
+      await page.getByTestId('main-settings').click();
+      await expect.poll(() => page.evaluate(() => window.__dotkick?.ctx.router.current)).toBe('settings');
+      await page.evaluate(RETURN_TO_PAGE);
+      await page.waitForTimeout(1500);
+      expect(await page.evaluate(() => (window as unknown as { __stillHere?: boolean }).__stillHere)).toBe(true);
+      expect((await swStatus(page))!.build).not.toBe(next);
+      // Back on the main menu, the next return reloads into the new build by itself.
+      await page.getByTestId('back').click();
+      await expect(page.getByTestId('main-update')).toBeVisible();
+      await Promise.all([page.waitForEvent('load', { timeout: 30_000 }), page.evaluate(RETURN_TO_PAGE)]);
+      await expect(page.getByTestId('splash-start')).toBeVisible();
+      await waitForController(page);
+      expect((await swStatus(page))!.build).toBe(next);
+      await page.getByTestId('splash-start').tap();
+      await expect(page.getByTestId('main-kickoff')).toBeVisible();
+      await expect(page.getByTestId('main-update')).toBeHidden(); // nothing left to apply
+    } finally {
+      writeFileSync(SW_PATH, original);
+    }
+  });
+
+  test('[NET-FIX-2] "Update ready, tap to reload" on the main menu reloads into the new build', async ({ page }) => {
+    const original = readFileSync(SW_PATH, 'utf8');
+    const next = 'netfix2-menu-tap';
+    try {
+      await page.goto('/');
+      await waitForController(page);
+      await page.getByTestId('splash-start').tap();
+      await expect(page.getByTestId('main-kickoff')).toBeVisible();
+      await expect(page.getByTestId('main-update')).toBeHidden();
+      writeFileSync(SW_PATH, original.replace(/^(const BUILD = )'[^']*'/m, `$1'${next}'`));
+      await page.evaluate(() => window.__dotkickPwa!.checkForUpdate());
+      await expect(page.getByTestId('main-update')).toBeVisible({ timeout: 20_000 });
+      await Promise.all([page.waitForEvent('load', { timeout: 30_000 }), page.getByTestId('main-update').click()]);
+      await waitForController(page);
+      expect((await swStatus(page))!.build).toBe(next);
+    } finally {
+      writeFileSync(SW_PATH, original);
+    }
+  });
 });
+
+/** The page goes to the background and comes back (document.visibilityState hidden, then visible). */
+const RETURN_TO_PAGE = (): void => {
+  const set = (v: string): void => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => v });
+    document.dispatchEvent(new Event('visibilitychange'));
+  };
+  set('hidden');
+  set('visible');
+};

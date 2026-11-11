@@ -25,6 +25,21 @@
  * what the transport saw (blockedVariant): no relay configured (try the same Wi-Fi, or ask for a relay), a relay that
  * could not be reached, or a relay that was reached but did not help. The details go to the diagnostics log.
  *
+ * [NET-FIX-2, D-045] Same-Wi-Fi devices that cannot see each other (Safari offers only mDNS names unless the page holds a
+ * microphone grant, src/net/localMode.ts):
+ *  - Local-network mode, only on request: the guest's 'blocked' screen offers "Try local-network mode" (asks for the
+ *    microphone, then dials again while the track is held; stopped when the link opens or fails, or after
+ *    LOCAL_MODE_GUEST_MS); the host's waiting screen has a toggle and the failed-join notice a button (held until the
+ *    next guest's attempt ends, at most LOCAL_MODE_HOST_MS; tap again to re-arm). Nothing is recorded or persisted.
+ *  - The host's failed-join notice stays on the waiting screen until dismissed or a guest connects: a friend tried to
+ *    join, the failed stage in plain words, local-network mode (it replaces the old toast).
+ *  - The guest's 'blocked' copy knows when both sides share a public address (IceReport.sameNetwork: "looks like the
+ *    same network, but it did not let them talk directly", titled "Your network ...": carrier-grade NAT shares a
+ *    public address too); otherwise its advice fits both cases.
+ *  - The connecting view shows the stage (finding the room / connecting / through the relay) and the seconds left,
+ *    from the transport's progress events and a 1 s timer that runs only while that view is up.
+ *  - Both sides send this page's build id in their hellos (information only: "peer build ..." in the log).
+ *
  * Test hook (e2e, never set in production): window.__dotkickNetTest = { createTransport(role), config, code,
  * startCountdownMs, relayUrl } replaces the PeerJS transport (an in-page fake) or the broker settings (a local
  * PeerServer). The hook's config wins over NET_CONFIG key by key (its iceServers replace the public STUN list); the
@@ -32,6 +47,7 @@
  * window.__dotkickOnline exposes a read-only view of the room for tests and diagnostics.
  */
 import { UiSound, type AppContext, type Screen, type ScreenParams } from '../../contracts/app';
+import { GAME_VERSION } from '../../contracts/constants';
 import type { Club } from '../../contracts/data';
 import { createMatchConfig, type MatchConfig } from '../../contracts/state';
 import { createNetConfig, type NetConfig } from '../../net/config';
@@ -39,11 +55,13 @@ import { cleanNickname, createLobby, NICKNAME_MAX, type Lobby, type LobbyError, 
 import {
   formatRoomCode, isRoomCodeChar, normaliseRoomCode, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, roomCodeFromUrl, roomLink, urlWithoutRoom,
 } from '../../net/roomCode';
-import type { IceReport } from '../../net/ice';
+import type { IceReport, IceStage } from '../../net/ice';
+import { createLocalNetworkMode, type LocalNetworkMode } from '../../net/localMode';
 import { loadRelay, NO_RELAY, type RelayConfig } from '../../net/relay';
 import { createOnlineSession, onlineSupported, type OnlineSession, type OnlineStatus } from '../../net/session';
 import { createPeerTransport } from '../../net/transport';
-import type { NetTransport } from '../../net/types';
+import type { ConnectProgress, NetTransport } from '../../net/types';
+import { pageBuildId } from '../../platform/pwa';
 import { attachDotField, sharedDotField } from '../dotfield';
 import {
   closeTopModal, copyText, createBackButton, createButton, createSelector, createToggle, h, injectStyle, openModal, showToast,
@@ -77,7 +95,7 @@ export const ONLINE_ERROR_TEXT: Readonly<Record<LobbyError, ErrorText>> = {
   },
   blocked: {
     title: 'The network blocked the connection',
-    body: 'Your devices could not reach each other directly. This usually happens on different networks, such as mobile data. Put both devices on the same Wi-Fi (or one phone\'s hotspot) and try again, or ask the game\'s owner to add a relay.',
+    body: 'Your devices could not reach each other directly. On different networks, such as mobile data, put both devices on the same Wi-Fi or one phone\'s hotspot. Already on the same Wi-Fi? Try local-network mode. The game\'s owner can also add a relay.',
   },
   disconnected: {
     title: 'Connection lost',
@@ -99,29 +117,96 @@ export function errorText(reason: LobbyError): ErrorText {
 
 /**
  * [NET-FIX] Why a connection was blocked, as far as this device can tell:
- *  - 'no-relay'          no TURN relay configured: only a direct link was possible (ONLINE_ERROR_TEXT.blocked);
+ *  - 'no-relay'          no TURN relay configured: only a direct link was possible (ONLINE_ERROR_TEXT.blocked); the
+ *                        advice fits both "different networks" and "same Wi-Fi" (NET-FIX-2: it is not known which);
+ *  - 'same-network'      [NET-FIX-2] no relay, and both sides share a public address (IceReport.sameNetwork): most
+ *                        often the same Wi-Fi, which did not let the devices talk directly (never "use the same Wi-Fi");
+ *                        worded "your network", not "the Wi-Fi", because two networks behind one carrier-grade NAT
+ *                        address (mobile data, some offices) share a public address too;
  *  - 'relay-unreachable' a relay is configured, but this device got no relay candidate from it (or its credentials);
  *  - 'relay-failed'      this device reached the relay and the link still did not open.
  */
-export type BlockedVariant = 'no-relay' | 'relay-unreachable' | 'relay-failed';
+export type BlockedVariant = 'no-relay' | 'same-network' | 'relay-unreachable' | 'relay-failed';
 
 export const BLOCKED_TEXT: Readonly<Record<BlockedVariant, ErrorText>> = {
   'no-relay': ONLINE_ERROR_TEXT.blocked,
+  'same-network': {
+    title: 'Your network blocked the connection',
+    body: 'Your devices look like they are on the same network, but it did not let them talk to each other directly. Try local-network mode, connect both to one phone\'s hotspot, or ask the game\'s owner to add a relay.',
+  },
   'relay-unreachable': {
     title: 'Could not reach the relay',
-    body: 'Your devices could not reach each other directly, and the relay server that links them in that case could not be reached either. Put both devices on the same Wi-Fi (or one phone\'s hotspot) and try again.',
+    body: 'Your devices could not reach each other directly, and the relay server that links them in that case could not be reached either. On the same Wi-Fi, try local-network mode; otherwise put both devices on the same Wi-Fi or one phone\'s hotspot and try again.',
   },
   'relay-failed': {
     title: 'The network blocked the connection',
-    body: 'Your devices could not connect, even through the relay server. Put both devices on the same Wi-Fi (or one phone\'s hotspot) and try again.',
+    body: 'Your devices could not connect, even through the relay server. On the same Wi-Fi, try local-network mode; otherwise put both devices on the same Wi-Fi or one phone\'s hotspot and try again.',
   },
 };
 
 /** The blocked variant from the room's relay config and the transport's ICE report. Pure. */
 export function blockedVariant(relay: Readonly<RelayConfig> | null, ice: Readonly<IceReport> | null | undefined): BlockedVariant {
   const configured = !!relay?.declared || !!ice?.relayConfigured;
-  if (!configured) return 'no-relay';
+  if (!configured) return ice?.sameNetwork === true ? 'same-network' : 'no-relay';
   return ice && ice.local.includes('relay') ? 'relay-failed' : 'relay-unreachable';
+}
+
+// ---------------------------------------------------------------- [NET-FIX-2] local-network mode, progress, notice
+
+/** The guest holds the microphone for at most this long per attempt, ms (the attempt itself ends well before). */
+export const LOCAL_MODE_GUEST_MS = 30_000;
+/** The host holds it from the tap until the next guest's attempt ends, at most this long, ms (tap again to re-arm). */
+export const LOCAL_MODE_HOST_MS = 120_000;
+
+/** Local-network mode copy: short and honest (the microphone is only a key to the local addresses). */
+export const LOCAL_MODE_TEXT = {
+  retry: 'Try local-network mode',
+  toggle: 'Local-network mode',
+  toggleHint: 'For a friend on the same Wi-Fi who cannot connect',
+  explain: 'Safari will ask for the microphone. It is only so the two devices can see each other on the Wi-Fi: nothing is recorded, and you can say no.',
+  asking: 'Waiting for the microphone permission…',
+  hostOn: 'On. Ask your friend to join again: it turns off once they connect or fail, or after 2 minutes.',
+  denied: 'Microphone not allowed, so local-network mode is off. You can still try again the normal way, or use one phone\'s hotspot.',
+  unavailable: 'Local-network mode is not available in this browser. You can still try again the normal way, or use one phone\'s hotspot.',
+} as const;
+
+/** The host's failed-join notice. */
+export const JOIN_FAILED_TEXT = {
+  title: 'A friend tried to join, but your devices could not connect',
+  advice: 'On the same Wi-Fi? Turn on local-network mode, then ask your friend to join again. Otherwise, try one phone\'s hotspot.',
+  turnOn: 'Turn on local-network mode',
+  dismiss: 'Dismiss',
+} as const;
+
+/** The failed connection stage in plain words (the host's notice). */
+export const STAGE_TEXT: Readonly<Record<IceStage, string>> = {
+  signalling: 'The connection details did not get through the matchmaking server.',
+  gathering: 'This device found no network address to offer.',
+  ice: 'Both devices found network addresses, but neither could reach the other.',
+  channel: 'The devices reached each other, but the game link did not open.',
+};
+
+/** Plain-language progress line for the connecting view. Pure. */
+export function progressText(p: Readonly<ConnectProgress> | null | undefined): string {
+  if (!p) return 'Connecting…';
+  switch (p.stage) {
+    case 'broker': return 'Finding the room…';
+    case 'dialling': return p.relay ? 'Connecting to your friend, directly or through the relay…' : 'Connecting to your friend…';
+    case 'handshake': return 'Connected, checking the game versions…';
+    default: return 'Connecting…';
+  }
+}
+
+/** "Gives up in N s" for a progress reported at `atMs` (now `nowMs`); '' when unknown. Pure. */
+export function secondsLeftText(p: Readonly<ConnectProgress> | null | undefined, atMs: number, nowMs: number): string {
+  if (!p || !(p.timeoutMs > 0)) return '';
+  const left = Math.max(0, Math.ceil((atMs + p.timeoutMs - nowMs) / 1000));
+  return `Gives up in ${left} s`;
+}
+
+/** This page's build id (index.html's dotkick-build meta), else the game version (dev build). */
+export function onlineBuildId(): string {
+  return pageBuildId() ?? GAME_VERSION;
 }
 
 /** The privacy line (brief section 11; the README explains IP exposure in full). */
@@ -232,6 +317,8 @@ export interface NetTestHook {
   failOpen?: string;
   /** relay.json URL instead of the one beside the page; null = do not fetch a relay. */
   relayUrl?: string | null;
+  /** [NET-FIX-2] Override the build id sent in the hellos. */
+  build?: string;
 }
 
 export interface OnlineDebugView {
@@ -310,11 +397,72 @@ interface Room {
   closed: boolean;
   /** The room's relay config once loaded (null while loading, and for in-page test transports). */
   relay: RelayConfig | null;
+  /** [NET-FIX-2] Host: a guest's attempt failed (the failed-join notice; null when none or dismissed). */
+  joinFailed: { stage: IceStage | null } | null;
+  /** [NET-FIX-2] The latest connection progress and when it arrived (performance.now). */
+  progress: { p: ConnectProgress; at: number } | null;
 }
 
 let room: Room | null = null;
 /** The screen currently mounted (it re-renders on room changes). */
-let activeView: { render(): void } | null = null;
+let activeView: { render(): void; progress(): void } | null = null;
+
+// ---------------------------------------------------------------- [NET-FIX-2] local-network mode (one per page)
+
+let localMode: LocalNetworkMode | null = null;
+/** The room whose attempt holds the microphone (released when that attempt ends or the room closes). */
+let localFor: Room | null = null;
+/** The last local-network mode refusal to explain on screen (cleared by the next request). */
+let localMsg: 'denied' | 'unavailable' | null = null;
+let localLog: AppContext | null = null;
+
+function localModeOf(ctx: AppContext): LocalNetworkMode {
+  localLog = ctx;
+  if (!localMode) {
+    localMode = createLocalNetworkMode({
+      log: (kind, message) => {
+        try {
+          localLog?.diagnostics.log(kind, message);
+        } catch {
+          /* diagnostics never break the lobby */
+        }
+      },
+    });
+    localMode.onChange(() => activeView?.render());
+  }
+  return localMode;
+}
+
+/** Stop the microphone if `r`'s attempt holds it. */
+function releaseLocal(r: Room, why: string): void {
+  if (localFor !== r) return;
+  localFor = null;
+  localMode?.release(why);
+}
+
+/** The attempt `r` holds the microphone for has ended: the link opened, or it failed / closed. */
+function checkLocal(r: Room): void {
+  if (localFor !== r) return;
+  const ph = r.lobby.phase;
+  if (ph === 'lobby' || ph === 'playing') releaseLocal(r, 'link open');
+  else if (ph === 'error' || ph === 'closed') releaseLocal(r, 'attempt ended');
+}
+
+/** Host: turn local-network mode on for the next guest's attempt (straight from the tap). */
+function hostLocalOn(r: Room): void {
+  if (room !== r) return;
+  const lm = localModeOf(r.ctx);
+  localMsg = null;
+  localFor = r;
+  void lm.enable(LOCAL_MODE_HOST_MS).then((res) => {
+    if (res === 'denied' || res === 'unavailable') {
+      if (localFor === r) localFor = null;
+      localMsg = res;
+    }
+    activeView?.render();
+  });
+  activeView?.render();
+}
 
 function defaultTemplate(ctx: AppContext): MatchConfig {
   const c = createMatchConfig();
@@ -342,6 +490,7 @@ function randomNickname(): string {
 
 function openRoom(ctx: AppContext, host: boolean, code?: string): Room {
   leaveRoom();
+  localMsg = null;
   const hook = testHook();
   const s = ctx.settings.get();
   const rejoin = !host && code ? readRejoin() : null;
@@ -367,9 +516,22 @@ function openRoom(ctx: AppContext, host: boolean, code?: string): Room {
     }
     return relayServers;
   };
+  const build = hook?.build ?? onlineBuildId();
+  // [NET-FIX-2] Connection progress for the connecting view (the first transport reports before the room exists).
+  let progress: Room['progress'] = null;
+  const watch = (t: NetTransport): NetTransport => {
+    t.onProgress?.((p) => {
+      progress = { p, at: typeof performance !== 'undefined' ? performance.now() : 0 };
+      if (relayRoom) {
+        relayRoom.progress = progress;
+        if (room === relayRoom) activeView?.progress();
+      }
+    });
+    return t;
+  };
   const factory = hook?.createTransport
-    ? () => hook.createTransport!(host ? 'host' : 'guest')
-    : () => createPeerTransport(createNetConfig(hook?.config ?? {}), { extraIceServers: loadRelayOnce(), log });
+    ? () => watch(hook.createTransport!(host ? 'host' : 'guest'))
+    : () => watch(createPeerTransport(createNetConfig(hook?.config ?? {}), { extraIceServers: loadRelayOnce(), log, build }));
   const lobby = createLobby({
     host,
     code: host ? hook?.code ?? code : code,
@@ -380,8 +542,11 @@ function openRoom(ctx: AppContext, host: boolean, code?: string): Room {
     rejoinToken: rejoin && rejoin.code === code ? rejoin.token : undefined,
     startCountdownMs: hook?.startCountdownMs,
     log,
+    build,
   });
-  const r: Room = { ctx, lobby, os: null, overlay: null, unsubs: [], screenMounted: true, closed: false, relay: null };
+  const r: Room = {
+    ctx, lobby, os: null, overlay: null, unsubs: [], screenMounted: true, closed: false, relay: null, joinFailed: null, progress,
+  };
   relayRoom = r;
   room = r;
   if (host) {
@@ -393,6 +558,8 @@ function openRoom(ctx: AppContext, host: boolean, code?: string): Room {
   r.unsubs.push(
     lobby.onChange(() => {
       if (lobby.phase === 'closed') roomClosed(r);
+      checkLocal(r);
+      if (lobby.peer) r.joinFailed = null;
       activeView?.render();
     }),
     lobby.onError(() => activeView?.render()),
@@ -407,12 +574,20 @@ function clampClub(clubs: readonly Club[], i: number): number {
 }
 
 function onLobbyNotice(r: Room, n: LobbyNotice): void {
-  if (room !== r || !r.screenMounted) return;
+  if (room !== r) return;
+  if (n.kind === 'join-blocked') {
+    // [NET-FIX-2] A notice that stays on the waiting screen (no toast: one message, not two). The attempt is over, so
+    // a microphone held for it is let go; the notice offers to arm it again for the next one.
+    r.joinFailed = { stage: r.lobby.transport.ice?.stage ?? null };
+    releaseLocal(r, 'attempt failed');
+    activeView?.render();
+    return;
+  }
+  if (n.kind === 'peer-joined') r.joinFailed = null;
+  if (!r.screenMounted) return;
   // (A friend joining shows in the lobby itself: the friend card fills in.)
   if (n.kind === 'peer-left') showToast('Your friend left the room', { kind: 'warning', testId: 'net-toast' });
-  else if (n.kind === 'join-blocked') {
-    showToast('A friend tried to join but the network blocked it: try the same Wi-Fi or a phone hotspot', { kind: 'warning', testId: 'net-toast' });
-  } else if (n.kind === 'retrying') showToast('The room is busy, trying again…', { kind: 'info', testId: 'net-toast' });
+  else if (n.kind === 'retrying') showToast('The room is busy, trying again…', { kind: 'info', testId: 'net-toast' });
 }
 
 /** The room's match is still being played here (finishing against the CPU after the room closed). */
@@ -424,6 +599,7 @@ function matchRunning(r: Room): boolean {
 }
 
 function roomClosed(r: Room): void {
+  releaseLocal(r, 'left the room');
   if (room !== r) return;
   if (!r.closed) {
     r.closed = true;
@@ -619,6 +795,14 @@ const CSS = `
   background: var(--surface-1); border: var(--line) solid var(--hairline); font-size: var(--fs-sm); color: var(--text-2); }
 .net-settings-ro b { color: var(--text-1); font-weight: var(--fw-medium); }
 .net-error { display: flex; flex-direction: column; align-items: center; gap: var(--space-4); margin: auto 0; max-width: 40em; text-align: center; }
+.net-local { display: flex; flex-direction: column; gap: var(--space-2); max-width: 40em; }
+.net-local__note { margin: 0; font-size: var(--fs-sm); color: var(--text-2); line-height: var(--lh); }
+.net-local__msg { margin: 0; font-size: var(--fs-sm); color: var(--warning); line-height: var(--lh); }
+.net-notice { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); border-radius: var(--radius-lg);
+  background: var(--surface-1); border: var(--line) solid var(--warning); }
+.net-notice__title { margin: 0; font-size: var(--fs-md); font-weight: var(--fw-bold); color: var(--text-1); }
+.net-notice__body { margin: 0; font-size: var(--fs-sm); color: var(--text-2); line-height: var(--lh); }
+.net-progress { margin: 0; font: 13px / 1.3 var(--font-num); color: var(--text-3); min-height: 1.3em; }
 .net-error__icon { width: 56px; height: 56px; border-radius: 50%; border: 3px solid var(--error); display: flex; align-items: center; justify-content: center;
   color: var(--error); font: var(--fw-bold) 30px / 1 var(--font-ui); }
 .net-overlay { position: absolute; inset: 0; pointer-events: none; z-index: var(--z-toast); }
@@ -659,7 +843,55 @@ export function createOnlineScreen(): Screen {
   let qualityEl: HTMLElement | null = null;
   let lastQuality = '';
   let lastQualityAt = 0;
-  const renderer = { render: () => render() };
+  // [NET-FIX-2] The connecting view's progress line: updated by progress events and a 1 s timer while it is up.
+  let stageEl: HTMLElement | null = null;
+  let leftEl: HTMLElement | null = null;
+  let progressTimer: ReturnType<typeof setInterval> | null = null;
+  const renderer = { render: () => render(), progress: () => updateProgress() };
+
+  function stopProgressTimer(): void {
+    if (progressTimer !== null) clearInterval(progressTimer);
+    progressTimer = null;
+    stageEl = null;
+    leftEl = null;
+  }
+
+  function updateProgress(): void {
+    if (!stageEl || !leftEl) return;
+    const pr = room?.progress ?? null;
+    const now = typeof performance !== 'undefined' ? performance.now() : 0;
+    const stage = progressText(pr?.p);
+    const left = pr ? secondsLeftText(pr.p, pr.at, now) : '';
+    if (stageEl.textContent !== stage) stageEl.textContent = stage;
+    if (leftEl.textContent !== left) leftEl.textContent = left;
+  }
+
+  /** Guest, 'blocked': ask for the microphone (straight from the tap), then dial again while it is held. */
+  function tryLocalMode(): void {
+    const ctx = ctxRef;
+    const r = room;
+    if (!ctx) return;
+    const lm = localModeOf(ctx);
+    localMsg = null;
+    if (r) localFor = r; // a Back while Safari asks cancels the request (roomClosed releases it)
+    void lm.enable(LOCAL_MODE_GUEST_MS).then((res) => {
+      if (res === 'on') {
+        if (room !== r || !ctxRef) {
+          lm.release('left');
+          return;
+        }
+        localFor = null; // retry() leaves the failed room: the microphone belongs to the next attempt
+        retry();
+        if (room && !room.closed) localFor = room;
+        else lm.release('no attempt');
+        return;
+      }
+      if (r && localFor === r) localFor = null;
+      if (res === 'denied' || res === 'unavailable') localMsg = res;
+      render();
+    });
+    render();
+  }
 
   function setView(v: View): void {
     view = v;
@@ -799,9 +1031,17 @@ export function createOnlineScreen(): Screen {
     const r = room;
     const label = r && !r.lobby.isHost ? `Joining room ${formatRoomCode(r.lobby.code)}…` : 'Creating a room…';
     root.append(h('h1', { class: 'ui-title', text: 'Play online', testId: 'online-lobby-title' }));
+    stageEl = h('p', { class: 'net-status', testId: 'net-progress-stage', attrs: { role: 'status', 'aria-live': 'polite' } });
+    leftEl = h('p', { class: 'net-progress', testId: 'net-progress-left' });
+    updateProgress();
+    progressTimer = setInterval(updateProgress, 1000);
+    const localOn = !!localMode?.active && localFor === r;
     root.append(h('div', { class: 'net-connecting', testId: 'net-connecting' },
       h('div', { class: 'net-spinner', attrs: { 'aria-hidden': 'true' } }, h('span'), h('span'), h('span')),
       h('p', { class: 'ui-subtitle', text: label }),
+      stageEl,
+      leftEl,
+      localOn ? h('p', { class: 'net-progress', text: 'Local-network mode is on', testId: 'net-local-on' }) : null,
       createButton('Cancel', () => {
         leaveRoom();
         setView('home');
@@ -812,12 +1052,27 @@ export function createOnlineScreen(): Screen {
     const reason: LobbyError = unsupported ? 'unsupported' : room?.lobby.error ?? 'disconnected';
     const variant = reason === 'blocked' ? blockedVariant(room?.relay ?? null, room?.lobby.transport.ice) : null;
     const t = variant ? BLOCKED_TEXT[variant] : errorText(reason);
+    // [NET-FIX-2] A guest whose connection was blocked can dial again in local-network mode (asks for the microphone).
+    const offerLocal = reason === 'blocked' && !!room && !room.lobby.isHost;
+    const asking = offerLocal && !!localMode?.pending;
+    const local = offerLocal
+      ? h('div', { class: 'net-local', testId: 'net-local' },
+        h('p', { class: 'net-local__note', text: LOCAL_MODE_TEXT.explain, testId: 'net-local-explain' }),
+        asking ? h('p', { class: 'net-local__note', text: LOCAL_MODE_TEXT.asking, testId: 'net-local-asking' }) : null,
+        localMsg ? h('p', { class: 'net-local__msg', text: LOCAL_MODE_TEXT[localMsg], testId: 'net-local-msg', attrs: { role: 'status' } }) : null)
+      : null;
     root.append(h('div', { class: 'net-error', testId: `net-error-${reason}`, attrs: variant ? { 'data-blocked': variant } : undefined },
       h('div', { class: 'net-error__icon', text: '!', attrs: { 'aria-hidden': 'true' } }),
       h('h1', { class: 'ui-title', text: t.title, testId: 'net-error-title' }),
       h('p', { class: 'ui-subtitle', text: t.body, testId: 'net-error-body' }),
+      local,
       h('div', { class: 'ui-row' },
-        reason === 'unsupported' ? null : createButton('Try again', () => retry(), { testId: 'net-retry', variant: 'primary', ctx, autofocus: true }),
+        offerLocal ? createButton(LOCAL_MODE_TEXT.retry, () => tryLocalMode(), {
+          testId: 'net-local-retry', variant: 'primary', ctx, autofocus: true, disabled: asking,
+        }) : null,
+        reason === 'unsupported' ? null : createButton('Try again', () => retry(), {
+          testId: 'net-retry', variant: offerLocal ? 'secondary' : 'primary', ctx, autofocus: !offerLocal,
+        }),
         createButton('Back', () => {
           unsupported = false;
           leaveRoom();
@@ -922,8 +1177,47 @@ export function createOnlineScreen(): Screen {
         row('Goal replays', on(cfg.replaySeconds > 0 ? 1 : 0))));
     }
     right.append(h('p', { class: 'net-privacy', text: PRIVACY_LINE, testId: 'net-privacy' }));
+    if (lobby.isHost) {
+      // [NET-FIX-2] Host, before a friend is in: the failed-join notice and local-network mode, at the top of the column.
+      const top: HTMLElement[] = [];
+      if (r.joinFailed && !peer) top.push(joinFailedNotice(ctx, r));
+      if (!peer) top.push(localToggle(ctx, r));
+      right.prepend(...top);
+    }
     grid.append(left, right);
     root.append(grid);
+  }
+
+  /** [NET-FIX-2] Host: a friend's attempt failed; stays until dismissed or a guest connects. */
+  function joinFailedNotice(ctx: AppContext, r: Room): HTMLElement {
+    const stage = r.joinFailed?.stage ?? null;
+    const on = !!localMode?.active && localFor === r;
+    const pendingLocal = !!localMode?.pending && localFor === r;
+    return h('div', { class: 'net-notice', testId: 'net-join-failed', attrs: { role: 'status', ...(stage ? { 'data-stage': stage } : {}) } },
+      h('p', { class: 'net-notice__title', text: JOIN_FAILED_TEXT.title, testId: 'net-join-failed-title' }),
+      stage ? h('p', { class: 'net-notice__body', text: STAGE_TEXT[stage], testId: 'net-join-failed-stage' }) : null,
+      h('p', { class: 'net-notice__body', text: on ? LOCAL_MODE_TEXT.hostOn : JOIN_FAILED_TEXT.advice, testId: 'net-join-failed-advice' }),
+      h('div', { class: 'net-share' },
+        on || pendingLocal ? null : createButton(JOIN_FAILED_TEXT.turnOn, () => hostLocalOn(r), { testId: 'net-join-failed-local', variant: 'primary', ctx }),
+        createButton(JOIN_FAILED_TEXT.dismiss, () => {
+          r.joinFailed = null;
+          render();
+        }, { testId: 'net-join-failed-dismiss', ctx })));
+  }
+
+  /** [NET-FIX-2] Host: the local-network mode toggle (on = microphone held for the next guest's attempt). */
+  function localToggle(ctx: AppContext, r: Room): HTMLElement {
+    const on = !!localMode?.active && localFor === r;
+    const pendingLocal = !!localMode?.pending && localFor === r;
+    const status = pendingLocal ? LOCAL_MODE_TEXT.asking : on ? LOCAL_MODE_TEXT.hostOn : localMsg ? LOCAL_MODE_TEXT[localMsg] : LOCAL_MODE_TEXT.explain;
+    const toggle = createToggle(LOCAL_MODE_TEXT.toggle, on || pendingLocal, (v) => {
+      if (v) hostLocalOn(r);
+      else releaseLocal(r, 'turned off');
+      render();
+    }, { testId: 'net-local-toggle', ctx, hint: LOCAL_MODE_TEXT.toggleHint });
+    return h('div', { class: 'net-local', testId: 'net-local' },
+      toggle.el,
+      h('p', { class: localMsg && !on && !pendingLocal ? 'net-local__msg' : 'net-local__note', text: status, testId: 'net-local-status' }));
   }
 
   function lobbyStatus(lobby: Lobby): string {
@@ -940,6 +1234,7 @@ export function createOnlineScreen(): Screen {
     const root = rootEl;
     const ctx = ctxRef;
     if (!root || !ctx) return;
+    stopProgressTimer();
     const v = currentView();
     const sameView = v === view && root.dataset.view === v;
     view = v;
@@ -1065,6 +1360,7 @@ export function createOnlineScreen(): Screen {
       // Leaving the screen for anything but the match ends the room (the match screens take over while it plays).
       if (r && r.lobby.phase !== 'playing') leaveRoom();
       else if (r) r.screenMounted = false;
+      stopProgressTimer();
       rootEl = null;
       ctxRef = null;
       qualityEl = null;

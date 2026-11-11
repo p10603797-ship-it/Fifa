@@ -14,9 +14,11 @@
  * one sentence per reason, NET-07).
  *
  * Messages on the reliable channel ('lobby:' namespace; every other type is ignored):
- *  - 'lobby:hello'  { nick, game, sim, net, token? }  both sides once the transport opens. GAME_VERSION, SIM_VERSION
- *                   and NET_PROTOCOL_VERSION must match ('version-mismatch' otherwise; the transport handshake checks
- *                   the protocol string first). No hello within helloTimeoutMs -> 'disconnected'.
+ *  - 'lobby:hello'  { nick, game, sim, net, token?, build? }  both sides once the transport opens. GAME_VERSION,
+ *                   SIM_VERSION and NET_PROTOCOL_VERSION must match ('version-mismatch' otherwise; the transport handshake
+ *                   checks the protocol string first). No hello within helloTimeoutMs -> 'disconnected'. [NET-FIX-2]
+ *                   `build` (optional) is the sender's build id, information only: logged "lobby: peer build ...", never
+ *                   refused (an old peer sends none).
  *  - 'lobby:state'  { club, ready, prefs, n }  each side's own pick, ready flag and controller preferences; n = starts
  *                   this side has seen (it is back in the lobby after match n). A state of the current match number that
  *                   arrives while this side still plays the last ticks of that match is kept and applied by matchEnded()
@@ -38,7 +40,7 @@ import { createMatchConfig, type ControllerConfig, type MatchConfig } from '../c
 import { T_NET } from '../contracts/tuning';
 import { computeTargetDelay } from './adaptive';
 import { NET_CONFIG, type NetConfig } from './config';
-import { createEmitter, NET_PROTOCOL_VERSION, reasonOf } from './packet';
+import { cleanBuildId, createEmitter, NET_PROTOCOL_VERSION, reasonOf } from './packet';
 import { generateRoomCode, normaliseRoomCode, secureRandom } from './roomCode';
 import { createPeerTransport } from './transport';
 import type { ControlMessage, NetErrorReason, NetTransport, TransportEvent } from './types';
@@ -188,6 +190,8 @@ export interface LobbyOptions {
   startCountdownMs?: number;
   /** Diagnostics.log compatible. */
   log?: (kind: string, message: string, data?: unknown) => void;
+  /** [NET-FIX-2] This build's id, sent in 'lobby:hello' as information (logged by the other side). */
+  build?: string;
 }
 
 const defaultTimers: LobbyTimers = {
@@ -362,6 +366,8 @@ export function createLobby(opts: LobbyOptions): Lobby {
     helloSent = true;
     const msg: ControlMessage = { type: LOBBY_HELLO, nick: self.nickname, game: GAME_VERSION, sim: SIM_VERSION, net: NET_PROTOCOL_VERSION };
     if (!isHost && opts.rejoinToken) msg.token = opts.rejoinToken;
+    const build = cleanBuildId(opts.build);
+    if (build) msg.build = build;
     send(msg);
     clearHello();
     helloTimer = timers.setTimeout(() => {
@@ -378,6 +384,9 @@ export function createLobby(opts: LobbyOptions): Lobby {
   }
 
   function onHello(m: ControlMessage): void {
+    const peerBuild = cleanBuildId(m.build);
+    const ownBuild = cleanBuildId(opts.build);
+    log?.('net', `lobby: peer build ${peerBuild ?? 'unknown (older build)'}${ownBuild ? `, this build ${ownBuild}` : ''}`);
     const versionsMatch = m.game === GAME_VERSION && m.sim === SIM_VERSION && m.net === NET_PROTOCOL_VERSION;
     if (!versionsMatch && phase === 'playing') {
       // Mid-match the versions were agreed long ago (and the transport handshake checks them on every link): a garbled

@@ -24,6 +24,7 @@ import {
 import type { Replay } from '../../sim/replay';
 import { createButton, copyText, createBackButton, h, injectStyle, showToast } from '../components';
 import { createCreditsView } from '../../platform/licences';
+import { pageBuildId } from '../../platform/pwa';
 import { createPointerTracker, readPads, type PadLike } from '../debugOverlay';
 
 const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: diagnostics UI)
@@ -178,7 +179,11 @@ export function createDiagnosticsScreen(): Screen {
       injectStyle('diagnostics', CSS);
       const wrap = h('div', { class: 'diag' });
       const storage = ctx.settings.persistent ? 'storage persistent' : 'storage memory only';
-      const version = h('p', { class: 'diag-version', text: `${GAME_NAME} ${GAME_VERSION} · sim ${SIM_VERSION} · ${storage}`, testId: 'diagnostics-version' });
+      // [NET-FIX-2] The build id (index.html's dotkick-build meta) is the one both online players log as "peer build".
+      const build = pageBuildId();
+      const version = h('p', {
+        class: 'diag-version', text: `${GAME_NAME} ${GAME_VERSION} · sim ${SIM_VERSION} · ${storage}${build ? ` · build ${build}` : ''}`, testId: 'diagnostics-version',
+      });
       const status = h('p', { class: 'diag-status', testId: 'diagnostics-status', attrs: { role: 'status' } });
       const pre = h('pre', { class: 'ui-pre', text: ctx.diagnostics.report(), testId: 'diagnostics-report', attrs: { 'data-scroll': '' } });
       const refresh = (): void => {
