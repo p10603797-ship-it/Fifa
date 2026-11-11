@@ -41,6 +41,8 @@ function installFakeTransport(opts: HookOptions): void {
   const FRAME_INTS = 19;
   /** Silence that reads as a drop (the container's software WebGL can block a page for seconds while loading). */
   const SILENCE_MS = 10_000;
+  /** NET_CONFIG.replaceSilentMs: a dial from a new peer id takes the seat once the open link has been silent this long. */
+  const REPLACE_SILENT_MS = 2_000;
   const w = window as unknown as { __dotkickNetTest?: Record<string, unknown> };
   function makeTransport(): unknown {
     const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -119,8 +121,13 @@ function installFakeTransport(opts: HookOptions): void {
             return;
           }
           if (state === 'open' && peerId) {
-            post({ k: 'full', to: m.from });
-            return;
+            // As src/net/transport.ts onConnection: a new peer id replaces a link silent for
+            // NET_CONFIG.replaceSilentMs (a reloaded guest); a live link keeps the seat.
+            if (performance.now() - lastHeard < REPLACE_SILENT_MS) {
+              post({ k: 'full', to: m.from });
+              return;
+            }
+            down();
           }
           if (state !== 'connecting') return;
           peerId = m.from as string;
