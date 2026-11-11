@@ -335,8 +335,8 @@ The screen then says the devices could not reach each other directly. Quick fixe
 
 For play across any networks, the person who publishes the game can add a **TURN relay**: a server that passes the
 match data between the two devices when no direct link is possible. The game ships without one (there is no free
-public relay that works without an account), and it needs no rebuild: it reads an optional file `relay.json` next to
-`index.html` each time a room is created or joined. Steps with Metered's free TURN plan (20 GB of relay traffic a
+public relay that works without an account), and it needs no rebuild: it reads the file `relay.json` next to
+`index.html` each time a room is created or joined. The build ships it as `{ "iceServers": [] }` (no relay). Steps with Metered's free TURN plan (20 GB of relay traffic a
 month at the time of writing):
 
 1. Sign up at https://dashboard.metered.ca/signup?tool=turnserver (free account, no card).
@@ -346,20 +346,20 @@ month at the time of writing):
    `https://<appname>.metered.live/api/v1/turn/credentials?apiKey=<your API key>`
    Check it by opening it in a browser: it must show a list (`[ { "urls": "stun:..." }, { "urls": "turn:...",
    "username": "...", "credential": "..." }, ... ]`).
-4. Make a file named `relay.json` with exactly this content (your URL in the quotes):
+4. Replace the whole content of `relay.json` with this (your URL in the quotes):
 
    ```json
    { "credentialsUrl": "https://<appname>.metered.live/api/v1/turn/credentials?apiKey=<your API key>" }
    ```
 
-5. Put it next to `index.html` on the site. On GitHub Pages published from the `gh-pages` branch: open the repository
-   on github.com, switch the branch menu to **gh-pages**, choose **Add file > Create new file**, name it
-   `relay.json`, paste the content, and **Commit changes**. Pages republishes in a minute or two; check that
-   `https://<you>.github.io/<repo>/relay.json` shows the file. Force-pushing a new build to `gh-pages` removes it:
-   add it again afterwards (or copy it into the `dist/` folder before pushing). On a drag-and-drop host, add it to
-   the folder you upload. With the GitHub Actions workflow (section 4, Way 2) the site is rebuilt from the repository,
-   so the file would have to be committed in `public/`, which publishes the key in the repository too: limit the key
-   in the Metered dashboard first, or publish from a branch instead.
+5. Publish it next to `index.html`. On GitHub Pages published from the `gh-pages` branch: open the repository on
+   github.com, switch the branch menu to **gh-pages**, click `relay.json`, then the pencil (**Edit this file**),
+   paste the content and **Commit changes**. Pages republishes in a minute or two; check that
+   `https://<you>.github.io/<repo>/relay.json` shows your content. Force-pushing a new build to `gh-pages` puts the
+   empty default back: edit `dist/relay.json` before pushing, or edit it again afterwards. On a drag-and-drop host,
+   edit `relay.json` in the folder you upload. With the GitHub Actions workflow (section 4, Way 2) the site is rebuilt
+   from the repository, so the content would have to be committed in `public/relay.json`, which publishes the key in
+   the repository too: limit the key in the Metered dashboard first, or publish from a branch instead.
 6. Create a new room. **Copy report** now shows `relay: 5 server(s) from https://<appname>.metered.live/... (TURN)`,
    and `pair ... (through the relay)` when the relay was used.
 
@@ -369,8 +369,12 @@ Notes:
   game's source code.
 - Instead of a credentials URL, `relay.json` may list servers directly:
   `{ "iceServers": [{ "urls": "turn:relay.example.com:3478", "username": "...", "credential": "..." }] }` (only
-  `stun:`, `turn:` and `turns:` addresses, at most 10; anything malformed is ignored and noted in the diagnostics).
-- Deleting `relay.json` turns the relay off again. The offline copy never keeps an old `relay.json`.
+  `stun:`, `turn:` and `turns:` addresses written as `turn:host:port`, with `?transport=udp` or `?transport=tcp`
+  allowed only after `turn:`/`turns:`; at most 10). Any entry that is malformed, or that the browser itself refuses,
+  is left out and noted in the diagnostics; the game then connects as if it were not there, so a typo never stops
+  players on the same network from connecting.
+- Putting back `{ "iceServers": [] }` (or deleting the file) turns the relay off again. The offline copy never keeps
+  an old `relay.json`.
 - If the screen says **Could not reach the relay**, the relay is set up but this device could not get through to it
   (a wrong or expired key, a used-up monthly allowance, or a network that blocks it): check the URL from step 3.
 

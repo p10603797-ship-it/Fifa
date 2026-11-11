@@ -1,13 +1,15 @@
 /**
  * [NET-FIX, D-044] Online connection fix, pure parts:
  *  - the ICE list: explicit public STUN servers, never PeerJS's TURN defaults (their hosts have no DNS records);
- *  - relay.json parsing and strict validation (src/net/relay.ts) and loadRelay with a fake fetch: absent (404 / an
- *    HTML fallback), servers, a credentials URL (Metered's array, or { iceServers }), timeouts, malformed input;
+ *  - relay.json parsing and strict validation (src/net/relay.ts) and loadRelay with a fake fetch: the shipped default
+ *    (no servers), absent (404 / an HTML fallback), servers, a credentials URL (Metered's array, or { iceServers }), timeouts, malformed input;
  *  - connection-stage diagnostics (src/net/ice.ts): candidate types from SDP and candidates, the failing stage;
  *  - the 'blocked' screen variants (src/ui/screens/online.ts blockedVariant / BLOCKED_TEXT);
  *  - the service worker never answers relay.json (public/sw.js run in a vm).
  */
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
@@ -16,7 +18,7 @@ import {
   candidateTypeOf, candidateTypesFromSdp, createIceProbe, describeIce, failedStage, type IceReport, type IceSnapshot,
 } from '../../src/net/ice';
 import {
-  hasTurn, isIceUrl, loadRelay, MAX_RELAY_SERVERS, mergeIceServers, parseCredentials, parseRelayFile, redactUrl, relayUrlFor,
+  browserIceServerCheck, hasTurn, isIceUrl, keepAccepted, loadRelay, MAX_RELAY_SERVERS, mergeIceServers, parseCredentials, parseRelayFile, redactUrl, relayUrlFor,
   serverUrls, validateIceServers,
 } from '../../src/net/relay';
 import { BLOCKED_TEXT, blockedVariant, errorText } from '../../src/ui/screens/online';
@@ -93,6 +95,79 @@ describe('NET-FIX relay.json validation', () => {
     for (const bad of ['', 'stun:', 'stun:/a', 'http://a', 'turn:a b', 'stun:a\nb', 5, null, `stun:${'a'.repeat(600)}`]) expect(isIceUrl(bad), String(bad)).toBe(false);
   });
 
+  // Each case below was checked against Chromium's `new RTCPeerConnection({ iceServers })`: it throws SyntaxError for
+  // every "rejected" URL, and one such server in the list breaks every connection, direct ones included.
+  it('isIceUrl follows the browser: accepts what RTCPeerConnection accepts, rejects what makes it throw', () => {
+    const accepted = [
+      'stun:a.b', 'stun:a.b:3478', 'STUN:a.b', 'stun:a.b:65535', 'stun:a.b:1', 'turn:[::1]:3478', 'stun:[2001:db8::1]:19302',
+      'turn:a.b?transport=tcp', 'turn:a.b?transport=TCP', 'turns:a.b:443?transport=tcp', 'turn:1.2.3.4:3478?transport=udp',
+      'stun:localhost', 'stun:192.168.1.1:3478', 'stun:a-b.c', 'stun:a_b.c', 'stun:stun.l.google.com:19302',
+      'turn:global.relay.metered.ca:80?transport=tcp',
+    ];
+    const rejected = [
+      'stun:a.b?transport=udp', // the old Twilio "NTS" form: no query allowed on stun:
+      'stun:a.b:99999', 'stun:a.b:0', 'turn:a.b:0', 'stun:a.b:80:90', 'stun:a.b:', 'stun:a.b:+80',
+      'turn:[::1', 'turn:@@@', 'turn:u@a.b',
+      'turn:a.b?transport=foo', 'turn:a.b?transport=tcp&x=y', 'turn:a.b?transport=udp&', 'turn:a.b?Transport=udp', 'stun:a.b?',
+      'stun:a.b#x', 'stun:a.b/x', 'stun:a.b:3478/',
+    ];
+    for (const u of accepted) expect(isIceUrl(u), u).toBe(true);
+    for (const u of rejected) expect(isIceUrl(u), u).toBe(false);
+    const v = validateIceServers([{ urls: 'stun:a.b?transport=udp' }, { urls: 'turn:a.b:99999', username: 'u', credential: 'c' }, { urls: 'stun:ok.example' }]);
+    expect(v.servers).toEqual([{ urls: 'stun:ok.example' }]);
+    expect(v.problems.length).toBe(2);
+    // An empty TURN username or credential makes Chromium throw InvalidAccessError, like a missing one.
+    const e = validateIceServers([{ urls: 'turn:a.b', username: '', credential: 'c' }, { urls: 'turn:a.b', username: 'u', credential: '' }]);
+    expect(e.servers).toEqual([]);
+    expect(e.problems).toEqual(['server 0: a turn: server needs a username and a credential', 'server 1: a turn: server needs a username and a credential']);
+  });
+
+  it('keepAccepted drops each server the browser rejects, and everything if the list as a whole is rejected', () => {
+    const bad = { urls: 'turn:odd.example', username: 'user-SECRET', credential: 'cred-SECRET' };
+    const good = { urls: 'stun:a.b' };
+    const calls: RTCIceServer[][] = [];
+    const check = (servers: RTCIceServer[]): string | null => {
+      calls.push(servers);
+      return servers.includes(bad) ? 'SyntaxError' : null;
+    };
+    const r = keepAccepted([good, bad], check);
+    expect(r.servers).toEqual([good]);
+    expect(r.problems).toEqual(['server 1: the browser rejects this server (SyntaxError); ignored']);
+    expect(r.problems.join('\n')).not.toContain('SECRET');
+    expect(calls).toEqual([[good], [bad], [good]]);
+    const whole = keepAccepted([good, { urls: 'stun:c.d' }], (s) => (s.length > 1 ? 'InvalidAccessError' : null));
+    expect(whole.servers).toEqual([]);
+    expect(whole.problems).toEqual(['the browser rejects these servers together (InvalidAccessError); all ignored']);
+    expect(keepAccepted([good], null)).toEqual({ servers: [good], problems: [] });
+  });
+
+  it('browserIceServerCheck: null without RTCPeerConnection; with one, reports the error name and closes what it built', () => {
+    const g = globalThis as { RTCPeerConnection?: unknown };
+    const saved = g.RTCPeerConnection;
+    try {
+      delete g.RTCPeerConnection;
+      expect(browserIceServerCheck()).toBeNull();
+      let closed = 0;
+      g.RTCPeerConnection = class {
+        constructor(c: RTCConfiguration) {
+          if ((c.iceServers ?? []).some((s) => s.urls === 'stun:bad')) {
+            const e = new Error("'stun:bad' with secret is not valid");
+            e.name = 'SyntaxError';
+            throw e;
+          }
+        }
+        close(): void { closed++; }
+      };
+      const check = browserIceServerCheck()!;
+      expect(check([{ urls: 'stun:a.b' }])).toBeNull();
+      expect(closed).toBe(1);
+      expect(check([{ urls: 'stun:bad' }])).toBe('SyntaxError');
+    } finally {
+      if (saved === undefined) delete g.RTCPeerConnection;
+      else g.RTCPeerConnection = saved;
+    }
+  });
+
   it('parseRelayFile: { iceServers } or { credentialsUrl: https }, nothing else', () => {
     expect(parseRelayFile({ iceServers: [{ urls: 'stun:a.b' }] })).toEqual({ kind: 'servers', servers: [{ urls: 'stun:a.b' }], problems: [] });
     expect(parseRelayFile({ credentialsUrl: 'https://app.metered.live/api/v1/turn/credentials?apiKey=k' }))
@@ -160,6 +235,16 @@ describe('NET-FIX loadRelay', () => {
     expect(l.lines).toEqual(['[net] relay: none (no relay.json beside the page; direct connections only)']);
   });
 
+  it('the shipped default ({ "iceServers": [] }, public/relay.json): no relay, quietly, no problem logged', async () => {
+    const shipped = readFileSync(`${root}public/relay.json`, 'utf8');
+    expect(JSON.parse(shipped)).toEqual({ iceServers: [] });
+    const { fetchFn } = fakeFetch(() => new Response(shipped, { status: 200, headers: { 'content-type': 'application/json' } }));
+    const l = logs();
+    const r = await loadRelay({ url: PAGE_RELAY, fetchFn, log: l.log });
+    expect(r).toEqual({ iceServers: [], source: 'none', declared: false, problems: [] });
+    expect(l.lines).toEqual(['[net] relay: none configured (relay.json lists no servers; direct connections only)']);
+  });
+
   it('a host that answers a missing file with its HTML page counts as absent', async () => {
     const { fetchFn } = fakeFetch(() => new Response('<!doctype html><title>DotKick</title>', { status: 200, headers: { 'content-type': 'text/html' } }));
     expect((await loadRelay({ url: PAGE_RELAY, fetchFn })).declared).toBe(false);
@@ -175,6 +260,26 @@ describe('NET-FIX loadRelay', () => {
     expect(r.problems.length).toBe(1);
     expect(l.lines.join('\n')).toMatch(/1 server\(s\) from relay.json \(TURN\)/);
     expect(l.lines.join('\n')).not.toContain('"p"');
+  });
+
+  it('servers the browser rejects are dropped and logged (relay.json and the credentials URL); declared stays true', async () => {
+    const odd = { urls: 'turn:odd.example:3478', username: 'u', credential: 'p' };
+    const check = (servers: RTCIceServer[]): string | null => (servers.some((x) => x.urls === odd.urls) ? 'SyntaxError' : null);
+    const { fetchFn } = fakeFetch(() => json({ iceServers: [{ urls: 'stun:a.b' }, odd] }));
+    const l = logs();
+    const r = await loadRelay({ url: PAGE_RELAY, fetchFn, log: l.log, check });
+    expect(r.iceServers).toEqual([{ urls: 'stun:a.b' }]);
+    expect(r.declared).toBe(true);
+    expect(r.source).toBe('file');
+    expect(l.lines).toContain('[net] relay: relay.json server 1: the browser rejects this server (SyntaxError); ignored');
+    expect(l.lines).toContain('[net] relay: 1 server(s) from relay.json (no TURN)');
+
+    const cred = 'https://dotkick.metered.live/api/v1/turn/credentials?apiKey=K';
+    const c = fakeFetch((url) => (url === PAGE_RELAY ? json({ credentialsUrl: cred }) : json([odd])));
+    const l2 = logs();
+    const r2 = await loadRelay({ url: PAGE_RELAY, fetchFn: c.fetchFn, log: l2.log, check: () => 'SyntaxError' });
+    expect(r2).toMatchObject({ iceServers: [], source: 'none', declared: true });
+    expect(l2.lines).toContain('[net] relay: credentials server 0: the browser rejects this server (SyntaxError); ignored');
   });
 
   it('{ credentialsUrl }: fetched without cookies, Metered array accepted, the key never logged', async () => {
@@ -231,6 +336,17 @@ describe('NET-FIX loadRelay', () => {
     expect(Date.now() - t0).toBeLessThan(1000);
     expect(r.iceServers).toEqual([]);
     expect(r.problems[0]).toMatch(/no answer within 50 ms/);
+  });
+
+  it('a timeout is reported as such even when the fetch rejects the moment it is aborted (as browsers do)', async () => {
+    // Not an async wrapper: the promise the fetch returns rejects synchronously inside abort(), like Chromium's.
+    const fetchFn = ((_url: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('signal is aborted without reason', 'AbortError')));
+    })) as typeof fetch;
+    const l = logs();
+    const r = await loadRelay({ url: PAGE_RELAY, fetchFn, timeoutMs: 30, log: l.log });
+    expect(r.problems).toEqual(['relay.json could not be read (no answer within 30 ms); ignored']);
+    expect(l.lines.join('\n')).not.toContain('aborted');
   });
 });
 
@@ -341,6 +457,36 @@ describe('NET-FIX blocked screen text', () => {
       expect(t.body).toMatch(/\.$/);
       expect(`${t.title} ${t.body}`).not.toMatch(/ICE|WebRTC|TURN|STUN|srflx|candidate|null|undefined/);
       expect(t.body).toMatch(/same Wi-Fi/);
+    }
+  });
+});
+
+// ============================================================ build
+
+describe('NET-FIX build ships relay.json', () => {
+  it('postbuild copies the default relay.json beside index.html and rejects one that is not a JSON object', async () => {
+    const pb = (await import(/* @vite-ignore */ new URL('../../tools/postbuild.mjs', import.meta.url).href)) as {
+      EXTRA_FILES: string[];
+      runPostbuild(dist: string, opts: { publicDir: string }): { errors: string[]; files?: string[] };
+    };
+    expect(pb.EXTRA_FILES).toContain('relay.json');
+    const base = mkdtempSync(join(tmpdir(), 'netfix-'));
+    try {
+      const dist = join(base, 'dist');
+      const pub = join(base, 'public');
+      mkdirSync(dist, { recursive: true });
+      mkdirSync(pub, { recursive: true });
+      writeFileSync(join(dist, 'index.html'), '<!doctype html><html><head><meta charset="utf-8"><title>t</title></head><body></body></html>');
+      writeFileSync(join(pub, 'relay.json'), readFileSync(`${root}public/relay.json`));
+      const r = pb.runPostbuild(dist, { publicDir: pub });
+      expect(r.files).toContain('relay.json');
+      expect(r.errors.filter((e) => /relay/.test(e))).toEqual([]);
+      writeFileSync(join(dist, 'relay.json'), '[1, 2]');
+      expect(pb.runPostbuild(dist, { publicDir: pub }).errors).toContain('relay.json is not a JSON object');
+      writeFileSync(join(dist, 'relay.json'), '{ nope');
+      expect(pb.runPostbuild(dist, { publicDir: pub }).errors.some((e) => e.startsWith('relay.json does not parse'))).toBe(true);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
     }
   });
 });

@@ -32,7 +32,8 @@
  *     starts without the other side's old grace, and our own grace still running is announced again on it.
  *  7. [NET-FIX, D-044] ICE: the Peer gets config.iceServers (public STUN, src/net/config.ts) plus the servers of
  *     deps.extraIceServers (the relay from relay.json, src/net/relay.ts), awaited before the Peer is created (at most
- *     RELAY_WAIT_MS; the broker timeout starts after it). Each link watches the RTCPeerConnections of its channels
+ *     RELAY_WAIT_MS; the broker timeout starts after it; a list the browser refuses falls back to config.iceServers
+ *     alone, deps.checkIceServers). Each link watches the RTCPeerConnections of its channels
  *     (src/net/ice.ts, events only): when the channels do not open, the candidate types found on both sides and the
  *     failing stage go to the diagnostics log (deps.log) and to `transport.ice`; on success, the pair in use.
  *
@@ -45,7 +46,7 @@ import {
   createControlCodec, createEmitter, CTRL_BUSY, CTRL_FULL, CTRL_HELLO, decodeInputPacket, encodeInputPacket, MAX_BUSY_MS,
   NET_PROTOCOL_VERSION, netError, type ControlCodec,
 } from './packet';
-import { hasTurn, mergeIceServers } from './relay';
+import { browserIceServerCheck, hasTurn, mergeIceServers, type IceServerCheck } from './relay';
 import type {
   ControlMessage, InputPacket, NetErrorReason, NetRole, NetTransport, TransportEvent, TransportState,
 } from './types';
@@ -109,6 +110,12 @@ export interface PeerTransportDeps {
    * Peer is created once this settles (a rejection or no answer within RELAY_WAIT_MS counts as none).
    */
   extraIceServers?: PromiseLike<readonly RTCIceServer[]>;
+  /**
+   * [NET-FIX] Last guard before the Peer is created with extraIceServers: when the browser refuses the merged list
+   * (the RTCPeerConnection constructor would throw inside PeerJS, on the host inside its offer handler: no connection),
+   * the Peer is created without the extra servers. Default browserIceServerCheck(); null skips it.
+   */
+  checkIceServers?: IceServerCheck | null;
   /** Diagnostics log (ICE candidate types, the failing stage). */
   log?: (kind: string, message: string, data?: unknown) => void;
 }
@@ -638,7 +645,15 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
       // The broker gets its full time once the ICE list is known.
       armBrokerTimer();
     }
-    const options = peerOptions(config, extra);
+    let options = peerOptions(config, extra);
+    if (extra.length > 0 && options.config) {
+      const check = deps.checkIceServers === undefined ? browserIceServerCheck() : deps.checkIceServers;
+      const why = check ? check(options.config.iceServers) : null;
+      if (why !== null) {
+        log?.('net', `relay: the browser rejects the ICE server list (${why}); connecting without the relay`);
+        options = peerOptions(config);
+      }
+    }
     iceServers = options.config?.iceServers ?? [];
     try {
       p = await createPeer(role === 'host' ? targetId : undefined, options);

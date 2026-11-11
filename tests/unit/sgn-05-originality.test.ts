@@ -284,11 +284,22 @@ describe('SGN-05 item 5: runtime network (static half; the e2e spec logs a real 
     }
   });
 
-  it('network APIs: one same-origin fetch (service-worker probe), PeerJS only through src/net/transport.ts', () => {
+  it('network APIs: same-origin fetches (service-worker probe, the optional relay.json) and the deployer\'s relay credentials URL, PeerJS only through src/net/transport.ts', () => {
     const uses = (re: RegExp): string[] => SRC_FILES.filter((p) => !p.endsWith('.test.ts') && re.test(srcText(p))).map(rel).sort();
-    expect(uses(/(?<![.\w])fetch\(|\bfetchFn\(/)).toEqual(['src/platform/pwa.ts']);
+    // [NET-FIX, D-044] src/net/relay.ts reads relay.json beside the page (same origin, no-store) when a room opens and,
+    // only if that file names one, the deployer's https credentials URL (no cookies). No URL of its own.
+    expect(uses(/(?<![.\w])fetch\(|\bfetchFn\(/)).toEqual(['src/net/relay.ts', 'src/platform/pwa.ts']);
     expect(srcText(join(root, 'src/platform/pwa.ts'))).toMatch(/credentials: 'same-origin'/);
-    expect(uses(/new (WebSocket|EventSource|RTCPeerConnection)\b|XMLHttpRequest/)).toEqual([]);
+    const relay = srcText(join(root, 'src/net/relay.ts'));
+    expect(relay).toMatch(/cache: 'no-store', credentials: 'same-origin'/);
+    expect(relay).toMatch(/cache: 'no-store', credentials: 'omit'/);
+    expect(relay).toMatch(/protocol === 'https:'/);
+    expect(uses(/new (WebSocket|EventSource)\b|XMLHttpRequest/)).toEqual([]);
+    // [NET-FIX] relay.ts builds an RTCPeerConnection only to ask the browser whether it accepts the relay's ICE
+    // servers, and closes it at once: no offer, no description, no candidate, so no gathering and no network.
+    expect(uses(/new RTCPeerConnection\b/)).toEqual(['src/net/relay.ts']);
+    expect(relay).toMatch(/new RTCPeerConnection\(\{ iceServers: servers \}\)\.close\(\);/);
+    expect(relay).not.toMatch(/createOffer|createAnswer|setLocalDescription|setRemoteDescription|createDataChannel|addIceCandidate/);
     expect(uses(/from 'peerjs'|import\('peerjs'\)/)).toEqual(['src/net/transport.ts']);
     expect(srcText(join(root, 'src/net/transport.ts'))).toMatch(/await import\('peerjs'\)/);
     expect(uses(/0\.peerjs\.com/)).toEqual(['src/net/config.ts']);

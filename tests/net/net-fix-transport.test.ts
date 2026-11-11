@@ -1,6 +1,7 @@
 /**
  * [NET-FIX, D-044] The PeerJS transport and the ICE list / relay / connection-stage diagnostics (fake broker, no network):
  *  - the Peer is created with NET_CONFIG's STUN list plus the relay's servers (deps.extraIceServers), awaited first;
+ *    a merged list the browser rejects (deps.checkIceServers) falls back to the STUN list alone;
  *  - a relay that fails or never answers costs at most RELAY_WAIT_MS and the room still opens (STUN only);
  *  - the broker timeout counts from when the ICE list is known;
  *  - channels that never open: the transport reports the candidate types and the failing stage (transport.ice and the
@@ -65,12 +66,13 @@ afterEach(() => {
   delete (FakeConn.prototype as unknown as { peerConnection?: unknown }).peerConnection;
 });
 
-function setup(extra?: PeerTransportDeps['extraIceServers'], overrides = {}) {
+function setup(extra?: PeerTransportDeps['extraIceServers'], overrides = {}, check?: PeerTransportDeps['checkIceServers']) {
   const f = fakeSetup({ iceServers: NET_CONFIG.iceServers, ...overrides });
   const lines: string[] = [];
   const timers = { now: f.clock.now, setTimeout: f.clock.setTimeout, clearTimeout: f.clock.clearTimeout };
   const make = (withExtra: boolean): NetTransport => createPeerTransport(f.config, {
     createPeer: f.broker.factory, timers, log: (k, m) => lines.push(`[${k}] ${m}`), ...(withExtra && extra ? { extraIceServers: extra } : {}),
+    ...(check !== undefined ? { checkIceServers: check } : {}),
   });
   return { ...f, lines, make };
 }
@@ -94,6 +96,42 @@ describe('NET-FIX transport ICE servers', () => {
       expect(p.options.config?.iceServers).toEqual([...NET_CONFIG.iceServers!, TURN]);
     }
     expect(host.state).toBe('open');
+  });
+
+  it('a relay list the browser rejects: both sides fall back to the STUN list alone and still connect', async () => {
+    const odd = { urls: 'turn:odd.example:3478', username: 'u', credential: 'p' };
+    const checked: RTCIceServer[][] = [];
+    const check = (servers: RTCIceServer[]): string | null => {
+      checked.push(servers);
+      return servers.some((x) => x.urls === odd.urls) ? 'SyntaxError' : null;
+    };
+    const s = setup(Promise.resolve([odd]), {}, check);
+    const host = s.make(true);
+    const guest = s.make(true);
+    const done = Promise.all([host.open('host', 'KQZ7MP'), guest.open('guest', 'KQZ7MP')]);
+    await s.run(200);
+    await done;
+    expect(s.broker.created.length).toBe(2);
+    for (const p of s.broker.created) expect(p.options.config?.iceServers).toEqual(NET_CONFIG.iceServers);
+    expect(checked.length).toBe(2);
+    expect(s.lines.filter((l) => l.includes('the browser rejects the ICE server list')).length).toBe(2);
+    expect(s.lines.join('\n')).not.toContain('"p"');
+    expect(host.state).toBe('open');
+    expect(guest.state).toBe('open');
+  });
+
+  it('the browser check runs only for run-time servers, and an accepted list is used as is', async () => {
+    const calls: number[] = [];
+    const s = setup(Promise.resolve([TURN]), {}, (servers) => { calls.push(servers.length); return null; });
+    void s.make(true).open('host', 'KQZ7MP');
+    await s.run(50);
+    expect(calls).toEqual([NET_CONFIG.iceServers!.length + 1]);
+    expect(s.broker.created[0]!.options.config?.iceServers).toEqual([...NET_CONFIG.iceServers!, TURN]);
+    const s2 = setup(undefined, {}, () => { calls.push(-1); return 'SyntaxError'; });
+    void s2.make(false).open('host', 'AAAAAA');
+    await s2.run(50);
+    expect(calls).toEqual([NET_CONFIG.iceServers!.length + 1]);
+    expect(s2.broker.created[0]!.options.config?.iceServers).toEqual(NET_CONFIG.iceServers);
   });
 
   it('without a relay the Peer still gets the explicit STUN list (never PeerJS\'s TURN defaults)', async () => {

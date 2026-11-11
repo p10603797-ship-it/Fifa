@@ -7,16 +7,22 @@
  *
  *   { "iceServers": [{ "urls": "turn:relay.example.com:3478", "username": "u", "credential": "p" }] }
  *       the servers are appended to the STUN list for this room;
- *   { "credentialsUrl": "https://<app>.metered.live/api/v1/turn/credentials?apiKey=<key>" }
- *       an https URL that answers a JSON array of RTCIceServer (Metered's format) or { "iceServers": [...] }; it is
+ *   { "credentialsUrl": "https://relay.example.com/credentials" }
+ *       an https URL (Metered: <app>.metered.live/api/v1/turn/credentials with the app's key as a query parameter, see
+ *       the README) that answers a JSON array of RTCIceServer (Metered's format) or { "iceServers": [...] }; it is
  *       fetched each time a room opens, so short-lived credentials stay fresh.
+ *
+ * The build ships relay.json as `{ "iceServers": [] }` (no relay), so the fetch finds a file and the browser logs no
+ * 404; a missing file is handled the same way (index.html deployed alone).
  *
  * The online screen calls loadRelay() when it creates or joins a room. relay.json is fetched from the page's own
  * directory (same origin, cache 'no-store', RELAY_TIMEOUT_MS); the credentials URL with the same timeout and no
  * cookies. Everything is validated strictly (validateIceServers: only stun: / turn: / turns: URLs, string username and
- * credential, TURN entries must carry both, at most MAX_RELAY_SERVERS servers); anything malformed is dropped and
- * logged to diagnostics. A missing file (404, the default deploy), a network error or a timeout means "no relay" and
- * never stops the room from opening. The service worker never answers relay.json from its cache (public/sw.js).
+ * credential, TURN entries must carry both, at most MAX_RELAY_SERVERS servers), then each server is offered to the
+ * browser's own RTCPeerConnection parser (keepAccepted; one server it refuses would otherwise break every connection,
+ * direct ones included); anything malformed or refused is dropped and logged to diagnostics. A missing file (404, the
+ * default deploy), a network error or a timeout means "no relay" and never stops the room from opening. The service
+ * worker never answers relay.json from its cache (public/sw.js).
  *
  * The key in a Metered credentials URL is meant for browsers (it only mints short-lived TURN credentials); it lives in
  * the deployed relay.json, never in this repository.
@@ -56,9 +62,26 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-/** A stun: / turn: / turns: URL (RFC 7064 / 7065 shape: scheme, host, optional port and query; no spaces). */
+/** host [":" port] of an ICE URL: a DNS name (letters, digits, '-', '_', dots), an IPv4 address or a [bracketed] IPv6. */
+const ICE_URL_RE = /^(stun|turns?):([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.?|\[[0-9A-Fa-f:.]+\])(?::(\d{1,5}))?(\?transport=(?:udp|tcp))?$/i;
+
+/**
+ * A stun: / turn: / turns: URL the browser accepts (RFC 7064 / 7065): scheme, host, optional port 1-65535, and only on
+ * turn: / turns: an optional `?transport=udp|tcp`. Anything else (a query on stun:, the old `?transport=udp` STUN form,
+ * port 0 or 99999, two ports, a user@ part, a path, other query keys) makes `new RTCPeerConnection` throw in Chromium,
+ * and one such server would break every connection, direct ones included (D-044). Pure.
+ */
 export function isIceUrl(u: unknown): u is string {
-  return typeof u === 'string' && u.length <= MAX_URL_CHARS && /^(stun|turns?):[^\s/?#][^\s]*$/i.test(u);
+  if (typeof u !== 'string' || u.length > MAX_URL_CHARS) return false;
+  const m = ICE_URL_RE.exec(u);
+  if (!m) return false;
+  if (m[3] !== undefined) {
+    const port = Number(m[3]);
+    if (port < 1 || port > 65535) return false;
+  }
+  // The query key is case-sensitive in Chromium; the value is not.
+  if (m[4] !== undefined && (!/^turns?$/i.test(m[1]!) || !m[4].startsWith('?transport='))) return false;
+  return true;
 }
 
 /** True when the URL is a TURN relay (turn: / turns:). */
@@ -103,7 +126,7 @@ export function validateIceServers(raw: unknown): { servers: RTCIceServer[]; pro
       return;
     }
     if (!rawUrls.every(isIceUrl)) {
-      problems.push(`server ${i}: only stun:, turn: and turns: URLs are allowed`);
+      problems.push(`server ${i}: only stun:, turn: and turns: URLs are allowed (host, optional port, turn: may add ?transport=udp|tcp)`);
       return;
     }
     const urls = rawUrls as string[];
@@ -116,7 +139,8 @@ export function validateIceServers(raw: unknown): { servers: RTCIceServer[]; pro
       problems.push(`server ${i}: credential must be a string`);
       return;
     }
-    if (urls.some(isTurnUrl) && (typeof username !== 'string' || typeof credential !== 'string')) {
+    // Chromium refuses a TURN server with an empty username or credential (InvalidAccessError) like a missing one.
+    if (urls.some(isTurnUrl) && (typeof username !== 'string' || typeof credential !== 'string' || username === '' || credential === '')) {
       problems.push(`server ${i}: a turn: server needs a username and a credential`);
       return;
     }
@@ -126,6 +150,53 @@ export function validateIceServers(raw: unknown): { servers: RTCIceServer[]; pro
     servers.push(s);
   });
   return { servers, problems };
+}
+
+/**
+ * Asks the browser whether it accepts an ICE server list: null when it does, else a short reason. The browser's own
+ * parser is the final word (isIceUrl follows Chromium's, other engines may differ in corners).
+ */
+export type IceServerCheck = (servers: RTCIceServer[]) => string | null;
+
+/**
+ * The browser check: `new RTCPeerConnection({ iceServers })` then close(), the same check PeerJS's own feature test
+ * makes. Nothing is gathered and no server is contacted (gathering only starts with a local description). null when
+ * the page has no RTCPeerConnection (tests in node, very old browsers): nothing to check against.
+ */
+export function browserIceServerCheck(): IceServerCheck | null {
+  if (typeof RTCPeerConnection !== 'function') return null;
+  return (servers) => {
+    try {
+      new RTCPeerConnection({ iceServers: servers }).close();
+      return null;
+    } catch (err) {
+      // The error's name only: its message can quote the server entry.
+      return err instanceof Error && err.name ? err.name : 'error';
+    }
+  };
+}
+
+/**
+ * Keeps the servers the check accepts one by one, then checks the whole list once more (a combination the browser
+ * refuses drops everything). Messages never quote usernames or credentials. Pure given the check.
+ */
+export function keepAccepted(servers: readonly RTCIceServer[], check: IceServerCheck | null | undefined): { servers: RTCIceServer[]; problems: string[] } {
+  if (!check || servers.length === 0) return { servers: [...servers], problems: [] };
+  const problems: string[] = [];
+  const kept: RTCIceServer[] = [];
+  servers.forEach((s, i) => {
+    const why = check([s]);
+    if (why === null) kept.push(s);
+    else problems.push(`server ${i}: the browser rejects this server (${why}); ignored`);
+  });
+  if (kept.length > 0) {
+    const why = check(kept);
+    if (why !== null) {
+      problems.push(`the browser rejects these servers together (${why}); all ignored`);
+      return { servers: [], problems };
+    }
+  }
+  return { servers: kept, problems };
 }
 
 /** What a relay.json file asks for. Pure. */
@@ -144,7 +215,7 @@ export function isHttpsUrl(u: unknown): u is string {
   }
 }
 
-/** Parse the JSON of relay.json: { iceServers: [...] } or { credentialsUrl: 'https://...' }. Pure. */
+/** Parse the JSON of relay.json: { iceServers: [...] } or { credentialsUrl: an https URL }. Pure. */
 export function parseRelayFile(raw: unknown): RelayFile {
   if (!isRecord(raw)) return { kind: 'invalid', problem: 'relay.json is not a JSON object' };
   if (raw.credentialsUrl !== undefined) {
@@ -191,6 +262,8 @@ export interface LoadRelayOptions {
   fetchFn?: typeof fetch;
   timeoutMs?: number;
   log?: Log;
+  /** Browser check of the validated servers (default browserIceServerCheck(); null skips it). */
+  check?: IceServerCheck | null;
 }
 
 async function fetchJson(fetchFn: typeof fetch, url: string, init: RequestInit, timeoutMs: number): Promise<{ status: number; json?: unknown; html?: boolean }> {
@@ -198,8 +271,9 @@ async function fetchJson(fetchFn: typeof fetch, url: string, init: RequestInit, 
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      ctl?.abort();
+      // Settle the timeout first: a real fetch rejects at once on abort, and its "signal is aborted" would win the race.
       reject(new Error(`no answer within ${timeoutMs} ms`));
+      ctl?.abort();
     }, timeoutMs);
   });
   try {
@@ -229,6 +303,7 @@ export async function loadRelay(opts: LoadRelayOptions = {}): Promise<RelayConfi
     log?.('net', `relay: ${p}`);
   };
   if (!fetchFn) return { ...NO_RELAY, problems: [] };
+  const check = opts.check === undefined ? browserIceServerCheck() : opts.check;
   let url: string;
   try {
     url = opts.url ?? relayUrlFor(typeof location !== 'undefined' ? location.href : '');
@@ -259,9 +334,16 @@ export async function loadRelay(opts: LoadRelayOptions = {}): Promise<RelayConfi
   }
   if (file.kind === 'servers') {
     for (const p of file.problems) note(`relay.json ${p}`);
+    if (file.servers.length === 0 && file.problems.length === 0) {
+      log?.('net', 'relay: none configured (relay.json lists no servers; direct connections only)');
+      return { ...NO_RELAY, problems: [] };
+    }
+    // A relay was asked for when a TURN entry was written, even one the browser then rejects.
     const declared = hasTurn(file.servers);
-    log?.('net', `relay: ${file.servers.length} server(s) from relay.json${declared ? ' (TURN)' : ' (no TURN)'}`);
-    return { iceServers: file.servers, source: file.servers.length > 0 ? 'file' : 'none', declared, problems };
+    const accepted = keepAccepted(file.servers, check);
+    for (const p of accepted.problems) note(`relay.json ${p}`);
+    log?.('net', `relay: ${accepted.servers.length} server(s) from relay.json${hasTurn(accepted.servers) ? ' (TURN)' : ' (no TURN)'}`);
+    return { iceServers: accepted.servers, source: accepted.servers.length > 0 ? 'file' : 'none', declared, problems };
   }
   // credentialsUrl
   try {
@@ -272,7 +354,9 @@ export async function loadRelay(opts: LoadRelayOptions = {}): Promise<RelayConfi
       note(`the credentials URL ${redactUrl(file.url)} answered HTTP ${r.status}; no relay for this room`);
       return { iceServers: [], source: 'none', declared: true, problems };
     }
-    const v = parseCredentials(r.json);
+    const parsed = parseCredentials(r.json);
+    for (const p of parsed.problems) note(`credentials ${p}`);
+    const v = keepAccepted(parsed.servers, check);
     for (const p of v.problems) note(`credentials ${p}`);
     log?.('net', `relay: ${v.servers.length} server(s) from ${redactUrl(file.url)}${hasTurn(v.servers) ? ' (TURN)' : ' (no TURN)'}`);
     return { iceServers: v.servers, source: v.servers.length > 0 ? 'credentials' : 'none', declared: true, problems };

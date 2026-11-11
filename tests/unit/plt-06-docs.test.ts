@@ -25,7 +25,8 @@ const read = (rel: string): string => readFileSync(join(root, rel), 'utf8');
 
 const DOCS = ['README.md', 'docs/ASSETS.md', 'docs/DEVICE_CHECKLIST.md', 'docs/DEPLOY.md'] as const;
 /** Paths the docs tell the reader to create (they need not exist in the repo). */
-const USER_CREATED = new Set(['.github/workflows/pages.yml']);
+// relay.json: the optional TURN relay config a deployer drops next to index.html (D-044); never in the repository.
+const USER_CREATED = new Set(['.github/workflows/pages.yml', 'relay.json']);
 
 interface PackageJson {
   scripts: Record<string, string>;

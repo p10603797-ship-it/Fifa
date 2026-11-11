@@ -126,7 +126,8 @@ test.describe('SGN-05 runtime network', () => {
     for (const re of FORBIDDEN_IN_BUNDLE) expect(html, String(re)).not.toMatch(re);
     // The only network endpoints in the bundle are the online 1v1 ones (PeerJS broker, the public STUN list of
     // NET_CONFIG, and the PeerJS library's own unused TURN defaults, D-044).
-    for (const m of html.matchAll(/\b(?:wss?|stun|turn):[/]{0,2}([a-z0-9.-]+)/gi)) {
+    // (A host has a dot: minified code such as `?ws:0` is no endpoint.)
+    for (const m of html.matchAll(/\b(?:wss?|stun|turn):[/]{0,2}([a-z0-9-]+\.[a-z0-9.-]+)/gi)) {
       expect(['0.peerjs.com', 'stun.l.google.com', 'stun1.l.google.com', 'stun.cloudflare.com', 'global.stun.twilio.com',
         'eu-0.turn.peerjs.com', 'us-0.turn.peerjs.com'], m[0]).toContain(m[1]!);
     }
@@ -268,9 +269,13 @@ test.describe('SGN-05 runtime network', () => {
     expect([...hosts]).toEqual(['0.peerjs.com']);
     const rtc = (await pageNet(page)).rtc;
     for (const ice of rtc) {
-      // [D-044] the explicit STUN list only (no relay.json in this build): never PeerJS's dead TURN defaults.
+      // [D-044] the explicit STUN list (no relay.json in this build). PeerJS's own feature probe (util.supports) still
+      // constructs one connection with its built-in config and closes it without gathering; every other connection
+      // carries NET_CONFIG's list, never PeerJS's dead TURN defaults.
+      const peerjsProbe = /turn\.peerjs\.com/.test(ice);
       for (const m of ice.matchAll(/(?:stun|turn)s?:([a-z0-9.-]+)/gi)) {
-        expect(['stun.l.google.com', 'stun1.l.google.com', 'stun.cloudflare.com', 'global.stun.twilio.com']).toContain(m[1]!);
+        expect(peerjsProbe ? ['stun.l.google.com', 'eu-0.turn.peerjs.com', 'us-0.turn.peerjs.com']
+          : ['stun.l.google.com', 'stun1.l.google.com', 'stun.cloudflare.com', 'global.stun.twilio.com']).toContain(m[1]!);
       }
     }
     await t.detach();

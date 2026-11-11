@@ -32,7 +32,9 @@ export const GZIP_BUDGET_BYTES = 4 * 1024 * 1024;
 /** Decoded woff2 bytes allowed inline (five Latin faces are ~80 KB). */
 export const FONT_BUDGET_BYTES = 200 * 1024;
 /** Files allowed beside index.html (the optional extras). */
-export const EXTRA_FILES = ['manifest.webmanifest', 'sw.js'];
+// relay.json: the optional TURN relay config (D-044), shipped as `{ "iceServers": [] }` (no relay) so the page's fetch
+// never 404s (a console error); a deployer replaces it next to index.html.
+export const EXTRA_FILES = ['manifest.webmanifest', 'sw.js', 'relay.json'];
 export const EXTRA_DIRS = ['icons'];
 export const SW_BUILD_RE = /^(const BUILD = )'([^'\n]*)'(; \/\/ dotkick-build)/m;
 
@@ -314,6 +316,17 @@ export function runPostbuild(dist, opts = {}) {
     if (!existsSync(join(dist, f)) && existsSync(join(publicDir, f))) {
       copyFileSync(join(publicDir, f), join(dist, f));
       notes.push(`copied ${f} from public/`);
+    }
+  }
+  // [NET-FIX] relay.json must be a JSON object (src/net/relay.ts ignores anything else, but a broken shipped default is a
+  // build mistake).
+  const relayPath = join(dist, 'relay.json');
+  if (existsSync(relayPath)) {
+    try {
+      const v = JSON.parse(readFileSync(relayPath, 'utf8'));
+      if (typeof v !== 'object' || v === null || Array.isArray(v)) errors.push('relay.json is not a JSON object');
+    } catch (err) {
+      errors.push(`relay.json does not parse: ${String(err)}`);
     }
   }
   for (const d of EXTRA_DIRS) {
