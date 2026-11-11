@@ -23,6 +23,8 @@
  * - Everything else is not touched. Cross-origin requests are never intercepted or cached: the PeerJS broker, STUN /
  *   TURN and anything else online 1v1 talks to go straight to the network (WebSockets never reach a service worker),
  *   and a same-origin /peerjs path is skipped too.
+ * - [NET-FIX, D-044] relay.json (the optional TURN relay config beside index.html, src/net/relay.ts) is network only:
+ *   never answered from or stored in the cache, so a changed or removed relay applies at the next room.
  *
  * Messages from the page (src/platform/pwa.ts)
  * - { type: 'SKIP_WAITING' }: the player accepted the update; this waiting worker activates (the page reloads on
@@ -206,6 +208,7 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return; // PeerJS broker, STUN/TURN, CDNs: never intercepted
   if (!url.href.startsWith(scopeUrl())) return;
   if (/\/peerjs(\/|$)/.test(url.pathname)) return;
+  if (/\/relay\.json$/.test(url.pathname)) return; // network only (the page fetches it with cache: 'no-store')
   if (isShellRequest(req, url)) {
     event.respondWith(networkFirst(event));
     return;

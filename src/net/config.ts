@@ -2,12 +2,15 @@
  * [NET-02] Network configuration: PeerJS broker and ICE servers in one object so a self-hosted PeerServer can
  * replace the defaults (brief section 11). No keys anywhere: the public PeerJS cloud broker needs none.
  *
- *   NET_CONFIG                         the defaults (free public PeerJS broker, PeerJS default ICE servers)
+ *   NET_CONFIG                         the defaults (free public PeerJS broker, DEFAULT_ICE_SERVERS)
  *   createNetConfig({ host: 'peer.example.org', port: 9000, path: '/dotkick', secure: true })
  *                                      a self-hosted PeerServer (everything not given keeps the default)
  *
- * iceServers undefined means "PeerJS defaults" (one public STUN server plus the PeerJS public TURN relays), so the
- * defaults stay in step with the pinned peerjs version. Importing this file never touches the network.
+ * [NET-FIX, D-044] The ICE servers are explicit: a few free public STUN servers and no TURN relay. PeerJS's own defaults
+ * (stun.l.google.com plus the TURN relays eu-0 / us-0.turn.peerjs.com) are never used: both PeerJS TURN hostnames have
+ * no DNS records any more, so they relayed nothing. There is no free TURN relay without an account; a deploy adds one
+ * at run time with a relay.json file beside index.html (src/net/relay.ts, README "If online does not connect"), whose
+ * servers are appended to this list for that room. Importing this file never touches the network.
  */
 
 export interface NetConfig {
@@ -19,7 +22,7 @@ export interface NetConfig {
   path?: string;
   /** Use wss/https for the broker. Default true. */
   secure?: boolean;
-  /** ICE servers; undefined = PeerJS defaults. */
+  /** ICE servers (STUN / TURN); undefined = PeerJS's built-in defaults (dead TURN relays: avoid, D-044). */
   iceServers?: RTCIceServer[];
   /** PeerJS log level 0..3. */
   debug: number;
@@ -47,12 +50,23 @@ export interface NetConfig {
   brokerRetryMs: number;
 }
 
-/** Defaults: the free public PeerJS broker and its default ICE servers. */
+/**
+ * Free public STUN servers (each device learns its public address for a direct link). Four operators, so one outage
+ * does not matter; kept short because every server costs ICE gathering time. No TURN here: see relay.json.
+ */
+export const DEFAULT_ICE_SERVERS: readonly RTCIceServer[] = Object.freeze([
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+]);
+
+/** Defaults: the free public PeerJS broker and the public STUN servers above (a relay comes from relay.json). */
 export const NET_CONFIG: NetConfig = {
   host: '0.peerjs.com',
   port: 443,
   path: '/',
   secure: true,
+  iceServers: DEFAULT_ICE_SERVERS.map((s) => ({ ...s })),
   debug: 0,
   peerPrefix: 'dotkick-',
   brokerTimeoutMs: 10_000,

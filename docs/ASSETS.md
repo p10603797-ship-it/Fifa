@@ -58,11 +58,12 @@ These are not assets, but they are the only places the game connects to, and onl
 | Service | Address | Role |
 |---|---|---|
 | PeerJS public broker (PeerJS Cloud) | `0.peerjs.com` (port 443) | Introduces the two players (signalling). Free, no key |
-| STUN server (PeerJS default) | `stun.l.google.com:19302` | Lets each device learn its public address for the direct link |
-| TURN relays (PeerJS default) | `eu-0.turn.peerjs.com:3478`, `us-0.turn.peerjs.com:3478` | Relay the match data when a direct link is impossible |
+| STUN servers | `stun.l.google.com:19302`, `stun1.l.google.com:19302`, `stun.cloudflare.com:3478`, `global.stun.twilio.com:3478` | Let each device learn its public address for the direct link |
+| TURN relay (optional, none by default) | whatever the site's `relay.json` names (README section 7) | Relays the match data when a direct link is impossible |
 
 All of them are set in one place, `NET_CONFIG` in `src/net/config.ts`, and can be replaced by your own servers
-([DEPLOY.md](DEPLOY.md#self-hosted-peerjs-server-optional)).
+([DEPLOY.md](DEPLOY.md#self-hosted-peerjs-server-optional)). The PeerJS library still contains its old default relay
+addresses (`eu-0.turn.peerjs.com`, `us-0.turn.peerjs.com`), but the game never uses them (D-044).
 
 ## Build and test tools (not shipped)
 

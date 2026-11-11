@@ -20,8 +20,15 @@
  * shows the waiting / reconnecting / pause pill (createNetIndicator, also exported for the match HUD) and the "Finish
  * against CPU / End match" card after the 20 s rejoin window.
  *
+ * [NET-FIX, D-044] Creating or joining a room also fetches the optional relay config (relay.json beside index.html,
+ * src/net/relay.ts) for that room; its servers are appended to the ICE list. A 'blocked' failure explains itself by
+ * what the transport saw (blockedVariant): no relay configured (try the same Wi-Fi, or ask for a relay), a relay that
+ * could not be reached, or a relay that was reached but did not help. The details go to the diagnostics log.
+ *
  * Test hook (e2e, never set in production): window.__dotkickNetTest = { createTransport(role), config, code,
- * startCountdownMs } replaces the PeerJS transport (an in-page fake) or the broker settings (a local PeerServer).
+ * startCountdownMs, relayUrl } replaces the PeerJS transport (an in-page fake) or the broker settings (a local
+ * PeerServer). The hook's config wins over NET_CONFIG key by key (its iceServers replace the public STUN list); the
+ * relay's servers are still appended unless relayUrl is null (no fetch); a string relayUrl replaces the file's URL.
  * window.__dotkickOnline exposes a read-only view of the room for tests and diagnostics.
  */
 import { UiSound, type AppContext, type Screen, type ScreenParams } from '../../contracts/app';
@@ -32,6 +39,8 @@ import { cleanNickname, createLobby, NICKNAME_MAX, type Lobby, type LobbyError, 
 import {
   formatRoomCode, isRoomCodeChar, normaliseRoomCode, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, roomCodeFromUrl, roomLink, urlWithoutRoom,
 } from '../../net/roomCode';
+import type { IceReport } from '../../net/ice';
+import { loadRelay, NO_RELAY, type RelayConfig } from '../../net/relay';
 import { createOnlineSession, onlineSupported, type OnlineSession, type OnlineStatus } from '../../net/session';
 import { createPeerTransport } from '../../net/transport';
 import type { NetTransport } from '../../net/types';
@@ -68,7 +77,7 @@ export const ONLINE_ERROR_TEXT: Readonly<Record<LobbyError, ErrorText>> = {
   },
   blocked: {
     title: 'The network blocked the connection',
-    body: 'Your devices could not connect to each other. Join the same Wi-Fi network, or use a phone hotspot, then try again.',
+    body: 'Your devices could not reach each other directly. This usually happens on different networks, such as mobile data. Put both devices on the same Wi-Fi (or one phone\'s hotspot) and try again, or ask the game\'s owner to add a relay.',
   },
   disconnected: {
     title: 'Connection lost',
@@ -86,6 +95,33 @@ export const ONLINE_ERROR_TEXT: Readonly<Record<LobbyError, ErrorText>> = {
 
 export function errorText(reason: LobbyError): ErrorText {
   return ONLINE_ERROR_TEXT[reason] ?? ONLINE_ERROR_TEXT.disconnected;
+}
+
+/**
+ * [NET-FIX] Why a connection was blocked, as far as this device can tell:
+ *  - 'no-relay'          no TURN relay configured: only a direct link was possible (ONLINE_ERROR_TEXT.blocked);
+ *  - 'relay-unreachable' a relay is configured, but this device got no relay candidate from it (or its credentials);
+ *  - 'relay-failed'      this device reached the relay and the link still did not open.
+ */
+export type BlockedVariant = 'no-relay' | 'relay-unreachable' | 'relay-failed';
+
+export const BLOCKED_TEXT: Readonly<Record<BlockedVariant, ErrorText>> = {
+  'no-relay': ONLINE_ERROR_TEXT.blocked,
+  'relay-unreachable': {
+    title: 'Could not reach the relay',
+    body: 'Your devices could not reach each other directly, and the relay server that links them in that case could not be reached either. Put both devices on the same Wi-Fi (or one phone\'s hotspot) and try again.',
+  },
+  'relay-failed': {
+    title: 'The network blocked the connection',
+    body: 'Your devices could not connect, even through the relay server. Put both devices on the same Wi-Fi (or one phone\'s hotspot) and try again.',
+  },
+};
+
+/** The blocked variant from the room's relay config and the transport's ICE report. Pure. */
+export function blockedVariant(relay: Readonly<RelayConfig> | null, ice: Readonly<IceReport> | null | undefined): BlockedVariant {
+  const configured = !!relay?.declared || !!ice?.relayConfigured;
+  if (!configured) return 'no-relay';
+  return ice && ice.local.includes('relay') ? 'relay-failed' : 'relay-unreachable';
 }
 
 /** The privacy line (brief section 11; the README explains IP exposure in full). */
@@ -194,6 +230,8 @@ export interface NetTestHook {
   startCountdownMs?: number;
   /** Read by test transports only: make the next open() fail with this reason. */
   failOpen?: string;
+  /** relay.json URL instead of the one beside the page; null = do not fetch a relay. */
+  relayUrl?: string | null;
 }
 
 export interface OnlineDebugView {
@@ -270,6 +308,8 @@ interface Room {
   screenMounted: boolean;
   /** The lobby closed (left, or Finish against CPU) while its match may still be running. */
   closed: boolean;
+  /** The room's relay config once loaded (null while loading, and for in-page test transports). */
+  relay: RelayConfig | null;
 }
 
 let room: Room | null = null;
@@ -305,9 +345,31 @@ function openRoom(ctx: AppContext, host: boolean, code?: string): Room {
   const hook = testHook();
   const s = ctx.settings.get();
   const rejoin = !host && code ? readRejoin() : null;
+  const log = (kind: string, message: string, data?: unknown): void => {
+    try {
+      ctx.diagnostics.log(kind, message, data);
+    } catch {
+      /* diagnostics never break the lobby */
+    }
+  };
+  // The relay for this room only: fetched now, awaited by the transport before it creates its Peer.
+  let relayRoom: Room | null = null;
+  let relayServers: Promise<readonly RTCIceServer[]> | null = null;
+  const loadRelayOnce = (): Promise<readonly RTCIceServer[]> => {
+    if (!relayServers) {
+      const load = hook?.relayUrl === null
+        ? Promise.resolve<RelayConfig>({ ...NO_RELAY, problems: [] })
+        : loadRelay({ url: hook?.relayUrl ?? undefined, log });
+      relayServers = load.then((rc) => {
+        if (relayRoom) relayRoom.relay = rc;
+        return rc.iceServers;
+      });
+    }
+    return relayServers;
+  };
   const factory = hook?.createTransport
     ? () => hook.createTransport!(host ? 'host' : 'guest')
-    : () => createPeerTransport(createNetConfig(hook?.config ?? {}));
+    : () => createPeerTransport(createNetConfig(hook?.config ?? {}), { extraIceServers: loadRelayOnce(), log });
   const lobby = createLobby({
     host,
     code: host ? hook?.code ?? code : code,
@@ -317,15 +379,10 @@ function openRoom(ctx: AppContext, host: boolean, code?: string): Room {
     prefs: { assist: s.controls.assist, autoSwitch: s.controls.autoSwitch, fastPower: s.controls.touch?.fastPowerBar ? 1 : 0 },
     rejoinToken: rejoin && rejoin.code === code ? rejoin.token : undefined,
     startCountdownMs: hook?.startCountdownMs,
-    log: (kind, message, data) => {
-      try {
-        ctx.diagnostics.log(kind, message, data);
-      } catch {
-        /* diagnostics never break the lobby */
-      }
-    },
+    log,
   });
-  const r: Room = { ctx, lobby, os: null, overlay: null, unsubs: [], screenMounted: true, closed: false };
+  const r: Room = { ctx, lobby, os: null, overlay: null, unsubs: [], screenMounted: true, closed: false, relay: null };
+  relayRoom = r;
   room = r;
   if (host) {
     lobby.setConfig(defaultTemplate(ctx));
@@ -753,8 +810,9 @@ export function createOnlineScreen(): Screen {
 
   function renderError(root: HTMLElement, ctx: AppContext): void {
     const reason: LobbyError = unsupported ? 'unsupported' : room?.lobby.error ?? 'disconnected';
-    const t = errorText(reason);
-    root.append(h('div', { class: 'net-error', testId: `net-error-${reason}` },
+    const variant = reason === 'blocked' ? blockedVariant(room?.relay ?? null, room?.lobby.transport.ice) : null;
+    const t = variant ? BLOCKED_TEXT[variant] : errorText(reason);
+    root.append(h('div', { class: 'net-error', testId: `net-error-${reason}`, attrs: variant ? { 'data-blocked': variant } : undefined },
       h('div', { class: 'net-error__icon', text: '!', attrs: { 'aria-hidden': 'true' } }),
       h('h1', { class: 'ui-title', text: t.title, testId: 'net-error-title' }),
       h('p', { class: 'ui-subtitle', text: t.body, testId: 'net-error-body' }),

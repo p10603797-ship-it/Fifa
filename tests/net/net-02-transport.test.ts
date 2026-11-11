@@ -124,14 +124,15 @@ describe('NET-02 packet codec', () => {
 });
 
 describe('NET-02 config', () => {
-  it('defaults to the public PeerJS broker with PeerJS default ICE servers and no keys', () => {
+  it('defaults to the public PeerJS broker with explicit public STUN servers (never PeerJS\'s dead TURN defaults) and no keys', () => {
     expect(NET_CONFIG.host).toBe('0.peerjs.com');
     expect(NET_CONFIG.secure).toBe(true);
-    expect(NET_CONFIG.iceServers).toBeUndefined();
+    expect(NET_CONFIG.iceServers).toBeDefined(); // [NET-FIX, D-044] was undefined = PeerJS defaults
     expect(NET_CONFIG.peerPrefix).toBe('dotkick-');
     expect(JSON.stringify(NET_CONFIG)).not.toMatch(/key|token|credential/i);
     const o = peerOptions(NET_CONFIG);
-    expect('config' in o).toBe(false); // PeerJS keeps its default ICE config
+    expect(o.config?.iceServers).toEqual(NET_CONFIG.iceServers);
+    expect(JSON.stringify(o)).not.toMatch(/peerjs\.com:3478|turn:/);
     expect(o).toMatchObject({ host: '0.peerjs.com', port: 443, path: '/', secure: true });
   });
 

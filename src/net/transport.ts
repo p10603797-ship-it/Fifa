@@ -30,15 +30,22 @@
  *  6. expectBusy(ms) sends '$busy' { ms }: both sides suspend the silence timeout for up to ms (match warm-up blocks
  *     the main thread); expectBusy(0) / '$busy' { ms: 0 } ends the grace. A grace belongs to its link: a new link
  *     starts without the other side's old grace, and our own grace still running is announced again on it.
+ *  7. [NET-FIX, D-044] ICE: the Peer gets config.iceServers (public STUN, src/net/config.ts) plus the servers of
+ *     deps.extraIceServers (the relay from relay.json, src/net/relay.ts), awaited before the Peer is created (at most
+ *     RELAY_WAIT_MS; the broker timeout starts after it). Each link watches the RTCPeerConnections of its channels
+ *     (src/net/ice.ts, events only): when the channels do not open, the candidate types found on both sides and the
+ *     failing stage go to the diagnostics log (deps.log) and to `transport.ice`; on success, the pair in use.
  *
  * Tests inject `createPeer` (a fake Peer / DataConnection pair, no network) and `timers` (a manual clock).
  */
 import { createRttMeter, type RttMeter } from './adaptive';
 import type { NetConfig } from './config';
+import { createIceProbe, describeIce, failedStage, type IceProbe, type IceReport } from './ice';
 import {
   createControlCodec, createEmitter, CTRL_BUSY, CTRL_FULL, CTRL_HELLO, decodeInputPacket, encodeInputPacket, MAX_BUSY_MS,
   NET_PROTOCOL_VERSION, netError, type ControlCodec,
 } from './packet';
+import { hasTurn, mergeIceServers } from './relay';
 import type {
   ControlMessage, InputPacket, NetErrorReason, NetRole, NetTransport, TransportEvent, TransportState,
 } from './types';
@@ -97,7 +104,17 @@ export interface PeerTransportDeps {
   version?: string;
   /** Explicit peer id to host under / dial instead of NetConfig.peerPrefix + code. */
   peerId?: string;
+  /**
+   * [NET-FIX] More ICE servers, known only at run time (the relay of relay.json), appended to config.iceServers. The
+   * Peer is created once this settles (a rejection or no answer within RELAY_WAIT_MS counts as none).
+   */
+  extraIceServers?: PromiseLike<readonly RTCIceServer[]>;
+  /** Diagnostics log (ICE candidate types, the failing stage). */
+  log?: (kind: string, message: string, data?: unknown) => void;
 }
+
+/** Longest wait for deps.extraIceServers before the Peer is created without them, ms (two 3 s fetches + margin). */
+export const RELAY_WAIT_MS = 7000;
 
 /** PeerJS error type -> plain-language reason. `phase` is what was happening when it arrived. */
 export function mapPeerError(type: string | undefined, phase: 'broker' | 'dial' | 'open'): NetErrorReason {
@@ -127,14 +144,17 @@ export function mapPeerError(type: string | undefined, phase: 'broker' | 'dial' 
   }
 }
 
-/** Peer constructor options from a NetConfig (undefined keys are left out so PeerJS defaults apply). */
-export function peerOptions(config: NetConfig): PeerOptionsLike {
+/**
+ * Peer constructor options from a NetConfig plus run-time ICE servers (`extra`, appended). Undefined keys are left out
+ * so PeerJS defaults apply; NET_CONFIG always sets iceServers, so PeerJS's dead TURN defaults are never used (D-044).
+ */
+export function peerOptions(config: NetConfig, extra: readonly RTCIceServer[] = []): PeerOptionsLike {
   const o: PeerOptionsLike = { debug: config.debug };
   if (config.host !== undefined) o.host = config.host;
   if (config.port !== undefined) o.port = config.port;
   if (config.path !== undefined) o.path = config.path;
   if (config.secure !== undefined) o.secure = config.secure;
-  if (config.iceServers !== undefined) o.config = { iceServers: config.iceServers };
+  if (config.iceServers !== undefined || extra.length > 0) o.config = { iceServers: mergeIceServers(config.iceServers, extra) };
   return o;
 }
 
@@ -162,6 +182,9 @@ interface Link {
   dead: boolean;
   codec: ControlCodec;
   timer: unknown;
+  /** ICE diagnostics of this link's RTCPeerConnections. */
+  probe: IceProbe;
+  iceReported: boolean;
 }
 
 type Wait = { resolve: () => void; reject: (e: Error) => void };
@@ -171,6 +194,10 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
   const createPeer = deps.createPeer ?? defaultPeerFactory;
   const timers = deps.timers ?? defaultTimers;
   const version = deps.version ?? NET_PROTOCOL_VERSION;
+  const log = deps.log;
+  /** The ICE servers handed to the Peer (known once startPeer resolved the extra servers). */
+  let iceServers: readonly RTCIceServer[] = config.iceServers ?? [];
+  let lastIce: IceReport | null = null;
 
   let state: TransportState = 'idle';
   let role: NetRole | null = null;
@@ -226,6 +253,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
   /** Opening failed for good: report, reject, tear down. */
   function fail(reason: NetErrorReason, detail?: string): void {
     if (closed || state === 'failed') return;
+    if (reason === 'blocked' && link) reportIce(link, detail);
     state = 'failed';
     events.emit(detail === undefined ? { type: 'error', reason } : { type: 'error', reason, detail });
     settle(netError(reason));
@@ -238,6 +266,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
    */
   function failAttempt(reason: NetErrorReason, detail?: string): void {
     if (closed || state === 'failed') return;
+    if (reason === 'blocked' && link) reportIce(link, detail);
     if (role === 'guest' && openWait === null && state !== 'open') {
       if (link) dropLink(link);
       state = 'closed';
@@ -252,11 +281,44 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     return now < localGraceUntil || now < remoteGraceUntil ? 0 : now - lastHeard;
   }
 
+  /**
+   * The link's channels did not open: what ICE found, and where it stopped, to the diagnostics log and `ice`. Read
+   * synchronously (PeerJS lets go of the RTCPeerConnection when the channel closes). Once per link.
+   */
+  function reportIce(l: Link, why?: string): void {
+    if (l.iceReported || l.established) return;
+    l.iceReported = true;
+    try {
+      const snap = l.probe.snapshot();
+      lastIce = { ...snap, stage: failedStage(snap), relayConfigured: hasTurn(iceServers), servers: iceServers.length };
+      log?.('net', `${describeIce(lastIce)}${why ? ` (${why})` : ''}`);
+    } catch {
+      /* diagnostics never break the transport */
+    }
+  }
+
+  /** The link opened: record and log the candidate types and, once getStats answers, the pair in use. */
+  function reportIceOpen(l: Link): void {
+    try {
+      const snap = l.probe.snapshot();
+      const rep: IceReport = { ...snap, stage: null, relayConfigured: hasTurn(iceServers), servers: iceServers.length };
+      lastIce = rep;
+      if (!log) return;
+      void l.probe.selectedPair().then((pair) => {
+        const via = pair ? `, pair ${pair.local ?? '?'} -> ${pair.remote ?? '?'}${pair.local === 'relay' || pair.remote === 'relay' ? ' (through the relay)' : ' (direct)'}` : '';
+        log('net', `${describeIce(rep)}${via}`);
+      });
+    } catch {
+      /* diagnostics never break the transport */
+    }
+  }
+
   function dropLink(l: Link): void {
     // Detach first: closing a channel fires 'close' synchronously, which must not re-enter linkLost for this link.
     l.dead = true;
     if (link === l) link = null;
     l.timer = clear(l.timer);
+    l.probe.dispose();
     l.codec.reset();
     for (const c of [l.control, l.inputs]) {
       try {
@@ -285,6 +347,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
   function linkLost(l: Link): void {
     if (link !== l) return;
     const wasEstablished = l.established;
+    if (!wasEstablished) reportIce(l, 'channel closed before the handshake');
     dropLink(l);
     if (closed || state === 'failed') return;
     if (!wasEstablished) {
@@ -297,6 +360,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
   }
 
   function established(l: Link): void {
+    reportIceOpen(l);
     l.established = true;
     l.timer = clear(l.timer);
     state = 'open';
@@ -389,6 +453,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     const isControl = conn.label === 'control';
     if (isControl) l.control = conn;
     else l.inputs = conn;
+    l.probe.watch(conn);
     conn.on('open', () => {
       if (l.dead) return;
       if (isControl) l.controlOpen = true;
@@ -404,7 +469,10 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
       if (l.dead) return;
       if (l.established) linkLost(l);
       else if (role === 'guest') failAttempt(mapPeerError(err?.type, 'dial'), err?.message);
-      else dropLink(l);
+      else {
+        reportIce(l, err?.message ?? err?.type);
+        dropLink(l);
+      }
     });
     if (conn.open) {
       if (isControl) l.controlOpen = true;
@@ -416,13 +484,14 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
   function newLink(peerId: string): Link {
     const l: Link = {
       peerId, control: null, inputs: null, controlOpen: false, inputsOpen: false, helloSent: false, established: false,
-      dead: false, codec: createControlCodec(), timer: null,
+      dead: false, codec: createControlCodec(), timer: null, probe: createIceProbe(), iceReported: false,
     };
     l.timer = timers.setTimeout(() => {
       l.timer = null;
       if (l.dead || l.controlOpen && l.inputsOpen) return;
       if (role === 'guest') failAttempt('blocked', 'data channels did not open');
       else {
+        reportIce(l, 'a guest could not connect');
         events.emit({ type: 'error', reason: 'blocked', detail: 'a guest could not connect' });
         dropLink(l);
       }
@@ -532,10 +601,47 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     }, config.brokerRetryMs);
   }
 
+  function armBrokerTimer(): void {
+    brokerTimer = clear(brokerTimer);
+    brokerTimer = timers.setTimeout(() => {
+      brokerTimer = null;
+      if (!brokerOpen) fail('broker-unreachable', 'broker timeout');
+    }, config.brokerTimeoutMs);
+  }
+
+  /** deps.extraIceServers, or [] on rejection / no answer within RELAY_WAIT_MS. */
+  async function resolveExtra(): Promise<readonly RTCIceServer[]> {
+    const src = deps.extraIceServers;
+    if (!src) return [];
+    let h: unknown = null;
+    try {
+      return await Promise.race([
+        Promise.resolve(src).then((v) => (Array.isArray(v) ? v : []), () => []),
+        new Promise<readonly RTCIceServer[]>((resolve) => {
+          h = timers.setTimeout(() => {
+            log?.('net', `relay: no answer within ${RELAY_WAIT_MS} ms; connecting without it`);
+            resolve([]);
+          }, RELAY_WAIT_MS);
+        }),
+      ]);
+    } finally {
+      clear(h);
+    }
+  }
+
   async function startPeer(): Promise<void> {
     let p: PeerLike;
+    let extra: readonly RTCIceServer[] = [];
+    if (deps.extraIceServers) {
+      extra = await resolveExtra();
+      if (closed || state === 'failed') return;
+      // The broker gets its full time once the ICE list is known.
+      armBrokerTimer();
+    }
+    const options = peerOptions(config, extra);
+    iceServers = options.config?.iceServers ?? [];
     try {
-      p = await createPeer(role === 'host' ? targetId : undefined, peerOptions(config));
+      p = await createPeer(role === 'host' ? targetId : undefined, options);
     } catch (err) {
       fail('unsupported', err instanceof Error ? err.message : String(err));
       return;
@@ -573,6 +679,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
     get role() { return role; },
     get rtt() { return meter.rttMs; },
     get jitter() { return meter.jitterMs; },
+    get ice() { return lastIce; },
     open(r, code) {
       if (state !== 'idle') return Promise.reject(new Error('open() called twice'));
       role = r;
@@ -581,10 +688,7 @@ export function createPeerTransport(config: NetConfig, deps: PeerTransportDeps =
       const p = new Promise<void>((resolve, reject) => {
         openWait = { resolve, reject };
       });
-      brokerTimer = timers.setTimeout(() => {
-        brokerTimer = null;
-        if (!brokerOpen) fail('broker-unreachable', 'broker timeout');
-      }, config.brokerTimeoutMs);
+      if (!deps.extraIceServers) armBrokerTimer();
       void startPeer();
       return p;
     },

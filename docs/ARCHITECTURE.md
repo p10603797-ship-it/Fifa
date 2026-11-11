@@ -118,7 +118,8 @@ to `SETPIECE_INPUT[kind]`; when the taker plays the ball `applyKick` sets `resta
   DOM only on change; every screen works by touch alone and by controller alone (FocusNavigator).
 * **Net** (`src/net/`): lockstep `TickInputProvider` with input delay, redundancy and hash exchange (`lockstep.ts`,
   `adaptive.ts`, `desync.ts`), PeerJS and in-memory transports (`transport.ts`, `memoryTransport.ts`, `packet.ts`,
-  broker settings in `config.ts`), room codes and lobby (`roomCode.ts`, `lobby.ts`), and the online match session
+  broker and STUN settings in `config.ts`, the optional runtime relay `relay.ts` and ICE diagnostics `ice.ts`, D-044),
+  room codes and lobby (`roomCode.ts`, `lobby.ts`), and the online match session
   (`session.ts`: pause rules through `MatchSetup.hooks` (D-021), 20 s rejoin, Finish against CPU through
   `Command.HAND_TO_CPU`). The screens are `src/ui/screens/online.ts`.
 * **Modes** (`src/modes/`): Kick-Off, Cup, Shoot-out and Practice set-ups and flows; match statistics and records

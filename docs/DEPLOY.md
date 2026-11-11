@@ -195,10 +195,12 @@ HTTPS tunnel to `npx http-server dist`. Two details:
 
 ## Self-hosted PeerJS server (optional)
 
-Online 1v1 uses the free public PeerJS broker (`0.peerjs.com`, port 443) and PeerJS's default STUN and TURN servers
-to introduce the two players; after that the match data goes directly between them where the network allows. All
-broker and ICE settings are one object, `NET_CONFIG` in `src/net/config.ts`: `host`, `port`, `path`, `secure` and
-`iceServers` (undefined means the PeerJS defaults). To use your own server:
+Online 1v1 uses the free public PeerJS broker (`0.peerjs.com`, port 443) and public STUN servers (Google, Cloudflare,
+Twilio) to introduce the two players; after that the match data goes directly between them where the network allows.
+There is no TURN relay in the build (PeerJS's default relays no longer exist, D-044); add one at run time with a
+`relay.json` file next to `index.html` (README section 7, "If online does not connect / adding a relay"). All broker
+and ICE settings are one object, `NET_CONFIG` in `src/net/config.ts`: `host`, `port`, `path`, `secure` and
+`iceServers` (the STUN list; relay.json servers are appended to it). To use your own server:
 
 1. Run a PeerServer (the open-source `peer` package from the PeerJS project; see its README) behind HTTPS.
 2. Change `host`, `port`, `path` and `secure` in `NET_CONFIG` to match it (`createNetConfig({...})` builds a config

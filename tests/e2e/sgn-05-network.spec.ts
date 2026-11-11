@@ -124,9 +124,11 @@ test.describe('SGN-05 runtime network', () => {
     // Dev-only packages stay out (the local PeerServer `peer` and its express server, test tools).
     expect(html).not.toMatch(/peerjs-server|\bexpress\b|vitest|@playwright|typescript-eslint/);
     for (const re of FORBIDDEN_IN_BUNDLE) expect(html, String(re)).not.toMatch(re);
-    // The only network endpoints in the bundle are the online 1v1 ones (PeerJS broker, its STUN / TURN defaults).
+    // The only network endpoints in the bundle are the online 1v1 ones (PeerJS broker, the public STUN list of
+    // NET_CONFIG, and the PeerJS library's own unused TURN defaults, D-044).
     for (const m of html.matchAll(/\b(?:wss?|stun|turn):[/]{0,2}([a-z0-9.-]+)/gi)) {
-      expect(['0.peerjs.com', 'stun.l.google.com', 'eu-0.turn.peerjs.com', 'us-0.turn.peerjs.com'], m[0]).toContain(m[1]!);
+      expect(['0.peerjs.com', 'stun.l.google.com', 'stun1.l.google.com', 'stun.cloudflare.com', 'global.stun.twilio.com',
+        'eu-0.turn.peerjs.com', 'us-0.turn.peerjs.com'], m[0]).toContain(m[1]!);
     }
   });
 
@@ -266,8 +268,9 @@ test.describe('SGN-05 runtime network', () => {
     expect([...hosts]).toEqual(['0.peerjs.com']);
     const rtc = (await pageNet(page)).rtc;
     for (const ice of rtc) {
+      // [D-044] the explicit STUN list only (no relay.json in this build): never PeerJS's dead TURN defaults.
       for (const m of ice.matchAll(/(?:stun|turn)s?:([a-z0-9.-]+)/gi)) {
-        expect(['stun.l.google.com', 'eu-0.turn.peerjs.com', 'us-0.turn.peerjs.com']).toContain(m[1]!);
+        expect(['stun.l.google.com', 'stun1.l.google.com', 'stun.cloudflare.com', 'global.stun.twilio.com']).toContain(m[1]!);
       }
     }
     await t.detach();

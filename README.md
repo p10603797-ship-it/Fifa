@@ -322,6 +322,58 @@ Both devices need the internet. The first visit must be online over HTTPS (any p
 Online play uses the free public PeerJS service to introduce the two devices; read section 10 (Privacy) first. If
 something goes wrong the game shows a plain message; section 9 lists what to do.
 
+### If online does not connect / adding a relay
+
+The game first tries a **direct** link between the two devices. That works on the same Wi-Fi and on most home
+networks, but often fails when the devices are on **different networks**, such as one on mobile data (many mobile
+networks share one public address between many phones), a guest or office Wi-Fi, or a Wi-Fi that keeps devices apart.
+The screen then says the devices could not reach each other directly. Quick fixes:
+
+- Put both devices on the **same Wi-Fi**, or connect one device to the other's **phone hotspot**.
+- **Settings > Diagnostics > Copy report** shows what was tried: lines starting `[net] ice` list the address types each
+  device found (`host` = local network, `srflx` = public address, `relay` = a relay server) and the stage that failed.
+
+For play across any networks, the person who publishes the game can add a **TURN relay**: a server that passes the
+match data between the two devices when no direct link is possible. The game ships without one (there is no free
+public relay that works without an account), and it needs no rebuild: it reads an optional file `relay.json` next to
+`index.html` each time a room is created or joined. Steps with Metered's free TURN plan (20 GB of relay traffic a
+month at the time of writing):
+
+1. Sign up at https://dashboard.metered.ca/signup?tool=turnserver (free account, no card).
+2. In the dashboard, create a TURN app. Its name gives your address `https://<appname>.metered.live`.
+3. Create a TURN credential / API key in that app. The dashboard shows a code sample with a URL of this form; copy
+   it:
+   `https://<appname>.metered.live/api/v1/turn/credentials?apiKey=<your API key>`
+   Check it by opening it in a browser: it must show a list (`[ { "urls": "stun:..." }, { "urls": "turn:...",
+   "username": "...", "credential": "..." }, ... ]`).
+4. Make a file named `relay.json` with exactly this content (your URL in the quotes):
+
+   ```json
+   { "credentialsUrl": "https://<appname>.metered.live/api/v1/turn/credentials?apiKey=<your API key>" }
+   ```
+
+5. Put it next to `index.html` on the site. On GitHub Pages published from the `gh-pages` branch: open the repository
+   on github.com, switch the branch menu to **gh-pages**, choose **Add file > Create new file**, name it
+   `relay.json`, paste the content, and **Commit changes**. Pages republishes in a minute or two; check that
+   `https://<you>.github.io/<repo>/relay.json` shows the file. Force-pushing a new build to `gh-pages` removes it:
+   add it again afterwards (or copy it into the `dist/` folder before pushing). On a drag-and-drop host, add it to
+   the folder you upload. With the GitHub Actions workflow (section 4, Way 2) the site is rebuilt from the repository,
+   so the file would have to be committed in `public/`, which publishes the key in the repository too: limit the key
+   in the Metered dashboard first, or publish from a branch instead.
+6. Create a new room. **Copy report** now shows `relay: 5 server(s) from https://<appname>.metered.live/... (TURN)`,
+   and `pair ... (through the relay)` when the relay was used.
+
+Notes:
+- That API key is meant to sit in web pages (it only hands out short-lived relay passwords, and the dashboard lets
+  you limit it), but anyone can read it from `relay.json`, so watch the usage in the dashboard. Never put it in the
+  game's source code.
+- Instead of a credentials URL, `relay.json` may list servers directly:
+  `{ "iceServers": [{ "urls": "turn:relay.example.com:3478", "username": "...", "credential": "..." }] }` (only
+  `stun:`, `turn:` and `turns:` addresses, at most 10; anything malformed is ignored and noted in the diagnostics).
+- Deleting `relay.json` turns the relay off again. The offline copy never keeps an old `relay.json`.
+- If the screen says **Could not reach the relay**, the relay is set up but this device could not get through to it
+  (a wrong or expired key, a used-up monthly allowance, or a network that blocks it): check the URL from step 3.
+
 ---
 
 ## 8. Controls reference
@@ -628,7 +680,8 @@ A newer version has been published. Tap **Reload** to switch to it now, or ignor
 | Room code not found | Check the 6-character code with your friend; the host must keep the game open on the room screen. |
 | Room is full | Someone else already joined that room. The host can create a new one. |
 | Version mismatch | You run different versions. Both reload the page (accept **Update available**) and try again. |
-| Connection blocked by the network | Some networks (school, office, hotel, some mobile networks) block direct connections. Use the same Wi-Fi, or one player's phone hotspot. |
+| Connection blocked by the network | The devices could not reach each other directly (often different networks, such as mobile data, or school, office and hotel networks). Use the same Wi-Fi, or one player's phone hotspot; the game's publisher can add a relay (section 7, "If online does not connect / adding a relay"). |
+| Could not reach the relay | A relay is set up but this device could not reach it. Use the same Wi-Fi or a hotspot, and check the relay settings (section 7). |
 | Your friend left or the connection dropped | The game waits 20 seconds for a rejoin, then offers to finish against the CPU or end the match. |
 
 **Something went wrong** (a recovery screen appears).
@@ -648,11 +701,13 @@ Results** button. The on-device script is [docs/DEVICE_CHECKLIST.md](docs/DEVICE
 - No accounts, ads, analytics or tracking. The game makes no network requests while you play, except for online 1v1.
 - Settings, records and cup progress stay on your iPad (browser storage). **Settings > Data** erases them.
 - **Online 1v1 is peer to peer.** The two iPads connect directly to each other (WebRTC). A free public PeerJS
-  matchmaking server introduces them, and when a direct link is impossible the traffic may pass through a public relay
-  server. Only a nickname and game inputs are sent. There is no chat, and nothing is stored online.
-- **Peer-to-peer play shows each player's IP address to the other** (and to those matchmaking and relay servers). An
-  IP address can reveal your rough location and your internet provider. **Share room codes and links only with people
-  you know.**
+  matchmaking server introduces them, and public STUN servers (Google, Cloudflare, Twilio) tell each device its own
+  public address. The game ships with no relay server; if the site's publisher added one (`relay.json`, section 7),
+  the traffic passes through that relay when a direct link is impossible. Only a nickname and game inputs are sent.
+  There is no chat, and nothing is stored online.
+- **Peer-to-peer play shows each player's IP address to the other** (and to the matchmaking, STUN and any relay
+  servers). An IP address can reveal your rough location and your internet provider. **Share room codes and links
+  only with people you know.**
 
 ---
 

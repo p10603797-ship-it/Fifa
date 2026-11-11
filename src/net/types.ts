@@ -24,6 +24,8 @@
  * Every subscriber sees every non-'$' message and must ignore types it does not own.
  */
 
+import type { IceReport } from './ice';
+
 /** Which side of the room this peer is. The host owns the match settings and is the resync authority. */
 export type NetRole = 'host' | 'guest';
 
@@ -107,6 +109,11 @@ export interface NetTransport {
   readonly rtt: number;
   /** Round-trip jitter estimate (smoothed mean deviation), ms (0 until measured). */
   readonly jitter: number;
+  /**
+   * [NET-FIX] ICE diagnostics of the last link that opened or failed to open (candidate types, failing stage); null
+   * before any, and absent on transports without WebRTC (in-memory, test fakes).
+   */
+  readonly ice?: IceReport | null;
   /**
    * Host a room (peer id = NetConfig.peerPrefix + code) or join one. Resolves once both channels are open and the
    * versions agree; rejects with an Error whose message is a NetErrorReason. No network use before this call.
