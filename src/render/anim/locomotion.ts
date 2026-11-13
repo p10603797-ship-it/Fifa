@@ -33,7 +33,7 @@
  * Allocation-free: module scratch only; parameter sets are built once at load.
  */
 
-import { AnimId, PoseIdx, type Pose, type PoseFn } from '../../contracts/render';
+import { AnimId, POSE_SIZE, PoseIdx, type Pose, type PoseFn } from '../../contracts/render';
 import type { PoseTable } from '../types';
 import {
   ANKLE_Y, clamp, FPA, HEEL_X, HIP_Z, IKT, LEG_MAX, legIKS, lerp, PELVIS_Y, placeSwingFootS, plantToeS, PSA, PTA, setFootPitchS, SHIN,
@@ -52,6 +52,8 @@ const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: render-only animation cons
   shuffleCadenceBase: 3.2,
   shuffleCadencePerMs: 0.55,
   shuffleMinStride: 0.4,
+  /** [REPAIR] The keeper's shortest shuffle stride (m): small creeping steps with the feet nearly level. */
+  keeperMinStride: 0.24,
   /** Gravity used for the turn lean (m/s^2) and the largest lean (rad). */
   gravity: 9.81,
   maxTurnLean: 0.38,
@@ -72,17 +74,18 @@ export function strideLength(speed: number): number {
   return s > LOCAL_TUNING.minStride ? s : LOCAL_TUNING.minStride;
 }
 
-/** Shuffle stride (strafe, jockey, shield, keeper ready), m per cycle. */
-export function shuffleStrideLength(speed: number): number {
+/** Shuffle stride (strafe, jockey, shield, keeper ready), m per cycle. [REPAIR] The keeper creeps with a shorter
+ *  shortest stride (keeperMinStride). */
+export function shuffleStrideLength(speed: number, minStride: number = LOCAL_TUNING.shuffleMinStride): number {
   const v = speed > 0 ? (speed < 12 ? speed : 12) : 0;
   const s = (2 * v) / (LOCAL_TUNING.shuffleCadenceBase + LOCAL_TUNING.shuffleCadencePerMs * v);
-  return s > LOCAL_TUNING.shuffleMinStride ? s : LOCAL_TUNING.shuffleMinStride;
+  return s > minStride ? s : minStride;
 }
 
 /** Stride length the cycle of clip `anim` must advance with (m per 2 PI). Locomotion clips only; others use the run. */
 export function strideLengthFor(anim: AnimId, speed: number): number {
-  return anim === AnimId.STRAFE || anim === AnimId.JOCKEY || anim === AnimId.SHIELD || anim === AnimId.KEEPER_READY
-    ? shuffleStrideLength(speed) : strideLength(speed);
+  if (anim === AnimId.KEEPER_READY) return shuffleStrideLength(speed, LOCAL_TUNING.keeperMinStride);
+  return anim === AnimId.STRAFE || anim === AnimId.JOCKEY || anim === AnimId.SHIELD ? shuffleStrideLength(speed) : strideLength(speed);
 }
 
 /** Lean angle (rad, + = right) for a turn at `speed` (m/s) with yaw rate `yawRate` (rad/s, + = turning right). */
@@ -98,6 +101,8 @@ export function turnLeanAngle(speed: number, yawRate: number): number {
  */
 interface GaitStyle {
   shuffle: number;
+  /** Shortest stride (m per cycle) of a shuffle style. */
+  minStride: number;
   /** Feet half spacing at rest / at speed (m). */
   baseRest: number;
   baseMove: number;
@@ -116,23 +121,28 @@ interface GaitStyle {
 }
 
 const RUN: GaitStyle = {
-  shuffle: 0, baseRest: 0.115, baseMove: 0.085, crouchRest: -0.015, crouchRun: -0.09, swingH: 0.3, heelLift: 0.9, ballLift: 0,
+  shuffle: 0, minStride: LOCAL_TUNING.minStride,
+  baseRest: 0.115, baseMove: 0.085, crouchRest: -0.015, crouchRun: -0.09, swingH: 0.3, heelLift: 0.9, ballLift: 0,
   centreRest: 0.15, centreMove: 0.05,
 };
 const STRAFE_STYLE: GaitStyle = {
-  shuffle: 1, baseRest: 0.13, baseMove: 0.15, crouchRest: -0.04, crouchRun: -0.1, swingH: 0.14, heelLift: 0.6, ballLift: 0.05,
+  shuffle: 1, minStride: LOCAL_TUNING.shuffleMinStride,
+  baseRest: 0.13, baseMove: 0.15, crouchRest: -0.04, crouchRun: -0.1, swingH: 0.14, heelLift: 0.6, ballLift: 0.05,
   centreRest: 0.15, centreMove: 0.12,
 };
 const JOCKEY_STYLE: GaitStyle = {
-  shuffle: 1, baseRest: 0.19, baseMove: 0.19, crouchRest: -0.17, crouchRun: -0.06, swingH: 0.1, heelLift: 0.5, ballLift: 0.18,
+  shuffle: 1, minStride: LOCAL_TUNING.shuffleMinStride,
+  baseRest: 0.19, baseMove: 0.19, crouchRest: -0.17, crouchRun: -0.06, swingH: 0.1, heelLift: 0.5, ballLift: 0.18,
   centreRest: 0.15, centreMove: 0.13,
 };
 const SHIELD_STYLE: GaitStyle = {
-  shuffle: 1, baseRest: 0.21, baseMove: 0.2, crouchRest: -0.12, crouchRun: -0.05, swingH: 0.09, heelLift: 0.5, ballLift: 0.12,
+  shuffle: 1, minStride: LOCAL_TUNING.shuffleMinStride,
+  baseRest: 0.21, baseMove: 0.2, crouchRest: -0.12, crouchRun: -0.05, swingH: 0.09, heelLift: 0.5, ballLift: 0.12,
   centreRest: 0.14, centreMove: 0.12,
 };
 const KEEPER_STYLE: GaitStyle = {
-  shuffle: 1, baseRest: 0.2, baseMove: 0.19, crouchRest: -0.2, crouchRun: -0.05, swingH: 0.09, heelLift: 0.5, ballLift: 0.2,
+  shuffle: 1, minStride: LOCAL_TUNING.keeperMinStride,
+  baseRest: 0.2, baseMove: 0.19, crouchRest: -0.2, crouchRun: -0.05, swingH: 0.09, heelLift: 0.5, ballLift: 0.2,
   centreRest: 0.16, centreMove: 0.13,
 };
 
@@ -212,10 +222,13 @@ function gaitParams(st: GaitStyle): void {
   if (st.shuffle === 1) {
     G[G_DUTY] = 0.6;
     const sl = (2 * v) / (LOCAL_TUNING.shuffleCadenceBase + LOCAL_TUNING.shuffleCadencePerMs * v);
-    G[G_STRIDE] = sl > LOCAL_TUNING.shuffleMinStride ? sl : LOCAL_TUNING.shuffleMinStride;
+    G[G_STRIDE] = sl > st.minStride ? sl : st.minStride;
     G[G_OFFSET] = 0.5 - 0.27 * sideways; // gallop-like side shuffle: the leading foot lands first, feet never cross
     G[G_DROP] = st.crouchRest + st.crouchRun * GC[GC_05_4]!;
-    G[G_SWING] = st.swingH * move * (0.6 + 0.1 * v);
+    // [REPAIR] The swing height reaches its working value by 0.2 m/s (it scaled with ss(0, 1.2, v): a keeper
+    // creeping at 0.2 m/s lifted his boot 4 mm and read as gliding); it still goes to 0 as the player stops.
+    let q = v / 0.2; q = q > 1 ? 1 : q; q = q * q * (3 - 2 * q);
+    G[G_SWING] = st.swingH * q * (0.6 + 0.1 * v);
   } else {
     G[G_DUTY] = v <= 1.6 ? 0.56 : v <= 4 ? 0.56 + (0.34 - 0.56) * ((v - 1.6) / 2.4) : Math.max(0.27, 0.34 - 0.012 * (v - 4));
     const sl = (2 * v) / (LOCAL_TUNING.cadenceBase + LOCAL_TUNING.cadencePerMs * v);
@@ -238,7 +251,9 @@ function gaitParams(st: GaitStyle): void {
   G[G_CENTRE] = centre + (deep > 0 ? deep * 1.1 : 0);
   G[G_BALL] = st.ballLift;
   // Swing end tangents (fraction of the stance velocity): a smaller pull-back at speed keeps the feet in reach.
-  G[G_TANGENT] = 0.55 - 0.3 * GC[GC_4_8]!;
+  // [REPAIR] A shuffle step leaves and lands with the boot still in the world (tangent 1: the swing starts and ends at
+  // the stance velocity); 0.55 let the boot skate forward along the grass at either end of every side step.
+  G[G_TANGENT] = st.shuffle === 1 ? 1 : 0.55 - 0.3 * GC[GC_4_8]!;
   // The heel rolls up only when stepping forward (a backward or side step leaves the foot flat / on its ball).
   if (forward < 1) G[G_HEEL] = G[G_HEEL]! * (forward > 0 ? forward : 0);
   if (G[G_HEEL]! < st.ballLift) G[G_HEEL] = st.ballLift;
@@ -274,7 +289,9 @@ function footAt(): void {
   const s2 = s * s, s3 = s2 * s;
   F[0] = (2 * s3 - 3 * s2 + 1) * p0 + (s3 - 2 * s2 + s) * m + (-2 * s3 + 3 * s2) * p1 + (s3 - s2) * m;
   const sn = Math.sin(Math.PI * s);
-  F[2] = H * sn * sn * sn * sn;
+  // [REPAIR] Shuffle steps lift off and set down briskly (sin^2; sin^4 kept the boot within a few mm of the grass for
+  // the first and last fifth of the swing, where it read as a slide).
+  F[2] = G[G_TANGENT]! >= 1 ? H * sn * sn : H * sn * sn * sn * sn;
   const ball = G[G_BALL]!;
   let up = H * 8;
   up = up > 1 ? 1 : up;
@@ -301,6 +318,7 @@ function gaitLegs(out: Pose): void {
   out[P.ROOT_YAW] = 0;
   const base = G[G_BASE]!;
   const span = BODY_TOE_HEEL;
+  let air = 9;
   for (let leg = 0; leg < 2; leg++) {
     const side = leg === 0 ? 1 : -1; // right first: touchdown at u = 0
     let lu = u;
@@ -320,7 +338,11 @@ function gaitLegs(out: Pose): void {
       PSA[0] = tx; PSA[1] = F[2]!; PSA[2] = tz; PSA[3] = pitch;
       placeSwingFootS(out, side);
     }
+    if (F[2]! < air) air = F[2]!;
   }
+  // [REPAIR] The side gallop (G_OFFSET < 0.5) has a short flight with both feet up: report it like the run does, so
+  // the model's ground snap keeps it instead of pulling the lower swing boot down onto the grass (where it slid).
+  GAIT_AIR[0] = air > 0 && air < 9 ? air : 0;
 }
 
 /** Boot length toe to heel (m): the heel drops below the toe by this * sin(pitch) when the toes point up. */
@@ -356,7 +378,8 @@ export function strideLengthForS(anim: AnimId): void {
   let s: number;
   if (anim === AnimId.STRAFE || anim === AnimId.JOCKEY || anim === AnimId.SHIELD || anim === AnimId.KEEPER_READY) {
     s = (2 * v) / (LOCAL_TUNING.shuffleCadenceBase + LOCAL_TUNING.shuffleCadencePerMs * v);
-    if (s < LOCAL_TUNING.shuffleMinStride) s = LOCAL_TUNING.shuffleMinStride;
+    const mn = anim === AnimId.KEEPER_READY ? LOCAL_TUNING.keeperMinStride : LOCAL_TUNING.shuffleMinStride;
+    if (s < mn) s = mn;
   } else {
     s = (2 * v) / (LOCAL_TUNING.cadenceBase + LOCAL_TUNING.cadencePerMs * v);
     if (s < LOCAL_TUNING.minStride) s = LOCAL_TUNING.minStride;
@@ -459,10 +482,72 @@ const RUN_SHAPE = {
 export const RUN_IN = new Float64Array(3);
 /** Lowest sole height (m, model space) the last locomotion pose means to have: > 0 only in a flight phase. */
 export const GAIT_AIR = new Float64Array(1);
+/**
+ * [REPAIR] Planted-toe correction per leg (0 right, 1 left; m along the motion, 0 for plain PoseFn calls), set by the
+ * mapper for the slot it poses. The stance line (toe = tdToe - T * lu / D) plants a boot exactly only at a steady
+ * speed: while the speed changes inside one stance (a start from rest crosses the walk -> run blend, where the duty
+ * factor and the touchdown point change fast) it moved the planted toe by up to 15 cm. The mapper integrates where the
+ * planted toe really is (latched at touchdown, moved back by the distance travelled) and hands the difference here:
+ * added in full in the stance, faded out over the first part of the swing (no pop at toe-off), 0 again at touchdown.
+ * [REPAIR 2] RUN_PLANT[2..3]: the same for the lateral position (m, + = the model's +z), used when a run starts from a
+ * standing clip: the boot the run has planted stays where it stood (it is wider apart in the idle stance).
+ */
+export const RUN_PLANT = new Float64Array(4);
+const PLANT_MAX = 0.3;
+const PLANT_Z_MAX = 0.1;
+/** [REPAIR] Lowest mid-swing sole height of the run gait (m, at full step). */
+const SWING_CLEAR = 0.035;
 
-/** Run legs scratch: per leg (0 right, 1 left) planted flag, toe / ankle along the motion, height, pitch, lowest sole. */
-const RL = new Float64Array(16);
-const RL_STRIDE = 8, RL_PLANT = 0, RL_X = 1, RL_Y = 2, RL_P = 3, RL_LOW = 4, RL_AX = 5, RL_AY = 6, RL_U = 7;
+/** runTdS scratch: in [0] speed (m/s), [1] smoothed acceleration (m/s^2), [2] stance travel T (m); out [3] the
+ *  touchdown toe ahead of the hips (m), [4] walk -> run factor r. Shared by runPose and runPlantRefS. */
+const RTD = new Float64Array(5);
+function runTdS(): void {
+  const v = RTD[0]!, acc = RTD[1]!, T = RTD[2]!;
+  let q = (v - 1.6) / 2; q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const r = q * q * (3 - 2 * q);
+  q = acc / RUN_SHAPE.accFull; q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const accP = q * q * (3 - 2 * q);
+  q = -acc / RUN_SHAPE.brakeFull; q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const accN = q * q * (3 - 2 * q) * r;
+  const tdW = RUN_SHAPE.tdWalkBase + RUN_SHAPE.tdWalkTravel * T;
+  RTD[3] = tdW + (RUN_SHAPE.tdRunBase + RUN_SHAPE.tdRunTravel * T - tdW) * r - 0.07 * accP * r + 0.05 * accN;
+  RTD[4] = r;
+}
+
+/**
+ * [REPAIR] The run's stance line for the mapper's planted-toe tracking (RUN_PLANT). In: RPF[0] cycle (rad), RPF[1]
+ * speed (m/s), RPF[2] smoothed acceleration (m/s^2). Out per leg (right, left): RPF[3..4] the toe along the motion the
+ * stance line gives (extended past toe-off into the swing), RPF[5..6] the leg phase (0 = touchdown), RPF[7] the duty,
+ * RPF[8] the feet half spacing (m).
+ */
+export const RPF = new Float64Array(9);
+export function runPlantRefS(): void {
+  const c0 = RPF[0]!, s0 = RPF[1]!, a0 = RPF[2]!;
+  const cycle = c0 === c0 && c0 < 1e6 && c0 > -1e6 ? c0 : 0;
+  const sp = s0 === s0 && s0 < 1e6 && s0 > -1e6 ? s0 : 0;
+  const v = sp > 0 ? (sp < 12 ? sp : 12) : 0;
+  GPA[0] = v; GPA[1] = 1; GPA[2] = 0; GPA[3] = 0;
+  gaitParams(RUN);
+  const D = G[G_DUTY]!, T = G[G_TRAVEL]!;
+  RTD[0] = v; RTD[1] = a0 === a0 && a0 < 1e3 && a0 > -1e3 ? a0 : 0; RTD[2] = T;
+  runTdS();
+  let u = cycle / TAU;
+  u -= Math.floor(u);
+  if (u >= 1) u = 0;
+  for (let leg = 0; leg < 2; leg++) {
+    let lu = u;
+    if (leg === 1) { lu = u - 0.5; lu -= Math.floor(lu); if (lu >= 1) lu = 0; }
+    RPF[3 + leg] = RTD[3]! - (T * lu) / D;
+    RPF[5 + leg] = lu;
+  }
+  RPF[7] = D;
+  RPF[8] = G[G_BASE]!;
+}
+
+/** Run legs scratch: per leg (0 right, 1 left) planted flag, toe / ankle along the motion, height, pitch, lowest sole,
+ *  ankle along / up, leg phase, the share of the planted-toe correction still applied (1 in the stance). */
+const RL = new Float64Array(18);
+const RL_STRIDE = 9, RL_PLANT = 0, RL_X = 1, RL_Y = 2, RL_P = 3, RL_LOW = 4, RL_AX = 5, RL_AY = 6, RL_U = 7, RL_W = 8;
 
 /** Run gait + upper body (RPA: cycle, speed, sprint 0..1 blending the jog / sprint style, turn lean before the IK). */
 function runPose(out: Pose): void {
@@ -486,6 +571,13 @@ function runPose(out: Pose): void {
   // Speed factors: r = walk -> run, f = run -> top speed.
   let q = (v - 1.6) / 2; q = q < 0 ? 0 : q > 1 ? 1 : q;
   const r = q * q * (3 - 2 * q);
+  // Planted-toe corrections (mapper, RUN_PLANT): right, left.
+  let pl0 = RUN_PLANT[0]!, pl1 = RUN_PLANT[1]!;
+  pl0 = pl0 === pl0 ? (pl0 < -PLANT_MAX ? -PLANT_MAX : pl0 > PLANT_MAX ? PLANT_MAX : pl0) : 0;
+  pl1 = pl1 === pl1 ? (pl1 < -PLANT_MAX ? -PLANT_MAX : pl1 > PLANT_MAX ? PLANT_MAX : pl1) : 0;
+  let pz0 = RUN_PLANT[2]!, pz1 = RUN_PLANT[3]!;
+  pz0 = pz0 === pz0 ? (pz0 < -PLANT_Z_MAX ? -PLANT_Z_MAX : pz0 > PLANT_Z_MAX ? PLANT_Z_MAX : pz0) : 0;
+  pz1 = pz1 === pz1 ? (pz1 < -PLANT_Z_MAX ? -PLANT_Z_MAX : pz1 > PLANT_Z_MAX ? PLANT_Z_MAX : pz1) : 0;
   q = (v - 4) / 4.5; q = q < 0 ? 0 : q > 1 ? 1 : q;
   const f = q * q * (3 - 2 * q);
   q = (v - 0.1) / 1.1; q = q < 0 ? 0 : q > 1 ? 1 : q;
@@ -507,9 +599,9 @@ function runPose(out: Pose): void {
   const dX = Math.cos(off), dZ = Math.sin(off);
 
   // ---- stance geometry (speed and acceleration only: identical for the jog and the sprint style)
-  const tdW = RUN_SHAPE.tdWalkBase + RUN_SHAPE.tdWalkTravel * T;
-  const tdToe = tdW + (RUN_SHAPE.tdRunBase + RUN_SHAPE.tdRunTravel * T - tdW) * r
-    - 0.07 * accP * r + 0.05 * accN;
+  RTD[0] = v; RTD[1] = acc; RTD[2] = T;
+  runTdS();
+  const tdToe = RTD[3]!;
   q = (v - 0.2) / 1; q = q < 0 ? 0 : q > 1 ? 1 : q;
   const toPitch = -(0.85 + 0.4 * r) * (q * q * (3 - 2 * q));
   const tdPitch = -(0.06 + 0.16 * f) * r;
@@ -517,7 +609,9 @@ function runPose(out: Pose): void {
   // ---- pelvis: mean height and bob (lowest through the stance, highest in flight; a walk is highest mid-stance)
   const A = (0.022 + 0.008 * drive) * r * move;
   const Aw = 0.012 * (1 - r) * move;
-  const mean = -0.012 - 0.03 * r - 0.01 * drive - 0.02 * accP * r;
+  // [REPAIR] Half the drive / acceleration share of the drop (the accelerating live run sat low with bent knees all
+  // through the cycle); the reach guard below still keeps the stance leg off full extension.
+  const mean = -0.012 - 0.03 * r - 0.005 * drive - 0.01 * accP * r;
   let phi = 2 * u; phi -= Math.floor(phi);
   const bob = -A * Math.cos(TAU * (phi - D * (0.6 + 0.5 * f))) + Aw * Math.cos(TAU * (phi - D));
   const hipMean = PELVIS_Y + mean;
@@ -576,9 +670,9 @@ function runPose(out: Pose): void {
       let e = s / 0.35; e = e > 1 ? 1 : e; e = e * e * (3 - 2 * e);
       let rl = (s - 0.35) / 0.65; rl = rl < 0 ? 0 : rl > 1 ? 1 : rl; rl = rl * rl * (3 - 2 * rl);
       const p = tdPitch + (msPitch - tdPitch) * e + (toPitch - msPitch) * rl * Math.sqrt(rl);
-      const tx = tdToe - T * s;
+      const tx = tdToe - T * s + (leg === 0 ? pl0 : pl1);
       cp = Math.cos(p); sn = Math.sin(p);
-      RL[o + RL_PLANT] = 1; RL[o + RL_X] = tx; RL[o + RL_Y] = 0; RL[o + RL_P] = p; RL[o + RL_LOW] = 0;
+      RL[o + RL_PLANT] = 1; RL[o + RL_X] = tx; RL[o + RL_Y] = 0; RL[o + RL_P] = p; RL[o + RL_LOW] = 0; RL[o + RL_W] = 1;
       RL[o + RL_AX] = tx - (TOE_X * cp + ANKLE_Y * sn); RL[o + RL_AY] = -(TOE_X * sn - ANKLE_Y * cp);
     } else {
       const s = (lu - D) / (1 - D);
@@ -589,8 +683,10 @@ function runPose(out: Pose): void {
       const h = t1 - t0;
       const w = (s - t0) / h, w2 = w * w, w3 = w2 * w;
       const h00 = 2 * w3 - 3 * w2 + 1, h10 = w3 - 2 * w2 + w, h01 = -2 * w3 + 3 * w2, h11 = w3 - w2;
-      RL[o + RL_PLANT] = 0;
-      RL[o + RL_AX] = h00 * xa + h10 * h * ma + h01 * xb + h11 * h * mb;
+      // The planted-toe correction carried into the swing fades out by 40 % of it (continuous at toe-off).
+      let wl = s / 0.4; wl = wl > 1 ? 1 : wl; wl = 1 - wl * wl * (3 - 2 * wl);
+      RL[o + RL_PLANT] = 0; RL[o + RL_W] = wl;
+      RL[o + RL_AX] = h00 * xa + h10 * h * ma + h01 * xb + h11 * h * mb + (leg === 0 ? pl0 : pl1) * wl;
       RL[o + RL_AY] = h00 * ya + h10 * h * na + h01 * yb + h11 * h * nb;
       RL[o + RL_X] = s; // swing progress (pitch below)
     }
@@ -605,7 +701,7 @@ function runPose(out: Pose): void {
     const o = leg * RL_STRIDE;
     const side = leg === 0 ? 1 : -1;
     const ax = RL[o + RL_AX]! * dX;
-    const dz = side * base + RL[o + RL_AX]! * dZ - rsEst - side * HIP_Z;
+    const dz = side * base + RL[o + RL_AX]! * dZ + (leg === 0 ? pz0 : pz1) * RL[o + RL_W]! - rsEst - side * HIP_Z;
     let rem = lMax * lMax - ax * ax - dz * dz;
     rem = rem > 0 ? Math.sqrt(rem) : 0;
     const yMax = RL[o + RL_AY]! + rem - PELVIS_Y + side * HIP_Z * sinRoll;
@@ -619,8 +715,8 @@ function runPose(out: Pose): void {
       let du = k === 0 ? lu - D : lu;
       du -= Math.floor(du + 0.5);
       if (du > 0.15 || du < -0.15) continue;
-      const xe = k === 0 ? x0 : x3, ye = k === 0 ? y0 : y3;
-      const ex = xe * dX, ez = side * base + xe * dZ - rsEst - side * HIP_Z;
+      const xe = k === 0 ? x0 + (leg === 0 ? pl0 : pl1) : x3, ye = k === 0 ? y0 : y3;
+      const ex = xe * dX, ez = side * base + xe * dZ + (k === 0 ? (leg === 0 ? pz0 : pz1) : 0) - rsEst - side * HIP_Z;
       rem = lMax * lMax - ex * ex - ez * ez;
       rem = rem > 0 ? Math.sqrt(rem) : 0;
       const yv = ye + rem - PELVIS_Y + side * HIP_Z * sinRoll + 6 * du * du;
@@ -643,7 +739,7 @@ function runPose(out: Pose): void {
     const side = leg === 0 ? 1 : -1;
     if (RL[o + RL_PLANT] === 1) {
       const tx = RL[o + RL_X]!;
-      PTA[0] = tx * dX; PTA[1] = 0; PTA[2] = side * base + tx * dZ; PTA[3] = RL[o + RL_P]!;
+      PTA[0] = tx * dX; PTA[1] = 0; PTA[2] = side * base + tx * dZ + (leg === 0 ? pz0 : pz1); PTA[3] = RL[o + RL_P]!;
       plantToeS(out, side);
       air = 0;
       continue;
@@ -651,7 +747,7 @@ function runPose(out: Pose): void {
     const s = RL[o + RL_X]!;
     const al = RL[o + RL_AX]!;
     let ay = RL[o + RL_AY]!;
-    const ax = al * dX, az = side * base + al * dZ;
+    const ax = al * dX, az = side * base + al * dZ + (leg === 0 ? pz0 : pz1) * RL[o + RL_W]!;
     // Shin angle from vertical (+ forward) of the planar two-bone solution for this ankle: the foot pitch is set
     // relative to it (toes up in the air), blended from the toe-off pitch and into the touchdown pitch.
     const hy = PELVIS_Y + rootY - side * HIP_Z * sinRoll;
@@ -659,14 +755,23 @@ function runPose(out: Pose): void {
     let L = Math.sqrt(ax * ax + ddy * ddy) / (THIGH + SHIN);
     L = L > 1 ? 1 : L;
     const shin = Math.atan2(ax, -ddy) - Math.acos(L);
-    let e = (0.6 * s1 - s) / (0.6 * s1); e = e < 0 ? 0 : e > 1 ? 1 : e; const wA = e * e * (3 - 2 * e);
+    // [REPAIR] The toe-off pitch lets go by 15 % of the swing (it was held to about 20 %, and the boot trailed
+    // pointed behind the runner as the heel came up); the foot dorsiflexes more through the heel recovery.
+    let e = (0.15 - s) / 0.15; e = e < 0 ? 0 : e > 1 ? 1 : e; const wA = e * e * (3 - 2 * e);
     e = (s - s2) / (1 - s2); e = e < 0 ? 0 : e > 1 ? 1 : e; const wB = e * e * (3 - 2 * e);
     e = (s - s1) / (s2 - s1); e = e < 0 ? 0 : e > 1 ? 1 : e; e = e * e * (3 - 2 * e);
-    const rel = (0.12 + 0.12 * drive) + (0.12 + 0.1 * drive) * e;
+    const rel = (0.14 + 0.24 * drive) + (0.1 - 0.02 * drive) * e;
     const p = wA * toPitch + wB * tdPitch + (1 - wA - wB) * (shin + rel);
     cp = Math.cos(p); sn = Math.sin(p);
     const tl = TOE_X * sn - ANKLE_Y * cp, hl = HEEL_X * sn - ANKLE_Y * cp;
     let low = ay + (tl < hl ? tl : hl);
+    // [REPAIR] Mid-swing clearance: the walk -> slow-jog swing (below about 2 m/s) brushed the toe along the grass
+    // (it read as a scuffing, sliding boot). Lift the swing foot softly to at least SWING_CLEAR * move mid-swing
+    // (nothing at toe-off and touchdown, so the stance ends are unchanged).
+    const wc = 4 * s * (1 - s);
+    const dl = SWING_CLEAR * move * wc - low;
+    const lift = 0.5 * (dl + Math.sqrt(dl * dl + 0.00004)) * wc;
+    ay += lift; low += lift;
     if (low < 0) { ay -= low; low = 0; }
     if (low < air) air = low;
     IKT[0] = ax; IKT[1] = ay; IKT[2] = az;
@@ -687,16 +792,18 @@ function runPose(out: Pose): void {
   const ca = Math.cos(TAU * u - 0.25);
   let amp = ((0.2 + 0.24 * r + 0.08 * f) * (1 - drive) + (0.25 + 0.42 * r + 0.18 * f) * drive + 0.1 * accP) * armMove;
   if (amp > 1.15) amp = 1.15;
-  const mid = (0.06 + 0.1 * drive) * r;
+  // [REPAIR] Forward swing a little lower and less closed (the sprinting fist reached the collar and read as crossing
+  // the body from a 3/4 front view), the back drive a little longer.
+  const mid = (0.03 + 0.06 * drive) * r;
   out[P.SHOULDER_L_PITCH] = mid + amp * ca;
   out[P.SHOULDER_R_PITCH] = mid - amp * ca;
   const eb = 0.3 * (1 - r) + (1.42 + 0.08 * drive) * r;
-  const ea = (0.1 + 0.14 * drive) * r + 0.08 * (1 - r);
+  const ea = (0.1 - 0.02 * drive) * r + 0.08 * (1 - r);
   out[P.ELBOW_L] = eb + ea * ca;
   out[P.ELBOW_R] = eb - ea * ca;
   // A touch more abduction as an arm comes forward keeps the hand on its own side of the chest (never across).
-  out[P.SHOULDER_L_ROLL] = 0.06 + 0.04 * ca;
-  out[P.SHOULDER_R_ROLL] = 0.06 - 0.04 * ca;
+  out[P.SHOULDER_L_ROLL] = 0.075 + 0.06 * ca;
+  out[P.SHOULDER_R_ROLL] = 0.075 - 0.06 * ca;
 }
 
 function jogI(out: Pose): void {
@@ -836,23 +943,60 @@ function shieldI(out: Pose): void {
   out[in1e] = 0.9;
 }
 
-/** Keeper ready: crouched on the balls of the feet, hands up in front, shuffling in any direction. */
+/** [REPAIR] Keeper set position at rest (keeperI): toe ahead of the hips (m), feet half spacing (m), pelvis drop
+ *  (m), foot pitch (rad, - = heel up: weight on the forefoot). Arms: shoulder pitch / roll, elbow (rad). */
+const KEEPER_SET = { toeX: 0.26, halfWidth: 0.245, drop: -0.17, pitch: -0.2, shPitch: 0.42, shRoll: 0.1, elbow: 1.3 } as const;
+/** keeperI scratch: the moving (shuffle) legs while blending into the set position at rest. */
+const KEEPER_MOVE = new Float32Array(POSE_SIZE);
+
+/**
+ * Keeper ready: crouched on the balls of the feet, hands up in front, shuffling in any direction. [REPAIR] At rest the
+ * keeper stands in a square set position (feet parallel, wider than the shoulders, heels up, knees bent over the feet,
+ * both hands level in front of the waist with the elbows a little out); the shuffle takes over as he starts moving
+ * (by about 0.6 m/s, before the feet have travelled a stride). The rest pose used to be a frozen frame of the shuffle:
+ * one foot ahead of the other, knees in, and the hands out wide at chest height.
+ */
 function keeperI(out: Pose): void {
   clearUpper(out);
   shuffleArgs(0.5);
   shuffleLegs(out, KEEPER_STYLE);
+  // [REPAIR] Handed over to the shuffle by 0.12 m/s (it was 0.6): a part-blended set position keeps its boots still
+  // in the body frame, so a keeper creeping at 0.2 m/s glided on them for metres without a step. The keeper's shorter
+  // creeping stride (KEEPER_MIN_STRIDE) keeps the shuffle's slow frames close to the set position, so the hand-over
+  // moves the boots only a few cm.
+  let q = (SLA[2]! - 0.02) / (0.12 - 0.02); // ss(0.02, 0.12, speed) written out (no double crosses a call)
+  q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const mv = q * q * (3 - 2 * q);
+  if (mv < 1) {
+    for (let k = 0; k < LOWER_BODY.length; k++) { const c = LOWER_BODY[k]!; KEEPER_MOVE[c] = out[c]!; }
+    out[P.ROOT_Y] = KEEPER_SET.drop; out[P.ROOT_SIDE] = 0; out[P.ROOT_ROLL] = 0; out[P.ROOT_YAW] = 0;
+    out[P.ROOT_PITCH] = 0; out[P.ROOT_FWD] = 0;
+    PTA[0] = KEEPER_SET.toeX; PTA[1] = 0; PTA[2] = KEEPER_SET.halfWidth; PTA[3] = KEEPER_SET.pitch;
+    plantToeS(out, 1);
+    PTA[0] = KEEPER_SET.toeX; PTA[1] = 0; PTA[2] = -KEEPER_SET.halfWidth; PTA[3] = KEEPER_SET.pitch;
+    plantToeS(out, -1);
+    for (let k = 0; k < LOWER_BODY.length; k++) {
+      const c = LOWER_BODY[k]!;
+      out[c] = out[c]! + (KEEPER_MOVE[c]! - out[c]!) * mv;
+    }
+    GAIT_AIR[0] = GAIT_AIR[0]! * mv; // the set feet are on the grass
+  }
   out[P.SPINE_PITCH] = 0.34;
   out[P.HEAD_PITCH] = -0.32;
   leanInto(out);
-  let q = (SLA[2]! - 0.2) / (1.5 - 0.2); // ss(0.2, 1.5, speed) written out (no double crosses a call)
+  q = (SLA[2]! - 0.2) / (1.5 - 0.2); // ss(0.2, 1.5, speed) written out (no double crosses a call)
   q = q < 0 ? 0 : q > 1 ? 1 : q;
   const s = 0.05 * Math.sin(SLA[1]!) * (q * q * (3 - 2 * q));
-  out[P.SHOULDER_L_PITCH] = 0.85 + s;
-  out[P.SHOULDER_R_PITCH] = 0.85 - s;
-  out[P.SHOULDER_L_ROLL] = 0.42;
-  out[P.SHOULDER_R_ROLL] = 0.42;
-  out[P.ELBOW_L] = 1.15;
-  out[P.ELBOW_R] = 1.15;
+  // Hands level in front of the waist at rest, a little higher and wider while shuffling (the old carriage).
+  const shP = KEEPER_SET.shPitch + (0.85 - KEEPER_SET.shPitch) * mv;
+  const shR = KEEPER_SET.shRoll + (0.42 - KEEPER_SET.shRoll) * mv;
+  const el = KEEPER_SET.elbow + (1.15 - KEEPER_SET.elbow) * mv;
+  out[P.SHOULDER_L_PITCH] = shP + s;
+  out[P.SHOULDER_R_PITCH] = shP - s;
+  out[P.SHOULDER_L_ROLL] = shR;
+  out[P.SHOULDER_R_ROLL] = shR;
+  out[P.ELBOW_L] = el;
+  out[P.ELBOW_R] = el;
 }
 
 /**

@@ -145,7 +145,14 @@ export interface TierParams {
   readonly effectsScale: number;
   /** Texture anisotropy, capped by the GPU (GFX-03 uses the same values). */
   readonly anisotropy: number;
-  /** [LOOK] Player geometry LOD (players/parts.ts): 0 lighter (no heavier than the pre-[LOOK] model), 1 full. */
+  /**
+   * [LOOK] Player geometry LOD (players/parts.ts): 0 lighter (no heavier than the pre-[LOOK] model), 1 full.
+   * Headroom note: at QUALITY the player shadows draw the full LOD a second time, so every full-LOD player triangle
+   * counts about 44 times per frame (22 players, colour + shadow pass). The full LOD (3,075 per player, every variant
+   * counted) puts QUALITY at about 182k of the 200k triangle budget (tests/perf/sgn-04-scenes.ts); 3,435 measured
+   * 197.5k. gfx-07-parts caps the full LOD at 3,200. Adding player detail past that needs a cheaper shadow caster
+   * (e.g. the LOD 0 geometry for the depth pass) first.
+   */
   readonly playerDetail: 0 | 1;
 }
 

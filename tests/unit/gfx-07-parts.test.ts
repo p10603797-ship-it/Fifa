@@ -43,12 +43,14 @@ describe('GFX-07 part geometry', () => {
   // [LOOK] The redesigned figure has a budget of 2,500..3,500 triangles per player at the full LOD (22 players under
   // 80k of the 200k frame budget; it was 30k for the 1,123-triangle pre-[LOOK] model), every variant counted. The
   // PERFORMANCE tier's LOD stays no heavier than the pre-[LOOK] model. Draw calls are unchanged (8).
-  it('budget: 8 draw calls (one InstancedMesh per part), <= 3,500 triangles per player (<= 80k for 22); LOD 0 <= 1,123', () => {
+  // [REPAIR] Capped at 3,200 (not 3,500): QUALITY draws the player shadows with the full LOD too, so each triangle
+  // counts ~44 times a frame; 3,435 measured 197.5k of the 200k frame budget there, 3,075 measures ~182k.
+  it('budget: 8 draw calls (one InstancedMesh per part), <= 3,200 triangles per player (<= 80k for 22); LOD 0 <= 1,123', () => {
     expect(PART_COUNT).toBe(8);
     expect(PART_COUNT).toBeLessThanOrEqual(14);
     const perPlayer = trianglesPerPlayer();
     expect(perPlayer).toBeGreaterThan(2_000); // a shaped figure, not sticks
-    expect(perPlayer).toBeLessThanOrEqual(3_500);
+    expect(perPlayer).toBeLessThanOrEqual(3_200);
     expect(perPlayer * 22).toBeLessThanOrEqual(80_000);
     expect(trianglesPerPlayer(0)).toBeLessThanOrEqual(1_123);
     expect(trianglesPerPlayer(0)).toBeGreaterThan(600); // reads as a body, not a capsule

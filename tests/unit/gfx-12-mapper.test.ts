@@ -18,6 +18,8 @@ import {
   createAnimSample, kickAnim, mapAnim, MAPPER_TUNING, poseFnFor, samplePose, shotAnim, type Animator,
 } from '../../src/render/anim/mapper';
 import { createInterpState, type RenderFrame } from '../../src/render/types';
+import { footPoint, GROUND_AIR } from '../../src/render/players/fk';
+import { heightScale } from '../../src/render/players/model';
 import { initMatch } from '../../src/sim/init';
 
 const P = PoseIdx;
@@ -297,8 +299,56 @@ describe('[GFX-12] blending, cycle, teleports', () => {
     const c0 = a.bank.cycle[SLOT]!;
     for (let i = 0; i < 12; i++) { p.x += 5 / 60; a.update(frameFor(s), null); }
     const advanced = (a.bank.cycle[SLOT]! - c0 + TAU) % TAU;
-    expect(advanced).toBeCloseTo(((12 * 5) / 60 / strideLengthFor(AnimId.JOG, 5)) * TAU, 4);
+    // [REPAIR] The model draws the pose scaled by the player's height (heightScale): the cycle runs on the distance in
+    // model units (distance / scale), so the planted boot of a tall or short player stays put on the grass too.
+    const hs = heightScale(s.attrs[SLOT]!.height);
+    expect(hs).not.toBe(1); // the case this covers
+    expect(advanced).toBeCloseTo(((12 * 5) / 60 / hs / strideLengthFor(AnimId.JOG, 5)) * TAU, 4);
     expect(strideLengthFor(AnimId.JOG, 5)).toBe(strideLength(5));
+  });
+
+  it('[REPAIR] a start from rest keeps every planted toe within 2 cm of its spot, from the first frame of the idle -> run fade', () => {
+    // 0 -> 5 m/s at about 4 m/s^2 crosses the walk -> run blend, where the duty factor and the touchdown point change
+    // fast: the stance line alone moved planted toes 12-16 cm per stance. Measured on the drawn pose (FK + ground snap)
+    // in the world (body x + model toe scaled by the player's height, as the model draws it) with the flight clearance
+    // the mapper hands the model (GROUND_AIR). [REPAIR 2] From the first frame of the JOG clip, so the idle -> run
+    // cross-fade is covered too (its joint blend slid the standing boots about 5 cm; the boots are now anchored).
+    for (const acc of [3, 4, 6]) {
+      const s = makeState();
+      const a = createAnimator();
+      const sk = Object.assign(sink(), { groundAir: new Float32Array(NUM_SLOTS) });
+      const p = s.players[SLOT]!;
+      const hs = heightScale(s.attrs[SLOT]!.height);
+      p.vx = 0;
+      for (let i = 0; i < 30; i++) a.update(frameFor(s), sk);
+      let fadeFrames = 0;
+      const o = [0, 0, 0];
+      const start: (number[] | null)[] = [null, null];
+      let worst = 0, stances = 0, frames = 0;
+      let v = 0;
+      while (v < 5 || frames < 40) {
+        v = Math.min(5, v + acc / 60);
+        p.vx = v; p.x += v / 60;
+        a.update(frameFor(s), sk);
+        frames++;
+        const pose = sk.poses[SLOT]!;
+        const fade = a.bank.anim[SLOT] === AnimId.JOG;
+        if (fade && a.bank.blend[SLOT]! < 1) fadeFrames++;
+        for (let f = 0; f < 2; f++) {
+          GROUND_AIR[0] = sk.groundAir[SLOT]!;
+          footPoint(pose, f === 0 ? 1 : -1, 1, o);
+          GROUND_AIR[0] = 0;
+          const wx = o[0]! * hs + p.x, wz = o[2]! * hs + p.z;
+          if (fade && o[1]! < 0.003) {
+            const st = start[f];
+            if (!st) { start[f] = [wx, wz]; if (v < 5) stances++; } else worst = Math.max(worst, Math.hypot(wx - st[0]!, wz - st[1]!));
+          } else start[f] = null;
+        }
+      }
+      expect(stances, `stances begun while accelerating at ${acc} m/s^2`).toBeGreaterThanOrEqual(3);
+      expect(fadeFrames, `idle -> run fade frames measured at ${acc} m/s^2`).toBeGreaterThan(3);
+      expect(worst, `planted toe slip at ${acc} m/s^2`).toBeLessThan(0.02);
+    }
   });
 
   it('teleport reset: a jump over 3 m does not advance the cycle and cuts without a cross-fade', () => {

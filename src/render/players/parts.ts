@@ -440,9 +440,11 @@ function buildTorso(b: SoupBuilder, d: Detail): void {
     sec(0.15, 0.116, 0.112, 0.172),
     hi(sec(0.25, 0.13, 0.114, 0.182, 0, 0.004)),
     sec(0.33, 0.135, 0.12, 0.192, 0, 0.006),
-    sec(0.405, 0.124, 0.124, 0.206, 0, 0.004),
-    sec(0.455, 0.106, 0.114, 0.214),
-    sec(0.497, 0.084, 0.09, 0.172),
+    // [REPAIR] The shoulder line runs out to the sleeve seam (over the deltoid caps), so the outline goes smoothly from
+    // the neck down onto the arm instead of the sleeves standing off the torso like pads.
+    sec(0.405, 0.124, 0.124, 0.21, 0, 0.004),
+    sec(0.455, 0.104, 0.112, 0.226),
+    sec(0.497, 0.082, 0.088, 0.19),
     hi(sec(0.518, 0.072, 0.074, 0.1)),
     // Collar trim: a crew band around the neck (whole bands, so its edge is a clean line).
     sec(0.53, 0.073, 0.075, 0.088, 1),
@@ -456,10 +458,12 @@ function buildTorso(b: SoupBuilder, d: Detail): void {
 /** Shorts body (hip-level local). Colour A = shorts. */
 function buildPelvis(b: SoupBuilder, d: Detail): void {
   // Inside the shirt hem where they overlap (the hem hangs over the shorts with a clear gap, so the surfaces never
-  // z-fight); fuller below the hem: hips, seat and the crotch between the thigh tops.
+  // z-fight); fuller below the hem at the hips and seat. [REPAIR] The front hangs straight (vertical, so it shades
+  // like the shorts legs) just behind the fronts of the thigh tops, and closes in a short flat crotch between them: a
+  // front fuller than the thighs, rounding down to a point, read as a darker lump between the legs in front views.
   tube(b, d, [
-    round(0.06, 0), sec(0.06, 0.07, 0.07, 0.12), sec(0.0, 0.08, 0.085, 0.14), hi(sec(-0.035, 0.086, 0.092, 0.15)),
-    sec(-0.075, 0.098, 0.108, 0.162), hi(sec(-0.11, 0.092, 0.1, 0.152)), sec(-0.14, 0.06, 0.064, 0.1), round(-0.15, 0),
+    round(0.06, 0), sec(0.06, 0.07, 0.07, 0.12), sec(0.0, 0.08, 0.085, 0.14), hi(sec(-0.035, 0.08, 0.092, 0.15)),
+    sec(-0.075, 0.074, 0.106, 0.16), hi(sec(-0.1, 0.07, 0.098, 0.146)), sec(-0.122, 0.064, 0.07, 0.1), round(-0.128, 0),
   ], d.pelvis, undefined, Math.PI / d.pelvis);
 }
 
@@ -473,10 +477,11 @@ function buildUpperArm(b: SoupBuilder, d: Detail): void {
   const u = BODY.upperArm;
   if (d.features) b.variant = SleeveVariant.SHORT;
   tube(b, d, [
-    // Deltoid cap (sleeve) around the joint, so a raised or swung arm stays joined to the shoulder.
-    ...dome(-0.02, 0.063, 1, d.dome, 0, 0.6).reverse(),
-    round(-0.02, 0.063),
-    hi(sec(-0.07, 0.063, 0.062, 0.06)),
+    // Deltoid cap (sleeve) around the joint, so a raised or swung arm stays joined to the shoulder. [REPAIR] Lower and
+    // flatter (its top sits inside the shirt's shoulder line) and a little narrower at the top of the sleeve.
+    ...dome(-0.03, 0.058, 1, d.dome, 0, 0.42).reverse(),
+    round(-0.03, 0.058),
+    hi(sec(-0.075, 0.061, 0.06, 0.058)),
     // Sleeve cuff: a slight lip at the hem.
     hi(sec(-0.118, 0.066, 0.064, 0.062)),
     sec(-0.132, 0.066, 0.064, 0.062),
@@ -490,9 +495,9 @@ function buildUpperArm(b: SoupBuilder, d: Detail): void {
   if (d.features) {
     b.variant = SleeveVariant.LONG;
     tube(b, d, [
-      ...dome(-0.02, 0.063, 1, d.dome, 0, 0.6).reverse(),
-      round(-0.02, 0.063),
-      sec(-0.08, 0.063, 0.062, 0.06),
+      ...dome(-0.03, 0.058, 1, d.dome, 0, 0.42).reverse(),
+      round(-0.03, 0.058),
+      sec(-0.08, 0.061, 0.06, 0.058),
       sec(-0.15, 0.06, 0.058, 0.056, 1),
       sec(-0.225, 0.055, 0.053, 0.051, 1),
       round(-u, 0.05, 1),

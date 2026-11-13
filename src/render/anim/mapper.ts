@@ -46,15 +46,18 @@ import { ACTION_CONTACT, ACTION_HOLD, ACTION_IMPLS, ACTION_POSES } from './actio
 import { celebrationAnim, CONTACT_CONTACT, CONTACT_IMPLS, CONTACT_POSES, diveAnim } from './contact';
 import {
   applyBreathS, applyTurnLeanS, BRA, GAIT_AIR, isLocomotion, LOCOMOTION_IMPLS, LOCOMOTION_POSES, LOCOMOTION_TUNING, LOWER_BODY,
-  neutralPose, PP, RUN_IN, SLEN, strideLengthForS, TLA, type PoseImpl,
+  neutralPose, PP, RPF, RUN_IN, RUN_PLANT, runPlantRefS, SLEN, strideLengthForS, TLA, type PoseImpl,
 } from './locomotion';
-import { TAU } from './poseMath';
+import { footPitchS, FPR, plantToeS, PTA, TAU } from './poseMath';
+import { BODY, createSkeleton, framePoint, Joint, solvePoseFK } from '../players/fk';
 import { kickApply, kickOffset, KOF, RCH, REACH_SWITCH, reachClip, touchReach, touchStepS, TST } from './reach';
 
 const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: render-only animation constants)
   /** Idle below / locomotion above these speeds (m/s, hysteresis). */
   idleEnter: 0.25,
   idleLeave: 0.5,
+  /** [REPAIR] A run fading in from a standing clip below this speed (m/s) anchors the boots (no slide in the fade). */
+  anchorMaxSpeed: 1.5,
   /** Moving this far off the facing (rad) switches to STRAFE (enter / leave), only up to strafeMaxSpeed (m/s). */
   strafeEnter: 0.75,
   strafeLeave: 0.55,
@@ -824,6 +827,24 @@ export function createAnimator(): Animator {
   /** [LOOK] Smoothed acceleration along the motion (m/s^2) and last speed per slot: the run leans into it. */
   const accel = new Float32Array(NUM_SLOTS);
   const lastSpeed = new Float32Array(NUM_SLOTS);
+  /** [REPAIR] Planted-toe tracking of the run legs (locomotion.ts RUN_PLANT): per slot and leg (right, left) where the
+   *  toe really is along the motion (m, latched from the stance line at touchdown, then moved back by the distance
+   *  travelled), the leg phase of the last frame, and whether the tracking is live (run legs drawn last frame). */
+  const plantX = new Float64Array(NUM_SLOTS * 2);
+  const plantLu = new Float64Array(NUM_SLOTS * 2);
+  const plantOk = new Uint8Array(NUM_SLOTS);
+  /** [REPAIR] Fade-in anchors of a run started from a standing clip (idle, strafe, jockey, shield, keeper ready): per
+   *  slot and leg (right, left) where the drawn toe was when the fade began (model space, moved back by the distance
+   *  travelled, so it stays put on the grass), and whether the slot's fade is anchored. */
+  const ancX = new Float64Array(NUM_SLOTS * 2);
+  const ancZ = new Float64Array(NUM_SLOTS * 2);
+  const ancOn = new Uint8Array(NUM_SLOTS);
+  const ancLift = new Uint8Array(NUM_SLOTS * 2);
+  /** [REPAIR] Lateral planted-toe correction per slot and leg (RUN_PLANT[2..3]): set for the stance the anchor began. */
+  const plantZ = new Float64Array(NUM_SLOTS * 2);
+  /** Anchor scratch: a skeleton and a point. */
+  const ancSk = createSkeleton();
+  const ancPt = new Float64Array(3);
   const lastFoot = new Uint8Array(NUM_SLOTS);
   const liveFrom = createPose();
   /** [QF-4] Share of the drawn legs that are the run cycle's: this frame's target (runLegs) and, for the fade in
@@ -857,6 +878,8 @@ export function createAnimator(): Animator {
     blendDur.fill(0);
     fromLive.fill(0);
     accel.fill(0); lastSpeed.fill(0);
+    plantX.fill(0); plantLu.fill(0); plantOk.fill(0);
+    ancX.fill(0); ancZ.fill(0); ancOn.fill(0); ancLift.fill(0); plantZ.fill(0);
     runLegs.fill(0); fromRunLegs.fill(0);
     mem.idle.fill(0); mem.strafe.fill(0); mem.lean.fill(0); mem.foot.fill(255); mem.act.fill(0); mem.actT.fill(0);
     touchW.fill(0); touchSeenTick.fill(-1); touchRise.fill(0); wasCharging.fill(0); strike.fill(0);
@@ -959,6 +982,16 @@ export function createAnimator(): Animator {
           if (sample.t > mx) sample.t = mx;
         }
       }
+      // [REPAIR] The model draws the pose scaled by the player's height (attrs.height / 180): a planted toe that moves
+      // back by d in model units moves hs * d over the grass. The cycle and the planted-toe tracking run on the
+      // distance in model units (d / hs), so a tall or short player's planted boot stays put too (it slid by
+      // (hs - 1) * speed: up to 10 % of the running speed, which the model's foot lock only partly hid).
+      let hs = s.attrs[i]!.height / 180;
+      if (!(hs >= LOCAL_TUNING.minScale)) hs = LOCAL_TUNING.minScale; else if (hs > LOCAL_TUNING.maxScale) hs = LOCAL_TUNING.maxScale;
+      d /= hs;
+      // Ground distance actually travelled this frame, model units (the dribble alignment below may scale the cycle's
+      // advance).
+      const dGround = d;
       // [QF-4] Dribble: phase-align the run so a foot comes through just before the touch the sim has scheduled.
       const owner = s.ball.owner === i && s.ball.heldBy < 0 && p.act === ActionKind.NONE ? 1 : 0;
       let touchTau = -1;
@@ -976,7 +1009,7 @@ export function createAnimator(): Animator {
         if (d > 0 && REACH_SWITCH.align === 1 && speed > LOCAL_TUNING.alignMinSpeed && tau >= 1 && tau < 60) {
           SLEN[0] = speed;
           strideLengthForS(OUTX.loco);
-          const nat = ((speed * tau) / 60 / SLEN[1]!) * TAU;
+          const nat = ((speed * tau) / 60 / hs / SLEN[1]!) * TAU;
           // Phase at the touch if nothing changes, and the nearest foot-through phase (right at -lead, left at pi - lead).
           let e = -LOCAL_TUNING.touchLead - (bank.cycle[i]! + nat);
           e -= Math.PI * Math.round(e / Math.PI);
@@ -1004,12 +1037,71 @@ export function createAnimator(): Animator {
       if (off > Math.PI) off -= TAU;
       RUN_IN[0] = accel[i]!; RUN_IN[2] = off;
       RUN_IN[1] = 0;
+      // [REPAIR] Planted-toe tracking: a run leg keeps its touchdown spot while the speed changes within the stance.
+      RUN_PLANT[0] = 0; RUN_PLANT[1] = 0; RUN_PLANT[2] = 0; RUN_PLANT[3] = 0;
+      // [REPAIR] Motion direction off the facing as the run uses it (clamped the same way): the anchors move along it.
+      const offA = off < -0.9 ? -0.9 : off > 0.9 ? 0.9 : off;
+      const adX = Math.cos(offA), adZ = Math.sin(offA);
+      const runNow = anim === AnimId.JOG || anim === AnimId.SPRINT || anim === AnimId.TURN_LEAN;
+      const runBefore = prevAnim === AnimId.JOG || prevAnim === AnimId.SPRINT || prevAnim === AnimId.TURN_LEAN;
+      // [REPAIR] A run starting from a standing clip (the start from rest): anchor both boots where they are drawn.
+      // Only from a slow start (the body moves a few cm over the fade): a run cut in at speed keeps the joint blend.
+      const anchorNow = runNow && !runBefore && !teleport && seen[i] === 1 && isLocomotion(prevAnim)
+        && speed < LOCAL_TUNING.anchorMaxSpeed;
+      if (!runNow || teleport) ancOn[i] = 0;
+      else if (ancOn[i] === 1) {
+        for (let leg = 0; leg < 2; leg++) {
+          ancX[i * 2 + leg] = ancX[i * 2 + leg]! - dGround * adX;
+          ancZ[i * 2 + leg] = ancZ[i * 2 + leg]! - dGround * adZ;
+        }
+      }
+      if (anchorNow) {
+        solvePoseFK(poses[i]!, ancSk);
+        for (let leg = 0; leg < 2; leg++) {
+          framePoint(ancSk, leg === 0 ? Joint.ANKLE_R : Joint.ANKLE_L, BODY.toeX, -BODY.ankleY, 0, ancPt);
+          ancX[i * 2 + leg] = ancPt[0]! - dGround * adX;
+          ancZ[i * 2 + leg] = ancPt[2]! - dGround * adZ;
+        }
+        ancOn[i] = 1;
+      }
+      if (anim === AnimId.JOG || anim === AnimId.SPRINT || anim === AnimId.TURN_LEAN
+        || OUTX.loco === AnimId.JOG || OUTX.loco === AnimId.SPRINT || OUTX.loco === AnimId.TURN_LEAN) {
+        RPF[0] = cycle; RPF[1] = speed; RPF[2] = accel[i]!;
+        runPlantRefS();
+        const live = plantOk[i] === 1 && !teleport;
+        for (let leg = 0; leg < 2; leg++) {
+          const k = i * 2 + leg;
+          const lu = RPF[5 + leg]!, xr = RPF[3 + leg]!;
+          // A new touchdown (the leg phase wrapped) or a fresh start latches the stance line: no correction then.
+          // [REPAIR] ... except a run starting from a standing clip: a leg the run has planted keeps the boot where it is.
+          if (anchorNow) ancLift[k] = lu < RPF[7]! ? 0 : 1;
+          const anchored = anchorNow && lu < RPF[7]!;
+          if (anchored) plantX[k] = ancX[k]! / adX;
+          else if (!live || lu < plantLu[k]! - 0.5) { plantX[k] = xr; plantZ[k] = 0; }
+          else plantX[k] = plantX[k]! - dGround;
+          plantLu[k] = lu;
+          let e = plantX[k]! - xr;
+          // Bounded (the gait clamps it too): past the bound the toe follows the stance line again.
+          if (!(e === e)) { plantX[k] = xr; e = 0; }
+          else if (e > 0.3) { plantX[k] = xr + 0.3; e = 0.3; } else if (e < -0.3) { plantX[k] = xr - 0.3; e = -0.3; }
+          RUN_PLANT[leg] = e;
+          // Lateral: the anchored boot keeps its spot across (the run's planted toe sits at side * base + along * dZ).
+          if (anchored) {
+            let ez = ancZ[k]! - ((leg === 0 ? 1 : -1) * RPF[8]! + plantX[k]! * adZ);
+            ez = ez === ez ? (ez < -0.1 ? -0.1 : ez > 0.1 ? 0.1 : ez) : 0;
+            plantZ[k] = ez;
+          }
+          RUN_PLANT[2 + leg] = plantZ[k]!;
+        }
+        plantOk[i] = 1;
+      } else plantOk[i] = 0;
       if (anim === AnimId.JOG || anim === AnimId.SPRINT) { RUN_IN[1] = OUTF[OF_LEAN]!; OUTF[OF_LEAN] = 0; }
       GAIT_AIR[0] = 0;
       POSE_IMPLS[anim]!(target);
       RUN_IN[1] = 0;
-      // Clearance the target means to keep (a run's flight phase): its legs must be the run's.
-      let airT = anim === AnimId.JOG || anim === AnimId.SPRINT || anim === AnimId.TURN_LEAN ? GAIT_AIR[0]! : 0;
+      // Clearance the target means to keep (a run's flight phase, [REPAIR] or a side shuffle's): its legs must be the
+      // gait's.
+      let airT = isLocomotion(anim) ? GAIT_AIR[0]! : 0;
       const lw = OUTF[OF_LAYER]!;
       // Share of this target's legs that are the run cycle's (a running clip: all; an action: its leg layer).
       // (Through a typed scratch: a ternary mixing small-integer constants with doubles boxes them in V8.)
@@ -1031,8 +1123,6 @@ export function createAnimator(): Animator {
       if (OUTF[OF_BREATH]! > 0) { BRA[0] = br; BRA[1] = OUTF[OF_BREATH]!; applyBreathS(target); }
       // [QF-4] Foot kicks: the kicking boot reaches the ball the sim kicks (predicted to the contact tick, frozen there).
       const offX = drawn !== null ? drawn[i * 2]! : 0, offZ = drawn !== null ? drawn[i * 2 + 1]! : 0;
-      let hs = s.attrs[i]!.height / 180;
-      if (!(hs >= LOCAL_TUNING.minScale)) hs = LOCAL_TUNING.minScale; else if (hs > LOCAL_TUNING.maxScale) hs = LOCAL_TUNING.maxScale;
       if (!(OUTX.action === 1 && p.actContact >= 0 && reachClip(anim))) kickInit[i] = 0;
       if (OUTX.action === 1 && p.actContact >= 0 && reachClip(anim)) {
         // Weight by time to / since the contact tick (a phase window shrinks with short wind-ups and would pop).
@@ -1137,7 +1227,7 @@ export function createAnimator(): Animator {
           GAIT_AIR[0] = 0;
           POSE_IMPLS[fa]!(liveFrom);
           RUN_IN[1] = 0;
-          air = air * w + (fa === AnimId.JOG || fa === AnimId.SPRINT || fa === AnimId.TURN_LEAN ? GAIT_AIR[0]! : 0) * (1 - w);
+          air = air * w + (isLocomotion(fa) ? GAIT_AIR[0]! : 0) * (1 - w);
           if (fa !== AnimId.TURN_LEAN) liveLocoLayers(fa, liveFrom);
           a = liveFrom;
         } else air *= w;
@@ -1150,7 +1240,30 @@ export function createAnimator(): Animator {
             out[c] = out[c]! + (target[c]! - out[c]!) * kl;
           }
         }
+        // [REPAIR] A run fading in from a standing clip: each boot goes from where it stood (anchored on the grass) to
+        // the run's boot by the fade weight, solved by IK on the blended body. A boot the run has planted was latched at
+        // its anchor (RUN_PLANT), so it does not move at all; a boot the run swings rises with the weight. The joint
+        // blend alone slid the standing boots with the body (and the planted ones toward the run's stance line): about
+        // 5 cm a stance over the first metres of every start from rest, which the model's foot lock then eased back.
+        if (ancOn[i] === 1) {
+          solvePoseFK(target, ancSk);
+          for (let leg = 0; leg < 2; leg++) {
+            const side = leg === 0 ? 1 : -1;
+            framePoint(ancSk, leg === 0 ? Joint.ANKLE_R : Joint.ANKLE_L, BODY.toeX, -BODY.ankleY, 0, ancPt);
+            footPitchS(out, side);
+            const pitch = FPR[0]!;
+            const ax = ancX[i * 2 + leg]!, az = ancZ[i * 2 + leg]!;
+            let ty = ancPt[1]! * w;
+            const hd = (BODY.toeX - BODY.heelX) * Math.sin(pitch); // the heel below the toe (toes up)
+            if (hd > ty) ty = hd;
+            // A boot the run swings leaves its spot upward first: its horizontal weight lags (w^3) while it is low.
+            const wh = ancLift[i * 2 + leg] === 1 ? w * w * w : w;
+            PTA[0] = ax + (ancPt[0]! - ax) * wh; PTA[1] = ty; PTA[2] = az + (ancPt[2]! - az) * wh; PTA[3] = pitch;
+            plantToeS(out, side);
+          }
+        }
       }
+      if (w >= 1) ancOn[i] = 0;
       runLegs[i] = LEGS[0]!;
       // [QF-4] Touch reach (dribble touches, first touches): a touch this tick turns the reach on toward where the ball
       // was touched (the frame shows it there); a dribble touch the sim has scheduled, or a pass about to reach him,
@@ -1238,6 +1351,7 @@ export function createAnimator(): Animator {
       }
       seen[i] = 1;
       RUN_IN[0] = 0; RUN_IN[1] = 0; RUN_IN[2] = 0;
+      RUN_PLANT[0] = 0; RUN_PLANT[1] = 0; RUN_PLANT[2] = 0; RUN_PLANT[3] = 0;
       if (sink) {
         if (sink.groundAir !== undefined) sink.groundAir[i] = air;
         sink.setPose(i, out);
