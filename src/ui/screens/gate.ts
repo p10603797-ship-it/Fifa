@@ -1,11 +1,12 @@
 /**
- * [GATE] Password lock screen (D-047). Shown by src/app/gateBoot.ts before boot, so it runs without the router,
+ * [GATE] Password lock screen (D-047, D-048). Shown by src/app/gateBoot.ts before boot, so it runs without the router,
  * focus navigator, audio or settings: plain DOM in #ui, styled with the Dot tokens like the splash.
  *
  *  - One large field (autocapitalize characters, no autocomplete / autocorrect / spellcheck, enterkeyhint "go") and
  *    a large Unlock button in a <form>: Enter on a keyboard and Go on the iPad keyboard submit.
- *  - Messages: wrong code, a code this device already used, a checker that could not be reached (future online
- *    redeemer), and, after an unlock this browser cannot keep (private browsing), a plain notice with Continue.
+ *  - Messages: wrong code, a code already used (on any device), the online checker could not be reached (no internet:
+ *    "Connect to the internet and try again"), and, after an unlock this browser cannot keep (private browsing), a
+ *    plain notice with Continue. Only a submit contacts the checker (src/app/gateOnline.ts).
  *  - On-screen keyboard: the screen follows window.visualViewport (top and height), so the field and the button stay
  *    in the visible part above the iPad keyboard in landscape and portrait; a short viewport switches to a compact
  *    layout, and the column scrolls if it is still too short.

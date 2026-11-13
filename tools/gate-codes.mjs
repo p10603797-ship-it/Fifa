@@ -1,28 +1,36 @@
-/* global console, process, URL */
+/* global console, process */
 /**
- * [GATE] Make new passwords for the password lock (src/app/gate.ts, D-047).
+ * [GATE] Make and manage passwords for the password lock (src/app/gate.ts; online checker D-048).
  *
- *   npm run gate:codes                      10 new codes: plain codes and their hashes printed to the terminal
- *   npm run gate:codes -- 5                 5 new codes
- *   npm run gate:codes -- 5 --append        ... and add the hashes to src/data/gateCodes.ts (commit that file)
- *   npm run gate:codes -- --hash CODE       the hash of an existing code (to find or remove its line)
+ *   npm run gate:codes -- 10 --server prod     10 new passwords, added to the published game's checker, then printed
+ *   npm run gate:codes -- 10 --server test     ... to the test checker instead
+ *   npm run gate:codes -- --status prod        how many passwords the checker holds: total, used, unused
+ *   npm run gate:codes -- --retire CODE --server prod   remove a password nobody has used yet
+ *   npm run gate:codes -- --import FILE --server prod   add hashes listed in FILE (one per line) to the checker
+ *   npm run gate:codes -- 10                   10 new passwords and their hashes, printed only (nothing is added)
+ *   npm run gate:codes -- --hash CODE          the hash of a password
  *
- * Codes are 12 characters from CODE_ALPHABET (crypto randomness, crypto.randomInt: uniform), shown as XXXX-XXXX-XXXX.
- * The plain codes are printed to stdout ONLY: never written to a file, never committed (the repository is public).
- * Copy them somewhere safe before closing the terminal; they cannot be recovered from the hashes.
+ * Passwords are 12 characters from CODE_ALPHABET (crypto randomness, crypto.randomInt: uniform), shown as
+ * XXXX-XXXX-XXXX. They are printed to stdout ONLY: never written to a file, never committed (the repository is
+ * public), never sent anywhere (only their hashes go to the checker). Copy them somewhere safe before closing the
+ * terminal; they cannot be recovered from the hashes. With --server the passwords are printed only after their
+ * hashes were added, so every printed password works.
  * Hash = lowercase hex SHA-256 of "dotkick-gate-v1:" + the normalised code (upper case, only A-Z and 0-9), the same
- * recipe as src/app/gate.ts (tests/unit/gate-01-lock.test.ts checks the two agree).
+ * recipe as src/app/gate.ts and server/gate-worker/worker.js (tests/unit/gate-01-lock.test.ts and
+ * tests/unit/gate-02-online.test.ts check that they agree).
+ *
+ * --server / --status / --retire / --import need CLOUDFLARE_ACCOUNT_ID (or --account <id>) and CLOUDFLARE_API_TOKEN
+ * (see tools/lib/cloudflare.mjs; behind a proxy add NODE_USE_ENV_PROXY=1).
  */
 import { createHash, randomInt } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const CODE_LENGTH = 12;
 export const GATE_HASH_PREFIX = 'dotkick-gate-v1:';
-export const BEGIN_MARK = '// gate-codes:begin';
-export const END_MARK = '// gate-codes:end';
+const HASH_RE = /^[0-9a-f]{64}$/;
 
 /** Upper case, everything but A-Z and 0-9 removed (src/app/gate.ts normaliseCode). */
 export function normaliseCode(input) {
@@ -60,56 +68,111 @@ export function newCodes(n, existing = [], rand) {
   return out;
 }
 
-/** Hashes listed between the markers of a code list file's text. */
-export function listedHashes(text) {
-  const a = text.indexOf(BEGIN_MARK);
-  const b = text.indexOf(END_MARK);
-  if (a < 0 || b < a) throw new Error(`code list: markers "${BEGIN_MARK}" / "${END_MARK}" not found`);
-  return [...text.slice(a, b).matchAll(/'([0-9a-f]{64})'/g)].map((m) => m[1]);
+/** Well-formed hashes in a text (one per line; blank lines and # comments ignored). Throws on anything else. */
+export function parseHashList(text) {
+  const out = [];
+  for (const [i, raw] of text.split('\n').entries()) {
+    const line = raw.replace(/#.*$/, '').trim();
+    if (line === '') continue;
+    if (!HASH_RE.test(line)) throw new Error(`line ${i + 1} is not a lowercase hex SHA-256 hash`);
+    if (!out.includes(line)) out.push(line);
+  }
+  return out;
 }
 
-/** The code list file's text with `hashes` added before the end marker (keeps its indentation). */
-export function appendHashes(text, hashes) {
-  listedHashes(text); // validates the markers
-  const b = text.indexOf(END_MARK);
-  const lineStart = text.lastIndexOf('\n', b) + 1;
-  const indent = text.slice(lineStart, b);
-  const lines = hashes.map((h) => `${indent}'${h}',\n`).join('');
-  return text.slice(0, lineStart) + lines + text.slice(lineStart);
+/** SQL + params that add `hashes` (unused) to the checker's table, skipping ones already there. Pure. */
+export function insertStatement(hashes) {
+  if (hashes.length === 0 || hashes.length > 90 || !hashes.every((h) => HASH_RE.test(h))) throw new Error('1..90 well-formed hashes per statement');
+  return { sql: `INSERT OR IGNORE INTO codes (hash) VALUES ${hashes.map(() => '(?)').join(', ')}`, params: [...hashes] };
+}
+
+async function cloudflare(args, envName) {
+  const cf = await import('./lib/cloudflare.mjs');
+  const target = cf.gateEnv(envName);
+  const cfg = cf.cloudflareConfig(args);
+  const db = await cf.findDatabase(cfg, target.database);
+  if (!db) throw new Error(`no D1 database "${target.database}": run node tools/gate-deploy.mjs --env ${envName} first`);
+  return { cf, cfg, db, target };
+}
+
+async function addHashes(args, envName, hashes) {
+  const { cf, cfg, db } = await cloudflare(args, envName);
+  let added = 0;
+  for (let i = 0; i < hashes.length; i += 90) {
+    const st = insertStatement(hashes.slice(i, i + 90));
+    added += (await cf.d1Query(cfg, db.uuid, st.sql, st.params)).changes;
+  }
+  return added;
+}
+
+async function status(args, envName) {
+  const { cf, cfg, db } = await cloudflare(args, envName);
+  const r = await cf.d1Query(cfg, db.uuid, 'SELECT COUNT(*) AS total, COUNT(used_at) AS used FROM codes');
+  const c = r.results[0] ?? { total: 0, used: 0 };
+  return { total: c.total, used: c.used, unused: c.total - c.used };
+}
+
+async function main(args) {
+  const { flagValue } = await import('./lib/cloudflare.mjs');
+  const hashAt = args.indexOf('--hash');
+  if (hashAt >= 0) {
+    const code = args[hashAt + 1];
+    if (!code) throw new Error('--hash needs a code');
+    console.log(hashCode(code));
+    return;
+  }
+  if (args.includes('--append')) {
+    throw new Error('--append is gone: passwords now live in the online checker. Use --server prod (see README "Make new passwords").');
+  }
+  const statusEnv = flagValue(args, '--status');
+  if (statusEnv !== undefined) {
+    const s = await status(args, statusEnv);
+    console.log(`${statusEnv} checker: ${s.total} passwords, ${s.used} used, ${s.unused} unused`);
+    return;
+  }
+  const server = flagValue(args, '--server');
+  if (args.includes('--server') && !server) throw new Error('--server needs prod or test');
+  const retire = flagValue(args, '--retire');
+  if (retire !== undefined) {
+    if (!server) throw new Error('--retire needs --server prod or --server test');
+    const { cf, cfg, db } = await cloudflare(args, server);
+    const r = await cf.d1Query(cfg, db.uuid, 'DELETE FROM codes WHERE hash = ?1 AND used_at IS NULL', [hashCode(retire)]);
+    console.log(r.changes === 1 ? 'Removed: that password no longer works.' : 'Nothing removed: that password is not in the checker, or it has already been used.');
+    return;
+  }
+  const importFile = flagValue(args, '--import');
+  if (importFile !== undefined) {
+    if (!server) throw new Error('--import needs --server prod or --server test');
+    const hashes = parseHashList(readFileSync(resolve(importFile), 'utf8'));
+    if (hashes.length === 0) throw new Error('no hashes in that file');
+    const added = await addHashes(args, server, hashes);
+    console.log(`${added} of ${hashes.length} hash${hashes.length === 1 ? '' : 'es'} added (the rest were already there).`);
+    return;
+  }
+  const n = Number(args.find((a) => /^\d+$/.test(a)) ?? 10);
+  if (!Number.isInteger(n) || n < 1 || n > 1000) throw new Error('the number of codes must be 1..1000');
+  const codes = newCodes(n);
+  const hashes = codes.map(hashCode);
+  if (server) {
+    const added = await addHashes(args, server, hashes);
+    if (added !== n) throw new Error(`only ${added} of ${n} hashes were added (a clash with an existing password): run again`);
+    const s = await status(args, server);
+    console.log(`${n} new DotKick password${n === 1 ? '' : 's'}, added to the ${server} checker. Each works once, on one device.`);
+    console.log('Keep them safe; they are not saved anywhere:\n');
+    for (const c of codes) console.log(`  ${formatCode(c)}`);
+    console.log(`\nThe ${server} checker now holds ${s.total} passwords (${s.used} used, ${s.unused} unused).`);
+    return;
+  }
+  console.log(`${n} new DotKick password${n === 1 ? '' : 's'} (NOT added to any checker yet). Keep them safe; they are not saved anywhere:\n`);
+  for (const c of codes) console.log(`  ${formatCode(c)}`);
+  console.log('\nTheir hashes (put them in a file and add it with --import FILE --server prod):\n');
+  for (const h of hashes) console.log(`  ${h}`);
 }
 
 const isMain = process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
 if (isMain) {
-  const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-  const listFile = resolve(root, 'src/data/gateCodes.ts');
-  const args = process.argv.slice(2);
-  const hashAt = args.indexOf('--hash');
-  if (hashAt >= 0) {
-    const code = args[hashAt + 1];
-    if (!code) {
-      console.error('gate-codes: --hash needs a code');
-      process.exit(2);
-    }
-    console.log(hashCode(code));
-    process.exit(0);
-  }
-  const n = Number(args.find((a) => /^\d+$/.test(a)) ?? 10);
-  if (!Number.isInteger(n) || n < 1 || n > 1000) {
-    console.error('gate-codes: the number of codes must be 1..1000');
-    process.exit(2);
-  }
-  const text = readFileSync(listFile, 'utf8');
-  const codes = newCodes(n, listedHashes(text));
-  const hashes = codes.map(hashCode);
-  console.log(`${n} new DotKick password${n === 1 ? '' : 's'} (each works once per device). Keep them safe; they are not saved anywhere:\n`);
-  for (const c of codes) console.log(`  ${formatCode(c)}`);
-  console.log('\nHashes for src/data/gateCodes.ts:\n');
-  for (const h of hashes) console.log(`  '${h}',`);
-  if (args.includes('--append')) {
-    writeFileSync(listFile, appendHashes(text, hashes));
-    console.log(`\nAdded ${n} hash${n === 1 ? '' : 'es'} to src/data/gateCodes.ts. Build and publish to make the new codes work.`);
-  } else {
-    console.log('\nNot added: paste these hash lines between the markers in src/data/gateCodes.ts yourself (a run with');
-    console.log('--append makes new codes and adds their hashes in one go; the codes above would then not work).');
-  }
+  main(process.argv.slice(2)).catch((err) => {
+    console.error(`gate-codes: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(err instanceof Error && /needs|must be|gone/.test(err.message) ? 2 : 1);
+  });
 }

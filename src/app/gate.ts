@@ -1,27 +1,29 @@
 /**
- * [GATE] Password lock, pure logic (D-047). The UI is src/ui/screens/gate.ts; src/main.ts runs boot() only once the
- * lock is open, so nothing of the game (splash, menus, a `?room=` / `#room=` join link, `?bench=1`) runs before.
+ * [GATE] Password lock, pure logic (D-047, D-048). The UI is src/ui/screens/gate.ts; src/main.ts runs boot() only once
+ * the lock is open, so nothing of the game (splash, menus, a `?room=` / `#room=` join link, `?bench=1`) runs before.
  *
  * - A code is 12 characters from CODE_ALPHABET, shown as XXXX-XXXX-XXXX. What the player types is normalised
  *   (normaliseCode: upper case, every character that is not A-Z or 0-9 removed), so "abcd efgh jkmn" and
  *   "ABCD-EFGH-JKMN" are the same code.
- * - Only hashes are shipped (src/data/gateCodes.ts): lowercase hex SHA-256 of the UTF-8 string GATE_HASH_PREFIX +
- *   normalised code. crypto.subtle when the page is a secure context, else the plain-TypeScript fallback
- *   (src/app/sha256.ts; plain http on a LAN address).
- * - Single use is per device: the device remembers the hashes it has redeemed (GATE_USED_KEY) and refuses them again
- *   ('used'), even after the unlock record itself is gone. There is no server, and this module makes no network
- *   request. The redeem step is behind CodeRedeemer, so an online checker that makes a code single-use across every
- *   device can replace createLocalRedeemer later ('offline-error' is its "could not reach the checker" answer).
- * - Once a code is accepted the unlock record (GATE_UNLOCK_KEY) is written and every later start goes straight in.
- *   When storage cannot keep it (private browsing, site data blocked) the game still opens for this session and the
- *   screen says so (UnlockOutcome.remembered false).
+ * - A code's hash is the lowercase hex SHA-256 of the UTF-8 string GATE_HASH_PREFIX + normalised code: crypto.subtle
+ *   when the page is a secure context, else the plain-TypeScript fallback (src/app/sha256.ts; plain http on a LAN
+ *   address). The online checker (server/gate-worker/worker.js) hashes the same way.
+ * - The redeem step is behind CodeRedeemer. The published game uses the online checker (src/app/gateOnline.ts,
+ *   D-048): a code works once across every device, and the first unlock needs the internet ('offline-error' when the
+ *   checker cannot be reached). createLocalRedeemer (a hash list, no network) is kept for tests and the e2e hook.
+ * - Either way the device remembers the hashes it has redeemed (GATE_USED_KEY) and refuses them again ('used'), even
+ *   after the unlock record itself is gone and without asking the checker.
+ * - Once a code is accepted the unlock record (GATE_UNLOCK_KEY) is written and every later start goes straight in,
+ *   with no network request. When storage cannot keep it (private browsing, site data blocked) the game still opens
+ *   for this session and the screen says so (UnlockOutcome.remembered false).
  * - Storage is src/platform/storage.ts safe storage (never throws; memory fallback). Malformed stored values count
  *   as "locked" (unlock record) or "nothing redeemed" (used list: only well-formed hashes are kept).
  *
- * Test hook (e2e, never set in production): window.__dotkickGateTest = { hashes: [...] } set before the page script
- * runs (an init script) adds accepted hashes, so e2e can unlock with its own test codes (tests/e2e/gate-harness.ts).
- * Like any lock that runs only in the browser, a technical person with a computer can get past it (developer tools);
- * see README "Password lock".
+ * Test hook (e2e, never set in production): window.__dotkickGateTest = { hashes?: [...], serverUrl?: '...' } set
+ * before the page script runs (an init script; no address, query string or stored value can set it). `serverUrl`
+ * points the online checker at another server (the TEST worker); `hashes` alone swaps in the local redeemer with
+ * those hashes (tests/e2e/gate-harness.ts). Like any lock that runs in the browser, a technical person with a
+ * computer can get past the lock screen (developer tools); see README "Password lock".
  */
 import { GAME_NAME } from '../contracts/constants';
 import type { KeyValueStorage } from '../platform/storage';
@@ -33,6 +35,8 @@ export const GATE_HASH_PREFIX = 'dotkick-gate-v1:';
 export const GATE_UNLOCK_KEY = 'dotkick.gate.unlock.v1';
 /** Storage key of the redeemed hashes on this device ({ v: 1, used: [hash, ...] }). */
 export const GATE_USED_KEY = 'dotkick.gate.used.v1';
+/** Storage key of this device's random id for the online checker (32 lowercase hex digits, 128 bits). */
+export const GATE_DEVICE_KEY = 'dotkick.gate.device.v1';
 /** Code alphabet (no I, L, O, 0 or 1, which are easy to misread). */
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 /** Characters in a code (shown in groups of four). */
@@ -45,7 +49,7 @@ export const GATE_TEXT = {
   prompt: `Enter your password to unlock ${GAME_NAME}`,
   wrong: "That password doesn't work. Check it and try again.",
   used: 'That password has already been used.',
-  offline: "Couldn't check the password. Check your internet connection and try again.",
+  offline: "Couldn't check the password. Connect to the internet and try again.",
   empty: 'Type your password, then tap Unlock.',
   checking: 'Checking…',
   notRemembered:
@@ -53,10 +57,10 @@ export const GATE_TEXT = {
     'need a password again next time.',
 } as const;
 
-/** Answer of one redeem attempt. 'offline-error': an online checker could not be reached (never from the local one). */
+/** Answer of one redeem attempt. 'offline-error': the online checker could not be reached (never from the local one). */
 export type RedeemResult = 'ok' | 'wrong' | 'used' | 'offline-error';
 
-/** The step that decides whether a code opens the game (local now; an online checker can be plugged in later). */
+/** The step that decides whether a code opens the game (the online checker, or the local hash list in tests). */
 export interface CodeRedeemer {
   redeem(code: string): Promise<RedeemResult>;
 }
@@ -118,7 +122,7 @@ export function defaultDigest(): Digest {
   };
 }
 
-/** The hash a code is stored under (src/data/gateCodes.ts). */
+/** The hash a code is stored under (the checker's database, the local used list). */
 export function hashCode(code: string, digest: Digest = defaultDigest()): Promise<string> {
   return digest(GATE_HASH_PREFIX + normaliseCode(code));
 }
@@ -169,13 +173,25 @@ export function parseUsedList(raw: string | null): string[] {
 
 export interface LocalRedeemerOptions {
   storage: KeyValueStorage;
-  /** Accepted hashes (src/data/gateCodes.ts, plus test hashes). Malformed entries are ignored. */
+  /** Accepted hashes (test codes). Malformed entries are ignored. */
   hashes: readonly string[];
   digest?: Digest;
 }
 
+/** Add `hash` to this device's used list (kept well-formed and without duplicates). */
+export function rememberUsed(storage: KeyValueStorage, hash: string): void {
+  const used = parseUsedList(storage.get(GATE_USED_KEY));
+  if (!used.includes(hash)) used.push(hash);
+  storage.set(GATE_USED_KEY, JSON.stringify({ v: 1, used }));
+}
+
+/** True when this device has redeemed `hash` before. */
+export function isUsedHere(storage: KeyValueStorage, hash: string): boolean {
+  return parseUsedList(storage.get(GATE_USED_KEY)).includes(hash);
+}
+
 /**
- * Redeemer that checks the shipped hashes and remembers redeemed ones on this device. A code is 'wrong' when its
+ * Redeemer that checks a fixed list of hashes (tests, the e2e hook) and remembers redeemed ones on this device. A code is 'wrong' when its
  * hash is not accepted, 'used' when this device has redeemed it before, else 'ok' (and it is recorded as used).
  * Attempts run one at a time, so two quick submits of one code never both pass.
  */
@@ -189,10 +205,8 @@ export function createLocalRedeemer(opts: LocalRedeemerOptions): CodeRedeemer {
     if (n.length === 0) return 'wrong';
     const h = await hashCode(n, digest);
     if (!accepted.has(h)) return 'wrong';
-    const used = parseUsedList(storage.get(GATE_USED_KEY));
-    if (used.includes(h)) return 'used';
-    used.push(h);
-    storage.set(GATE_USED_KEY, JSON.stringify({ v: 1, used }));
+    if (isUsedHere(storage, h)) return 'used';
+    rememberUsed(storage, h);
     return 'ok';
   };
   return {
@@ -248,25 +262,36 @@ export function createGate(opts: GateOptions): Gate {
 
 /** Test hook shape (see the file header). */
 export interface GateTestHook {
+  /** Accepted test hashes: without serverUrl, the local redeemer with these hashes replaces the online checker. */
   hashes?: readonly string[];
+  /** The online checker's redeem URL to use instead of GATE_SERVER_URL (http(s) only). */
+  serverUrl?: string;
 }
 
 declare global {
   interface Window {
-    /** e2e only: extra accepted hashes, set by an init script before the page runs. Never set in production. */
+    /** e2e only: set by an init script before the page runs. Never set in production. */
     __dotkickGateTest?: GateTestHook;
   }
 }
 
-/** Shipped hashes plus the test hook's (when an e2e init script set it). */
-export function acceptedHashes(shipped: readonly string[]): string[] {
-  const out = shipped.filter(isGateHash);
+/** The test hook as set by an e2e init script, checked (null when absent or malformed). */
+export function readTestHook(): { hashes: string[] | null; serverUrl: string | null } | null {
   try {
     const hook = typeof window !== 'undefined' ? window.__dotkickGateTest : undefined;
-    const extra = hook && Array.isArray(hook.hashes) ? hook.hashes : [];
-    for (const h of extra) if (isGateHash(h) && !out.includes(h)) out.push(h);
+    if (!hook || typeof hook !== 'object') return null;
+    const hashes = Array.isArray(hook.hashes) ? acceptedHashes(hook.hashes) : null;
+    const serverUrl = typeof hook.serverUrl === 'string' && /^https?:\/\/[^\s]+$/i.test(hook.serverUrl) ? hook.serverUrl : null;
+    if (hashes === null && serverUrl === null) return null;
+    return { hashes, serverUrl };
   } catch {
-    /* a broken hook adds nothing */
+    return null; // a broken hook changes nothing
   }
+}
+
+/** Well-formed, distinct hashes of `list`. Pure. */
+export function acceptedHashes(list: readonly unknown[]): string[] {
+  const out: string[] = [];
+  for (const h of list) if (isGateHash(h) && !out.includes(h)) out.push(h);
   return out;
 }
