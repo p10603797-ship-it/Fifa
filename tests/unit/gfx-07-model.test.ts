@@ -15,7 +15,7 @@ import { CLUBS } from '../../src/data/clubs';
 import { fillInterp } from '../../src/render/index';
 import { resolveMatchKits } from '../../src/render/kits';
 import { BODY, Joint, FRAME_SIZE } from '../../src/render/players/fk';
-import { Part } from '../../src/render/players/parts';
+import { Part, trianglesPerPlayer } from '../../src/render/players/parts';
 import {
   createDefaultPoseDriver, createNumberAtlas, createPlayerModel, GLOVE_COLOUR, gridGlyphRect, SKIN_TONES, type NumberAtlas,
   type PlayerModelModule, type PoseSink,
@@ -402,10 +402,41 @@ describe('GFX-07 player model: quality, lifecycle, debug hook', () => {
   it('players cast shadows only at the QUALITY tier (shadow map tier)', () => {
     const r = made(rig());
     for (const m of r.model.meshes) expect(m.castShadow).toBe(false);
+    for (const m of r.model.shadowCasters) expect(m.castShadow).toBe(false);
     r.model.setQuality!(QualityTier.QUALITY);
-    for (const m of r.model.meshes) expect(m.castShadow).toBe(true);
+    // [POLISH] The drawn full-detail meshes never cast; one caster per part does, with the LOD 0 geometry.
+    for (const m of r.model.meshes) expect(m.castShadow).toBe(false);
+    expect(r.model.shadowCasters.length).toBe(r.model.meshes.length);
+    for (const m of r.model.shadowCasters) expect(m.castShadow).toBe(true);
     r.model.setQuality!(QualityTier.PERFORMANCE);
     for (const m of r.model.meshes) expect(m.castShadow).toBe(false);
+    for (const m of r.model.shadowCasters) expect(m.castShadow).toBe(false);
+  });
+
+  it('[POLISH] shadow casters: LOD 0 geometry, the drawn meshes\' instances, and nothing drawn outside the shadow pass', () => {
+    const r = made(rig());
+    r.model.setQuality!(QualityTier.QUALITY);
+    const lod0 = trianglesPerPlayer(0);
+    let tris = 0;
+    r.model.shadowCasters.forEach((c, p) => {
+      const m = r.model.meshes[p]!;
+      expect(c.instanceMatrix).toBe(m.instanceMatrix);
+      expect(c.count).toBe(m.count);
+      expect(c.customDepthMaterial).toBe(m.customDepthMaterial);
+      const g = c.geometry;
+      tris += (g.getAttribute('position').count / 3) * (c.count / NUM_SLOTS);
+      // Colour pass: an empty draw range past the end (three.js returns before the draw call).
+      expect(g.drawRange.count).toBe(0);
+      expect(g.drawRange.start).toBeGreaterThan(g.getAttribute('position').count);
+      // Shadow pass: the whole geometry, then empty again.
+      c.onBeforeShadow(null as never, null as never, null as never, null as never, g, null as never, null as never);
+      expect(g.drawRange.start).toBe(0);
+      expect(g.drawRange.count).toBe(Infinity);
+      c.onAfterShadow(null as never, null as never, null as never, null as never, g, null as never, null as never);
+      expect(g.drawRange.count).toBe(0);
+      for (const k of ['iColA', 'iColB', 'iVar']) expect(g.getAttribute(k)).toBe(m.geometry.getAttribute(k));
+    });
+    expect(tris).toBeCloseTo(lod0, 6);
   });
 
   it('[LOOK] the PERFORMANCE tier swaps in the lighter LOD (<= the pre-[LOOK] 1,123 triangles), keeping colours and variants', () => {

@@ -147,11 +147,11 @@ export interface TierParams {
   readonly anisotropy: number;
   /**
    * [LOOK] Player geometry LOD (players/parts.ts): 0 lighter (no heavier than the pre-[LOOK] model), 1 full.
-   * Headroom note: at QUALITY the player shadows draw the full LOD a second time, so every full-LOD player triangle
-   * counts about 44 times per frame (22 players, colour + shadow pass). The full LOD (3,075 per player, every variant
-   * counted) puts QUALITY at about 182k of the 200k triangle budget (tests/perf/sgn-04-scenes.ts); 3,435 measured
-   * 197.5k. gfx-07-parts caps the full LOD at 3,200. Adding player detail past that needs a cheaper shadow caster
-   * (e.g. the LOD 0 geometry for the depth pass) first.
+   * Headroom note: [POLISH] at QUALITY the player shadows are cast by the LOD 0 geometry (players/model.ts
+   * shadowCasters), so a full-LOD player triangle counts 22 times per frame at every tier (it counted 44 times at
+   * QUALITY while the shadows drew the full LOD a second time: 3,075 per player measured about 182k of the 200k
+   * triangle budget). gfx-07-parts caps the full LOD at 3,300 (every variant counted) and LOD 0 at 1,123; QUALITY is
+   * measured in tests/perf/sgn-04-scenes.ts.
    */
   readonly playerDetail: 0 | 1;
 }

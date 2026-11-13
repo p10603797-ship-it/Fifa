@@ -156,6 +156,19 @@ export function framePoint(F: Float64Array, j: number, x: number, y: number, z: 
   out[2] = F[o + 2]! * x + F[o + 5]! * y + F[o + 8]! * z + F[o + 11]!;
 }
 
+/**
+ * [POLISH] Toe point (sole, front of the boot) of ankle joint j in the block's parent space, written to out[0..2].
+ * Integer arguments only, for per-frame callers (framePoint's double arguments are boxed when V8 does not inline the
+ * call: the mapper's start-from-rest anchors allocated about 16 B a frame through it).
+ */
+export function toePoint(F: Float64Array, j: number, out: Float64Array): void {
+  const o = j * FRAME_SIZE;
+  const x = BODY.toeX, y = -BODY.ankleY;
+  out[0] = F[o]! * x + F[o + 3]! * y + F[o + 9]!;
+  out[1] = F[o + 1]! * x + F[o + 4]! * y + F[o + 10]!;
+  out[2] = F[o + 2]! * x + F[o + 5]! * y + F[o + 11]!;
+}
+
 // ============================================================ per-frame internals (integer arguments only)
 
 /**

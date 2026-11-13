@@ -307,13 +307,15 @@ describe('[GFX-12] blending, cycle, teleports', () => {
     expect(strideLengthFor(AnimId.JOG, 5)).toBe(strideLength(5));
   });
 
-  it('[REPAIR] a start from rest keeps every planted toe within 2 cm of its spot, from the first frame of the idle -> run fade', () => {
+  it('[REPAIR] a start from rest keeps every planted toe within 2 cm of its spot, from the first frame the player moves', () => {
     // 0 -> 5 m/s at about 4 m/s^2 crosses the walk -> run blend, where the duty factor and the touchdown point change
     // fast: the stance line alone moved planted toes 12-16 cm per stance. Measured on the drawn pose (FK + ground snap)
     // in the world (body x + model toe scaled by the player's height, as the model draws it) with the flight clearance
     // the mapper hands the model (GROUND_AIR). [REPAIR 2] From the first frame of the JOG clip, so the idle -> run
     // cross-fade is covered too (its joint blend slid the standing boots about 5 cm; the boots are now anchored).
-    for (const acc of [3, 4, 6]) {
+    // [REPAIR 3] From the first frame the player moves: the idle frames before the run (up to idleLeave) are covered
+    // too (the idle boots glided 2-4 cm with the body; they are now pinned).
+    for (const acc of [3, 4, 4.5, 6, 8]) {
       const s = makeState();
       const a = createAnimator();
       const sk = Object.assign(sink(), { groundAir: new Float32Array(NUM_SLOTS) });
@@ -339,7 +341,7 @@ describe('[GFX-12] blending, cycle, teleports', () => {
           footPoint(pose, f === 0 ? 1 : -1, 1, o);
           GROUND_AIR[0] = 0;
           const wx = o[0]! * hs + p.x, wz = o[2]! * hs + p.z;
-          if (fade && o[1]! < 0.003) {
+          if (o[1]! < 0.003) {
             const st = start[f];
             if (!st) { start[f] = [wx, wz]; if (v < 5) stances++; } else worst = Math.max(worst, Math.hypot(wx - st[0]!, wz - st[1]!));
           } else start[f] = null;
@@ -348,6 +350,51 @@ describe('[GFX-12] blending, cycle, teleports', () => {
       expect(stances, `stances begun while accelerating at ${acc} m/s^2`).toBeGreaterThanOrEqual(3);
       expect(fadeFrames, `idle -> run fade frames measured at ${acc} m/s^2`).toBeGreaterThan(3);
       expect(worst, `planted toe slip at ${acc} m/s^2`).toBeLessThan(0.02);
+    }
+  });
+
+  it('[REPAIR 3] a stop keeps every planted toe within 2 cm of its spot and never moves one more than 2 cm in a frame', () => {
+    // Run up at 6 m/s^2, run on for a second, brake at `dec` to a stop and stand: through the braking steps, the switch
+    // to idle and the idle fade. The run -> idle switch dropped the run's planted-toe tracking (up to 30 cm in one
+    // frame), the idle fade slid both boots to the idle stance and the stance line at a few tenths of a m/s dragged
+    // the planted boot: 14-52 cm a stop. The boots are now pinned and step to the stance.
+    for (const [v0, dec] of [[5, 10], [5, 3], [8.5, 6], [8.5, 10], [2, 4], [3.5, 20]] as const) {
+      const s = makeState();
+      const a = createAnimator();
+      const sk = Object.assign(sink(), { groundAir: new Float32Array(NUM_SLOTS) });
+      const p = s.players[SLOT]!;
+      const hs = heightScale(s.attrs[SLOT]!.height);
+      p.vx = 0;
+      for (let i = 0; i < 30; i++) a.update(frameFor(s), sk);
+      const o = [0, 0, 0];
+      const start: (number[] | null)[] = [null, null];
+      const last: (number[] | null)[] = [null, null];
+      let worst = 0, jump = 0, steps = 0, v = 0, t = 0, braking = -1;
+      while (braking < 0 || t < braking + 150) {
+        if (braking < 0) { v = Math.min(v0, v + 6 / 60); if (v >= v0 && t > 120) braking = t; }
+        else v = Math.max(0, v - dec / 60);
+        p.vx = v; p.x += v / 60;
+        a.update(frameFor(s), sk);
+        t++;
+        if (braking < 0 || t < braking - 20) continue;
+        const pose = sk.poses[SLOT]!;
+        for (let f = 0; f < 2; f++) {
+          GROUND_AIR[0] = sk.groundAir[SLOT]!;
+          footPoint(pose, f === 0 ? 1 : -1, 1, o);
+          GROUND_AIR[0] = 0;
+          const wx = o[0]! * hs + p.x, wz = o[2]! * hs + p.z;
+          if (o[1]! < 0.003) {
+            const st = start[f], ls = last[f];
+            if (!st) { start[f] = [wx, wz]; steps++; } else worst = Math.max(worst, Math.hypot(wx - st[0]!, wz - st[1]!));
+            if (ls) jump = Math.max(jump, Math.hypot(wx - ls[0]!, wz - ls[1]!));
+            last[f] = [wx, wz];
+          } else { start[f] = null; last[f] = null; }
+        }
+      }
+      expect(a.bank.anim[SLOT], `standing after the stop from ${v0} at ${dec}`).toBe(AnimId.IDLE);
+      expect(steps, `boot contacts through the stop from ${v0} at ${dec}`).toBeGreaterThanOrEqual(2);
+      expect(worst, `planted toe slip, stop from ${v0} m/s at ${dec} m/s^2`).toBeLessThan(0.02);
+      expect(jump, `planted toe one-frame move, stop from ${v0} m/s at ${dec} m/s^2`).toBeLessThan(0.02);
     }
   });
 

@@ -11,7 +11,10 @@
  *    layering over locomotion, short cross-fades on clip changes (per-joint pose lerp, smoothstep weight), then
  *    sink.setPose. Allocation-free per frame. [LOOK] The run gait also gets the slot's smoothed acceleration, its turn
  *    lean (before the leg IK) and its motion direction off the facing (locomotion.ts RUN_IN), and the flight clearance
- *    of the drawn pose goes to the sink with it (PoseSinkLike.groundAir).
+ *    of the drawn pose goes to the sink with it (PoseSinkLike.groundAir). [REPAIR 3] Standing, stopping and walking
+ *    off (idle; a run below pinMaxSpeed) the boots are pinned in the world and step to the clip's stance (the pin pass,
+ *    PoseSinkLike.bootPins); a braking run steps quicker; a run started from rest begins its cycle where its first
+ *    stance fits the boots.
  *  - The Wave 0 stub API kept for the model's default driver: mapAnim / advanceCycle / samplePose / poseFnFor with
  *    AnimSample / AnimBank. Same mapping; when called per slot in that order with a bank from createAnimBank it also
  *    keeps hysteresis / foot memory and cross-fades clip changes (timed in sim ticks); no alpha term in the action
@@ -49,7 +52,7 @@ import {
   neutralPose, PP, RPF, RUN_IN, RUN_PLANT, runPlantRefS, SLEN, strideLengthForS, TLA, type PoseImpl,
 } from './locomotion';
 import { footPitchS, FPR, plantToeS, PTA, TAU } from './poseMath';
-import { BODY, createSkeleton, framePoint, Joint, solvePoseFK } from '../players/fk';
+import { BODY, createSkeleton, Joint, solvePoseFK, toePoint } from '../players/fk';
 import { kickApply, kickOffset, KOF, RCH, REACH_SWITCH, reachClip, touchReach, touchStepS, TST } from './reach';
 
 const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: render-only animation constants)
@@ -58,6 +61,37 @@ const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: render-only animation cons
   idleLeave: 0.5,
   /** [REPAIR] A run fading in from a standing clip below this speed (m/s) anchors the boots (no slide in the fade). */
   anchorMaxSpeed: 1.5,
+  // ---- [REPAIR 3] boot pins at low speed (stopping, standing, walking off): see the pin pass in createAnimator
+  /** Idle, and a run below this speed (m/s), pin grounded boots in the world. */
+  pinMaxSpeed: 2.2,
+  /** A boot whose toe the clip holds below this height (m) is grounded. */
+  pinGround: 0.004,
+  /** A pinned boot steps to where the clip has it once that is this far away (m, model): while moving / at rest. */
+  pinStepMove: 0.1,
+  pinStepRest: 0.025,
+  /** At rest: idle, settled, slower than this (m/s). */
+  pinRestSpeed: 0.05,
+  /** Farther than this (m) a pinned boot steps even while the other one is up (the leg cannot hold it there). */
+  pinLetGo: 0.3,
+  /** Step time (s) at rest, its reduction per m/s and its floor; lift (m) = base + share of the step length, capped. */
+  pinStepTime: 0.24,
+  pinStepTimePerMs: 0.05,
+  pinStepTimeMin: 0.16,
+  pinLiftBase: 0.02,
+  pinLiftShare: 0.25,
+  pinLiftMax: 0.07,
+  /** A boot the pin lets go eases from where it was drawn to the clip's over this time (s). */
+  pinRelease: 0.15,
+  /** While the boots are pinned the model's foot-lock offset eases back to the sim position with this time constant
+   *  (s, see PoseSinkLike.bootPins): the body settles over the planted boots. */
+  pinOffsetReturn: 0.25,
+  /** [REPAIR 3] Braking steps: a planted run toe more than brakeStepDead (m) behind its stance line moves the cycle on
+   *  by brakeStepGain of the excess (as stance-line travel) per frame, at most brakeStepMax cycles per frame. */
+  brakeStepDead: 0.02,
+  brakeStepGain: 0.35,
+  brakeStepMax: 0.03,
+  /** Turning faster than this (rad/s) drops the pins (the boots turn with the body, as before). */
+  pinMaxYawRate: 2.5,
   /** Moving this far off the facing (rad) switches to STRAFE (enter / leave), only up to strafeMaxSpeed (m/s). */
   strafeEnter: 0.75,
   strafeLeave: 0.55,
@@ -772,6 +806,13 @@ export interface PoseSinkLike {
    * phase. The animator writes it with each setPose; the model's ground snap keeps it (fk.ts GROUND_AIR).
    */
   readonly groundAir?: Float32Array;
+  /**
+   * [REPAIR 3] Per slot 1 when the boots were pinned in the world this frame (the pin pass): the sink's foot lock then
+   * only eases its offset back (by 1 - dt / MAPPER_TUNING.pinOffsetReturn per frame, which the pins allow for) instead
+   * of correcting it from the boots, which already stay put (correcting from them fed the pins' own one-frame offset
+   * lag back into the offset and ran it away). Written with setPose; the sink zeroes it before each driver call.
+   */
+  readonly bootPins?: Uint8Array;
 }
 
 /** Per-frame animation driver: same shape as GFX-07's PoseDriver. */
@@ -833,6 +874,8 @@ export function createAnimator(): Animator {
   const plantX = new Float64Array(NUM_SLOTS * 2);
   const plantLu = new Float64Array(NUM_SLOTS * 2);
   const plantOk = new Uint8Array(NUM_SLOTS);
+  /** [REPAIR 3] Per slot the most a planted run toe lagged behind its stance line last frame (m, <= 0). */
+  const plantE = new Float64Array(NUM_SLOTS);
   /** [REPAIR] Fade-in anchors of a run started from a standing clip (idle, strafe, jockey, shield, keeper ready): per
    *  slot and leg (right, left) where the drawn toe was when the fade began (model space, moved back by the distance
    *  travelled, so it stays put on the grass), and whether the slot's fade is anchored. */
@@ -845,6 +888,23 @@ export function createAnimator(): Animator {
   /** Anchor scratch: a skeleton and a point. */
   const ancSk = createSkeleton();
   const ancPt = new Float64Array(3);
+  /** [REPAIR 3] Boot pins (see the pin pass below), per slot and leg (right, left): state (0 free, 1 pinned, 2 stepping),
+   *  the pinned spot / where a stepping boot was drawn last frame (world x, z), the step's progress (0..1) and lift (m), and a
+   *  let-go boot's offset from the clip (model x, y, z) with the share of it still drawn (1 -> 0 over pinRelease). Per
+   *  slot: whether the fade in progress started from a locomotion clip. */
+  const pinSt = new Uint8Array(NUM_SLOTS * 2);
+  const pinWX = new Float64Array(NUM_SLOTS * 2), pinWZ = new Float64Array(NUM_SLOTS * 2);
+  const stepT = new Float64Array(NUM_SLOTS * 2), stepLift = new Float64Array(NUM_SLOTS * 2);
+  const relX = new Float64Array(NUM_SLOTS * 2), relY = new Float64Array(NUM_SLOTS * 2), relZ = new Float64Array(NUM_SLOTS * 2);
+  const relW = new Float64Array(NUM_SLOTS * 2);
+  const fromLoco = new Uint8Array(NUM_SLOTS);
+  /** Pin pass scratch per leg (right, left; 12 each): the clip's toe (model x, y, z), its pitch, the step goal (model
+   *  x, z), the toe drawn last frame (world x, height, world z), the goal in the world (x, z) and its distance from the
+   *  pinned spot (m, model). */
+  const PN = new Float64Array(24);
+  /** [REPAIR 3] The pose drawn last frame per slot (the pins latch a boot that was already down where it was drawn). */
+  const lastPose: Pose[] = [];
+  for (let i = 0; i < NUM_SLOTS; i++) lastPose.push(createPose());
   const lastFoot = new Uint8Array(NUM_SLOTS);
   const liveFrom = createPose();
   /** [QF-4] Share of the drawn legs that are the run cycle's: this frame's target (runLegs) and, for the fade in
@@ -878,8 +938,10 @@ export function createAnimator(): Animator {
     blendDur.fill(0);
     fromLive.fill(0);
     accel.fill(0); lastSpeed.fill(0);
-    plantX.fill(0); plantLu.fill(0); plantOk.fill(0);
+    plantX.fill(0); plantLu.fill(0); plantOk.fill(0); plantE.fill(0);
     ancX.fill(0); ancZ.fill(0); ancOn.fill(0); ancLift.fill(0); plantZ.fill(0);
+    pinSt.fill(0); pinWX.fill(0); pinWZ.fill(0); stepT.fill(0); stepLift.fill(0);
+    relX.fill(0); relY.fill(0); relZ.fill(0); relW.fill(0); fromLoco.fill(0);
     runLegs.fill(0); fromRunLegs.fill(0);
     mem.idle.fill(0); mem.strafe.fill(0); mem.lean.fill(0); mem.foot.fill(255); mem.act.fill(0); mem.actT.fill(0);
     touchW.fill(0); touchSeenTick.fill(-1); touchRise.fill(0); wasCharging.fill(0); strike.fill(0);
@@ -922,6 +984,7 @@ export function createAnimator(): Animator {
         const k = 1 - Math.exp(-dt / LOCAL_TUNING.yawRateTau);
         yawRate[i] = yawRate[i]! + (rate - yawRate[i]!) * k;
       }
+      const lpx = lastX[i]!, lpz = lastZ[i]!, lpfx = lastFx[i]!, lpfz = lastFz[i]!;
       lastX[i] = x; lastZ[i] = z; lastFx[i] = fx; lastFz[i] = fz;
       // [LOOK] Acceleration along the motion (smoothed): the run leans into a speed-up and back on braking.
       if (teleport) accel[i] = 0;
@@ -1022,12 +1085,23 @@ export function createAnimator(): Animator {
       if (d > 0) {
         SLEN[0] = speed;
         strideLengthForS(OUTX.loco);
-        let c = bank.cycle[i]! + (d / SLEN[1]!) * TAU;
+        let adv = d / SLEN[1]!;
+        // [REPAIR 3] Braking: a planted toe left behind its stance line (plantE, last frame) moves the cycle on faster,
+        // so the stance ends sooner and the next boot comes down: short quick steps into a stop. The stance line comes
+        // forward as the stride shortens with the speed; the planted toe fell more than its bound behind it and was
+        // dragged forward over the grass (13-20 cm in a hard stop from a sprint) while the foot lock pulled the body back.
+        const pe = -plantE[i]! - LOCAL_TUNING.brakeStepDead;
+        if (pe > 0) {
+          let ex = (pe * LOCAL_TUNING.brakeStepGain) / SLEN[1]!;
+          if (ex > LOCAL_TUNING.brakeStepMax) ex = LOCAL_TUNING.brakeStepMax;
+          adv += ex;
+        }
+        let c = bank.cycle[i]! + adv * TAU;
         if (!(c === c)) c = 0;
         if (c >= TAU || c < 0) c -= TAU * Math.floor(c / TAU);
         bank.cycle[i] = c >= TAU ? 0 : c;
       }
-      const cycle = bank.cycle[i]!;
+      let cycle = bank.cycle[i]!;
       // Target pose: clip, locomotion legs under upper-body clips, lean and breathing layers.
       PP[0] = sample.t; PP[1] = cycle; PP[2] = speed; PP[3] = sample.side; PP[4] = sample.foot;
       // [LOOK] Run inputs: acceleration, the turn lean of a JOG / SPRINT target (leaned before its leg IK, not layered
@@ -1058,17 +1132,37 @@ export function createAnimator(): Animator {
       if (anchorNow) {
         solvePoseFK(poses[i]!, ancSk);
         for (let leg = 0; leg < 2; leg++) {
-          framePoint(ancSk, leg === 0 ? Joint.ANKLE_R : Joint.ANKLE_L, BODY.toeX, -BODY.ankleY, 0, ancPt);
+          toePoint(ancSk, leg === 0 ? Joint.ANKLE_R : Joint.ANKLE_L, ancPt);
           ancX[i * 2 + leg] = ancPt[0]! - dGround * adX;
           ancZ[i * 2 + leg] = ancPt[2]! - dGround * adZ;
         }
         ancOn[i] = 1;
+        // [REPAIR 3] The run starts its cycle where its first stance fits the boots as they stand: the boot farther
+        // forward planted early in its stance (the stance line's toe at its anchor), the other one just leaving the
+        // grass. From an arbitrary phase a boot the run held planted late in its stance sat far ahead of the stance line,
+        // past the planted-toe bound: it was dragged back over the grass through the fade (up to 8 cm a start after a
+        // stop) and the model's foot lock, chasing it, pulled the body 20 cm behind the sim position.
+        RPF[0] = 0; RPF[1] = speed; RPF[2] = accel[i]!;
+        runPlantRefS();
+        const td = RPF[3]!, rate = 2 * (RPF[3]! - RPF[4]!), duty = RPF[7]!;
+        const pl = ancX[i * 2 + 1]! > ancX[i * 2]! ? 1 : 0;
+        let lu = rate > 1e-6 ? (td - ancX[i * 2 + pl]! / adX) / rate : 0;
+        let luMin = duty - 0.48;
+        if (luMin < 0) luMin = 0;
+        if (!(lu >= luMin)) lu = luMin; else if (lu > 0.6 * duty) lu = 0.6 * duty;
+        let u = pl === 0 ? lu : lu + 0.5;
+        u -= Math.floor(u);
+        if (u >= 1) u = 0;
+        bank.cycle[i] = u * TAU;
+        cycle = bank.cycle[i]!;
+        PP[1] = cycle;
       }
       if (anim === AnimId.JOG || anim === AnimId.SPRINT || anim === AnimId.TURN_LEAN
         || OUTX.loco === AnimId.JOG || OUTX.loco === AnimId.SPRINT || OUTX.loco === AnimId.TURN_LEAN) {
         RPF[0] = cycle; RPF[1] = speed; RPF[2] = accel[i]!;
         runPlantRefS();
         const live = plantOk[i] === 1 && !teleport;
+        let eMin = 0;
         for (let leg = 0; leg < 2; leg++) {
           const k = i * 2 + leg;
           const lu = RPF[5 + leg]!, xr = RPF[3 + leg]!;
@@ -1085,6 +1179,7 @@ export function createAnimator(): Animator {
           if (!(e === e)) { plantX[k] = xr; e = 0; }
           else if (e > 0.3) { plantX[k] = xr + 0.3; e = 0.3; } else if (e < -0.3) { plantX[k] = xr - 0.3; e = -0.3; }
           RUN_PLANT[leg] = e;
+          if (lu < RPF[7]! && e < eMin) eMin = e;
           // Lateral: the anchored boot keeps its spot across (the run's planted toe sits at side * base + along * dZ).
           if (anchored) {
             let ez = ancZ[k]! - ((leg === 0 ? 1 : -1) * RPF[8]! + plantX[k]! * adZ);
@@ -1094,7 +1189,8 @@ export function createAnimator(): Animator {
           RUN_PLANT[2 + leg] = plantZ[k]!;
         }
         plantOk[i] = 1;
-      } else plantOk[i] = 0;
+        plantE[i] = eMin;
+      } else { plantOk[i] = 0; plantE[i] = 0; }
       if (anim === AnimId.JOG || anim === AnimId.SPRINT) { RUN_IN[1] = OUTF[OF_LEAN]!; OUTF[OF_LEAN] = 0; }
       GAIT_AIR[0] = 0;
       POSE_IMPLS[anim]!(target);
@@ -1180,12 +1276,15 @@ export function createAnimator(): Animator {
       const restarted = prevAct === p.act && p.act !== ActionKind.NONE && p.actT < prevActT;
       const jump = OUTX.action === 1 && anim === prevAnim && (sample.t < lastT[i]! - 0.02 || sample.t > lastT[i]! + LOCAL_TUNING.phaseJump);
       const out = poses[i]!;
+      const lp = lastPose[i]!;
+      for (let k = 0; k < POSE_SIZE; k++) lp[k] = out[k]!;
       if (teleport) {
         blendT[i] = 0;
         blendDur[i] = 0;
       } else if ((anim !== prevAnim && !sameRunPose(prevAnim, lastFoot[i]!, anim, sample.foot)) || restarted || jump) {
         for (let k = 0; k < POSE_SIZE; k++) from[i]![k] = out[k]!;
         fromRunLegs[i] = runLegs[i]!;
+        fromLoco[i] = isLocomotion(prevAnim) ? 1 : 0;
         // Settled fades only: an interrupted fade starts from the drawn mixture (frozen), so the pose stays continuous;
         // the model's foot lock catches the slip of those short fades.
         if (anim !== prevAnim && isLocomotion(prevAnim) && isLocomotion(anim) && blendT[i]! >= blendDur[i]!) {
@@ -1249,7 +1348,7 @@ export function createAnimator(): Animator {
           solvePoseFK(target, ancSk);
           for (let leg = 0; leg < 2; leg++) {
             const side = leg === 0 ? 1 : -1;
-            framePoint(ancSk, leg === 0 ? Joint.ANKLE_R : Joint.ANKLE_L, BODY.toeX, -BODY.ankleY, 0, ancPt);
+            toePoint(ancSk, leg === 0 ? Joint.ANKLE_R : Joint.ANKLE_L, ancPt);
             footPitchS(out, side);
             const pitch = FPR[0]!;
             const ax = ancX[i * 2 + leg]!, az = ancZ[i * 2 + leg]!;
@@ -1265,6 +1364,161 @@ export function createAnimator(): Animator {
       }
       if (w >= 1) ancOn[i] = 0;
       runLegs[i] = LEGS[0]!;
+      // [REPAIR 3] Boot pins. Standing, stopping and walking off (idle; a run below pinMaxSpeed) a boot the clip has on
+      // the grass stays on its spot in the world (pinned when it lands), whatever the clip's own boot does under it:
+      // the run's stance line at a few tenths of a m/s, the switch from the run to idle (its outgoing run legs lose the
+      // planted-toe tracking: up to 30 cm in one frame) and the idle fade (it slid both boots to the idle stance) all
+      // dragged planted boots, 14-52 cm a stop. A pinned boot the clip wants elsewhere steps there instead (lifted, one
+      // boot at a time, the other planted, toward where the clip is going: the fade's target): farther than
+      // pinStepMove while moving, pinStepRest once standing (a stop ends with a settling step or two). A boot the clip
+      // lifts eases from where it was drawn to the clip's over pinRelease; so does every boot when an action, the
+      // start-from-rest anchors or another standing clip takes over, except that a run (faster than pinMaxSpeed) keeps
+      // a planted boot where it is until its gait lifts it. World spots: x, z (interpolated sim position) plus the
+      // model's drawn offset (foot lock, last frame, eased as bootPins makes the model ease it) and the height scale, as
+      // the model places the skeleton. No allocation (typed arrays; integer arguments only).
+      if (teleport) {
+        for (let leg = 0; leg < 2; leg++) { pinSt[i * 2 + leg] = 0; relW[i * 2 + leg] = 0; }
+      }
+      const runClip = anim === AnimId.JOG || anim === AnimId.SPRINT || anim === AnimId.TURN_LEAN;
+      const pinOn = !teleport && seen[i] === 1 && p.act === ActionKind.NONE && ancOn[i] === 0
+        && (anim === AnimId.IDLE || (runClip && speed < LOCAL_TUNING.pinMaxSpeed))
+        && (w >= 1 || fromLoco[i] === 1)
+        && yawRate[i]! < LOCAL_TUNING.pinMaxYawRate && yawRate[i]! > -LOCAL_TUNING.pinMaxYawRate;
+      const holdOn = pinOn || (!teleport && p.act === ActionKind.NONE && ancOn[i] === 0 && runClip);
+      const pinsHeld = pinSt[i * 2] !== 0 || pinSt[i * 2 + 1] !== 0;
+      let pinsOut = 0;
+      if (pinOn || pinsHeld || relW[i * 2]! > 0 || relW[i * 2 + 1]! > 0) {
+        let fl = Math.sqrt(fx * fx + fz * fz);
+        if (!(fl > 1e-6)) fl = 1;
+        const ux = fx / fl, uz = fz / fl;
+        // Where the model draws the body this frame: the drawn offset of the last frame, eased back as the model does
+        // while the boots are pinned (bootPins).
+        let kp = 1;
+        if ((pinOn || pinsHeld) && drawn !== null && sink !== null && sink.bootPins !== undefined) {
+          kp = 1 - dt / LOCAL_TUNING.pinOffsetReturn;
+          if (kp < 0) kp = 0;
+        }
+        const ox = x + offX * kp, oz = z + offZ * kp;
+        // The step goal: where the clip being faded to has the boot (the fade's target pose), else the clip's.
+        const goalT = w < 1 && pinOn && (pinSt[i * 2] !== 0 || pinSt[i * 2 + 1] !== 0);
+        if (goalT) {
+          solvePoseFK(target, ancSk);
+          for (let leg = 0; leg < 2; leg++) {
+            toePoint(ancSk, leg === 0 ? Joint.ANKLE_R : Joint.ANKLE_L, ancPt);
+            PN[leg * 12 + 4] = ancPt[0]!; PN[leg * 12 + 5] = ancPt[2]!;
+          }
+        }
+        // A boot about to be pinned that was already down last frame is latched where it was drawn then (last frame's
+        // pose, position, facing and drawn offset), not where the clip has it now: this frame's clip boot is where it
+        // would have slid to (the foot lock, which corrected that, stops at the pins).
+        PN[7] = 1; PN[19] = 1;
+        if (pinOn && ((pinSt[i * 2] === 0 && relW[i * 2] === 0) || (pinSt[i * 2 + 1] === 0 && relW[i * 2 + 1] === 0))) {
+          let lfl = Math.sqrt(lpfx * lpfx + lpfz * lpfz);
+          if (!(lfl > 1e-6)) lfl = 1;
+          const lux = lpfx / lfl, luz = lpfz / lfl;
+          solvePoseFK(lp, ancSk);
+          for (let leg = 0; leg < 2; leg++) {
+            toePoint(ancSk, leg === 0 ? Joint.ANKLE_R : Joint.ANKLE_L, ancPt);
+            PN[leg * 12 + 6] = lpx + offX + hs * (ancPt[0]! * lux - ancPt[2]! * luz);
+            PN[leg * 12 + 7] = ancPt[1]!;
+            PN[leg * 12 + 8] = lpz + offZ + hs * (ancPt[0]! * luz + ancPt[2]! * lux);
+          }
+        }
+        solvePoseFK(out, ancSk);
+        for (let leg = 0; leg < 2; leg++) {
+          const k = i * 2 + leg, o = leg * 12;
+          toePoint(ancSk, leg === 0 ? Joint.ANKLE_R : Joint.ANKLE_L, ancPt);
+          footPitchS(out, leg === 0 ? 1 : -1);
+          PN[o] = ancPt[0]!; PN[o + 1] = ancPt[1]!; PN[o + 2] = ancPt[2]!; PN[o + 3] = FPR[0]!;
+          if (!goalT) { PN[o + 4] = ancPt[0]!; PN[o + 5] = ancPt[2]!; }
+          // The goal in the world, and its distance from the pinned spot (model m).
+          PN[o + 9] = ox + hs * (PN[o + 4]! * ux - PN[o + 5]! * uz);
+          PN[o + 10] = oz + hs * (PN[o + 4]! * uz + PN[o + 5]! * ux);
+          const ex = PN[o + 9]! - pinWX[k]!, ez = PN[o + 10]! - pinWZ[k]!;
+          PN[o + 11] = Math.sqrt(ex * ex + ez * ez) / hs;
+        }
+        const rest = anim === AnimId.IDLE && speed < LOCAL_TUNING.pinRestSpeed;
+        const trig = rest ? LOCAL_TUNING.pinStepRest : LOCAL_TUNING.pinStepMove;
+        let dur = LOCAL_TUNING.pinStepTime - LOCAL_TUNING.pinStepTimePerMs * speed;
+        if (dur < LOCAL_TUNING.pinStepTimeMin) dur = LOCAL_TUNING.pinStepTimeMin;
+        // The boot farther from its goal goes first.
+        const first = PN[23]! > PN[11]! ? 1 : 0;
+        for (let n = 0; n < 2; n++) {
+          const leg = n === 0 ? first : 1 - first;
+          const k = i * 2 + leg, o = leg * 12, ko = i * 2 + 1 - leg;
+          const nx = PN[o]!, ny = PN[o + 1]!, nz = PN[o + 2]!;
+          // Drawn toe this frame (model): the clip's unless a state below moves it.
+          let dx = nx, dy = ny, dz = nz;
+          let st = pinSt[k]!;
+          if (st === 1) {
+            if (!holdOn || ny >= LOCAL_TUNING.pinGround || (!pinOn && PN[o + 11]! > LOCAL_TUNING.pinLetGo)) {
+              st = 0; relW[k] = 1;
+              const rx = pinWX[k]! - ox, rz = pinWZ[k]! - oz;
+              relX[k] = (rx * ux + rz * uz) / hs - nx; relY[k] = 0; relZ[k] = (rz * ux - rx * uz) / hs - nz;
+            } else if (pinOn && PN[o + 11]! > trig && (pinSt[ko] === 1 || PN[o + 11]! > LOCAL_TUNING.pinLetGo)) {
+              // (Past pinLetGo the leg cannot hold the boot there: it steps even while the other boot is up.)
+              st = 2; stepT[k] = 0;
+              let lift = LOCAL_TUNING.pinLiftBase + LOCAL_TUNING.pinLiftShare * PN[o + 11]!;
+              if (lift > LOCAL_TUNING.pinLiftMax) lift = LOCAL_TUNING.pinLiftMax;
+              stepLift[k] = lift;
+            } else {
+              const rx = pinWX[k]! - ox, rz = pinWZ[k]! - oz;
+              dx = (rx * ux + rz * uz) / hs; dz = (rz * ux - rx * uz) / hs;
+            }
+          }
+          if (st === 2) {
+            // Step: pinWX / pinWZ hold where the boot was drawn last frame; it covers this frame's share of the way
+            // left to the goal (continuous if the goal moves), across the grass by 85 % of the step, then sets down.
+            const t0 = stepT[k]!;
+            let t = t0 + dt / dur;
+            if (t > 1) t = 1;
+            let e0 = t0 / 0.85; e0 = e0 > 1 ? 1 : e0 * e0 * (3 - 2 * e0);
+            let e1 = t / 0.85; e1 = e1 > 1 ? 1 : e1 * e1 * (3 - 2 * e1);
+            const share = e0 < 1 ? (e1 - e0) / (1 - e0) : 1;
+            const wx = pinWX[k]! + (PN[o + 9]! - pinWX[k]!) * share, wz = pinWZ[k]! + (PN[o + 10]! - pinWZ[k]!) * share;
+            pinWX[k] = wx; pinWZ[k] = wz;
+            const rx = wx - ox, rz = wz - oz;
+            dx = (rx * ux + rz * uz) / hs; dz = (rz * ux - rx * uz) / hs;
+            dy = ny + stepLift[k]! * Math.sin(Math.PI * t);
+            stepT[k] = t;
+            if (!pinOn) {
+              st = 0; relW[k] = 1; relX[k] = dx - nx; relY[k] = dy - ny; relZ[k] = dz - nz;
+            } else if (t >= 1) {
+              st = 1;
+            }
+          }
+          if (st === 0) {
+            let r = relW[k]!;
+            if (r > 0) {
+              const e = r * r * (3 - 2 * r);
+              dx = nx + relX[k]! * e; dy = ny + relY[k]! * e; dz = nz + relZ[k]! * e;
+              if (dy < 0) dy = 0;
+              r -= dt / LOCAL_TUNING.pinRelease;
+              relW[k] = r > 0 ? r : 0;
+            }
+            // Lands (or is on the grass when the pins begin): pinned where it is drawn.
+            if (pinOn && ny < LOCAL_TUNING.pinGround) {
+              if (relW[k] === 0 && PN[o + 7]! < LOCAL_TUNING.pinGround) {
+                // Down last frame too: latched where it was drawn then (this frame shows it there).
+                pinWX[k] = PN[o + 6]!; pinWZ[k] = PN[o + 8]!;
+                const rx = pinWX[k]! - ox, rz = pinWZ[k]! - oz;
+                dx = (rx * ux + rz * uz) / hs; dz = (rz * ux - rx * uz) / hs;
+              } else {
+                pinWX[k] = ox + hs * (dx * ux - dz * uz);
+                pinWZ[k] = oz + hs * (dx * uz + dz * ux);
+              }
+              st = 1; relW[k] = 0;
+            }
+          }
+          pinSt[k] = st;
+          if (st !== 0) pinsOut = 1;
+          const ddx = dx - nx, ddy = dy - ny, ddz = dz - nz;
+          if (ddx * ddx + ddy * ddy + ddz * ddz > 1e-8) {
+            PTA[0] = dx; PTA[1] = dy; PTA[2] = dz; PTA[3] = PN[o + 3]!;
+            plantToeS(out, leg === 0 ? 1 : -1);
+          }
+        }
+      }
       // [QF-4] Touch reach (dribble touches, first touches): a touch this tick turns the reach on toward where the ball
       // was touched (the frame shows it there); a dribble touch the sim has scheduled, or a pass about to reach him,
       // fades it in beforehand; it fades out after. The weight wanted this frame is then rate-limited by how far the
@@ -1354,6 +1608,7 @@ export function createAnimator(): Animator {
       RUN_PLANT[0] = 0; RUN_PLANT[1] = 0; RUN_PLANT[2] = 0; RUN_PLANT[3] = 0;
       if (sink) {
         if (sink.groundAir !== undefined) sink.groundAir[i] = air;
+        if (sink.bootPins !== undefined) sink.bootPins[i] = pinsOut;
         sink.setPose(i, out);
       }
     }

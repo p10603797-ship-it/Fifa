@@ -9,11 +9,16 @@
  * caps inside cuffed short sleeves, tapered biceps and forearms, a shaped thigh with a quad bulge under flared
  * shorts, a calf under a cuffed sock, ball-ended knees and elbows (both parts at a joint end in a sphere of the same
  * radius around the joint, so a bent joint shows no gap or kink), a head with a jaw, brow, nose and ears, mitten
- * hands with a thumb, oversized keeper gloves, and boots with a shaped toe and a sole.
+ * hands with a thumb, oversized keeper gloves, and boots with a shaped toe and a sole. [POLISH] Second body pass: a
+ * broader shoulder line over the sleeve caps and a fuller chest and lats over the waist, a higher collar and thicker
+ * neck, biceps and forearm swells tapering to the elbow and wrist, a quad swell tapering to a smaller knee and a
+ * fuller calf, a face with cheekbone and jaw planes, a chin, eyes (whites and irises, FeatureSel), a faceted nose and
+ * a mouth line, and fuller hair.
  *
  * Each vertex carries `aSel` (0 or 1): the shader colours it with the instance's colour A or B, so one part draws
  * two regions with crisp edges (sleeve / arm, shorts / thigh, sock / knee, skin / hair and brows, hand / glove, shirt
- * / collar trim, boot / sole). Region edges follow whole triangles.
+ * / collar trim, boot / sole). Region edges follow whole triangles. [POLISH] The head also uses 2..4 (FeatureSel: eye
+ * whites, irises, mouth), whose colours the part shader derives.
  *
  * Each vertex also carries `aVar`, a variant id: 0 is always drawn; any other id is drawn only on instances whose
  * per-instance `iVar` equals it (the vertex shader collapses the others to a point: zero-area triangles that are
@@ -73,7 +78,7 @@ export type PartLod = 0 | 1;
 
 /** Torso extent along the spine (local y, m): hem and collar. The shader maps kit patterns onto this range. */
 export const TORSO_Y0 = -0.05;
-export const TORSO_Y1 = 0.555;
+export const TORSO_Y1 = 0.565;
 /** Shirt hem half extents (front-back, side-side) at TORSO_Y0. */
 export const HEM_RX = 0.124;
 export const HEM_RZ = 0.19;
@@ -292,7 +297,7 @@ interface Detail {
 
 const DETAIL: readonly Detail[] = [
   { torso: 8, pelvis: 6, arm: 5, leg: 6, hand: 4, skullSeg: 8, skullLat: 5, hairSeg: 5, hairRows: 1, dome: 1, features: false, bootSeg: 5 },
-  { torso: 12, pelvis: 8, arm: 8, leg: 8, hand: 6, skullSeg: 12, skullLat: 9, hairSeg: 10, hairRows: 3, dome: 2, features: true, bootSeg: 7 },
+  { torso: 12, pelvis: 8, arm: 8, leg: 8, hand: 6, skullSeg: 14, skullLat: 10, hairSeg: 10, hairRows: 3, dome: 2, features: true, bootSeg: 7 },
 ];
 
 // ============================================================ head
@@ -301,7 +306,7 @@ const HY = BODY.headY;
 /** The skull's centre below BODY.headY (m). */
 const SKULL_DROP = 0.012;
 /** Skull width over BODY.headRZ. */
-const HEAD_WIDEN = 1.07;
+const HEAD_WIDEN = 1.09;
 
 /** Skull surface point for polar angle phi (0 = crown) and azimuth th (0 = front, +x; pi/2 = his right, +z). */
 function skull(phi: number, th: number): V3 {
@@ -311,20 +316,44 @@ function skull(phi: number, th: number): V3 {
   // headRY and the jaw sits closer to the collar (a shorter visible neck).
   let x = BODY.headRX * dx, y = (BODY.headRY + SKULL_DROP) * dy - SKULL_DROP, z = BODY.headRZ * dz;
   const low = Math.max(-dy, 0);
-  // Jaw narrower than the cranium; face a little narrower than the back of the head.
-  z *= 1 - 0.2 * low ** 1.5 - 0.05 * Math.max(dx, 0) ** 2;
+  const front = Math.max(dx, 0);
+  // [POLISH] Planes of a face instead of an egg: cheekbones (the widest point of the face, just below the eyes, at the
+  // front corners), then a jaw plane that runs from a squarer jaw corner under the ear down to the chin, a flatter
+  // face front, a chin that comes forward, and a slightly fuller back of the cranium.
+  const cheek = Math.exp(-(((dy + 0.12) / 0.2) ** 2)) * Math.min(1, front * 2.2);
+  const jaw = smooth01((low - 0.3) / 0.7); // 0 above the jaw corner, 1 at the chin
+  z *= 1 + 0.06 * cheek - (0.12 + 0.2 * front * front) * jaw - 0.04 * front * front * (1 - low);
   // Nape tucks in toward the neck; the chin stays forward.
   if (dx < 0) x *= 1 - 0.3 * low;
-  else x *= 1 - 0.1 * low * low;
+  else x *= 1 - 0.1 * low * low - 0.07 * front * front * Math.max(1 - Math.abs(dy) * 1.6, 0);
   // A slightly larger head than the skeleton's ellipsoid (readability): wider, and a longer lower half that brings
   // the jaw and chin down toward the collar (the crown stays at BODY.headY + headRY).
-  if (dy < 0) y = -SKULL_DROP - BODY.headRY * 1.06 * low ** 0.8; // a squarer jaw line than the ellipsoid's
+  // [POLISH] The jaw corners (front and sides) come down further than the nape: a squarer jaw and less neck.
+  if (dy < 0) y = -SKULL_DROP - BODY.headRY * 1.08 * low ** (0.8 - 0.22 * Math.min(Math.max(dx * 1.5 + 0.5, 0), 1));
   z *= HEAD_WIDEN;
   x *= 1.04;
-  if (dx < 0 && dy > 0) x *= 1 + 0.06 * dy;
-  // Brow ridge.
-  x += 0.008 * Math.max(dx, 0) ** 6 * Math.exp(-(((dy - 0.3) / 0.12) ** 2));
+  if (dx < 0 && dy > 0) x *= 1 + 0.07 * dy;
+  // Brow ridge, cheekbones forward a touch, and the chin.
+  x += 0.009 * front ** 6 * Math.exp(-(((dy - 0.33) / 0.12) ** 2));
+  x += 0.006 * cheek * Math.abs(dz);
+  x += 0.012 * front ** 3 * Math.exp(-(((dy + 0.8) / 0.16) ** 2));
   return [x, HY + y, z];
+}
+
+/** Polar angle where the skull at azimuth th is at height y (head-centre relative; bisection, the profile is monotonic). */
+function phiAtY(y: number, th: number): number {
+  let lo = 0, hi = Math.PI;
+  for (let k = 0; k < 40; k++) {
+    const m = (lo + hi) / 2;
+    if (skull(m, th)[1] - HY > y) lo = m; else hi = m;
+  }
+  return (lo + hi) / 2;
+}
+
+/** Smoothstep of t clamped to 0..1. */
+function smooth01(t: number): number {
+  const c = t < 0 ? 0 : t > 1 ? 1 : t;
+  return c * c * (3 - 2 * c);
 }
 
 /** Hairline: hair above this height (head-centre relative) at a given x (high on the forehead, low at the nape). */
@@ -366,12 +395,14 @@ function hairShell(b: SoupBuilder, d: Detail, off: (th: number, s: number) => nu
   grid(b, P, () => 1);
 }
 
-/** Head, face and neck (neck-base local). Colour A = skin, B = hair (scalp, brows, hair styles). */
+/** Head, face and neck (neck-base local). Colour A = skin, B = hair (scalp, brows, hair styles); face features use
+ *  the selectors FeatureSel (eye whites, irises, mouth: colours the part shader derives, see model.ts). */
 function buildHead(b: SoupBuilder, d: Detail): void {
-  // Neck: a short, strong column from inside the collar into the skull.
+  // Neck: a short, strong column from inside the collar into the skull. [POLISH] Thicker (an athlete's neck), so the
+  // little of it that shows between the collar and the jaw reads short.
   tube(b, d, [
-    round(-0.045, 0, 0), sec(-0.045, 0.058, 0.062, 0.066), hi(sec(0.02, 0.055, 0.058, 0.058)), sec(0.09, 0.055, 0.059, 0.057, 0, -0.002),
-    sec(0.14, 0.052, 0.058, 0.056, 0, -0.006), round(0.14, 0, 0),
+    round(-0.045, 0, 0), sec(-0.045, 0.062, 0.066, 0.07), hi(sec(0.02, 0.061, 0.064, 0.066)), sec(0.08, 0.059, 0.063, 0.063, 0, -0.002),
+    sec(0.14, 0.054, 0.06, 0.058, 0, -0.006), round(0.14, 0, 0),
   ], d.features ? 8 : 6);
   // Skull with jaw and brow; scalp above the hairline in the hair colour (BUZZ shows just this).
   const P: V3[][] = [];
@@ -382,46 +413,103 @@ function buildHead(b: SoupBuilder, d: Detail): void {
     P.push(row);
   }
   grid(b, P, (x, y) => (y - HY > hairline(x) ? 1 : 0));
-  // Nose: a wedge on the face.
-  const face = skull(Math.acos(-0.12), 0);
-  nose(b, face[0] - 0.006, HY - 0.012, 0.034, 0.02, 0.03, 0);
+  // Nose: a faceted wedge (bridge, two flanks, underside) whose flat planes catch the light.
+  nose(b);
   if (d.features) {
     // Ears.
     for (const s of [-1, 1]) {
-      ellipsoid(b, [-0.008, HY - 0.008, s * (BODY.headRZ * HEAD_WIDEN - 0.004)], [0, 0.03, 0], [0.019, 0, 0], [0, 0, 0.014], 4, 6, 0);
+      ellipsoid(b, [-0.008, HY - 0.008, s * (BODY.headRZ * HEAD_WIDEN - 0.006)], [0, 0.03, 0], [0.019, 0, 0], [0, 0, 0.014], 4, 6, 0);
     }
     // Brows in the hair colour (above the face band, so the face reads as skin).
     for (const s of [-1, 1]) {
-      const p = skull(Math.acos((0.05 + SKULL_DROP) / (BODY.headRY + SKULL_DROP)), s * 0.36);
-      ellipsoid(b, [p[0] - 0.001, HY + 0.05, p[2]], [0, 0.0065, 0], [0.007, 0, 0], [0, 0, 0.026], 2, 6, 1);
+      const p = skull(Math.acos((0.047 + SKULL_DROP) / (BODY.headRY + SKULL_DROP)), s * 0.36);
+      ellipsoid(b, [p[0] - 0.001, HY + 0.047, p[2]], [0, 0.0075, 0], [0.008, 0, 0], [0, 0, 0.027], 2, 6, 1);
+    }
+    // [POLISH] Eyes (white with a dark iris, so they read on every skin tone) under the brow ridge, and a mouth line.
+    for (const s of [-1, 1]) {
+      const th = s * 0.37;
+      const p = skull(phiAtY(EYE_Y, th), th);
+      const nx = Math.cos(th), nz = Math.sin(th);
+      ellipsoid(b, [p[0] - 0.0035 * nx, HY + EYE_Y, p[2] - 0.0035 * nz], [0.0062 * nx, 0, 0.0062 * nz], [0, 0.0105, 0], [-0.0172 * nz, 0, 0.0172 * nx], 2, 6, FeatureSel.EYE);
+      // The iris sits toward the nose so the gaze is straight ahead (centred on the white, it looked outward).
+      const ix = 0.0045 * s * nz, iz = -0.0045 * s * nx;
+      ellipsoid(b, [p[0] + 0.0024 * nx + ix, HY + EYE_Y - 0.0005, p[2] + 0.0024 * nz + iz], [0.0034 * nx, 0, 0.0034 * nz], [0, 0.0092, 0], [-0.0078 * nz, 0, 0.0078 * nx], 2, 5, FeatureSel.IRIS);
+    }
+    const m = skull(phiAtY(-0.066, 0), 0);
+    ellipsoid(b, [m[0] - 0.0012, HY - 0.066, 0], [0.0035, 0, 0], [0, 0.0035, 0], [0, 0, 0.019], 2, 4, FeatureSel.MOUTH);
+  } else {
+    // PERFORMANCE LOD: flat eyes on the coarse face (an almond white in 4 triangles and a diamond iris in 2), so the
+    // face still reads on dark skin within the 1,123-triangle budget.
+    for (const s of [-1, 1]) {
+      const th = s * 0.37, ph = phiAtY(EYE_Y, th);
+      // The point of the coarse skull grid (bilinear in its cell) under the eye: the grid's chords sit inside skull().
+      const fi = (ph / Math.PI) * d.skullLat, fj = ((th + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * d.skullSeg;
+      const i0 = Math.floor(fi), j0 = Math.floor(fj), u = fi - i0, v = fj - j0;
+      const g = (ii: number, jj: number): V3 => P[ii]![jj % d.skullSeg]!;
+      const c: V3 = [0, 0, 0];
+      for (let k = 0; k < 3; k++) {
+        c[k] = (1 - u) * ((1 - v) * g(i0, j0)[k]! + v * g(i0, j0 + 1)[k]!) + u * ((1 - v) * g(i0 + 1, j0)[k]! + v * g(i0 + 1, j0 + 1)[k]!);
+      }
+      const nx = Math.cos(th), nz = Math.sin(th);
+      const n: V3 = [nx, 0, nz];
+      const at = (off: number, w: number, h: number): V3 => [c[0] + off * nx - w * nz, HY + EYE_Y + h, c[2] + off * nz + w * nx];
+      const W = [at(0.0025, -0.018, 0), at(0.0025, -0.007, 0.009), at(0.0025, 0.007, 0.009), at(0.0025, 0.018, 0), at(0.0025, 0.007, -0.008), at(0.0025, -0.007, -0.008)];
+      b.tri(W[0]!, W[1]!, W[5]!, n, n, n, FeatureSel.EYE);
+      b.tri(W[1]!, W[4]!, W[5]!, n, n, n, FeatureSel.EYE);
+      b.tri(W[1]!, W[2]!, W[4]!, n, n, n, FeatureSel.EYE);
+      b.tri(W[2]!, W[3]!, W[4]!, n, n, n, FeatureSel.EYE);
+      const iw = -0.0045 * s; // toward the nose: a straight-ahead gaze
+      const I = [at(0.0035, iw, 0.0085), at(0.0035, iw + 0.0075, 0), at(0.0035, iw, -0.0075), at(0.0035, iw - 0.0075, 0)];
+      b.tri(I[0]!, I[1]!, I[2]!, n, n, n, FeatureSel.IRIS);
+      b.tri(I[0]!, I[2]!, I[3]!, n, n, n, FeatureSel.IRIS);
     }
   }
-  // Hair styles (variants).
+  // Hair styles (variants). [POLISH] More volume: the shells stand further off the scalp.
   b.variant = HairStyle.SHORT;
-  hairShell(b, d, (th, s) => 0.011 + 0.006 * (1 - s) + 0.004 * Math.max(Math.cos(th), 0));
+  hairShell(b, d, (th, s) => 0.015 + 0.01 * (1 - s) + 0.007 * Math.max(Math.cos(th), 0));
   b.variant = HairStyle.SWEPT;
   hairShell(b, d, (th, s) => {
     const front = Math.max(Math.cos(th), 0);
-    return 0.01 + 0.03 * front * front * Math.sin(Math.min(s * 1.4, 1) * Math.PI * 0.9) + 0.008 * (1 - s) + 0.006 * Math.max(Math.sin(th), 0);
+    return 0.014 + 0.034 * front * front * Math.sin(Math.min(s * 1.4, 1) * Math.PI * 0.9) + 0.011 * (1 - s) + 0.007 * Math.max(Math.sin(th), 0);
   });
   b.variant = HairStyle.CURLY;
-  hairShell(b, d, (th, s) => 0.03 + 0.012 * (1 - s) + (d.features ? 0.006 * Math.sin(th * 5) * Math.sin(s * 9 + 1) : 0), 1.02);
+  hairShell(b, d, (th, s) => 0.034 + 0.012 * (1 - s) + (d.features ? 0.006 * Math.sin(th * 5) * Math.sin(s * 9 + 1) : 0), 1.02);
   b.variant = HairStyle.TIED;
-  hairShell(b, d, (_th, s) => 0.008 + 0.004 * (1 - s));
-  ellipsoid(b, [-0.122, HY + 0.045, 0], [-0.014, 0.034, 0], [0.034, 0.012, 0], [0, 0, 0.034], d.features ? 4 : 3, d.hairSeg - 2, 1);
+  hairShell(b, d, (_th, s) => 0.011 + 0.005 * (1 - s));
+  ellipsoid(b, [-0.125, HY + 0.045, 0], [-0.014, 0.036, 0], [0.036, 0.012, 0], [0, 0, 0.036], d.features ? 4 : 3, d.hairSeg - 2, 1);
   b.variant = 0;
 }
 
-/** A small pyramid (nose) pointing along +x from (x, y, 0), with a base underneath. */
-function nose(b: SoupBuilder, x: number, y: number, len: number, w: number, h: number, sel: number): void {
-  const tip: V3 = [x + len, y - h * 0.35, 0];
-  const p: V3[] = [[x, y + h, 0], [x - 0.004, y - h, -w], [x - 0.004, y - h, w]];
-  for (let i = 0; i < 3; i++) {
-    const a = p[i]!, c = p[(i + 1) % 3]!;
-    const nx = 0.75, ny = (a[1] + c[1]) / 2 - y, nz = (a[2] + c[2]) / 2;
+/** Eye line above the head centre (m). */
+const EYE_Y = 0.013;
+
+/**
+ * Head selectors beyond colour A / B (skin / hair): eye white, iris, mouth. The part shader turns them into fixed eye
+ * colours and a darkened skin tone (model.ts PART_VERTEX_DECL), so a face reads on every skin tone.
+ */
+export const FeatureSel = {
+  EYE: 2,
+  IRIS: 3,
+  MOUTH: 4,
+} as const;
+
+/** [POLISH] Nose: a faceted wedge from the brow down to a tip in front of the face, with an underside. */
+function nose(b: SoupBuilder): void {
+  const xr = skull(Math.acos(0.3), 0)[0], xb = skull(Math.PI / 2 + 0.2, 0)[0];
+  const R: V3 = [xr - 0.003, HY + 0.026, 0];
+  const T: V3 = [xb + 0.022, HY - 0.027, 0];
+  const WL: V3 = [xb + 0.001, HY - 0.036, -0.018], WR: V3 = [xb + 0.001, HY - 0.036, 0.018];
+  const B: V3 = [xb + 0.006, HY - 0.043, 0];
+  const faces: [V3, V3, V3][] = [[R, T, WR], [R, WL, T], [T, B, WR], [T, WL, B]];
+  for (const [p, q, r] of faces) {
+    const ux = q[0] - p[0], uy = q[1] - p[1], uz = q[2] - p[2];
+    const vx = r[0] - p[0], vy = r[1] - p[1], vz = r[2] - p[2];
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const cx = (p[0] + q[0] + r[0]) / 3, cy = (p[1] + q[1] + r[1]) / 3 - HY, cz = (p[2] + q[2] + r[2]) / 3;
+    if (nx * cx + ny * cy + nz * cz < 0) { nx = -nx; ny = -ny; nz = -nz; }
     const l = Math.hypot(nx, ny, nz);
-    const nn: V3 = [nx / l, ny / l, nz / l];
-    b.tri(a, c, tip, nn, nn, nn, sel);
+    const n: V3 = [nx / l, ny / l, nz / l];
+    b.tri(p, q, r, n, n, n, 0);
   }
 }
 
@@ -436,20 +524,23 @@ function buildTorso(b: SoupBuilder, d: Detail): void {
     sec(TORSO_Y0, 0, 0, 0),
     sec(TORSO_Y0, HEM_RX, HEM_RX, HEM_RZ),
     hi(sec(-0.03, 0.122, 0.121, 0.187)),
-    hi(sec(0.06, 0.121, 0.116, 0.181)),
+    hi(sec(0.06, 0.121, 0.116, 0.18)),
+    // [POLISH] A real V: a narrower waist under a fuller chest and lats, then a broad shoulder line whose top runs out
+    // over the sleeve caps (the cap sits under the shirt, so the outline flows from the neck over the shoulder onto the
+    // arm), and a trapezius slope that rises to the collar (less neck).
     sec(0.15, 0.116, 0.112, 0.172),
-    hi(sec(0.25, 0.13, 0.114, 0.182, 0, 0.004)),
-    sec(0.33, 0.135, 0.12, 0.192, 0, 0.006),
-    // [REPAIR] The shoulder line runs out to the sleeve seam (over the deltoid caps), so the outline goes smoothly from
-    // the neck down onto the arm instead of the sleeves standing off the torso like pads.
-    sec(0.405, 0.124, 0.124, 0.21, 0, 0.004),
-    sec(0.455, 0.104, 0.112, 0.226),
-    sec(0.497, 0.082, 0.088, 0.19),
-    hi(sec(0.518, 0.072, 0.074, 0.1)),
+    hi(sec(0.25, 0.135, 0.116, 0.195, 0, 0.004)),
+    sec(0.33, 0.147, 0.127, 0.223, 0, 0.006),
+    sec(0.405, 0.135, 0.129, 0.238, 0, 0.004),
+    sec(0.448, 0.115, 0.116, 0.254),
+    sec(0.474, 0.099, 0.103, 0.252),
+    hi(sec(0.496, 0.085, 0.09, 0.218)),
+    sec(0.515, 0.078, 0.082, 0.156),
+    hi(sec(0.53, 0.075, 0.077, 0.108)),
     // Collar trim: a crew band around the neck (whole bands, so its edge is a clean line).
-    sec(0.53, 0.073, 0.075, 0.088, 1),
-    hi(sec(0.543, 0.07, 0.072, 0.078, 1)),
-    sec(TORSO_Y1, 0.066, 0.068, 0.07, 1),
+    sec(0.538, 0.077, 0.079, 0.096, 1),
+    hi(sec(0.552, 0.074, 0.076, 0.085, 1)),
+    sec(TORSO_Y1, 0.071, 0.073, 0.078, 1),
     sec(TORSO_Y1, 0, 0, 0, 1),
   ];
   tube(b, d, secs, d.torso, undefined, Math.PI / d.torso);
@@ -458,13 +549,24 @@ function buildTorso(b: SoupBuilder, d: Detail): void {
 /** Shorts body (hip-level local). Colour A = shorts. */
 function buildPelvis(b: SoupBuilder, d: Detail): void {
   // Inside the shirt hem where they overlap (the hem hangs over the shorts with a clear gap, so the surfaces never
-  // z-fight); fuller below the hem at the hips and seat. [REPAIR] The front hangs straight (vertical, so it shades
-  // like the shorts legs) just behind the fronts of the thigh tops, and closes in a short flat crotch between them: a
-  // front fuller than the thighs, rounding down to a point, read as a darker lump between the legs in front views.
+  // z-fight); fuller below the hem at the hips and seat. [POLISH] The front hangs straight down from the waistband,
+  // then steps back just behind the fronts of the thigh tops, and the crotch closes higher and flat behind it; its
+  // normals are levelled (below) so it shades like the shorts legs: no darker wedge or bulge between the legs.
+  const start = b.nrm.length;
   tube(b, d, [
-    round(0.06, 0), sec(0.06, 0.07, 0.07, 0.12), sec(0.0, 0.08, 0.085, 0.14), hi(sec(-0.035, 0.08, 0.092, 0.15)),
-    sec(-0.075, 0.074, 0.106, 0.16), hi(sec(-0.1, 0.07, 0.098, 0.146)), sec(-0.122, 0.064, 0.07, 0.1), round(-0.128, 0),
+    round(0.06, 0), sec(0.06, 0.07, 0.07, 0.12), sec(0.0, 0.08, 0.086, 0.142), hi(sec(-0.035, 0.079, 0.094, 0.152)),
+    sec(-0.068, 0.077, 0.104, 0.158), hi(sec(-0.09, 0.072, 0.095, 0.142)), sec(-0.104, 0.064, 0.07, 0.09), round(-0.112, 0),
   ], d.pelvis, undefined, Math.PI / d.pelvis);
+  // The crotch between the legs shades like the front of the shorts legs: below the waistband the normals are turned
+  // level (the smooth normals of the closing bottom tilted them down, a darker patch between the thighs).
+  for (let i = start; i < b.nrm.length; i += 3) {
+    if (b.pos[i + 1]! > 0) continue;
+    const nx = b.nrm[i]!, nz = b.nrm[i + 2]!;
+    let hx = nx, hz = nz, hl = Math.hypot(nx, nz);
+    if (hl < 0.05) { hx = b.pos[i]!; hz = b.pos[i + 2]!; hl = Math.hypot(hx, hz); }
+    if (hl < 1e-6) { hx = 1; hz = 0; hl = 1; }
+    b.nrm[i] = hx / hl; b.nrm[i + 1] = 0; b.nrm[i + 2] = hz / hl;
+  }
 }
 
 // ============================================================ limbs
@@ -477,45 +579,51 @@ function buildUpperArm(b: SoupBuilder, d: Detail): void {
   const u = BODY.upperArm;
   if (d.features) b.variant = SleeveVariant.SHORT;
   tube(b, d, [
-    // Deltoid cap (sleeve) around the joint, so a raised or swung arm stays joined to the shoulder. [REPAIR] Lower and
-    // flatter (its top sits inside the shirt's shoulder line) and a little narrower at the top of the sleeve.
-    ...dome(-0.03, 0.058, 1, d.dome, 0, 0.42).reverse(),
-    round(-0.03, 0.058),
-    hi(sec(-0.075, 0.061, 0.06, 0.058)),
+    // Deltoid cap (sleeve) around the joint, so a raised or swung arm stays joined to the shoulder. [POLISH] Its top
+    // sits under the shirt's shoulder line; the sleeve tapers from a narrow top (r 0.05) and flares only at the cuff.
+    ...dome(-0.03, 0.05, 1, d.dome, 0, 0.6).reverse(),
+    round(-0.03, 0.05),
+    hi(sec(-0.075, 0.057, 0.056, 0.055)),
     // Sleeve cuff: a slight lip at the hem.
-    hi(sec(-0.118, 0.066, 0.064, 0.062)),
-    sec(-0.132, 0.066, 0.064, 0.062),
-    // Bare arm from inside the cuff: biceps, then the elbow ball.
-    sec(-0.132, 0.06, 0.059, 0.057, 1),
-    hi(sec(-0.175, 0.064, 0.059, 0.056, 1, 0.003)),
-    sec(-0.235, 0.055, 0.053, 0.052, 1),
-    round(-u, 0.05, 1),
-    ...dome(-u, 0.05, -1, d.dome, 1),
+    hi(sec(-0.118, 0.063, 0.062, 0.061)),
+    sec(-0.132, 0.064, 0.063, 0.062),
+    // Bare arm from inside the cuff: [POLISH] the biceps swell (front), then a taper to a smaller elbow ball.
+    sec(-0.132, 0.057, 0.057, 0.058, 1),
+    hi(sec(-0.172, 0.065, 0.059, 0.062, 1, 0.004)),
+    sec(-0.232, 0.053, 0.051, 0.052, 1),
+    round(-u, ELBOW_R, 1),
+    ...dome(-u, ELBOW_R, -1, d.dome, 1),
   ].map(fixPole), d.arm, (_x, y) => (y > -0.1325 ? 0 : 1));
   if (d.features) {
     b.variant = SleeveVariant.LONG;
     tube(b, d, [
-      ...dome(-0.03, 0.058, 1, d.dome, 0, 0.42).reverse(),
-      round(-0.03, 0.058),
-      sec(-0.08, 0.061, 0.06, 0.058),
-      sec(-0.15, 0.06, 0.058, 0.056, 1),
-      sec(-0.225, 0.055, 0.053, 0.051, 1),
-      round(-u, 0.05, 1),
-      ...dome(-u, 0.05, -1, d.dome, 1),
+      ...dome(-0.03, 0.05, 1, d.dome, 0, 0.6).reverse(),
+      round(-0.03, 0.05),
+      sec(-0.08, 0.056, 0.055, 0.054),
+      sec(-0.15, 0.059, 0.057, 0.057, 1),
+      sec(-0.225, 0.055, 0.053, 0.052, 1),
+      round(-u, ELBOW_R, 1),
+      ...dome(-u, ELBOW_R, -1, d.dome, 1),
     ].map(fixPole), d.arm, (_x, y) => (y > -0.1325 ? 0 : 1));
   }
   b.variant = 0;
 }
 
+/** [POLISH] Elbow and knee ball radii (both parts at the joint end in this ball). */
+const ELBOW_R = 0.045;
+const KNEE_R = 0.058;
+
 /** Forearm and hand (elbow local). Colour A = forearm skin (keepers: sleeve), B = hand (variants: bare / glove). */
 function buildLowerArm(b: SoupBuilder, d: Detail): void {
   const f = BODY.foreArm, tip = -(f + BODY.hand);
   tube(b, d, [
-    ...dome(0, 0.05, 1, d.dome).reverse(),
-    round(0, 0.05),
-    hi(sec(-0.055, 0.054, 0.053, 0.049, 0, 0.002)),
-    sec(-0.15, 0.045, 0.043, 0.04),
-    sec(-f + 0.01, 0.033, 0.032, 0.028),
+    // [POLISH] The forearm swells just below the elbow and tapers to a slim wrist.
+    ...dome(0, ELBOW_R, 1, d.dome).reverse(),
+    round(0, ELBOW_R),
+    hi(sec(-0.05, 0.055, 0.051, 0.056, 0, 0.003)),
+    sec(-0.12, 0.047, 0.043, 0.047),
+    hi(sec(-0.19, 0.037, 0.035, 0.036)),
+    sec(-f + 0.01, 0.03, 0.029, 0.026),
     round(-f - 0.005, 0),
   ].map(fixPole), d.arm);
   // Bare hand: a mitten (palm toward the body: thin across z) with a thumb at the front.
@@ -543,13 +651,17 @@ function buildLowerArm(b: SoupBuilder, d: Detail): void {
  */
 function buildUpperLeg(b: SoupBuilder, d: Detail): void {
   const t = BODY.thigh;
+  // [POLISH] The shorts leg rises from deep inside the shorts body as one smooth cone with a gentler flare at the hem
+  // (fuller at the back, the seat): a raised or turned thigh reads as a fold of the shorts, not a lump stuck on. Its
+  // front and side stay narrow up top so a flexed hip stays inside the shirt (tests/unit/gfx-07-hem.test.ts). Below
+  // the hem: a quad swell at the front, tapering to a smaller knee ball.
   tube(b, d, [
-    round(0.05, 0), hi(round(0.035, 0.045)), round(0.0, 0.055), sec(-0.05, 0.06, 0.06, 0.058),
-    sec(-0.11, 0.074, 0.074, 0.072), sec(-0.17, 0.092, 0.09, 0.088), hi(sec(-0.198, 0.102, 0.1, 0.097)),
-    sec(-0.206, 0.102, 0.1, 0.097),
+    round(0.05, 0), hi(round(0.035, 0.045)), round(0.0, 0.055), sec(-0.05, 0.06, 0.062, 0.058),
+    sec(-0.11, 0.074, 0.078, 0.072), sec(-0.165, 0.09, 0.09, 0.088), hi(sec(-0.198, 0.099, 0.098, 0.096)),
+    sec(-0.206, 0.099, 0.098, 0.096),
     // Skin from inside the shorts hem: quad bulge at the front, then the knee ball.
-    sec(-0.206, 0.094, 0.09, 0.088, 1, 0.004), hi(sec(-0.27, 0.095, 0.084, 0.084, 1, 0.008)), sec(-0.35, 0.079, 0.07, 0.07, 1, 0.005),
-    round(-t, 0.061, 1), ...dome(-t, 0.061, -1, d.dome, 1),
+    sec(-0.206, 0.091, 0.09, 0.09, 1, 0.004), hi(sec(-0.265, 0.1, 0.088, 0.093, 1, 0.01)), sec(-0.345, 0.084, 0.072, 0.077, 1, 0.006),
+    round(-t, KNEE_R, 1), ...dome(-t, KNEE_R, -1, d.dome, 1),
   ].map(fixPole), d.leg, (_x, y) => (y > -0.2065 ? 0 : 1));
 }
 
@@ -557,10 +669,10 @@ function buildUpperLeg(b: SoupBuilder, d: Detail): void {
 function buildLowerLeg(b: SoupBuilder, d: Detail): void {
   const s = BODY.shin;
   tube(b, d, [
-    ...dome(0, 0.061, 1, d.dome, 1).reverse(), sec(0, 0.064, 0.061, 0.061, 1), sec(-0.055, 0.057, 0.059, 0.055, 1),
-    // Sock cuff (a small rolled lip), then the calf at the back, tapering to the ankle.
-    sec(-0.066, 0.062, 0.066, 0.06), hi(sec(-0.084, 0.062, 0.069, 0.061)), hi(sec(-0.09, 0.056, 0.066, 0.056)),
-    sec(-0.15, 0.056, 0.084, 0.062), hi(sec(-0.25, 0.048, 0.061, 0.051)), sec(-0.36, 0.039, 0.04, 0.037),
+    ...dome(0, KNEE_R, 1, d.dome, 1).reverse(), sec(0, 0.061, 0.058, 0.058, 1), sec(-0.055, 0.056, 0.058, 0.054, 1),
+    // Sock cuff (a small rolled lip), then [POLISH] a fuller calf at the back, tapering to a slim ankle.
+    sec(-0.066, 0.062, 0.066, 0.061), hi(sec(-0.084, 0.062, 0.071, 0.062)), hi(sec(-0.09, 0.057, 0.069, 0.058)),
+    sec(-0.15, 0.058, 0.092, 0.07), hi(sec(-0.25, 0.048, 0.065, 0.054)), sec(-0.36, 0.038, 0.04, 0.036),
     round(-s, 0.034), ...dome(-s, 0.034, -1, d.dome),
   ].map(fixPole), d.leg, (_x, y) => (y > -0.066 ? 1 : 0));
 }

@@ -1,6 +1,6 @@
 /**
  * [GFX-07] Body part geometry (src/render/players/parts.ts), kit looks and shader patches (model.ts): budgets
- * (<= 14 draw calls; [LOOK] <= 3,500 triangles per player, <= 80k for 22; the PERFORMANCE LOD <= 1,123), outward winding and unit normals, crisp colour regions in the
+ * (<= 14 draw calls; [LOOK] <= 3,300 triangles per player, <= 80k for 22; the PERFORMANCE LOD <= 1,123), outward winding and unit normals, crisp colour regions in the
  * right places (sleeve / arm, shorts / thigh, knee / sock, face / hair, hand, collar), sizes matching the skeleton,
  * no shirt / shorts z-fighting, keeper looks (long sleeves, gloves), halves sleeves, number glyph rects.
  */
@@ -11,12 +11,12 @@ import type { Kit } from '../../src/contracts/data';
 import { NUMBER_GLYPH_H, NUMBER_GLYPH_W } from '../../src/render/kits';
 import { BODY } from '../../src/render/players/fk';
 import {
-  buildPartGeometry, buildPartSoup, HAIR_MAX_RISE, HAIR_STYLE_COUNT, HairStyle, HandVariant, HEM_RX, HEM_RZ, NUMBER_PANEL,
+  buildPartGeometry, buildPartSoup, FeatureSel, HAIR_MAX_RISE, HAIR_STYLE_COUNT, HairStyle, HandVariant, HEM_RX, HEM_RZ, NUMBER_PANEL,
   Part, PART_COUNT, PART_PAIRED, SleeveVariant, TORSO_Y0, TORSO_Y1, trianglesPerPlayer, visibleTrianglesPerPlayer,
 } from '../../src/render/players/parts';
 import {
-  createSlotLook, GLOVE_COLOUR, gridGlyphRect, heightScale, luminance, patchDepthShader, patchPartShader, patchTorsoShader,
-  SKIN_TONES, slotLook, strideDistance,
+  createSlotLook, GLOVE_COLOUR, gridGlyphRect, HAIR_COLOURS, HAIR_MIN_DL, hairForSkin, heightScale, lightness, luminance,
+  patchDepthShader, patchPartShader, patchTorsoShader, SKIN_TONES, slotLook, strideDistance,
 } from '../../src/render/players/model';
 
 interface Tri { p: Vector3[]; n: Vector3[]; sel: number; c: Vector3 }
@@ -43,14 +43,16 @@ describe('GFX-07 part geometry', () => {
   // [LOOK] The redesigned figure has a budget of 2,500..3,500 triangles per player at the full LOD (22 players under
   // 80k of the 200k frame budget; it was 30k for the 1,123-triangle pre-[LOOK] model), every variant counted. The
   // PERFORMANCE tier's LOD stays no heavier than the pre-[LOOK] model. Draw calls are unchanged (8).
-  // [REPAIR] Capped at 3,200 (not 3,500): QUALITY draws the player shadows with the full LOD too, so each triangle
-  // counts ~44 times a frame; 3,435 measured 197.5k of the 200k frame budget there, 3,075 measures ~182k.
-  it('budget: 8 draw calls (one InstancedMesh per part), <= 3,200 triangles per player (<= 80k for 22); LOD 0 <= 1,123', () => {
+  // [REPAIR] Capped at 3,200 (not 3,500): QUALITY drew the player shadows with the full LOD too, so each triangle
+  // counted ~44 times a frame; 3,435 measured 197.5k of the 200k frame budget there, 3,075 measured ~182k.
+  // [POLISH] Capped at 3,300: the shadows now cast the LOD 0 geometry (model.ts shadowCasters), so a full-LOD triangle
+  // counts 22 times a frame at every tier (QUALITY measured in tests/perf/sgn-04-scenes.ts, under 190k).
+  it('budget: 8 draw calls (one InstancedMesh per part), <= 3,300 triangles per player (<= 80k for 22); LOD 0 <= 1,123', () => {
     expect(PART_COUNT).toBe(8);
     expect(PART_COUNT).toBeLessThanOrEqual(14);
     const perPlayer = trianglesPerPlayer();
     expect(perPlayer).toBeGreaterThan(2_000); // a shaped figure, not sticks
-    expect(perPlayer).toBeLessThanOrEqual(3_200);
+    expect(perPlayer).toBeLessThanOrEqual(3_300);
     expect(perPlayer * 22).toBeLessThanOrEqual(80_000);
     expect(trianglesPerPlayer(0)).toBeLessThanOrEqual(1_123);
     expect(trianglesPerPlayer(0)).toBeGreaterThan(600); // reads as a body, not a capsule
@@ -131,7 +133,7 @@ describe('GFX-07 part geometry', () => {
     expect(profile(SleeveVariant.LONG)).toBeLessThan(0.006);
   });
 
-  it('every part (both LODs): finite positions, unit normals, outward winding, selector 0 / 1 constant per triangle', () => {
+  it('every part (both LODs): finite positions, unit normals, outward winding, selector 0 / 1 constant per triangle ([POLISH] head: also face features)', () => {
     for (const lod of [0, 1] as const) for (let part = 0; part < PART_COUNT; part++) {
       const g = buildPartGeometry(part, lod);
       expect(g.getAttribute('aVar').count).toBe(g.getAttribute('position').count);
@@ -140,7 +142,7 @@ describe('GFX-07 part geometry', () => {
       for (const t of tris(part, lod)) {
         for (const v of t.p) expect(Number.isFinite(v.x + v.y + v.z)).toBe(true);
         for (const n of t.n) expect(n.length()).toBeCloseTo(1, 4);
-        expect([0, 1]).toContain(t.sel);
+        expect(part === Part.HEAD ? [0, 1, FeatureSel.EYE, FeatureSel.IRIS, FeatureSel.MOUTH] : [0, 1]).toContain(t.sel);
         const geo = new Vector3().subVectors(t.p[1]!, t.p[0]!).cross(new Vector3().subVectors(t.p[2]!, t.p[0]!));
         const mean = new Vector3().add(t.n[0]!).add(t.n[1]!).add(t.n[2]!);
         expect(geo.dot(mean), `part ${part} winding`).toBeGreaterThan(0);
@@ -189,7 +191,9 @@ describe('GFX-07 part geometry', () => {
     expect(selAt(Part.TORSO, (c) => c.y > 0.545)).toEqual([1]); // collar trim
     expect(selAt(Part.TORSO, (c) => c.y < 0.46)).toEqual([0]); // shirt body (pattern + number)
     expect(selAt(Part.HEAD, (c) => c.y > BODY.headY + 0.1)).toEqual([1]); // hair on top
-    expect(selAt(Part.HEAD, (c) => c.x > 0.08 && Math.abs(c.y - BODY.headY) < 0.04)).toEqual([0]); // face
+    // Face: skin, with [POLISH] eyes (whites and irises) and nothing in the hair colour.
+    expect(selAt(Part.HEAD, (c) => c.x > 0.08 && Math.abs(c.y - BODY.headY) < 0.04).sort()).toEqual([0, FeatureSel.EYE, FeatureSel.IRIS]);
+    expect(selAt(Part.HEAD, (c) => c.x > 0.08 && c.y < BODY.headY - 0.05 && c.y > BODY.headY - 0.08).sort()).toEqual([0, FeatureSel.MOUTH]); // mouth
     expect(selAt(Part.HEAD, (c) => c.x < -0.09 && c.y > BODY.headY - 0.03)).toEqual([1]); // back of the head
     expect(selAt(Part.HEAD, (c) => c.y < 0.12)).toEqual([0]); // neck
     // [LOOK] Boots have a sole in the second colour (dark, or light under dark boots); the upper is the boot colour.
@@ -378,6 +382,30 @@ describe('GFX-07 shader patches (three.js Lambert sources)', () => {
       styles.add(l.hairStyle);
     }
     expect(styles.size).toBe(HAIR_STYLE_COUNT);
+  });
+
+  it('[POLISH] faces read on every skin tone: hair and brows keep a lightness gap to the skin; eyes in fixed colours', () => {
+    for (const skin of SKIN_TONES) for (const want of HAIR_COLOURS) {
+      const hair = hairForSkin(skin, want);
+      expect(HAIR_COLOURS).toContain(hair);
+      expect(Math.abs(lightness(hair) - lightness(skin)), `${skin.toString(16)} / ${want.toString(16)}`).toBeGreaterThanOrEqual(HAIR_MIN_DL);
+      if (Math.abs(lightness(want) - lightness(skin)) >= HAIR_MIN_DL) expect(hair).toBe(want);
+      else expect(lightness(hair)).toBeLessThan(lightness(want) + HAIR_MIN_DL); // darker preferred: brown hair goes dark, not blond
+    }
+    const k: Kit = { shirt: 0xd7263d, shirt2: 0xffffff, pattern: KitPattern.PLAIN, shorts: 0x111111, socks: 0xd7263d, number: 0xffffff };
+    for (let c = 0; c < 8; c++) for (let r = 0; r < 25; r++) {
+      const l = slotLook(k, false, c, r, createSlotLook());
+      expect(l.hair).not.toBe(l.skin); // shaved scalps are stubble-dark, not skin
+      if (l.hairStyle !== HairStyle.BUZZ) expect(Math.abs(lightness(l.hair) - lightness(l.skin))).toBeGreaterThanOrEqual(HAIR_MIN_DL);
+    }
+    // Eye whites are light and irises dark against every skin tone (one or the other contrasts by at least 30 L*).
+    const v = patchPartShader(vs, fs).vertex;
+    expect(v).toContain('if ( aSel > 1.5 )');
+    const m = /aSel < 2\.5 \? vec3\( ([\d.]+), ([\d.]+), ([\d.]+) \) : \( aSel < 3\.5 \? vec3\( ([\d.]+), ([\d.]+), ([\d.]+) \)/.exec(v)!;
+    const lin = (c: number): number => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055) * 255;
+    const hex = (r: number, g: number, b2: number): number => (Math.round(lin(r)) << 16) | (Math.round(lin(g)) << 8) | Math.round(lin(b2));
+    const white = lightness(hex(+m[1]!, +m[2]!, +m[3]!)), iris = lightness(hex(+m[4]!, +m[5]!, +m[6]!));
+    for (const skin of SKIN_TONES) expect(Math.max(white - lightness(skin), lightness(skin) - iris)).toBeGreaterThan(30);
   });
 
   it('fails loudly when three.js moves its chunks (no silent white players)', () => {

@@ -430,12 +430,14 @@ function idleI(out: Pose): void {
   out[P.SPINE_ROLL] = -0.6 * out[P.ROOT_SIDE]!;
   out[P.HEAD_PITCH] = -0.02 - 0.5 * LOCAL_TUNING.breathChest * b;
   out[P.HEAD_YAW] = 0.08 * Math.sin(TAU * t + 1.3);
-  out[P.SHOULDER_L_ROLL] = 0.06 + 0.03 * b;
-  out[P.SHOULDER_R_ROLL] = 0.06 + 0.03 * b;
-  out[P.SHOULDER_L_PITCH] = 0.04;
-  out[P.SHOULDER_R_PITCH] = 0.04;
-  out[P.ELBOW_L] = 0.18;
-  out[P.ELBOW_R] = 0.18;
+  // [POLISH] Arms relaxed close to the body with soft elbows: the hands hang by the hips (they were held out wide,
+  // which read as a stiff A-pose at broadcast distance).
+  out[P.SHOULDER_L_ROLL] = 0.03 + 0.015 * b;
+  out[P.SHOULDER_R_ROLL] = 0.03 + 0.015 * b;
+  out[P.SHOULDER_L_PITCH] = 0.06;
+  out[P.SHOULDER_R_PITCH] = 0.06;
+  out[P.ELBOW_L] = 0.42;
+  out[P.ELBOW_R] = 0.42;
 }
 
 /**
@@ -888,11 +890,12 @@ function strafeI(out: Pose): void {
   let q = (SLA[2]! - 0.2) / (2 - 0.2); // ss(0.2, 2, speed) written out (no double crosses a call)
   q = q < 0 ? 0 : q > 1 ? 1 : q;
   const m = q * q * (3 - 2 * q);
-  ARA[0] = SLA[1]!; ARA[1] = 0.25 * m; ARA[2] = 0.4 + 0.6 * m; ARA[3] = 0.1; ARA[4] = 0.18; ARA[5] = 0;
+  // [POLISH] Arms in close (roll 0.12, elbows from 0.6): the hands stay by the hips, not held out wide.
+  ARA[0] = SLA[1]!; ARA[1] = 0.25 * m; ARA[2] = 0.6 + 0.45 * m; ARA[3] = 0.1; ARA[4] = 0.12; ARA[5] = 0;
   arms(out);
 }
 
-/** Jockey: low, side-on crouch, arms out low for balance, quick small steps (any direction). */
+/** Jockey: low, side-on crouch, arms low and in for balance, quick small steps (any direction). */
 function jockeyI(out: Pose): void {
   clearUpper(out);
   shuffleArgs(0.6);
@@ -905,12 +908,14 @@ function jockeyI(out: Pose): void {
   let q = (SLA[2]! - 0.2) / (1.5 - 0.2); // ss(0.2, 1.5, speed) written out (no double crosses a call)
   q = q < 0 ? 0 : q > 1 ? 1 : q;
   const s = 0.06 * Math.sin(SLA[1]!) * (q * q * (3 - 2 * q));
+  // [POLISH] Arms low and in for balance (roll 0.15, elbows 0.6): the hands by the hips; held out at 0.5 rad they read
+  // as a wide scarecrow at broadcast distance.
   out[P.SHOULDER_L_PITCH] = 0.25 + s;
   out[P.SHOULDER_R_PITCH] = 0.25 - s;
-  out[P.SHOULDER_L_ROLL] = 0.5;
-  out[P.SHOULDER_R_ROLL] = 0.5;
-  out[P.ELBOW_L] = 0.7;
-  out[P.ELBOW_R] = 0.7;
+  out[P.SHOULDER_L_ROLL] = 0.15;
+  out[P.SHOULDER_R_ROLL] = 0.15;
+  out[P.ELBOW_L] = 0.6;
+  out[P.ELBOW_R] = 0.6;
 }
 
 /** Shield: wide, low stance, back leaning into the opponent, arm out on PP[3] side (-1 left / +1 right). */
@@ -963,8 +968,9 @@ function keeperI(out: Pose): void {
   // [REPAIR] Handed over to the shuffle by 0.12 m/s (it was 0.6): a part-blended set position keeps its boots still
   // in the body frame, so a keeper creeping at 0.2 m/s glided on them for metres without a step. The keeper's shorter
   // creeping stride (KEEPER_MIN_STRIDE) keeps the shuffle's slow frames close to the set position, so the hand-over
-  // moves the boots only a few cm.
-  let q = (SLA[2]! - 0.02) / (0.12 - 0.02); // ss(0.02, 0.12, speed) written out (no double crosses a call)
+  // moves the boots only a few cm. [POLISH] Handed over by 0.05 m/s (from 0.008): at 0.1 m/s the 10 % of set position
+  // left still slid each planted boot about 3 cm, and below that the boots never lifted (a glide).
+  let q = (SLA[2]! - 0.008) / (0.05 - 0.008); // ss(0.008, 0.05, speed) written out (no double crosses a call)
   q = q < 0 ? 0 : q > 1 ? 1 : q;
   const mv = q * q * (3 - 2 * q);
   if (mv < 1) {

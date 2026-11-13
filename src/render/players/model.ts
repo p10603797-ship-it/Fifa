@@ -5,13 +5,16 @@
  *
  * PARTS (parts.ts): head + neck + hair, torso (shirt), pelvis (shorts), upper arm (sleeve), forearm + hand, thigh
  * (shorts leg), shin (sock), boot. One InstancedMesh per part: 22 instances, or 44 for left / right limbs
- * (index = slot * 2 + side, side 0 left, 1 right). 8 draw calls. [LOOK] 3,435 triangles per player at the
- * full LOD (~75.6k for 22, every hair / sleeve / glove variant counted; ~2,680 drawn as seen), and a lighter LOD (<= 1,123, the
- * pre-[LOOK] model's count) on the PERFORMANCE tier (TierParams.playerDetail): the geometry is swapped in setQuality.
+ * (index = slot * 2 + side, side 0 left, 1 right). 8 draw calls. [LOOK] [POLISH] 3,268 triangles per player at the
+ * full LOD (~71.9k for 22, every hair / sleeve / glove variant counted; ~2,600 drawn as seen), and a lighter LOD
+ * (1,122, no more than the pre-[LOOK] model's 1,123) on the PERFORMANCE tier (TierParams.playerDetail): the geometry
+ * is swapped in setQuality. [POLISH] At QUALITY the shadows are cast by that lighter LOD (shadowCasters), not by the
+ * drawn meshes.
  * Variants: per-instance iVar picks the head's hair style, the short or keeper's long sleeve and the forearm's bare
  * hand or keeper glove (parts.ts).
  * Lambert materials (one directional light + ambient from the stadium), patched in onBeforeCompile:
  *   - every part has per-instance colours A and B; the per-vertex selector aSel picks one (crisp kit regions);
+ *     [POLISH] head selectors 2..4 are the eye whites, irises and mouth (FEATURE_LINE), so faces read on every skin;
  *   - [LOOK] a cheap sky and rim term scaled by the ambient light gives the forms some shape at no draw-call cost;
  *   - the torso shader draws the kit pattern (plain, stripes, hoops, halves, sash: section 8) procedurally in torso
  *     space with derivative anti-aliasing (no shimmer at distance), a collar trim, and the shirt number on the back
@@ -36,7 +39,7 @@
 
 import {
   Color, DataTexture, DynamicDrawUsage, Group, InstancedBufferAttribute, InstancedMesh, MeshDepthMaterial, MeshLambertMaterial,
-  RGBADepthPacking, RGBAFormat, Vector3, type BufferGeometry, type Texture,
+  RGBADepthPacking, RGBAFormat, Vector3, BufferGeometry, type Texture,
 } from 'three';
 import { NUM_SLOTS } from '../../contracts/constants';
 import type { Club, Kit } from '../../contracts/data';
@@ -45,7 +48,7 @@ import { AnimId, createPose, POSE_SIZE, PoseIdx, type Pose } from '../../contrac
 import type { Settings } from '../../contracts/settings';
 import type { ReadonlySimState } from '../../contracts/state';
 import { GAIT_AIR } from '../anim/locomotion';
-import { advanceCycle, createAnimBank, createAnimator, createAnimSample, mapAnim, poseFnFor, samplePose } from '../anim/mapper';
+import { advanceCycle, createAnimBank, createAnimator, createAnimSample, mapAnim, MAPPER_TUNING, poseFnFor, samplePose } from '../anim/mapper';
 import { createKitNumberAtlas, resolveMatchKits, type KitNumberAtlas, type MatchKits } from '../kits';
 import { getTierParams } from '../quality';
 import type { RenderContext, RenderFrame, RenderModule } from '../types';
@@ -125,6 +128,9 @@ export interface PoseSink {
   /** [LOOK] Per slot the clearance (m, model) the pose means to keep above the grass (a run's flight phase); the
    *  driver writes it with setPose (zeroed by the model before each driver call). The ground snap keeps it. */
   readonly groundAir?: Float32Array;
+  /** [REPAIR 3] Per slot 1 when the driver pinned the boots in the world this frame (anim/mapper.ts PoseSinkLike
+   *  .bootPins); zeroed by the model before each driver call. The foot lock then only eases its offset back. */
+  readonly bootPins?: Uint8Array;
 }
 
 /** Writes the pose of every active slot for this frame (called first in the model's update). Must not allocate. */
@@ -149,6 +155,11 @@ export interface PlayerModelModule extends RenderModule, PoseSink {
   readonly mesh: InstancedMesh;
   /** Every part mesh in Part order (head, torso, pelvis, upper arm, lower arm, upper leg, lower leg, boot). */
   readonly meshes: readonly InstancedMesh[];
+  /**
+   * [POLISH] The players' shadow casters (QUALITY tier), in Part order: the lighter PERFORMANCE geometry of each part,
+   * drawn only in the shadow pass (the drawn meshes cast no shadow); castShadow only at the shadow-map tier.
+   */
+  readonly shadowCasters: readonly InstancedMesh[];
   /** Parent of every part mesh (named 'players'). */
   readonly group: Group;
   /** Pose buffer per slot (what is drawn this frame). Read-only for others. */
@@ -270,7 +281,9 @@ export function slotLook(kit: Kit, keeper: boolean, clubIdx: number, rosterIdx: 
   const h = lookHash(clubIdx + 1, rosterIdx + 1);
   out.skin = SKIN_TONES[h % SKIN_TONES.length]!;
   const shaved = ((h >>> 8) % 9) === 0;
-  out.hair = shaved ? out.skin : HAIR_COLOURS[(h >>> 12) % HAIR_COLOURS.length]!;
+  // [POLISH] Hair (and the brows, which share its colour) keeps a minimum lightness difference from the skin, so a
+  // head and face read on every skin tone; shaved heads show a stubble-dark scalp (it was the skin colour).
+  out.hair = shaved ? mixRgb(out.skin, HAIR_COLOURS[0]!, SHAVED_SCALP) : hairForSkin(out.skin, HAIR_COLOURS[(h >>> 12) % HAIR_COLOURS.length]!);
   out.boot = BOOT_COLOURS[(h >>> 20) % BOOT_COLOURS.length]!;
   out.sole = luminance(out.boot) < 0.2 ? 0xb4b4b4 : 0x1e1e1e;
   // [LOOK] Hair style from a second hash (the colours above keep their seeds); shaved heads show the scalp cap only.
@@ -290,6 +303,43 @@ export function slotLook(kit: Kit, keeper: boolean, clubIdx: number, rosterIdx: 
   out.armSkinR = keeper ? out.sleeveR : out.skin;
   out.hand = keeper ? GLOVE_COLOUR : out.skin;
   return out;
+}
+
+/** [POLISH] Smallest CIE L* difference between hair and skin, and how far a shaved scalp darkens toward black hair. */
+export const HAIR_MIN_DL = 15;
+const SHAVED_SCALP = 0.45;
+
+/** CIE L* (0..100) of an sRGB colour. */
+export function lightness(rgb: number): number {
+  const y = luminance(rgb);
+  return y > 0.008856 ? 116 * Math.cbrt(y) - 16 : 903.3 * y;
+}
+
+/** sRGB colours mixed per channel (t = 0 a, 1 b). */
+export function mixRgb(a: number, b: number, t: number): number {
+  let out = 0;
+  for (let sh = 16; sh >= 0; sh -= 8) {
+    const ca = (a >> sh) & 255, cb = (b >> sh) & 255;
+    out |= Math.round(ca + (cb - ca) * t) << sh;
+  }
+  return out >>> 0;
+}
+
+/**
+ * The wanted hair colour, or else the hair colour nearest it in lightness that differs from the skin by HAIR_MIN_DL,
+ * preferring a darker one (brown hair on a brown skin goes dark brown or black, not blond).
+ */
+export function hairForSkin(skin: number, want: number): number {
+  const ls = lightness(skin), lw = lightness(want);
+  if (Math.abs(lw - ls) >= HAIR_MIN_DL) return want;
+  let best = HAIR_COLOURS[0]!, bd = Infinity;
+  for (const c of HAIR_COLOURS) {
+    const lc = lightness(c);
+    if (Math.abs(lc - ls) < HAIR_MIN_DL) continue;
+    const dd = Math.abs(lc - lw) + (lc > lw ? 100 : 0);
+    if (dd < bd) { bd = dd; best = c; }
+  }
+  return best;
 }
 
 /** Relative luminance (0..1) of an sRGB colour (outline choice for the number). */
@@ -348,6 +398,12 @@ attribute float aVar;
 attribute float iVar;
 `;
 const VARIANT_LINE = '\ntransformed *= max( 1.0 - step( 0.5, aVar ), 1.0 - step( 0.5, abs( aVar - iVar ) ) );';
+/**
+ * [POLISH] Face features (head selectors parts.ts FeatureSel above 1): eye whites and irises in fixed colours (the
+ * whites read on dark skin, the irises on light skin), the mouth line a darker shade of the skin.
+ */
+const FEATURE_LINE = `
+if ( aSel > 1.5 ) vKitCol = aSel < 2.5 ? vec3( ${f4(0.8)}, ${f4(0.77)}, ${f4(0.72)} ) : ( aSel < 3.5 ? vec3( ${f4(0.03)}, ${f4(0.02)}, ${f4(0.015)} ) : iColA * ${f4(0.42)} );`;
 /** [LOOK] Sky and rim term (indirect light, scaled by the ambient colour: dims with the stadium lighting). */
 const SHAPE_LIGHT = `
 {
@@ -434,7 +490,7 @@ function inject(src: string, marker: string, add: string, after: boolean, what: 
 export function patchPartShader(vertex: string, fragment: string): { vertex: string; fragment: string } {
   let v = inject(vertex, '#include <common>', PART_VERTEX_DECL, true, 'vertex');
   v = inject(v, '#include <begin_vertex>', VARIANT_LINE, true, 'vertex');
-  v = inject(v, '#include <color_vertex>', '\nvKitCol = mix( iColA, iColB, aSel );', true, 'vertex');
+  v = inject(v, '#include <color_vertex>', '\nvKitCol = mix( iColA, iColB, aSel );' + FEATURE_LINE, true, 'vertex');
   let f = inject(fragment, '#include <common>', PART_FRAGMENT_DECL, true, 'fragment');
   f = inject(f, DIFFUSE_LINE, 'vec4 diffuseColor = vec4( diffuse * vKitCol, opacity );', false, 'fragment');
   f = inject(f, AO_MARKER, SHAPE_LIGHT, true, 'fragment');
@@ -584,6 +640,8 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
   let lod: PartLod = getTierParams(ctx.tier).playerDetail;
   const geosByLod: (BufferGeometry[] | null)[] = [null, null];
   const meshes: InstancedMesh[] = [];
+  const casters: InstancedMesh[] = [];
+  const casterGeos: BufferGeometry[] = [];
   const attrs: PartAttrs[] = [];
   const vars: InstancedBufferAttribute[] = [];
   const mats: Float32Array[] = [];
@@ -633,6 +691,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     meshes.push(mesh);
     mats.push(arr);
   }
+  buildCasters();
   group.updateMatrix();
   ctx.scene.add(group);
   applyShadows(ctx.tier);
@@ -678,6 +737,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
   const held = new Uint8Array(NUM_SLOTS);
   /** [LOOK] Ground clearance per slot from the driver (a run's flight phase) and of each held clip. */
   const groundAir = new Float32Array(NUM_SLOTS);
+  const bootPins = new Uint8Array(NUM_SLOTS);
   const heldAir = new Float32Array(NUM_SLOTS);
   const heldPoses: Pose[] = [];
   for (let i = 0; i < NUM_SLOTS; i++) heldPoses.push(createPose());
@@ -714,7 +774,39 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
 
   function applyShadows(tier: QualityTier): void {
     const cast = getTierParams(tier).shadowMap;
-    for (let p = 0; p < meshes.length; p++) meshes[p]!.castShadow = cast;
+    for (let p = 0; p < meshes.length; p++) meshes[p]!.castShadow = false;
+    for (let p = 0; p < casters.length; p++) casters[p]!.castShadow = cast;
+  }
+
+  /**
+   * [POLISH] Shadow casters: one InstancedMesh per part with the LOD 0 (PERFORMANCE) geometry, sharing the drawn
+   * meshes' instance matrices, variants and colours. At QUALITY the player shadows drew the full-detail figure a second
+   * time (every player triangle counted twice in the 200k frame budget); the light geometry casts the same silhouette
+   * at about a third of the cost. A caster's draw range is empty except inside its own shadow draw (onBeforeShadow /
+   * onAfterShadow), and three.js skips an empty range before the draw call, so the colour pass draws nothing for it
+   * (no draw call, no triangles) at any tier; castShadow alone turns the casters on (QUALITY) and off.
+   */
+  function buildCasters(): void {
+    const g0 = geometriesFor(0);
+    for (let p = 0; p < PART_COUNT; p++) {
+      const src = g0[p]!;
+      const geo = new BufferGeometry();
+      for (const name of Object.keys(src.attributes)) geo.setAttribute(name, src.getAttribute(name));
+      const off = src.getAttribute('position').count + 1;
+      geo.setDrawRange(off, 0);
+      casterGeos.push(geo);
+      const mesh = new InstancedMesh(geo, p === Part.TORSO ? torsoMat : partMat, meshes[p]!.count);
+      mesh.instanceMatrix = meshes[p]!.instanceMatrix;
+      mesh.customDepthMaterial = depthMat;
+      mesh.name = `players-shadow-${PART_NAMES[p]}`;
+      mesh.frustumCulled = false;
+      mesh.matrixAutoUpdate = false;
+      mesh.receiveShadow = false;
+      mesh.onBeforeShadow = () => { geo.drawRange.start = 0; geo.drawRange.count = Infinity; };
+      mesh.onAfterShadow = () => { geo.drawRange.start = off; geo.drawRange.count = 0; };
+      group.add(mesh);
+      casters.push(mesh);
+    }
   }
 
   /** [LOOK] Player geometry LOD for a tier (a swap, not a rebuild, after the first time a LOD is used). */
@@ -948,7 +1040,15 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     let ox = 0, oz = 0;
     let locked = 0;
     lockHeld[i] = 0;
-    if (!fresh) {
+    if (!fresh && bootPins[i] === 1) {
+      // [REPAIR 3] The driver pinned the boots in the world (they already stay put, allowing for this easing): the
+      // offset only eases back, so the body settles over the planted boots.
+      ox = lockOff[i * 2]!; oz = lockOff[i * 2 + 1]!;
+      let f = 1 - dt / MAPPER_TUNING.pinOffsetReturn;
+      if (!(f > 0)) f = 0;
+      if (dt > 0) { ox *= f; oz *= f; }
+      if (!(ox === ox) || !(oz === oz)) { ox = 0; oz = 0; }
+    } else if (!fresh) {
       ox = lockOff[i * 2]!; oz = lockOff[i * 2 + 1]!;
       const vx = it.vx[i]!, vz = it.vz[i]!;
       const lockAct = p.act === ActionKind.NONE;
@@ -1067,11 +1167,13 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
   const api: PlayerModelModule = {
     mesh: meshes[Part.TORSO]!,
     meshes,
+    shadowCasters: casters,
     group,
     poses,
     skeletons,
     drawnOffsets: drawn,
     groundAir,
+    bootPins,
     get kits(): MatchKits | null { return kits; },
 
     setPose(slot: number, pose: ArrayLike<number>): void {
@@ -1128,6 +1230,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
         if (keyKeeper[i] !== keeper || keyRoster[i] !== p.rosterIdx || keyShirt[i] !== (s.attrs[i]!.shirt | 0)) applySlot(s, i);
       }
       groundAir.fill(0);
+      bootPins.fill(0);
       driver(f, api);
       for (let i = 0; i < NUM_SLOTS; i++) if (held[i] === 1) { api.setPose(i, heldPoses[i]!); groundAir[i] = heldAir[i]!; }
       const dtMs = f.frame.paused ? 0 : f.frame.dtMs;
@@ -1169,6 +1272,8 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     dispose(): void {
       ctx.scene.remove(group);
       for (let p = 0; p < meshes.length; p++) meshes[p]!.dispose();
+      for (let p = 0; p < casters.length; p++) casters[p]!.dispose();
+      for (let g = 0; g < casterGeos.length; g++) casterGeos[g]!.dispose();
       for (let l = 0; l < geosByLod.length; l++) {
         const gs = geosByLod[l];
         if (gs) for (let g = 0; g < gs.length; g++) gs[g]!.dispose();
