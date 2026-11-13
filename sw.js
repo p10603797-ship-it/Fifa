@@ -31,7 +31,7 @@
  *   controllerchange).
  * - { type: 'STATUS' }: replies on the message port with { type, build, cache, lastNavigation } (diagnostics, tests).
  */
-const BUILD = '0.1.0-133d9cbddb'; // dotkick-build: tools/postbuild.mjs replaces the quoted value
+const BUILD = '0.1.0-170118f48f'; // dotkick-build: tools/postbuild.mjs replaces the quoted value
 const PREFIX = 'dotkick-shell-';
 const CACHE = PREFIX + BUILD;
 const SHELL_KEY = './';
