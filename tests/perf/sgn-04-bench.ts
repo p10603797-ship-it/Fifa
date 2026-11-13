@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { writeFileSync } from 'node:fs';
 import { chromium, type CDPSession, type Page } from '@playwright/test';
 import { serveDir } from '../../tools/bench';
+import { unlockGateInContext } from '../../tools/lib/gateUnlock';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const argv = process.argv.slice(2);
@@ -225,6 +226,7 @@ async function main(): Promise<void> {
   try {
     for (const rate of throttles) {
       const context = await browser.newContext({ viewport: { width: 1180, height: 820 }, deviceScaleFactor: 1, hasTouch: true });
+      await unlockGateInContext(context); // [GATE] start unlocked (password lock, D-047)
       await context.addInitScript(RECORDER);
       if (flag('nodraw')) await context.addInitScript(NODRAW);
       const page = await context.newPage();

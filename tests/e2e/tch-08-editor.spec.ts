@@ -8,6 +8,7 @@
  *   PW_DIST=dist-e2e/tch-08 PW_PORT=4238 npx playwright test tests/e2e/tch-08-editor.spec.ts
  */
 import { expect, test, type CDPSession, type Page } from '@playwright/test';
+import { unlockGateInContext } from './gate-harness';
 
 const GPU_NOISE = [/GL Driver Message/, /Automatic fallback to software WebGL/, /GroupMarkerNotSet/];
 
@@ -77,6 +78,9 @@ async function drag(cdp: CDPSession, from: { x: number; y: number }, to: { x: nu
   }
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 }
+
+// [GATE] This spec clears localStorage and reloads: re-seed the password-lock unlock record on every load (D-047).
+test.beforeEach(async ({ context }) => { await unlockGateInContext(context); });
 
 test.describe('TCH-08 controls editor (real app)', () => {
   test('drag a button by touch, reload: the position persists; Reset restores the defaults', async ({ page }) => {

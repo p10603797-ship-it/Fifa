@@ -11,6 +11,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { unlockGateInContext } from './gate-harness';
 import { expect, test } from '@playwright/test';
 
 const SRC = resolve(process.env.SGN03_STATIC_SRC ?? 'dist/index.html');
@@ -28,6 +29,9 @@ async function waitServing(url: string): Promise<void> {
   }
   throw new Error(`static server never came up at ${url}`);
 }
+
+// [GATE] This spec serves the game from its own server (another origin): seed the password-lock unlock record there too (D-047).
+test.beforeEach(async ({ context }) => { await unlockGateInContext(context); });
 
 test('dist/index.html alone, from a plain static server (python http.server), boots and plays a match with zero console errors', async ({ page }) => {
   test.setTimeout(300_000);

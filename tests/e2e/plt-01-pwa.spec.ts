@@ -10,6 +10,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { unlockGateInContext } from './gate-harness';
 import { expect, test, type Page } from '@playwright/test';
 import { startStaticServer } from './plt-04-server';
 
@@ -38,6 +39,9 @@ function swStatus(page: Page): Promise<SwStatus | null> {
     setTimeout(() => res(null), 5000);
   }));
 }
+
+// [GATE] This spec serves the game from its own server (another origin): seed the password-lock unlock record there too (D-047).
+test.beforeEach(async ({ context }) => { await unlockGateInContext(context); });
 
 test.describe('PLT-01 PWA', () => {
   test('after the first load the game reloads and boots offline from the cache', async ({ page }) => {

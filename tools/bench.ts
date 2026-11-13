@@ -18,6 +18,7 @@ import type { BenchResult } from '../src/platform/benchHook';
 import { BENCH_DEFAULTS, formatBenchResult } from '../src/platform/benchHook';
 import { bool, num, parseArgs, str } from './lib/args';
 import { writeJson } from './lib/report';
+import { unlockGateInContext } from './lib/gateUnlock';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
@@ -73,6 +74,7 @@ async function main(argv: readonly string[]): Promise<number> {
   const errors: string[] = [];
   try {
     const context = await browser.newContext({ viewport: { width: 1180, height: 820 }, deviceScaleFactor: 2, hasTouch: true });
+    await unlockGateInContext(context); // [GATE] start unlocked (password lock, D-047)
     const page = await context.newPage();
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
     page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });

@@ -7,6 +7,7 @@
  *   PW_DIST=dist-e2e/qf-12 PW_PORT=4412 npx playwright test tests/e2e/qf-12-sk-cup-back.spec.ts
  */
 import { expect, test, type Page } from '@playwright/test';
+import { unlockGateInContext } from './gate-harness';
 import { collectConsole, PAD, padActivate, padInit, padTap, route, waitMatch, waitRoute } from './int-b-harness';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -19,6 +20,9 @@ async function padToMain(page: Page): Promise<void> {
   for (let i = 0; i < 6 && (await route(page)) !== 'main'; i++) await padTap(page, 0, PAD.CROSS);
   await waitRoute(page, 'main', 15_000);
 }
+
+// [GATE] This spec clears localStorage and reloads: re-seed the password-lock unlock record on every load (D-047).
+test.beforeEach(async ({ context }) => { await unlockGateInContext(context); });
 
 test('controller alone: Back on a finished cup tie\'s final screen returns to the cup with the result card', async ({ page }) => {
   test.setTimeout(240_000);

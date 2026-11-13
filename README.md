@@ -36,6 +36,29 @@ Once the game is online (section 4 shows two free ways):
 
 The Home Screen app runs full screen and keeps working without internet (except online 1v1).
 
+### Password lock
+
+The first time DotKick opens on a device it asks for a password: type it in the box (capitals, spaces and dashes do
+not matter, so `abcd efgh jkmn` is the same as `ABCD-EFGH-JKMN`) and tap **Unlock**. After that the game opens
+straight away on that device, after a reload, after closing Safari, and offline.
+
+- **Each password works once per device.** Once a password has unlocked a device, typing it again there says
+  "That password has already been used." There is no server, so the device itself remembers which passwords it has
+  used: the same password still unlocks a *different* device or browser. Give each person their own password.
+- Private browsing (or Safari set to block website data) cannot remember the unlock. The game still opens for that
+  visit and says so; it will ask again next time.
+- Safari and the Home Screen app may keep separate website data, so the Home Screen app can ask once more (use a
+  new password).
+- The list of used passwords is kept in the same website data as the unlock. Clearing website data, a private
+  window, or Safari clearing the data of a site not opened for about a week of Safari use re-locks the game, and
+  the same password then works again on that device. Only an online checker (the plug-in point in decision D-047)
+  could stop that.
+- The lock keeps casual players out; it is not strong security. Like any lock that runs only in the browser, a
+  technical person with a computer can get past it (with the browser's developer tools). The repository holds only
+  scrambled versions (hashes) of the passwords, never the passwords themselves.
+
+Making new passwords is in [section 11](#make-new-passwords).
+
 ---
 
 ## 2. Run it on your computer
@@ -760,6 +783,29 @@ Results** button. The on-device script is [docs/DEVICE_CHECKLIST.md](docs/DEVICE
   (`src/net/config.ts`, see [docs/DEPLOY.md](docs/DEPLOY.md#self-hosted-peerjs-server-optional)).
 - Hosting details and the GitHub Pages workflow: [docs/DEPLOY.md](docs/DEPLOY.md). On-device test script:
   [docs/DEVICE_CHECKLIST.md](docs/DEVICE_CHECKLIST.md).
+
+### Make new passwords
+
+The password lock (section 1, [docs/DECISIONS.md](docs/DECISIONS.md) D-047) checks what is typed against the list
+of hashes in `src/data/gateCodes.ts`: lowercase hex SHA-256 of `dotkick-gate-v1:` followed by the password in
+capitals with everything but letters and digits removed. Passwords are 12 characters from
+`ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no I, L, O, 0 or 1), shown as `XXXX-XXXX-XXXX`.
+
+1. `npm run gate:codes -- 10 --append` makes 10 new passwords with secure randomness, prints them **in the terminal
+   only**, and adds their hashes to `src/data/gateCodes.ts`. Copy the passwords somewhere safe straight away: they
+   are not saved anywhere and cannot be worked out from the hashes. Never commit or paste them into the repository
+   (it is public).
+2. Commit `src/data/gateCodes.ts`, then build and publish (section 4). The new passwords work once the new build is
+   online; devices that are already unlocked stay unlocked.
+
+Without `--append` the tool only prints the passwords and the hash lines (paste the lines between the
+`gate-codes:begin` and `gate-codes:end` markers yourself). To retire a password nobody has used yet, find its line
+with `npm run gate:codes -- --hash XXXX-XXXX-XXXX` and delete it. To replace every password, delete all the lines
+between the markers and add new ones.
+
+For tests: every Playwright browser starts unlocked (`playwright.config.ts` seeds the unlock through
+`tools/lib/gateUnlock.ts`); `tests/e2e/gate-01-lock.spec.ts` tests the lock itself with its own test passwords,
+which an init script adds through `window.__dotkickGateTest = { hashes: [...] }` (never set in the published game).
 
 ---
 

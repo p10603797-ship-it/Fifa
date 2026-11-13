@@ -14,6 +14,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type CDPSession } from '@playwright/test';
 import { serveDir } from '../../tools/bench';
+import { unlockGateInContext } from '../../tools/lib/gateUnlock';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const argv = process.argv.slice(2);
@@ -103,6 +104,7 @@ async function main(): Promise<void> {
   const browser = await chromium.launch({ headless: true, args: launchArgs });
   try {
     const context = await browser.newContext({ viewport: { width: 1180, height: 820 }, deviceScaleFactor: 2, hasTouch: true });
+    await unlockGateInContext(context); // [GATE] start unlocked (password lock, D-047)
     await context.addInitScript(RECORDER);
     if (flag('nodraw')) await context.addInitScript(NODRAW);
     const calib = Number(arg('calib', '0'));

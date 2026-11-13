@@ -22,7 +22,8 @@
     "icons": "node tools/gen-icons.mjs",
     "icons:check": "node tools/gen-icons.mjs --check",
     "size": "tsx tools/size-check.ts",
-    "glitch-audit": "tsx tools/glitch-audit.ts"
+    "glitch-audit": "tsx tools/glitch-audit.ts",
+    "gate:codes": "node tools/gate-codes.mjs"
   },
   "dependencies": {
     "three": "0.186.1",

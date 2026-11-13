@@ -15,6 +15,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { unlockGateInContext } from './gate-harness';
 
 const SHOTS = process.env.UIX11_SHOTS || join(process.cwd(), 'tmp', 'uix-11');
 mkdirSync(SHOTS, { recursive: true });
@@ -93,6 +94,9 @@ async function checkLayout(page: Page, label: string): Promise<void> {
   expect(r.overlaps, `${label}: no overlaps`).toEqual([]);
   expect(r.scroll, `${label}: no page scroll`).toBe(false);
 }
+
+// [GATE] This spec clears localStorage and reloads: re-seed the password-lock unlock record on every load (D-047).
+test.beforeEach(async ({ context }) => { await unlockGateInContext(context); });
 
 test.describe('UIX-11 cup and practice', () => {
   test('cup by touch: draw, bracket, simulated tie, persistence, play / quit / result; layouts', async ({ page }) => {

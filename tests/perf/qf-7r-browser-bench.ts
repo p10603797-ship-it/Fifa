@@ -26,6 +26,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type CDPSession, type Page } from '@playwright/test';
 import { serveDir } from '../../tools/bench';
+import { unlockGateInContext } from '../../tools/lib/gateUnlock';
 
 interface Args { [k: string]: string | boolean }
 function parse(argv: string[]): Args {
@@ -356,6 +357,7 @@ async function main(): Promise<void> {
   try {
     for (const rate of throttles) {
       const context = await browser.newContext({ viewport: { width: num('width', 1180), height: num('height', 820) }, deviceScaleFactor: dpr, hasTouch: true });
+      await unlockGateInContext(context); // [GATE] start unlocked (password lock, D-047)
       await context.addInitScript(RECORDER);
       if (args.nodraw) await context.addInitScript(NODRAW);
       const page = await context.newPage();

@@ -12,6 +12,7 @@
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { unlockGateInContext } from './gate-harness';
 import { expect, test, type Page } from '@playwright/test';
 import { startStaticServer } from './plt-04-server';
 
@@ -36,6 +37,9 @@ const frames = (page: Page, n: number) => page.evaluate((k) => new Promise<void>
   const f = (): void => { if (--left <= 0) res(); else requestAnimationFrame(f); };
   requestAnimationFrame(f);
 }), n);
+
+// [GATE] This spec serves the game from its own server (another origin): seed the password-lock unlock record there too (D-047).
+test.beforeEach(async ({ context }) => { await unlockGateInContext(context); });
 
 test.describe('QF-5 verify', () => {
   test('a lost WebGL context refuses Resume until the context is rebuilt; then the pause menu resumes', async ({ page }) => {

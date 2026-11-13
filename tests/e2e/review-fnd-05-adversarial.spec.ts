@@ -11,6 +11,7 @@
  *  - Escape and the touch PAUSE button pause exactly once; the touch layer ignores touches while paused.
  */
 import { expect, test, type CDPSession, type Page } from '@playwright/test';
+import { acceptTestCodes, unlockWithTestCode } from './gate-harness';
 
 interface Controlled { slot: number; x: number; z: number; tick: number }
 
@@ -32,8 +33,10 @@ async function waitMatch(page: Page): Promise<void> {
   }, null, { timeout: 15_000 });
 }
 
-async function startMatch(page: Page, live = false): Promise<void> {
+async function startMatch(page: Page, live = false, gated = false): Promise<void> {
   await page.goto('/');
+  // [GATE] `gated`: storage is blocked, so the password lock shows (private browsing): unlock with a test code.
+  if (gated) await unlockWithTestCode(page);
   // [QF-12 refit] `live`: auto-switch off (the checks follow one player) and open play (below).
   if (live) await page.evaluate(() => window.__dotkick!.ctx.settings.update((s) => { s.controls.autoSwitch = 0; }));
   await page.getByTestId('splash-start').click();
@@ -369,8 +372,9 @@ test.describe('REVIEW FND-05 adversarial', () => {
       Object.defineProperty(window, 'sessionStorage', { configurable: true, get() { throw new DOMException('blocked', 'SecurityError'); } });
       Object.defineProperty(navigator, 'serviceWorker', { configurable: true, get() { return undefined; } });
     });
+    await acceptTestCodes(page);
     const errors = collectErrors(page);
-    await startMatch(page, true);
+    await startMatch(page, true, true);
     const cdp = await page.context().newCDPSession(page);
     const before = await controlled(page);
     await touches(cdp, 'touchStart', [{ x: 300, y: 520, id: 1 }]);

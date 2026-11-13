@@ -10,6 +10,7 @@
  * phases after every tick exactly as it will with the real rules.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { acceptTestCodes, unlockWithTestCode } from './gate-harness';
 
 const GPU_ENVIRONMENT_NOISE = [/GL Driver Message/, /Automatic fallback to software WebGL/, /GroupMarkerNotSet/];
 /** MatchPhase values (src/contracts/enums.ts). */
@@ -36,8 +37,10 @@ async function current(page: Page): Promise<string | null> {
   return page.evaluate(() => window.__dotkick!.ctx.router.current);
 }
 
-async function bootToMain(page: Page): Promise<void> {
+async function bootToMain(page: Page, gated = false): Promise<void> {
   await page.goto('/');
+  // [GATE] `gated`: storage is blocked, so the password lock shows (private browsing): unlock with a test code.
+  if (gated) await unlockWithTestCode(page);
   const start = page.getByTestId('splash-start');
   await expect(start).toBeVisible();
   await start.tap();
@@ -227,8 +230,9 @@ test.describe('REVIEW FND-04 adversarial', () => {
         },
       });
     });
+    await acceptTestCodes(page);
     const messages = collectConsole(page);
-    await bootToMain(page);
+    await bootToMain(page, true);
     expect(await page.evaluate(() => window.__dotkick!.ctx.settings.persistent)).toBe(false);
     await page.evaluate(() => window.__dotkick!.ctx.settings.update((s) => { s.audio.master = 0.5; }));
     expect(await page.evaluate(() => window.__dotkick!.ctx.settings.get().audio.master)).toBe(0.5);

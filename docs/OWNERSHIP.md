@@ -247,6 +247,10 @@ cover `src/app/**` (FND-04, then the INT wave; the entry point `src/main.ts` goe
 | `src/ui/screens/matchFlow.ts` | UIX-05 (with UIX-03/04) | local pre-match flow shared by the flow screens |
 | `src/ui/screens/sideAssign.ts` | UIX-04 | side assignment model behind side select |
 | `tools/hash-table.ts` | TUN-7S | behaviour-identity hash table for refactors |
+| `src/app/gate.ts`, `gateBoot.ts`, `sha256.ts` | GATE (D-047) | password lock: redeem logic and storage records, boot wiring, SHA-256 fallback for non-secure pages |
+| `src/ui/screens/gate.ts` | GATE (D-047) | password lock screen (shown before boot) |
+| `src/data/gateCodes.ts` | GATE (D-047) | hashes of the passwords (`tools/gate-codes.mjs` adds new ones; the plain codes are never committed) |
+| `tools/gate-codes.mjs`, `tools/lib/gateUnlock.ts` | GATE (D-047) | new passwords; every test browser starts unlocked |
 
 ## Documents
 

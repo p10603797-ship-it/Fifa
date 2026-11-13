@@ -11,6 +11,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { unlockGateInContext } from './gate-harness';
 import { expect, test, type Page } from '@playwright/test';
 import { startStaticServer } from './plt-04-server';
 
@@ -37,6 +38,9 @@ function collectConsole(page: Page): string[] {
   page.on('pageerror', (e) => out.push(`pageerror: ${e.message}`));
   return out;
 }
+
+// [GATE] This spec serves the game from its own server (another origin): seed the password-lock unlock record there too (D-047).
+test.beforeEach(async ({ context }) => { await unlockGateInContext(context); });
 
 test.describe('PLT-04 single-file build', () => {
   test('index.html served alone boots to the main menu with zero console errors', async ({ page }) => {

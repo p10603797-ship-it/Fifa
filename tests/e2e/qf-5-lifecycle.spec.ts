@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { AudioEngineImpl } from '../../src/audio/engine';
+import { acceptTestCodes, unlockGateInContext, unlockWithTestCode } from './gate-harness';
 import { startStaticServer } from './plt-04-server';
 
 const DIST = resolve(process.env.PW_DIST ?? 'dist');
@@ -33,6 +34,9 @@ function collectConsole(page: Page): string[] {
 }
 
 const audioInfo = (page: Page) => page.evaluate(() => (window.__dotkick!.ctx.audio as unknown as AudioEngineImpl).info());
+
+// [GATE] This spec serves the game from its own server (another origin): seed the password-lock unlock record there too (D-047).
+test.beforeEach(async ({ context }) => { await unlockGateInContext(context); });
 
 test.describe('QF-5 lifecycle', () => {
   test('audio: quick hide/show comes back without a tap; a match right after the unlock is fully pre-rendered', async ({ page }) => {
@@ -74,7 +78,10 @@ test.describe('QF-5 lifecycle', () => {
       const never = { result: null, error: null, onsuccess: null, onerror: null, onupgradeneeded: null, onblocked: null };
       Object.defineProperty(window, 'indexedDB', { configurable: true, value: { open: () => never, deleteDatabase: () => never } });
     });
+    // [GATE] Nothing can be stored, so the password lock shows (private browsing): unlock with a test code.
+    await acceptTestCodes(page);
     await page.goto('/');
+    await unlockWithTestCode(page);
     await page.getByTestId('splash-start').tap();
     await page.getByTestId('main-kickoff').tap();
     await page.waitForFunction(() => (window.__dotkick!.ctx.session.getState()?.tick ?? 0) > 30, null, { timeout: 60_000 });

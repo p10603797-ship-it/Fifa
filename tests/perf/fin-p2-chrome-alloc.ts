@@ -16,6 +16,7 @@
 import { writeFileSync } from 'node:fs';
 import { chromium } from '@playwright/test';
 import { serveDir } from '../../tools/bench';
+import { unlockGateInContext } from '../../tools/lib/gateUnlock';
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d: string): string => {
@@ -38,6 +39,7 @@ if (jsflags) console.log(`renderer V8 flags: ${jsflags}`);
 const sample = !argv.includes('--nosample');
 try {
   const context = await browser.newContext({ viewport: { width: 1180, height: 820 }, deviceScaleFactor: 2, hasTouch: true });
+  await unlockGateInContext(context); // [GATE] start unlocked (password lock, D-047)
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
   if (throttle > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle });

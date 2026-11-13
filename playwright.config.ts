@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import { existsSync } from 'node:fs';
+import { gateUnlockedStorageState } from './tools/lib/gateUnlock';
 
 // Only Chromium ships in the dev container (/opt/pw-browsers). WebKit and Firefox projects
 // run when their browsers are installed (see docs/DECISIONS.md, D-003).
@@ -25,6 +26,9 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${port}`,
     trace: 'retain-on-failure',
+    // [GATE] Every context starts unlocked (password lock, D-047): also the contexts specs make with
+    // browser.newContext(). tests/e2e/gate-01-lock.spec.ts overrides it with an empty state; see tools/lib/gateUnlock.ts.
+    storageState: gateUnlockedStorageState([`http://localhost:${port}`, `http://127.0.0.1:${port}`]),
   },
   webServer: {
     command: `npx vite preview --port ${port} --strictPort --outDir ${distDir}`,

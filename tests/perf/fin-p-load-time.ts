@@ -9,6 +9,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 import { serveDir } from '../../tools/bench';
+import { unlockGateInContext } from '../../tools/lib/gateUnlock';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const argv = process.argv.slice(2);
@@ -21,6 +22,7 @@ async function main(): Promise<void> {
     for (const rate of arg('throttle', '1,4').split(',').map(Number)) {
       for (let r = 0; r < Number(arg('runs', '2')); r++) {
         const context = await browser.newContext({ viewport: { width: 1180, height: 820 }, deviceScaleFactor: 2, hasTouch: true });
+        await unlockGateInContext(context); // [GATE] start unlocked (password lock, D-047)
         const page = await context.newPage();
         const cdp = await context.newCDPSession(page);
         if (rate > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate });

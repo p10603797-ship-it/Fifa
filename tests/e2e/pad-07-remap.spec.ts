@@ -7,6 +7,7 @@
  *   PW_DIST=dist-e2e/tch-08 PW_PORT=4238 npx playwright test tests/e2e/pad-07-remap.spec.ts
  */
 import { expect, test, type Page } from '@playwright/test';
+import { unlockGateInContext } from './gate-harness';
 
 const ODD_ID = 'Retro Arcade Pad (Vendor: 1234 Product: 5678)';
 const MOCK_PAD = `
@@ -43,6 +44,9 @@ async function padTap(page: Page, b: number): Promise<void> {
 
 const remaps = (page: Page): Promise<Record<string, number[]>> =>
   page.evaluate(() => JSON.parse(JSON.stringify((window as unknown as Win).__dotkick!.ctx.settings.get().controls.pad.remaps)));
+
+// [GATE] This spec clears localStorage and reloads: re-seed the password-lock unlock record on every load (D-047).
+test.beforeEach(async ({ context }) => { await unlockGateInContext(context); });
 
 test('PAD-07 remap screen: a non-standard pad walks every action and the remap is saved', async ({ page }) => {
   const errors: string[] = [];
