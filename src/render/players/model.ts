@@ -5,10 +5,14 @@
  *
  * PARTS (parts.ts): head + neck + hair, torso (shirt), pelvis (shorts), upper arm (sleeve), forearm + hand, thigh
  * (shorts leg), shin (sock), boot. One InstancedMesh per part: 22 instances, or 44 for left / right limbs
- * (index = slot * 2 + side, side 0 left, 1 right). 8 draw calls and about 1,120 triangles per player (~24.7k for
- * 22; budget 14 calls and 30k triangles).
+ * (index = slot * 2 + side, side 0 left, 1 right). 8 draw calls. [LOOK] 3,435 triangles per player at the
+ * full LOD (~75.6k for 22, every hair / sleeve / glove variant counted; ~2,680 drawn as seen), and a lighter LOD (<= 1,123, the
+ * pre-[LOOK] model's count) on the PERFORMANCE tier (TierParams.playerDetail): the geometry is swapped in setQuality.
+ * Variants: per-instance iVar picks the head's hair style, the short or keeper's long sleeve and the forearm's bare
+ * hand or keeper glove (parts.ts).
  * Lambert materials (one directional light + ambient from the stadium), patched in onBeforeCompile:
  *   - every part has per-instance colours A and B; the per-vertex selector aSel picks one (crisp kit regions);
+ *   - [LOOK] a cheap sky and rim term scaled by the ambient light gives the forms some shape at no draw-call cost;
  *   - the torso shader draws the kit pattern (plain, stripes, hoops, halves, sash: section 8) procedurally in torso
  *     space with derivative anti-aliasing (no shimmer at distance), a collar trim, and the shirt number on the back
  *     from a glyph atlas (NumberAtlas: RGB white fill / black outline, premultiplied alpha coverage). The default
@@ -31,8 +35,8 @@
  */
 
 import {
-  Color, DataTexture, DynamicDrawUsage, Group, InstancedBufferAttribute, InstancedMesh, MeshLambertMaterial, RGBAFormat,
-  Vector3, type BufferGeometry, type Texture,
+  Color, DataTexture, DynamicDrawUsage, Group, InstancedBufferAttribute, InstancedMesh, MeshDepthMaterial, MeshLambertMaterial,
+  RGBADepthPacking, RGBAFormat, Vector3, type BufferGeometry, type Texture,
 } from 'three';
 import { NUM_SLOTS } from '../../contracts/constants';
 import type { Club, Kit } from '../../contracts/data';
@@ -40,16 +44,20 @@ import { ActionKind, KitPattern, MatchPhase, type QualityTier } from '../../cont
 import { AnimId, createPose, POSE_SIZE, PoseIdx, type Pose } from '../../contracts/render';
 import type { Settings } from '../../contracts/settings';
 import type { ReadonlySimState } from '../../contracts/state';
+import { GAIT_AIR } from '../anim/locomotion';
 import { advanceCycle, createAnimBank, createAnimator, createAnimSample, mapAnim, poseFnFor, samplePose } from '../anim/mapper';
 import { createKitNumberAtlas, resolveMatchKits, type KitNumberAtlas, type MatchKits } from '../kits';
 import { getTierParams } from '../quality';
 import type { RenderContext, RenderFrame, RenderModule } from '../types';
 import {
-  BODY, createSkeleton, FRAME_SIZE, groundSkeleton, Joint, JOINT_COUNT, PLACE_SIZE, placeSkeleton, solvePoseFK,
+  BODY, createSkeleton, FRAME_SIZE, GROUND_AIR, groundSkeleton, Joint, JOINT_COUNT, PLACE_SIZE, placeSkeleton, solvePoseFK,
   writeHiddenMatrix, writeJointMatrix,
 } from './fk';
 import { drawnOffsetsOf } from './drawn';
-import { buildPartGeometry, NUMBER_PANEL, Part, PART_COUNT, PART_NAMES, PART_PAIRED, TORSO_Y0, TORSO_Y1, trianglesPerPlayer } from './parts';
+import {
+  buildPartGeometry, HairStyle, HandVariant, NUMBER_PANEL, SleeveVariant, Part, PART_COUNT, PART_NAMES, PART_PAIRED, TORSO_Y0, TORSO_Y1,
+  trianglesPerPlayer, type PartLod,
+} from './parts';
 
 export {
   BODY, CONTACT_POINTS, createSkeleton, footPoint, FRAME_SIZE, GROUND_SNAP_MAX, groundLift, groundSkeleton, handPoint,
@@ -114,6 +122,9 @@ export interface PoseSink {
   setPose(slot: number, pose: ArrayLike<number>): void;
   /** [QF-4] Render-only offsets each player was drawn with on the last frame (players/drawn.ts). */
   readonly drawnOffsets?: Float64Array;
+  /** [LOOK] Per slot the clearance (m, model) the pose means to keep above the grass (a run's flight phase); the
+   *  driver writes it with setPose (zeroed by the model before each driver call). The ground snap keeps it. */
+  readonly groundAir?: Float32Array;
 }
 
 /** Writes the pose of every active slot for this frame (called first in the model's update). Must not allocate. */
@@ -159,9 +170,11 @@ export interface PlayerModelModule extends RenderModule, PoseSink {
 export interface PlayerModelDebug {
   /**
    * Close-up camera on a slot (slot < 0 turns it off): distance (m), angle around the player in degrees from his
-   * front (0 = facing the camera, 180 = his back), eye height (m). Overrides ctx.camera after the cameras ran.
+   * front (0 = facing the camera, 180 = his back), eye height (m), and for head close-ups ([LOOK]) the look-at height
+   * (m, default 1.0) and a vertical field of view (deg, default: the active camera's). Overrides ctx.camera after the
+   * cameras ran.
    */
-  closeUp(slot: number, dist?: number, angleDeg?: number, eyeY?: number): void;
+  closeUp(slot: number, dist?: number, angleDeg?: number, eyeY?: number, lookY?: number, fovDeg?: number): void;
   /** Hold a pose on a slot (POSE_SIZE values) or release it (null). */
   holdPose(slot: number, pose: ArrayLike<number> | null): void;
   /** Hold a clip on a slot through the mapper's pose table (GFX-09..11): phase t, stride cycle, speed, side, foot. */
@@ -205,6 +218,14 @@ export const HAIR_COLOURS: readonly number[] = [0x17110d, 0x2a1c13, 0x3f2a1c, 0x
 export const BOOT_COLOURS: readonly number[] = [0x121212, 0x121212, 0x121212, 0xf0f0f0, 0xf0f0f0, 0x1d3fbf, 0xd6262f, 0xf2c318, 0x27b36b];
 /** Keeper gloves. */
 export const GLOVE_COLOUR = 0xf4f4f0;
+/** [LOOK] Hair style by a 0..19 hash: buzz 3, short 6, swept 4, curly 4, tied back 3 in 20. */
+const HAIR_STYLE_TABLE: readonly number[] = [
+  HairStyle.BUZZ, HairStyle.BUZZ, HairStyle.BUZZ,
+  HairStyle.SHORT, HairStyle.SHORT, HairStyle.SHORT, HairStyle.SHORT, HairStyle.SHORT, HairStyle.SHORT,
+  HairStyle.SWEPT, HairStyle.SWEPT, HairStyle.SWEPT, HairStyle.SWEPT,
+  HairStyle.CURLY, HairStyle.CURLY, HairStyle.CURLY, HairStyle.CURLY,
+  HairStyle.TIED, HairStyle.TIED, HairStyle.TIED,
+];
 
 /** Integer hash (render-only variety; not used by the sim). */
 export function lookHash(a: number, b: number): number {
@@ -233,12 +254,15 @@ export interface SlotLook {
   armSkinR: number;
   hand: number;
   keeper: boolean;
+  /** [LOOK] Hair style (parts.ts HairStyle) and boot sole colour. */
+  hairStyle: number;
+  sole: number;
 }
 
 export function createSlotLook(): SlotLook {
   return {
     skin: 0, hair: 0, boot: 0, shirt: 0, shirt2: 0, shorts: 0, socks: 0, number: 0, pattern: 0, sleeveL: 0, sleeveR: 0,
-    armSkinL: 0, armSkinR: 0, hand: 0, keeper: false,
+    armSkinL: 0, armSkinR: 0, hand: 0, keeper: false, hairStyle: HairStyle.SHORT, sole: 0,
   };
 }
 
@@ -248,6 +272,10 @@ export function slotLook(kit: Kit, keeper: boolean, clubIdx: number, rosterIdx: 
   const shaved = ((h >>> 8) % 9) === 0;
   out.hair = shaved ? out.skin : HAIR_COLOURS[(h >>> 12) % HAIR_COLOURS.length]!;
   out.boot = BOOT_COLOURS[(h >>> 20) % BOOT_COLOURS.length]!;
+  out.sole = luminance(out.boot) < 0.2 ? 0xb4b4b4 : 0x1e1e1e;
+  // [LOOK] Hair style from a second hash (the colours above keep their seeds); shaved heads show the scalp cap only.
+  const hs = lookHash(clubIdx + 101, rosterIdx + 1) % 20;
+  out.hairStyle = shaved ? HairStyle.BUZZ : HAIR_STYLE_TABLE[hs]!;
   const pattern = kit.pattern >= KitPattern.PLAIN && kit.pattern <= KitPattern.SASH ? kit.pattern : KitPattern.PLAIN;
   out.pattern = pattern;
   out.shirt = kit.shirt;
@@ -310,8 +338,27 @@ const PART_VERTEX_DECL = `
 attribute vec3 iColA;
 attribute vec3 iColB;
 attribute float aSel;
+attribute float aVar;
+attribute float iVar;
 varying vec3 vKitCol;
 `;
+/** [LOOK] Variant collapse: a vertex with a variant id (aVar > 0) other than the instance's iVar goes to the origin. */
+const VARIANT_DECL = `
+attribute float aVar;
+attribute float iVar;
+`;
+const VARIANT_LINE = '\ntransformed *= max( 1.0 - step( 0.5, aVar ), 1.0 - step( 0.5, abs( aVar - iVar ) ) );';
+/** [LOOK] Sky and rim term (indirect light, scaled by the ambient colour: dims with the stadium lighting). */
+const SHAPE_LIGHT = `
+{
+  vec3 dkUp = normalize( ( viewMatrix * vec4( 0.0, 1.0, 0.0, 0.0 ) ).xyz );
+  float dkSky = dot( normal, dkUp );
+  float dkRim = 1.0 - saturate( dot( normal, normalize( vViewPosition ) ) );
+  dkRim *= dkRim * dkRim;
+  reflectedLight.indirectDiffuse += ambientLightColor * BRDF_Lambert( diffuseColor.rgb ) * ( ${f4(0.35)} * dkSky + ${f4(0.5)} * dkRim );
+}
+`;
+const AO_MARKER = '#include <aomap_fragment>';
 const PART_FRAGMENT_DECL = `
 varying vec3 vKitCol;
 `;
@@ -386,9 +433,11 @@ function inject(src: string, marker: string, add: string, after: boolean, what: 
 /** Patch Lambert sources for a generic part (colour A / B by aSel). Throws when three's chunks moved. Pure. */
 export function patchPartShader(vertex: string, fragment: string): { vertex: string; fragment: string } {
   let v = inject(vertex, '#include <common>', PART_VERTEX_DECL, true, 'vertex');
+  v = inject(v, '#include <begin_vertex>', VARIANT_LINE, true, 'vertex');
   v = inject(v, '#include <color_vertex>', '\nvKitCol = mix( iColA, iColB, aSel );', true, 'vertex');
   let f = inject(fragment, '#include <common>', PART_FRAGMENT_DECL, true, 'fragment');
   f = inject(f, DIFFUSE_LINE, 'vec4 diffuseColor = vec4( diffuse * vKitCol, opacity );', false, 'fragment');
+  f = inject(f, AO_MARKER, SHAPE_LIGHT, true, 'fragment');
   return { vertex: v, fragment: f };
 }
 
@@ -399,7 +448,14 @@ export function patchTorsoShader(vertex: string, fragment: string): { vertex: st
     '\nvLoc = position; vColA = iColA; vColB = iColB; vColN = iColN; vKit = iKit; vNum = iNum; vSel = aSel;', true, 'vertex');
   let f = inject(fragment, '#include <common>', TORSO_FRAGMENT_DECL, true, 'fragment');
   f = inject(f, DIFFUSE_LINE, 'vec4 diffuseColor = vec4( diffuse * dkShirt(), opacity );', false, 'fragment');
+  f = inject(f, AO_MARKER, SHAPE_LIGHT, true, 'fragment');
   return { vertex: v, fragment: f };
+}
+
+/** [LOOK] Patch a depth shader (shadow casting at the QUALITY tier) with the variant collapse. Pure. */
+export function patchDepthShader(vertex: string): string {
+  const v = inject(vertex, '#include <common>', VARIANT_DECL, true, 'depth vertex');
+  return inject(v, '#include <begin_vertex>', VARIANT_LINE, true, 'depth vertex');
 }
 
 // ============================================================ default pose driver
@@ -512,22 +568,61 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     shader.uniforms.uNumOn = numOn;
   };
   torsoMat.customProgramCacheKey = () => 'dk-player-torso-1';
+  // [LOOK] Shadow casting (QUALITY tier) with the same variant collapse, so hidden hair styles / gloves cast nothing.
+  const depthMat = new MeshDepthMaterial({ depthPacking: RGBADepthPacking });
+  depthMat.name = 'player-depth';
+  depthMat.onBeforeCompile = (shader) => {
+    shader.vertexShader = patchDepthShader(shader.vertexShader);
+  };
+  depthMat.customProgramCacheKey = () => 'dk-player-depth-1';
   // [QF-4] The onBeforeCompile uniforms, visible to scene walks (texture memory, context-restore rebuild).
   torsoMat.userData.uniforms = { uNumAtlas: numUniform, uNumOn: numOn };
 
   // ---- meshes and instanced attributes
-  const geos: BufferGeometry[] = [];
+  // [LOOK] Geometry per LOD (index = TierParams.playerDetail); LOD 0 is built when a tier first asks for it. The
+  // instanced attributes are shared by both, so a swap keeps every colour and variant.
+  let lod: PartLod = getTierParams(ctx.tier).playerDetail;
+  const geosByLod: (BufferGeometry[] | null)[] = [null, null];
   const meshes: InstancedMesh[] = [];
   const attrs: PartAttrs[] = [];
+  const vars: InstancedBufferAttribute[] = [];
   const mats: Float32Array[] = [];
   for (let p = 0; p < PART_COUNT; p++) {
     const n = PART_PAIRED[p] ? NUM_SLOTS * 2 : NUM_SLOTS;
-    const geo = buildPartGeometry(p);
     const a = new InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
     const b = new InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
-    geo.setAttribute('iColA', a);
-    geo.setAttribute('iColB', b);
+    const v = new InstancedBufferAttribute(new Float32Array(n), 1);
+    attrs.push({ a, b });
+    vars.push(v);
+  }
+  const torsoN = new InstancedBufferAttribute(new Float32Array(NUM_SLOTS * 3).fill(1), 3);
+  const torsoKit = new InstancedBufferAttribute(new Float32Array(NUM_SLOTS * 4), 4);
+  const torsoNum = new InstancedBufferAttribute(new Float32Array(NUM_SLOTS * 4), 4);
+  function geometriesFor(l: PartLod): BufferGeometry[] {
+    const have = geosByLod[l];
+    if (have) return have;
+    const out: BufferGeometry[] = [];
+    for (let p = 0; p < PART_COUNT; p++) {
+      const geo = buildPartGeometry(p, l);
+      geo.setAttribute('iColA', attrs[p]!.a);
+      geo.setAttribute('iColB', attrs[p]!.b);
+      geo.setAttribute('iVar', vars[p]!);
+      if (p === Part.TORSO) {
+        geo.setAttribute('iColN', torsoN);
+        geo.setAttribute('iKit', torsoKit);
+        geo.setAttribute('iNum', torsoNum);
+      }
+      out.push(geo);
+    }
+    geosByLod[l] = out;
+    return out;
+  }
+  const geos0 = geometriesFor(lod);
+  for (let p = 0; p < PART_COUNT; p++) {
+    const n = PART_PAIRED[p] ? NUM_SLOTS * 2 : NUM_SLOTS;
+    const geo = geos0[p]!;
     const mesh = new InstancedMesh(geo, p === Part.TORSO ? torsoMat : partMat, n);
+    mesh.customDepthMaterial = depthMat;
     mesh.name = `players-${PART_NAMES[p]}`;
     mesh.instanceMatrix.setUsage(DynamicDrawUsage);
     mesh.frustumCulled = false; // instances move every frame; the cached bounds would cull wrongly
@@ -535,18 +630,9 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     const arr = mesh.instanceMatrix.array as Float32Array;
     for (let i = 0; i < n; i++) writeHiddenMatrix(arr, i);
     group.add(mesh);
-    geos.push(geo);
     meshes.push(mesh);
-    attrs.push({ a, b });
     mats.push(arr);
   }
-  const torsoGeo = geos[Part.TORSO]!;
-  const torsoN = new InstancedBufferAttribute(new Float32Array(NUM_SLOTS * 3).fill(1), 3);
-  const torsoKit = new InstancedBufferAttribute(new Float32Array(NUM_SLOTS * 4), 4);
-  const torsoNum = new InstancedBufferAttribute(new Float32Array(NUM_SLOTS * 4), 4);
-  torsoGeo.setAttribute('iColN', torsoN);
-  torsoGeo.setAttribute('iKit', torsoKit);
-  torsoGeo.setAttribute('iNum', torsoNum);
   group.updateMatrix();
   ctx.scene.add(group);
   applyShadows(ctx.tier);
@@ -590,6 +676,9 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
   const LK = new Float64Array(13);
   const hidden = new Uint8Array(NUM_SLOTS).fill(1);
   const held = new Uint8Array(NUM_SLOTS);
+  /** [LOOK] Ground clearance per slot from the driver (a run's flight phase) and of each held clip. */
+  const groundAir = new Float32Array(NUM_SLOTS);
+  const heldAir = new Float32Array(NUM_SLOTS);
   const heldPoses: Pose[] = [];
   for (let i = 0; i < NUM_SLOTS; i++) heldPoses.push(createPose());
   /** Look key per slot: keeper flag, roster index and shirt number the colours were applied for. */
@@ -618,12 +707,23 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
   let closeDist: number = LOCAL_TUNING.closeUpDist;
   let closeAngle = 0;
   let closeEyeY: number = LOCAL_TUNING.closeUpEyeY;
+  let closeLookY: number = LOCAL_TUNING.closeUpLookY;
+  let closeFov = 0;
   const camTarget = new Vector3();
   const jointOut = new Float64Array(3);
 
   function applyShadows(tier: QualityTier): void {
     const cast = getTierParams(tier).shadowMap;
     for (let p = 0; p < meshes.length; p++) meshes[p]!.castShadow = cast;
+  }
+
+  /** [LOOK] Player geometry LOD for a tier (a swap, not a rebuild, after the first time a LOD is used). */
+  function applyLod(tier: QualityTier): void {
+    const want = getTierParams(tier).playerDetail;
+    if (want === lod) return;
+    lod = want;
+    const g = geometriesFor(lod);
+    for (let p = 0; p < meshes.length; p++) meshes[p]!.geometry = g[p]!;
   }
 
   function useAtlas(a: NumberAtlas | null): void {
@@ -660,8 +760,14 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
       const o = i * 6 + side * 3;
       writeColour(A(Part.UPPER_LEG), o, look.shorts); writeColour(B(Part.UPPER_LEG), o, look.skin);
       writeColour(A(Part.LOWER_LEG), o, look.socks); writeColour(B(Part.LOWER_LEG), o, look.skin);
-      writeColour(A(Part.BOOT), o, look.boot); writeColour(B(Part.BOOT), o, look.boot);
+      writeColour(A(Part.BOOT), o, look.boot); writeColour(B(Part.BOOT), o, look.sole);
+      (vars[Part.LOWER_ARM]!.array as Float32Array)[i * 2 + side] = keeper ? HandVariant.GLOVE : HandVariant.BARE;
+      (vars[Part.UPPER_ARM]!.array as Float32Array)[i * 2 + side] = keeper ? SleeveVariant.LONG : SleeveVariant.SHORT;
     }
+    vars[Part.UPPER_ARM]!.needsUpdate = true;
+    (vars[Part.HEAD]!.array as Float32Array)[i] = look.hairStyle;
+    vars[Part.HEAD]!.needsUpdate = true;
+    vars[Part.LOWER_ARM]!.needsUpdate = true;
     const kitArr = torsoKit.array as Float32Array;
     const numArr = torsoNum.array as Float32Array;
     const hasNo = atlas !== null && atlas.glyphRect(shirtNo, numArr, i * 4);
@@ -721,7 +827,9 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     if (yo !== 0) pose[PoseIdx.ROOT_YAW] = pose[PoseIdx.ROOT_YAW]! + yo;
     solvePoseFK(pose, modelSk);
     popGuard(i, pose);
+    GROUND_AIR[0] = groundAir[i]!;
     groundSkeleton(modelSk, pose);
+    GROUND_AIR[0] = 0;
     const sk = skeletons[i]!;
     // heightScale(), written out.
     const cm = s.attrs[i]!.height;
@@ -949,8 +1057,9 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     const dx = fx * c - fz * s, dz = fz * c + fx * s;
     const cam = ctx.camera;
     cam.position.set(x + dx * closeDist, closeEyeY, z + dz * closeDist);
-    camTarget.set(x, LOCAL_TUNING.closeUpLookY, z);
+    camTarget.set(x, closeLookY, z);
     cam.up.set(0, 1, 0);
+    if (closeFov > 0 && cam.fov !== closeFov) { cam.fov = closeFov; cam.updateProjectionMatrix(); }
     cam.lookAt(camTarget);
     cam.updateMatrixWorld(true);
   }
@@ -962,6 +1071,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     poses,
     skeletons,
     drawnOffsets: drawn,
+    groundAir,
     get kits(): MatchKits | null { return kits; },
 
     setPose(slot: number, pose: ArrayLike<number>): void {
@@ -1017,8 +1127,9 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
         const keeper = s.teams[t]!.keeperSlot === i ? 1 : 0;
         if (keyKeeper[i] !== keeper || keyRoster[i] !== p.rosterIdx || keyShirt[i] !== (s.attrs[i]!.shirt | 0)) applySlot(s, i);
       }
+      groundAir.fill(0);
       driver(f, api);
-      for (let i = 0; i < NUM_SLOTS; i++) if (held[i] === 1) api.setPose(i, heldPoses[i]!);
+      for (let i = 0; i < NUM_SLOTS; i++) if (held[i] === 1) { api.setPose(i, heldPoses[i]!); groundAir[i] = heldAir[i]!; }
       const dtMs = f.frame.paused ? 0 : f.frame.dtMs;
       LK[0] = dtMs > 0 ? (dtMs < 100 ? dtMs / 1000 : 0.1) : 0;
       stepStance(s, it);
@@ -1039,6 +1150,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
 
     setQuality(tier: QualityTier): void {
       applyShadows(tier);
+      applyLod(tier);
     },
 
     onSettings(st: Readonly<Settings>): void {
@@ -1057,9 +1169,13 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
     dispose(): void {
       ctx.scene.remove(group);
       for (let p = 0; p < meshes.length; p++) meshes[p]!.dispose();
-      for (let g = 0; g < geos.length; g++) geos[g]!.dispose();
+      for (let l = 0; l < geosByLod.length; l++) {
+        const gs = geosByLod[l];
+        if (gs) for (let g = 0; g < gs.length; g++) gs[g]!.dispose();
+      }
       partMat.dispose();
       torsoMat.dispose();
+      depthMat.dispose();
       ownAtlas?.texture.dispose(); // the GPU copy only: the shared glyph data stays cached for the next renderer
       ownAtlas = null;
       matchOn = false;
@@ -1068,22 +1184,27 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
   };
 
   const debug: PlayerModelDebug = {
-    closeUp(slot: number, dist?: number, angleDeg?: number, eyeY?: number): void {
+    closeUp(slot: number, dist?: number, angleDeg?: number, eyeY?: number, lookY?: number, fovDeg?: number): void {
       closeSlot = slot >= 0 && slot < NUM_SLOTS ? slot | 0 : -1;
       closeDist = dist !== undefined && dist > 0.5 ? dist : LOCAL_TUNING.closeUpDist;
       closeAngle = angleDeg ?? 0;
       closeEyeY = eyeY ?? LOCAL_TUNING.closeUpEyeY;
+      closeLookY = lookY !== undefined && Number.isFinite(lookY) ? lookY : LOCAL_TUNING.closeUpLookY;
+      closeFov = fovDeg !== undefined && fovDeg > 1 && fovDeg < 120 ? fovDeg : 0;
     },
     holdPose(slot: number, pose: ArrayLike<number> | null): void {
       if (!(slot >= 0 && slot < NUM_SLOTS)) return;
       if (!pose) { held[slot] = 0; return; }
       const dst = heldPoses[slot]!;
       for (let k = 0; k < POSE_SIZE; k++) dst[k] = k < pose.length ? pose[k]! : 0;
+      heldAir[slot] = 0;
       held[slot] = 1;
     },
     holdClip(slot: number, anim: AnimId, t = 0, cycle = 0, speed = 0, side = 1, foot = 0): void {
       if (!(slot >= 0 && slot < NUM_SLOTS)) return;
+      GAIT_AIR[0] = 0;
       poseFnFor(anim)(heldPoses[slot]!, t, cycle, speed, side, foot);
+      heldAir[slot] = anim === AnimId.JOG || anim === AnimId.SPRINT || anim === AnimId.TURN_LEAN ? GAIT_AIR[0]! : 0;
       held[slot] = 1;
     },
     joint(slot: number, j: number): [number, number, number] {
@@ -1112,7 +1233,7 @@ export function createPlayerModel(ctx: RenderContext): PlayerModelModule {
       return {
         meshes: meshes.length,
         drawCalls: meshes.length,
-        trianglesPerPlayer: trianglesPerPlayer(),
+        trianglesPerPlayer: trianglesPerPlayer(lod),
         instances: meshes.map((m) => m.count),
         numberAtlas: atlas !== null,
         hidden: hid,

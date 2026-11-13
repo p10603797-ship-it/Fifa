@@ -4,15 +4,22 @@
  * phase in radians: the mapper adds 2 PI * distance / strideLengthFor(anim, speed) every frame); poses blend (GFX-12).
  * Pose layout: contracts/render.ts PoseIdx (model faces +x, +z to the player's right).
  *
- * GAIT: one procedural gait drives every clip. A cycle (2 PI) is two steps: the right foot touches down at cycle 0,
- * the left half a cycle later (a quarter cycle when side-shuffling). While a foot is planted its toe point moves
- * backward in model space by exactly stride * cycle / (2 PI) per radian, i.e. at minus the body speed, so with the
- * mapper's distance-driven cycle the foot is still in the world (no sliding); late in the stance the heel lifts and
- * the foot rolls over the toe. Legs are placed with IK (poseMath.legIK / plantToe) against the GFX-07 skeleton.
- * Swing feet follow a Hermite arc whose end velocities match the stance (no jerk at touchdown / toe-off) and stay
- * low near both ends, so in the flight phases the lowest foot stays inside the model's ground snap (fk.ts
- * GROUND_SNAP_MAX) and the body never pops. Stance geometry depends on speed only, so JOG and SPRINT at the same speed
- * plant identically and cross-fade cleanly; they differ in the upper body (lean, arm swing) and knee lift.
+ * GAIT: a cycle (2 PI) is two steps: the right foot touches down at cycle 0, the left half a cycle later (a quarter
+ * cycle when side-shuffling). While a foot is planted its toe point moves backward in model space by exactly
+ * stride * cycle / (2 PI) per radian, i.e. at minus the body speed, so with the mapper's distance-driven cycle the foot
+ * is still in the world (no sliding); late in the stance the heel lifts and the foot rolls over the toe. Legs are
+ * placed with IK (poseMath.legIK / plantToe) against the GFX-07 skeleton.
+ *  - The directional clips (strafe, jockey, shield, keeper ready) use gaitLegs: swing feet on a low Hermite arc whose
+ *    end velocities match the stance, staying inside the model's ground snap (fk.ts GROUND_SNAP_MAX).
+ *  - [LOOK] JOG / SPRINT / TURN_LEAN use the run gait (runPose, see its comment): forefoot touchdown a little ahead of
+ *    the hips, heel recovery and knee drive in the swing, a bounce with a real flight phase (the pose reports its
+ *    clearance in GAIT_AIR so the model's snap keeps it), pelvis rotation and drop with counter-rotating shoulders, a
+ *    whole-body lean that grows with speed and acceleration, arms pumping front to back. Stance geometry depends on
+ *    speed (and the mapper's acceleration) only, so JOG and SPRINT at the same speed plant identically and cross-fade
+ *    cleanly; the sprint style differs in knee drive, heel recovery, lean, bounce and arm drive.
+ *
+ * RUN INPUTS (RUN_IN, set by the mapper per slot, 0 otherwise): smoothed acceleration, turn lean applied before the
+ * leg IK, motion direction off the facing (the planted feet travel along it).
  *
  * CLIP PARAMETERS (PoseFn: out, t, cycle, speed, side, foot):
  *  - IDLE: t = breathing phase (0..1, wraps); feet planted, gentle breathing sway.
@@ -28,7 +35,10 @@
 
 import { AnimId, PoseIdx, type Pose, type PoseFn } from '../../contracts/render';
 import type { PoseTable } from '../types';
-import { clamp, HEEL_X, lerp, PELVIS_Y, placeSwingFootS, plantToeS, PSA, PTA, TAU, TOE_X, wrap01 } from './poseMath';
+import {
+  ANKLE_Y, clamp, FPA, HEEL_X, HIP_Z, IKT, LEG_MAX, legIKS, lerp, PELVIS_Y, placeSwingFootS, plantToeS, PSA, PTA, setFootPitchS, SHIN,
+  TAU, THIGH, TOE_X, wrap01,
+} from './poseMath';
 
 const P = PoseIdx;
 
@@ -148,8 +158,8 @@ const GPA = new Float64Array(4);
 const FAU = new Float64Array(1);
 /** gaitLegs: cycle, dirX, dirZ, bob. */
 const GLA = new Float64Array(4);
-/** runPose: cycle, speed, sprint. */
-const RPA = new Float64Array(3);
+/** runPose: cycle, speed, sprint, turn lean. */
+const RPA = new Float64Array(4);
 /** arms: cycle, amp, elbow, elbowAmp, roll, offset. */
 const ARA = new Float64Array(6);
 /** shuffleLegs: t, cycle, speed. */
@@ -405,59 +415,312 @@ function idleI(out: Pose): void {
   out[P.ELBOW_R] = 0.18;
 }
 
-/** Run gait + upper body (RPA: cycle, speed, sprint 0..1 blending the jog / sprint upper body and knee lift). */
+/**
+ * [LOOK] Run gait (JOG, SPRINT, TURN_LEAN; the walk at low speed is the same gait). Real running mechanics, stylised:
+ *  - STANCE: the toe point is planted (it moves back at exactly the body speed: no sliding) from a forefoot-ish
+ *    touchdown a little ahead of the hips (runShape.tdToe, closer under the body while accelerating), the heel settles,
+ *    then rolls up to a pointed toe-off (toPitch) far behind the hips.
+ *  - SWING: the ankle follows a spline through two knee keys converted to ankle points by planar FK from the mean hip:
+ *    heel recovery (thigh near vertical, knee folded: in a sprint the heel comes up toward the glutes) and knee drive
+ *    (thigh up in front, shin under the knee), from the toe-off point to the touchdown point with end velocities that
+ *    follow the stance. The foot dorsiflexes in the air ("toes up") and comes down onto the forefoot.
+ *  - PELVIS: lowest just after touchdown / through mid-stance, highest in the flight phase (a run is a bounce, a walk
+ *    an inverted pendulum: the walk keeps its own small bob). A reach guard lowers it where a leg would otherwise
+ *    straighten past the soft IK range (no planted foot can be pulled off its spot); it covers the swing ankle too, so
+ *    it eases off smoothly as a foot leaves the grass. Pelvis yaw follows the swinging
+ *    leg, the hip on the swing side drops a little in stance; shoulders counter-rotate and the head stays steady.
+ *  - LEAN: the whole body inclines from the feet (root pitch carries the pelvis and trunk; a little spine flexion on
+ *    top), more with speed, the sprint style and acceleration (RUN_IN[0]), back on braking. A turn lean (RUN_IN[1],
+ *    TURN_LEAN's own) rolls the body over the feet BEFORE the legs are solved, so the feet stay planted and the inside
+ *    leg flexes. The feet travel along the motion direction (RUN_IN[2]): running a little off the facing does not drag
+ *    the planted boot sideways.
+ *  - ARMS: swing front to back opposite the legs, elbows about 85-95 degrees in a jog, closing in front and opening
+ *    behind in a sprint, hands at the side of the body (never across the midline).
+ * Stance placement depends on speed (and acceleration) only, never on the jog / sprint style, so JOG and SPRINT at the
+ * same speed plant identically and cross-fade without moving a planted boot.
+ * GAIT_AIR: the lowest sole height the pose means to have (> 0 only while both feet are off the grass). The mapper hands
+ * it to the model, whose ground snap keeps that clearance instead of pulling a flight phase down to the grass.
+ */
+const RUN_SHAPE = {
+  /** Swing knee keys [thigh angle from vertical (rad, + forward), knee flexion (rad)]: heel recovery and knee drive. */
+  recWalk: [-0.08, 0.85], recJog: [0.0, 1.32], recSprint: [0.06, 2.12],
+  drvWalk: [0.36, 0.62], drvJog: [0.74, 1.22], drvSprint: [1.12, 1.42],
+  /** Swing progress of the recovery and drive keys (walk -> run). */
+  s1Walk: 0.38, s1Run: 0.34, s2Walk: 0.74, s2Run: 0.7,
+  /** Toe point at touchdown ahead of the hips (m): base + share of the stance travel, walk and run. */
+  tdWalkBase: 0.1, tdWalkTravel: 0.45, tdRunBase: 0.24, tdRunTravel: 0.25,
+  /** Acceleration (m/s^2 smoothed, mapper) at which the accelerating / braking posture is full. */
+  accFull: 4, brakeFull: 5,
+} as const;
+
+/** Run inputs the mapper sets for the slot it is posing (0 for plain PoseFn calls): [0] smoothed acceleration along
+ *  the motion (m/s^2), [1] turn lean (rad, + = right) applied before the leg IK, [2] motion direction off the facing
+ *  (rad, + = right). */
+export const RUN_IN = new Float64Array(3);
+/** Lowest sole height (m, model space) the last locomotion pose means to have: > 0 only in a flight phase. */
+export const GAIT_AIR = new Float64Array(1);
+
+/** Run legs scratch: per leg (0 right, 1 left) planted flag, toe / ankle along the motion, height, pitch, lowest sole. */
+const RL = new Float64Array(16);
+const RL_STRIDE = 8, RL_PLANT = 0, RL_X = 1, RL_Y = 2, RL_P = 3, RL_LOW = 4, RL_AX = 5, RL_AY = 6, RL_U = 7;
+
+/** Run gait + upper body (RPA: cycle, speed, sprint 0..1 blending the jog / sprint style, turn lean before the IK). */
 function runPose(out: Pose): void {
   clearUpper(out);
-  // fin() and ss() written out (no double crosses a call: see ss).
-  const c0 = RPA[0]!, s0 = RPA[1]!;
+  GAIT_AIR[0] = 0;
+  // fin() and ss() written out (no double crosses a call).
+  const c0 = RPA[0]!, s0 = RPA[1]!, l0 = RPA[3]!;
   const cycle = c0 === c0 && c0 < 1e6 && c0 > -1e6 ? c0 : 0;
   const sp = s0 === s0 && s0 < 1e6 && s0 > -1e6 ? s0 : 0;
-  const v = sp > 0 ? sp : 0;
+  let leanTurn = l0 === l0 && l0 < 1e6 && l0 > -1e6 ? l0 : 0;
+  leanTurn = leanTurn < -0.6 ? -0.6 : leanTurn > 0.6 ? 0.6 : leanTurn;
+  const v = sp > 0 ? (sp < 12 ? sp : 12) : 0;
   const sprint = RPA[2]!;
-  GPA[0] = v; GPA[1] = 1; GPA[2] = 0; GPA[3] = sprint;
+  GPA[0] = v; GPA[1] = 1; GPA[2] = 0; GPA[3] = 0;
   gaitParams(RUN);
-  let q = (v - 2) / (5 - 2); q = q < 0 ? 0 : q > 1 ? 1 : q;
-  GLA[0] = cycle; GLA[1] = 1; GLA[2] = 0; GLA[3] = 0.05 * (q * q * (3 - 2 * q));
-  gaitLegs(out);
-  q = (v - 1.5) / (4 - 1.5); q = q < 0 ? 0 : q > 1 ? 1 : q;
-  const run = q * q * (3 - 2 * q);
-  // Pelvis twist with the stride, shoulders counter-rotate.
-  q = (v - 0.2) / (1.5 - 0.2); q = q < 0 ? 0 : q > 1 ? 1 : q;
-  const twist = (0.05 + 0.04 * run) * Math.sin(cycle) * (q * q * (3 - 2 * q));
-  out[P.SPINE_YAW] = -twist * 1.6;
-  q = (v - 4) / (8 - 4); q = q < 0 ? 0 : q > 1 ? 1 : q;
-  const lean = 0.04 + 0.1 * run + 0.012 * v + 0.1 * sprint * (q * q * (3 - 2 * q));
-  out[P.SPINE_PITCH] = lean;
-  out[P.HEAD_PITCH] = -lean * 0.75;
-  q = (v - 0.1) / (1.2 - 0.1); q = q < 0 ? 0 : q > 1 ? 1 : q;
-  let amp = (0.25 + 0.45 * run + 0.03 * v) * (1 + 0.3 * sprint) * (q * q * (3 - 2 * q));
-  if (amp > 1.1) amp = 1.1;
-  ARA[0] = cycle; ARA[1] = amp; ARA[2] = 0.25 + (1.1 + 0.15 * sprint) * run; ARA[3] = 0.25 * run;
-  ARA[4] = 0.1 + 0.04 * run; ARA[5] = -0.05 * run;
-  arms(out);
+  const D = G[G_DUTY]!, T = G[G_TRAVEL]!, base = G[G_BASE]!;
+  const move = GC[GC_0_12]!;
+  let u = cycle / TAU;
+  u -= Math.floor(u);
+  if (u >= 1) u = 0;
+  // Speed factors: r = walk -> run, f = run -> top speed.
+  let q = (v - 1.6) / 2; q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const r = q * q * (3 - 2 * q);
+  q = (v - 4) / 4.5; q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const f = q * q * (3 - 2 * q);
+  q = (v - 0.1) / 1.1; q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const armMove = q * q * (3 - 2 * q);
+  // Acceleration (mapper): accelerating 0..1, braking 0..1.
+  const a0 = RUN_IN[0]!;
+  const acc = a0 === a0 && a0 < 1e3 && a0 > -1e3 ? a0 : 0;
+  q = acc / RUN_SHAPE.accFull; q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const accP = q * q * (3 - 2 * q);
+  q = -acc / RUN_SHAPE.brakeFull; q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const accN = q * q * (3 - 2 * q) * r;
+  // Athletic drive: 0 relaxed jog .. 1 full sprint (style, top speed and acceleration).
+  let drive = sprint * (0.6 + 0.4 * f) + 0.35 * f * (1 - sprint) + 0.35 * accP * r;
+  drive = drive < 0 ? 0 : drive > 1 ? 1 : drive;
+  // Motion direction off the facing: the feet travel along it.
+  const o0 = RUN_IN[2]!;
+  let off = o0 === o0 && o0 < 10 && o0 > -10 ? o0 : 0;
+  off = off < -0.9 ? -0.9 : off > 0.9 ? 0.9 : off;
+  const dX = Math.cos(off), dZ = Math.sin(off);
+
+  // ---- stance geometry (speed and acceleration only: identical for the jog and the sprint style)
+  const tdW = RUN_SHAPE.tdWalkBase + RUN_SHAPE.tdWalkTravel * T;
+  const tdToe = tdW + (RUN_SHAPE.tdRunBase + RUN_SHAPE.tdRunTravel * T - tdW) * r
+    - 0.07 * accP * r + 0.05 * accN;
+  q = (v - 0.2) / 1; q = q < 0 ? 0 : q > 1 ? 1 : q;
+  const toPitch = -(0.85 + 0.4 * r) * (q * q * (3 - 2 * q));
+  const tdPitch = -(0.06 + 0.16 * f) * r;
+  const msPitch = -0.04 * f * r;
+  // ---- pelvis: mean height and bob (lowest through the stance, highest in flight; a walk is highest mid-stance)
+  const A = (0.022 + 0.008 * drive) * r * move;
+  const Aw = 0.012 * (1 - r) * move;
+  const mean = -0.012 - 0.03 * r - 0.01 * drive - 0.02 * accP * r;
+  let phi = 2 * u; phi -= Math.floor(phi);
+  const bob = -A * Math.cos(TAU * (phi - D * (0.6 + 0.5 * f))) + Aw * Math.cos(TAU * (phi - D));
+  const hipMean = PELVIS_Y + mean;
+  // ---- pelvis rotation (yaw toward the swinging leg) and drop (swing side), turn lean
+  const cyc = Math.cos(TAU * (u + 0.02));
+  const yawP = (0.045 + 0.035 * r + 0.03 * drive) * move;
+  const dropR = 0.045 * r * move;
+  const dropC = Math.cos(TAU * (u - D * 0.45));
+  const roll = -dropR * dropC + leanTurn;
+  const sinRoll = Math.sin(roll);
+
+  // ---- swing keys -> ankle points (planar FK from the mean hip, along the motion)
+  const s1 = RUN_SHAPE.s1Walk + (RUN_SHAPE.s1Run - RUN_SHAPE.s1Walk) * r;
+  const s2 = RUN_SHAPE.s2Walk + (RUN_SHAPE.s2Run - RUN_SHAPE.s2Walk) * r;
+  const jd = drive * (0.4 + 0.6 * r);
+  let th = RUN_SHAPE.recWalk[0] + (RUN_SHAPE.recJog[0] - RUN_SHAPE.recWalk[0]) * r;
+  let kn = RUN_SHAPE.recWalk[1] + (RUN_SHAPE.recJog[1] - RUN_SHAPE.recWalk[1]) * r;
+  th += (RUN_SHAPE.recSprint[0] - th) * jd; kn += (RUN_SHAPE.recSprint[1] - kn) * jd;
+  let x1 = THIGH * Math.sin(th) + SHIN * Math.sin(th - kn);
+  let y1 = hipMean - THIGH * Math.cos(th) - SHIN * Math.cos(th - kn);
+  th = RUN_SHAPE.drvWalk[0] + (RUN_SHAPE.drvJog[0] - RUN_SHAPE.drvWalk[0]) * r;
+  kn = RUN_SHAPE.drvWalk[1] + (RUN_SHAPE.drvJog[1] - RUN_SHAPE.drvWalk[1]) * r;
+  th += (RUN_SHAPE.drvSprint[0] - th) * jd; kn += (RUN_SHAPE.drvSprint[1] - kn) * jd;
+  let x2 = THIGH * Math.sin(th) + SHIN * Math.sin(th - kn);
+  let y2 = hipMean - THIGH * Math.cos(th) - SHIN * Math.cos(th - kn);
+  // Toe-off and touchdown ankles (toe point on the grass at the stance ends' pitch).
+  const toToe = tdToe - T;
+  let cp = Math.cos(toPitch), sn = Math.sin(toPitch);
+  const x0 = toToe - (TOE_X * cp + ANKLE_Y * sn), y0 = -(TOE_X * sn - ANKLE_Y * cp);
+  cp = Math.cos(tdPitch); sn = Math.sin(tdPitch);
+  const x3 = tdToe - (TOE_X * cp + ANKLE_Y * sn), y3 = -(TOE_X * sn - ANKLE_Y * cp);
+  // A slow walk lifts the foot less: pull the keys toward the chord.
+  x1 = x0 + (x3 - x0) * s1 + (x1 - x0 - (x3 - x0) * s1) * move;
+  y1 = y0 + (y3 - y0) * s1 + (y1 - y0 - (y3 - y0) * s1) * move;
+  x2 = x0 + (x3 - x0) * s2 + (x2 - x0 - (x3 - x0) * s2) * move;
+  y2 = y0 + (y3 - y0) * s2 + (y2 - y0 - (y3 - y0) * s2) * move;
+  // Spline tangents (m per unit of swing progress): the ends follow the stance (foot leaving / arriving backward).
+  const vSt = (T * (1 - D)) / D;
+  const m0x = -0.25 * vSt, m0y = 0.25 + 0.7 * r;
+  const m3x = -0.15 * vSt, m3y = -(0.2 + 0.45 * r);
+  // Interior tangents: monotone (harmonic mean of the chord slopes, flat at a local extreme), so the foot does not
+  // overshoot the touchdown point forward (no reaching, straight-legged landing) nor dip between the keys.
+  let d0 = (x1 - x0) / s1, d1 = (x2 - x1) / (s2 - s1), d2 = (x3 - x2) / (1 - s2);
+  const m1x = d0 * d1 <= 0 ? 0 : (2 * d0 * d1) / (d0 + d1), m2x = d1 * d2 <= 0 ? 0 : (2 * d1 * d2) / (d1 + d2);
+  d0 = (y1 - y0) / s1; d1 = (y2 - y1) / (s2 - s1); d2 = (y3 - y2) / (1 - s2);
+  const m1y = d0 * d1 <= 0 ? 0 : (2 * d0 * d1) / (d0 + d1), m2y = d1 * d2 <= 0 ? 0 : (2 * d1 * d2) / (d1 + d2);
+
+  // ---- both feet: planted toe or swing ankle (along the motion, heights absolute)
+  for (let leg = 0; leg < 2; leg++) {
+    let lu = u;
+    if (leg === 1) { lu = u - 0.5; lu -= Math.floor(lu); if (lu >= 1) lu = 0; }
+    const o = leg * RL_STRIDE;
+    RL[o + RL_U] = lu;
+    if (lu < D) {
+      const s = lu / D;
+      let e = s / 0.35; e = e > 1 ? 1 : e; e = e * e * (3 - 2 * e);
+      let rl = (s - 0.35) / 0.65; rl = rl < 0 ? 0 : rl > 1 ? 1 : rl; rl = rl * rl * (3 - 2 * rl);
+      const p = tdPitch + (msPitch - tdPitch) * e + (toPitch - msPitch) * rl * Math.sqrt(rl);
+      const tx = tdToe - T * s;
+      cp = Math.cos(p); sn = Math.sin(p);
+      RL[o + RL_PLANT] = 1; RL[o + RL_X] = tx; RL[o + RL_Y] = 0; RL[o + RL_P] = p; RL[o + RL_LOW] = 0;
+      RL[o + RL_AX] = tx - (TOE_X * cp + ANKLE_Y * sn); RL[o + RL_AY] = -(TOE_X * sn - ANKLE_Y * cp);
+    } else {
+      const s = (lu - D) / (1 - D);
+      let xa: number, ya: number, xb: number, yb: number, ma: number, na: number, mb: number, nb: number, t0: number, t1: number;
+      if (s < s1) { xa = x0; ya = y0; xb = x1; yb = y1; ma = m0x; na = m0y; mb = m1x; nb = m1y; t0 = 0; t1 = s1; }
+      else if (s < s2) { xa = x1; ya = y1; xb = x2; yb = y2; ma = m1x; na = m1y; mb = m2x; nb = m2y; t0 = s1; t1 = s2; }
+      else { xa = x2; ya = y2; xb = x3; yb = y3; ma = m2x; na = m2y; mb = m3x; nb = m3y; t0 = s2; t1 = 1; }
+      const h = t1 - t0;
+      const w = (s - t0) / h, w2 = w * w, w3 = w2 * w;
+      const h00 = 2 * w3 - 3 * w2 + 1, h10 = w3 - 2 * w2 + w, h01 = -2 * w3 + 3 * w2, h11 = w3 - w2;
+      RL[o + RL_PLANT] = 0;
+      RL[o + RL_AX] = h00 * xa + h10 * h * ma + h01 * xb + h11 * h * mb;
+      RL[o + RL_AY] = h00 * ya + h10 * h * na + h01 * yb + h11 * h * nb;
+      RL[o + RL_X] = s; // swing progress (pitch below)
+    }
+  }
+
+  // ---- pelvis height: the bob, lowered where a planted leg would straighten past the soft IK range
+  let rootY = mean + bob;
+  const rsEst = (PELVIS_Y + rootY) * Math.sin(leanTurn);
+  const lMax = LEG_MAX * 0.955;
+  // Both legs: a swing ankle must be reachable too, and the guard eases off as the foot leaves the grass (no pop).
+  for (let leg = 0; leg < 2; leg++) {
+    const o = leg * RL_STRIDE;
+    const side = leg === 0 ? 1 : -1;
+    const ax = RL[o + RL_AX]! * dX;
+    const dz = side * base + RL[o + RL_AX]! * dZ - rsEst - side * HIP_Z;
+    let rem = lMax * lMax - ax * ax - dz * dz;
+    rem = rem > 0 ? Math.sqrt(rem) : 0;
+    const yMax = RL[o + RL_AY]! + rem - PELVIS_Y + side * HIP_Z * sinRoll;
+    // Smooth minimum (continuous slope) of the wanted height and the reachable one.
+    let dd = rootY - yMax;
+    rootY = 0.5 * (rootY + yMax - Math.sqrt(dd * dd + 0.0002));
+    // The toe-off and touchdown ankles are the farthest reaches of a step: their constraint fades in over a window
+    // around those instants, so the pelvis eases down into them instead of dipping in a V.
+    const lu = RL[o + RL_U]!;
+    for (let k = 0; k < 2; k++) {
+      let du = k === 0 ? lu - D : lu;
+      du -= Math.floor(du + 0.5);
+      if (du > 0.15 || du < -0.15) continue;
+      const xe = k === 0 ? x0 : x3, ye = k === 0 ? y0 : y3;
+      const ex = xe * dX, ez = side * base + xe * dZ - rsEst - side * HIP_Z;
+      rem = lMax * lMax - ex * ex - ez * ez;
+      rem = rem > 0 ? Math.sqrt(rem) : 0;
+      const yv = ye + rem - PELVIS_Y + side * HIP_Z * sinRoll + 6 * du * du;
+      dd = rootY - yv;
+      rootY = 0.5 * (rootY + yv - Math.sqrt(dd * dd + 0.0002));
+    }
+  }
+  // ---- body lean (whole body from the feet; spine flexion on top), root channels
+  const leanB = 0.03 + 0.06 * r + 0.03 * f + 0.08 * sprint * r + 0.12 * accP - 0.1 * accN;
+  out[P.ROOT_Y] = rootY;
+  out[P.ROOT_PITCH] = 0.6 * leanB;
+  out[P.ROOT_ROLL] = roll;
+  out[P.ROOT_YAW] = yawP * cyc;
+  out[P.ROOT_SIDE] = (PELVIS_Y + rootY) * Math.sin(leanTurn);
+
+  // ---- legs by IK
+  let air = 9;
+  for (let leg = 0; leg < 2; leg++) {
+    const o = leg * RL_STRIDE;
+    const side = leg === 0 ? 1 : -1;
+    if (RL[o + RL_PLANT] === 1) {
+      const tx = RL[o + RL_X]!;
+      PTA[0] = tx * dX; PTA[1] = 0; PTA[2] = side * base + tx * dZ; PTA[3] = RL[o + RL_P]!;
+      plantToeS(out, side);
+      air = 0;
+      continue;
+    }
+    const s = RL[o + RL_X]!;
+    const al = RL[o + RL_AX]!;
+    let ay = RL[o + RL_AY]!;
+    const ax = al * dX, az = side * base + al * dZ;
+    // Shin angle from vertical (+ forward) of the planar two-bone solution for this ankle: the foot pitch is set
+    // relative to it (toes up in the air), blended from the toe-off pitch and into the touchdown pitch.
+    const hy = PELVIS_Y + rootY - side * HIP_Z * sinRoll;
+    const ddy = ay - hy;
+    let L = Math.sqrt(ax * ax + ddy * ddy) / (THIGH + SHIN);
+    L = L > 1 ? 1 : L;
+    const shin = Math.atan2(ax, -ddy) - Math.acos(L);
+    let e = (0.6 * s1 - s) / (0.6 * s1); e = e < 0 ? 0 : e > 1 ? 1 : e; const wA = e * e * (3 - 2 * e);
+    e = (s - s2) / (1 - s2); e = e < 0 ? 0 : e > 1 ? 1 : e; const wB = e * e * (3 - 2 * e);
+    e = (s - s1) / (s2 - s1); e = e < 0 ? 0 : e > 1 ? 1 : e; e = e * e * (3 - 2 * e);
+    const rel = (0.12 + 0.12 * drive) + (0.12 + 0.1 * drive) * e;
+    const p = wA * toPitch + wB * tdPitch + (1 - wA - wB) * (shin + rel);
+    cp = Math.cos(p); sn = Math.sin(p);
+    const tl = TOE_X * sn - ANKLE_Y * cp, hl = HEEL_X * sn - ANKLE_Y * cp;
+    let low = ay + (tl < hl ? tl : hl);
+    if (low < 0) { ay -= low; low = 0; }
+    if (low < air) air = low;
+    IKT[0] = ax; IKT[1] = ay; IKT[2] = az;
+    legIKS(out, side);
+    FPA[0] = p;
+    setFootPitchS(out, side);
+  }
+  GAIT_AIR[0] = air < 9 ? air : 0;
+
+  // ---- trunk, head: shoulders counter-rotate, the head stays steady
+  const S = (0.04 + 0.05 * r + 0.03 * drive) * move;
+  out[P.SPINE_YAW] = -(yawP + S) * cyc;
+  out[P.SPINE_ROLL] = dropR * dropC * 0.85 - leanTurn * 0.25;
+  out[P.SPINE_PITCH] = 0.4 * leanB + 0.025 * r * Math.cos(TAU * (phi - D));
+  out[P.HEAD_PITCH] = 0.04 + 0.3 * leanB - out[P.ROOT_PITCH]! - out[P.SPINE_PITCH]!;
+  out[P.HEAD_YAW] = 0.9 * S * cyc - leanTurn * 0.6;
+  // ---- arms: front to back opposite the legs (left arm forward as the right foot lands), elbows bent
+  const ca = Math.cos(TAU * u - 0.25);
+  let amp = ((0.2 + 0.24 * r + 0.08 * f) * (1 - drive) + (0.25 + 0.42 * r + 0.18 * f) * drive + 0.1 * accP) * armMove;
+  if (amp > 1.15) amp = 1.15;
+  const mid = (0.06 + 0.1 * drive) * r;
+  out[P.SHOULDER_L_PITCH] = mid + amp * ca;
+  out[P.SHOULDER_R_PITCH] = mid - amp * ca;
+  const eb = 0.3 * (1 - r) + (1.42 + 0.08 * drive) * r;
+  const ea = (0.1 + 0.14 * drive) * r + 0.08 * (1 - r);
+  out[P.ELBOW_L] = eb + ea * ca;
+  out[P.ELBOW_R] = eb - ea * ca;
+  // A touch more abduction as an arm comes forward keeps the hand on its own side of the chest (never across).
+  out[P.SHOULDER_L_ROLL] = 0.06 + 0.04 * ca;
+  out[P.SHOULDER_R_ROLL] = 0.06 - 0.04 * ca;
 }
 
 function jogI(out: Pose): void {
-  RPA[0] = PP[1]!; RPA[1] = PP[2]!; RPA[2] = 0;
+  RPA[0] = PP[1]!; RPA[1] = PP[2]!; RPA[2] = 0; RPA[3] = RUN_IN[1]!;
   runPose(out);
 }
 
 function sprintI(out: Pose): void {
-  RPA[0] = PP[1]!; RPA[1] = PP[2]!; RPA[2] = 1;
+  RPA[0] = PP[1]!; RPA[1] = PP[2]!; RPA[2] = 1; RPA[3] = RUN_IN[1]!;
   runPose(out);
 }
 
-/** Roll into a turn: lean = turnLeanAngle(speed, side as yaw rate). Applied after IK so the legs lean with the body. */
+/** Roll into a turn: lean = turnLeanAngle(speed, side as yaw rate). Applied after IK (layer for non-run clips). */
 export function applyTurnLean(out: Pose, lean: number): void {
   TLA[0] = lean;
   applyTurnLeanS(out);
 }
 
 /**
- * applyTurnLean with the lean in TLA[0] (allocation-free internal form). [INT-C] The roll pivots at the feet, not at the
- * pelvis: ROOT_ROLL turns the whole body about the root, which swung the planted feet sideways by pelvis height x
- * sin(lean) and made them slide whenever the lean changed (the yaw rate it follows moves all the time in live play);
- * the root now shifts into the turn by the same amount, so the feet stay where they are and the body leans over them.
+ * applyTurnLean with the lean in TLA[0] (allocation-free internal form): the lean layer of the clips that are not the
+ * run gait (strafe, jockey, shield, keeper ready). [INT-C] The roll pivots at the feet, not at the pelvis: ROOT_ROLL
+ * turns the whole body about the root, which swung the planted feet sideways by pelvis height x sin(lean) and made them
+ * slide whenever the lean changed; the root shifts into the turn by the same amount, so the feet stay where they are.
+ * The run gait (JOG / SPRINT / TURN_LEAN) leans before its leg IK instead (RUN_IN[1]).
  */
 export function applyTurnLeanS(out: Pose): void {
   const lean = TLA[0]!;
@@ -470,12 +733,10 @@ export function applyTurnLeanS(out: Pose): void {
 function turnLeanI(out: Pose): void {
   const s0 = PP[2]!, y0 = PP[3]!; // fin() written out (no double crosses a call)
   const speed = s0 === s0 && s0 < 1e6 && s0 > -1e6 ? s0 : 0, yaw = y0 === y0 && y0 < 1e6 && y0 > -1e6 ? y0 : 0;
-  RPA[0] = PP[1]!; RPA[1] = speed; RPA[2] = PP[4] === 1 ? 1 : 0;
-  runPose(out);
   let lean = Math.atan((speed * yaw) / LOCAL_TUNING.gravity);
   lean = lean < -LOCAL_TUNING.maxTurnLean ? -LOCAL_TUNING.maxTurnLean : lean > LOCAL_TUNING.maxTurnLean ? LOCAL_TUNING.maxTurnLean : lean;
-  TLA[0] = lean;
-  applyTurnLeanS(out);
+  RPA[0] = PP[1]!; RPA[1] = speed; RPA[2] = PP[4] === 1 ? 1 : 0; RPA[3] = lean + RUN_IN[1]!;
+  runPose(out);
 }
 
 /** Directional shuffle legs (SLA: t = motion direction as a fraction of a turn, cycle, speed). */
@@ -663,8 +924,9 @@ export function isLocomotion(anim: AnimId): boolean {
     || anim === AnimId.STRAFE || anim === AnimId.JOCKEY || anim === AnimId.SHIELD || anim === AnimId.KEEPER_READY;
 }
 
-/** Lower-body channels (pelvis offsets / roll / pitch and legs): what a locomotion layer owns under upper-body clips. */
+/** Lower-body channels (pelvis offsets / roll / pitch / yaw and legs): what a locomotion layer owns under upper-body
+ *  clips. [LOOK] Pelvis yaw too: the run's legs are solved for its rotating pelvis. */
 export const LOWER_BODY: readonly number[] = [
-  P.ROOT_Y, P.ROOT_PITCH, P.ROOT_ROLL, P.ROOT_FWD, P.ROOT_SIDE,
+  P.ROOT_Y, P.ROOT_PITCH, P.ROOT_ROLL, P.ROOT_YAW, P.ROOT_FWD, P.ROOT_SIDE,
   P.HIP_L_PITCH, P.HIP_L_ROLL, P.KNEE_L, P.ANKLE_L, P.HIP_R_PITCH, P.HIP_R_ROLL, P.KNEE_R, P.ANKLE_R,
 ];

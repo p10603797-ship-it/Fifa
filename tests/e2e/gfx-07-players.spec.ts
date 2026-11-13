@@ -3,7 +3,7 @@
  * The loop is stopped after kick-off; frames are drawn with GameRenderer.render (dt 100 ms) and probed with
  * readPixels in the same task (preserveDrawingBuffer is false). Uses the debug hook window.__dotkickPlayers
  * (close-up camera, held poses, joint points, applied colours). Checks:
- *  - budgets: 8 player draw calls (<= 14), <= 30k player triangles; whole frame <= 80 calls, <= 200k triangles;
+ *  - budgets: 8 player draw calls (<= 14), <= 80k player triangles ([LOOK]); whole frame <= 80 calls, <= 200k triangles;
  *  - the shaders compile (zero console errors / warnings) and colour each region from its instance colours: in a
  *    front close-up the chest shows the shirt (or its pattern colour), the shorts, socks, thigh and face show the
  *    shorts, sock and skin colours (chroma match under the stadium light);
@@ -134,7 +134,8 @@ test.describe('GFX-07 player model', () => {
     const meta = await page.evaluate(() => window.__dotkickPlayers!.info());
     expect(meta.drawCalls).toBe(8);
     expect(meta.instances).toEqual([22, 22, 22, 44, 44, 44, 44, 44]);
-    expect(meta.trianglesPerPlayer * 22).toBeLessThanOrEqual(30_000);
+    // [LOOK] <= 3,500 per player at the full LOD (80k for 22); the PERFORMANCE LOD stays <= 1,123 (the pre-[LOOK] model).
+    expect(meta.trianglesPerPlayer * 22).toBeLessThanOrEqual(80_000);
     expect(meta.numberAtlas).toBe(true);
 
     // Broadcast view of the kick-off as played.
@@ -142,7 +143,7 @@ test.describe('GFX-07 player model', () => {
     const stats = await page.evaluate(() => window.__dotkickRendererStats!());
     expect(stats.drawCalls).toBeLessThanOrEqual(80);
     expect(stats.triangles).toBeLessThanOrEqual(200_000);
-    expect(stats.triangles).toBeGreaterThan(22_000); // the players alone are ~24.7k
+    expect(stats.triangles).toBeGreaterThan(22_000); // the players alone are ~24.4k (PERFORMANCE LOD) or ~75k (full)
     await shot(page, info, 'gfx-07-broadcast');
 
     // Front close-up of the striker: region colours.

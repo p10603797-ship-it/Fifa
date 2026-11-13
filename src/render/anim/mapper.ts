@@ -9,7 +9,9 @@
  *    Per slot: clip choice (chooseClip), interpolated action phase, distance-driven stride cycle (reset-safe on
  *    teleports above LOCAL_TUNING.teleportDist), turn lean from the smoothed yaw rate, breathing, upper-body
  *    layering over locomotion, short cross-fades on clip changes (per-joint pose lerp, smoothstep weight), then
- *    sink.setPose. Allocation-free per frame.
+ *    sink.setPose. Allocation-free per frame. [LOOK] The run gait also gets the slot's smoothed acceleration, its turn
+ *    lean (before the leg IK) and its motion direction off the facing (locomotion.ts RUN_IN), and the flight clearance
+ *    of the drawn pose goes to the sink with it (PoseSinkLike.groundAir).
  *  - The Wave 0 stub API kept for the model's default driver: mapAnim / advanceCycle / samplePose / poseFnFor with
  *    AnimSample / AnimBank. Same mapping; when called per slot in that order with a bank from createAnimBank it also
  *    keeps hysteresis / foot memory and cross-fades clip changes (timed in sim ticks); no alpha term in the action
@@ -43,8 +45,8 @@ import type { RenderFrame } from '../types';
 import { ACTION_CONTACT, ACTION_HOLD, ACTION_IMPLS, ACTION_POSES } from './actions';
 import { celebrationAnim, CONTACT_CONTACT, CONTACT_IMPLS, CONTACT_POSES, diveAnim } from './contact';
 import {
-  applyBreathS, applyTurnLeanS, BRA, isLocomotion, LOCOMOTION_IMPLS, LOCOMOTION_POSES, LOCOMOTION_TUNING, LOWER_BODY,
-  neutralPose, PP, SLEN, strideLengthForS, TLA, type PoseImpl,
+  applyBreathS, applyTurnLeanS, BRA, GAIT_AIR, isLocomotion, LOCOMOTION_IMPLS, LOCOMOTION_POSES, LOCOMOTION_TUNING, LOWER_BODY,
+  neutralPose, PP, RUN_IN, SLEN, strideLengthForS, TLA, type PoseImpl,
 } from './locomotion';
 import { TAU } from './poseMath';
 import { kickApply, kickOffset, KOF, RCH, REACH_SWITCH, reachClip, touchReach, touchStepS, TST } from './reach';
@@ -68,6 +70,9 @@ const LOCAL_TUNING = { // LOCAL_TUNING (non-gameplay: render-only animation cons
   blendBeforeContact: 0.75,
   /** Yaw-rate smoothing time constant (s) and the lean (rad) that reports TURN_LEAN (enter / leave). */
   yawRateTau: 0.12,
+  /** [LOOK] Acceleration smoothing (s) and clamp (m/s^2) for the run's lean into acceleration / braking. */
+  accelTau: 0.18,
+  accelMax: 12,
   leanEnter: 0.12,
   leanLeave: 0.07,
   /** Upper-body clips keep the clip's legs below / take the locomotion legs above (m/s, smoothstep). */
@@ -424,15 +429,16 @@ function sameRunPose(a: AnimId, footA: number, b: AnimId, footB: number): boolea
 
 /**
  * [INT-C] The lean and breathing layers locomotionParams / update give locomotion clip `anim`, applied to `out` (the
- * outgoing clip of a locomotion cross-fade, evaluated live). IN holds the slot's inputs of this frame. Clobbers
+ * outgoing clip of a locomotion cross-fade, evaluated live). [LOOK] JOG / SPRINT lean inside the gait (liveLocoLean). IN holds the slot's inputs of this frame. Clobbers
  * OUTF[OF_LEAN] / OUTF[OF_BREATH] (read by update before the blend).
  */
 function liveLocoLayers(anim: AnimId, out: Pose): void {
+  if (anim === AnimId.JOG || anim === AnimId.SPRINT) return; // [LOOK] leaned before the leg IK (liveLocoLean)
   if (anim === AnimId.STRAFE || anim === AnimId.JOCKEY || anim === AnimId.KEEPER_READY || anim === AnimId.SHIELD) {
     breathFromIn();
     if (OUTF[OF_BREATH]! > 0) { BRA[0] = IN[IN_BREATH]!; BRA[1] = OUTF[OF_BREATH]!; applyBreathS(out); }
   }
-  if (anim === AnimId.JOG || anim === AnimId.SPRINT || anim === AnimId.STRAFE) leanFromIn(0);
+  if (anim === AnimId.STRAFE) leanFromIn(0);
   else if (anim === AnimId.JOCKEY || anim === AnimId.SHIELD || anim === AnimId.KEEPER_READY) leanFromIn(1);
   else OUTF[OF_LEAN] = 0;
   if (OUTF[OF_LEAN] !== 0) { TLA[0] = OUTF[OF_LEAN]!; applyTurnLeanS(out); }
@@ -440,6 +446,15 @@ function liveLocoLayers(anim: AnimId, out: Pose): void {
 
 function preferredFoot(s: ReadonlySimState, slot: number): number {
   return s.attrs[slot]!.foot === 1 ? 1 : 0;
+}
+
+/**
+ * [LOOK] The run gait leans into a turn before its leg IK (locomotion.ts RUN_IN[1]): the lean the layers would give run
+ * clip `anim` (JOG / SPRINT) is written to RUN_IN[1] before it is evaluated; 0 for every other clip. Clobbers
+ * OUTF[OF_LEAN] like liveLocoLayers.
+ */
+function liveLocoLean(anim: AnimId): void {
+  if (anim === AnimId.JOG || anim === AnimId.SPRINT) { leanFromIn(0); RUN_IN[1] = OUTF[OF_LEAN]!; } else RUN_IN[1] = 0;
 }
 
 /** Locomotion clip from speed, flags and movement direction (writes OUTF[OF_DIR]). */
@@ -749,6 +764,11 @@ export interface PoseSinkLike {
    * foot lock, set-piece stance); the ball-contact reach aims from the drawn body, not the sim position.
    */
   readonly drawnOffsets?: Float64Array;
+  /**
+   * [LOOK] Per slot the clearance (m, model) the drawn pose means to keep above the grass: > 0 only in a run's flight
+   * phase. The animator writes it with each setPose; the model's ground snap keeps it (fk.ts GROUND_AIR).
+   */
+  readonly groundAir?: Float32Array;
 }
 
 /** Per-frame animation driver: same shape as GFX-07's PoseDriver. */
@@ -801,6 +821,9 @@ export function createAnimator(): Animator {
   const fromT = new Float32Array(NUM_SLOTS), fromSide = new Float32Array(NUM_SLOTS);
   const fromFoot = new Uint8Array(NUM_SLOTS);
   const lastSide = new Float32Array(NUM_SLOTS);
+  /** [LOOK] Smoothed acceleration along the motion (m/s^2) and last speed per slot: the run leans into it. */
+  const accel = new Float32Array(NUM_SLOTS);
+  const lastSpeed = new Float32Array(NUM_SLOTS);
   const lastFoot = new Uint8Array(NUM_SLOTS);
   const liveFrom = createPose();
   /** [QF-4] Share of the drawn legs that are the run cycle's: this frame's target (runLegs) and, for the fade in
@@ -833,6 +856,7 @@ export function createAnimator(): Animator {
     blendT.fill(0);
     blendDur.fill(0);
     fromLive.fill(0);
+    accel.fill(0); lastSpeed.fill(0);
     runLegs.fill(0); fromRunLegs.fill(0);
     mem.idle.fill(0); mem.strafe.fill(0); mem.lean.fill(0); mem.foot.fill(255); mem.act.fill(0); mem.actT.fill(0);
     touchW.fill(0); touchSeenTick.fill(-1); touchRise.fill(0); wasCharging.fill(0); strike.fill(0);
@@ -876,6 +900,14 @@ export function createAnimator(): Animator {
         yawRate[i] = yawRate[i]! + (rate - yawRate[i]!) * k;
       }
       lastX[i] = x; lastZ[i] = z; lastFx[i] = fx; lastFz[i] = fz;
+      // [LOOK] Acceleration along the motion (smoothed): the run leans into a speed-up and back on braking.
+      if (teleport) accel[i] = 0;
+      else if (dt > 0) {
+        let ar = (speed - lastSpeed[i]!) / dt;
+        ar = ar < -LOCAL_TUNING.accelMax ? -LOCAL_TUNING.accelMax : ar > LOCAL_TUNING.accelMax ? LOCAL_TUNING.accelMax : ar;
+        accel[i] = accel[i]! + (ar - accel[i]!) * (1 - Math.exp(-dt / LOCAL_TUNING.accelTau));
+      }
+      lastSpeed[i] = speed;
       // Clip choice.
       IN[IN_VX] = vx; IN[IN_VZ] = vz; IN[IN_FX] = fx; IN[IN_FZ] = fz; IN[IN_ALPHA] = alpha; IN[IN_YAW] = yawRate[i]!;
       let br = (s.tick + alpha) / (60 * LOCAL_TUNING.breathPeriod) + i * 0.137;
@@ -965,7 +997,19 @@ export function createAnimator(): Animator {
       const cycle = bank.cycle[i]!;
       // Target pose: clip, locomotion legs under upper-body clips, lean and breathing layers.
       PP[0] = sample.t; PP[1] = cycle; PP[2] = speed; PP[3] = sample.side; PP[4] = sample.foot;
+      // [LOOK] Run inputs: acceleration, the turn lean of a JOG / SPRINT target (leaned before its leg IK, not layered
+      // after it: the feet stay planted and the inside leg flexes) and the motion direction off the facing (the planted
+      // boots travel along it).
+      let off = OUTF[OF_DIR]! * TAU;
+      if (off > Math.PI) off -= TAU;
+      RUN_IN[0] = accel[i]!; RUN_IN[2] = off;
+      RUN_IN[1] = 0;
+      if (anim === AnimId.JOG || anim === AnimId.SPRINT) { RUN_IN[1] = OUTF[OF_LEAN]!; OUTF[OF_LEAN] = 0; }
+      GAIT_AIR[0] = 0;
       POSE_IMPLS[anim]!(target);
+      RUN_IN[1] = 0;
+      // Clearance the target means to keep (a run's flight phase): its legs must be the run's.
+      let airT = anim === AnimId.JOG || anim === AnimId.SPRINT || anim === AnimId.TURN_LEAN ? GAIT_AIR[0]! : 0;
       const lw = OUTF[OF_LAYER]!;
       // Share of this target's legs that are the run cycle's (a running clip: all; an action: its leg layer).
       // (Through a typed scratch: a ternary mixing small-integer constants with doubles boxes them in V8.)
@@ -974,13 +1018,16 @@ export function createAnimator(): Animator {
       else if (OUTX.loco === AnimId.JOG || OUTX.loco === AnimId.SPRINT || OUTX.loco === AnimId.TURN_LEAN) LEGS[0] = lw;
       if (lw > 0) {
         PP[0] = OUTX.loco === AnimId.IDLE ? br : OUTF[OF_DIR]!; PP[1] = cycle; PP[2] = speed; PP[3] = 1; PP[4] = 0;
+        GAIT_AIR[0] = 0;
         POSE_IMPLS[OUTX.loco]!(layer);
+        if (lw >= 0.999) airT = GAIT_AIR[0]!;
         for (let k = 0; k < LOWER_BODY.length; k++) {
           const c = LOWER_BODY[k]!;
           target[c] = target[c]! + (layer[c]! - target[c]!) * lw;
         }
       }
       if (OUTF[OF_LEAN] !== 0) { TLA[0] = OUTF[OF_LEAN]!; applyTurnLeanS(target); }
+      let air = airT;
       if (OUTF[OF_BREATH]! > 0) { BRA[0] = br; BRA[1] = OUTF[OF_BREATH]!; applyBreathS(target); }
       // [QF-4] Foot kicks: the kicking boot reaches the ball the sim kicks (predicted to the contact tick, frozen there).
       const offX = drawn !== null ? drawn[i * 2]! : 0, offZ = drawn !== null ? drawn[i * 2 + 1]! : 0;
@@ -1086,10 +1133,14 @@ export function createAnimator(): Animator {
           const fa = fromAnim[i]! as AnimId;
           PP[0] = fromT[i]!; PP[1] = cycle; PP[2] = speed;
           PP[3] = fa === AnimId.TURN_LEAN ? yawRate[i]! : fromSide[i]!; PP[4] = fromFoot[i]!;
+          liveLocoLean(fa);
+          GAIT_AIR[0] = 0;
           POSE_IMPLS[fa]!(liveFrom);
+          RUN_IN[1] = 0;
+          air = air * w + (fa === AnimId.JOG || fa === AnimId.SPRINT || fa === AnimId.TURN_LEAN ? GAIT_AIR[0]! : 0) * (1 - w);
           if (fa !== AnimId.TURN_LEAN) liveLocoLayers(fa, liveFrom);
           a = liveFrom;
-        }
+        } else air *= w;
         for (let k = 0; k < POSE_SIZE; k++) out[k] = a[k]! + (target[k]! - a[k]!) * w;
         // [QF-4] Run legs on both sides of the fade (into / out of a first touch, header or throw-in on the run).
         const kl = Math.min(fromRunLegs[i]!, LEGS[0]!);
@@ -1157,6 +1208,21 @@ export function createAnimator(): Animator {
         RCH[2] = (rx * -fz + rz * fx) / hs;
         // The leg is chosen when the reach starts (the nearer toe) and kept: a switch mid-reach would pop. A rising
         // weight moves the foot at most touchStepMax per frame (touchStepS: nearerLeg + touchNeed in one call).
+        // [LOOK] On the run a touch toward the front is taken by the foot that lands next (the one coming through): a
+        // foot that has just left the grass swings back and up into its heel recovery first, away from the ball, and
+        // the nearest toe now is often that one (the reach then gave up mid-way). Balls well to the side keep the nearer
+        // toe.
+        if (touchSide[i] === 0 && touchW[i] === 0 && speed > 1 && (anim === AnimId.JOG || anim === AnimId.SPRINT
+          || anim === AnimId.TURN_LEAN || OUTX.loco === AnimId.JOG || OUTX.loco === AnimId.SPRINT)) {
+          const fwdB = RCH[0]!, latB = RCH[2]!;
+          if (fwdB > 0 && (latB < 0 ? -latB : latB) < fwdB * 1.2) {
+            let uc = bank.cycle[i]! / TAU;
+            uc -= Math.floor(uc);
+            // Next touchdown: the right foot at cycle 0 (u = 1), the left at u = 0.5.
+            const toR = 1 - uc, toL = uc < 0.5 ? 0.5 - uc : 1.5 - uc;
+            touchSide[i] = toR < toL ? 1 : -1;
+          }
+        }
         TST[0] = want; TST[1] = tw; TST[2] = touchSide[i]!; TST[3] = LOCAL_TUNING.touchStepMax;
         touchStepS(out);
         tw = TST[1]!;
@@ -1171,7 +1237,11 @@ export function createAnimator(): Animator {
         touchSide[i] = 0;
       }
       seen[i] = 1;
-      if (sink) sink.setPose(i, out);
+      RUN_IN[0] = 0; RUN_IN[1] = 0; RUN_IN[2] = 0;
+      if (sink) {
+        if (sink.groundAir !== undefined) sink.groundAir[i] = air;
+        sink.setPose(i, out);
+      }
     }
   }
 

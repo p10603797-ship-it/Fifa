@@ -145,6 +145,8 @@ export interface TierParams {
   readonly effectsScale: number;
   /** Texture anisotropy, capped by the GPU (GFX-03 uses the same values). */
   readonly anisotropy: number;
+  /** [LOOK] Player geometry LOD (players/parts.ts): 0 lighter (no heavier than the pre-[LOOK] model), 1 full. */
+  readonly playerDetail: 0 | 1;
 }
 
 function freezeParams(p: TierParams): Readonly<TierParams> {
@@ -155,19 +157,19 @@ function freezeParams(p: TierParams): Readonly<TierParams> {
 export const TIER_PARAMS: readonly Readonly<TierParams>[] = Object.freeze([
   freezeParams({
     tier: QualityTier.BALANCED, shadowMap: false, shadowMapSize: 0, msaa: false, msaaSamples: 0,
-    crowdDensity: 0.75, crowdAnimation: true, netDetail: 1, effectsScale: 0.75, anisotropy: 4,
+    crowdDensity: 0.75, crowdAnimation: true, netDetail: 1, effectsScale: 0.75, anisotropy: 4, playerDetail: 1,
   }),
   freezeParams({
     tier: QualityTier.PERFORMANCE, shadowMap: false, shadowMapSize: 0, msaa: false, msaaSamples: 0,
-    crowdDensity: 0.5, crowdAnimation: false, netDetail: 0, effectsScale: 0.5, anisotropy: 1,
+    crowdDensity: 0.5, crowdAnimation: false, netDetail: 0, effectsScale: 0.5, anisotropy: 1, playerDetail: 0,
   }),
   freezeParams({
     tier: QualityTier.BALANCED, shadowMap: false, shadowMapSize: 0, msaa: false, msaaSamples: 0,
-    crowdDensity: 0.75, crowdAnimation: true, netDetail: 1, effectsScale: 0.75, anisotropy: 4,
+    crowdDensity: 0.75, crowdAnimation: true, netDetail: 1, effectsScale: 0.75, anisotropy: 4, playerDetail: 1,
   }),
   freezeParams({
     tier: QualityTier.QUALITY, shadowMap: true, shadowMapSize: 1024, msaa: true, msaaSamples: 4,
-    crowdDensity: 1, crowdAnimation: true, netDetail: 2, effectsScale: 1, anisotropy: 8,
+    crowdDensity: 1, crowdAnimation: true, netDetail: 2, effectsScale: 1, anisotropy: 8, playerDetail: 1,
   }),
 ]);
 

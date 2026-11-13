@@ -25,7 +25,8 @@
  * the soles on the ground, arms hanging just clear of the body (armRestRoll). Non-finite pose values read as 0.
  *
  * GROUND: groundSkeleton() keeps every body part above the grass (never sinks) and plants small floats when the pose
- * is not airborne (ROOT_Y <= 0 and the lowest point is less than LOCAL_TUNING.groundSnapMax above the ground).
+ * is not airborne (ROOT_Y <= 0 and the lowest point is less than LOCAL_TUNING.groundSnapMax above the ground). [LOOK] A
+ * run's flight phase hands its intended clearance in GROUND_AIR: only floats above that clearance are planted.
  *
  * PERFORMANCE: the per-frame entry points (solvePoseFK, groundSkeleton, placeSkeleton, writeJointMatrix) pass only
  * integers and typed arrays between functions, so V8 never boxes a double at a call boundary (zero allocation per
@@ -338,6 +339,14 @@ const CONTACT_STRIDE = 5;
 /** Ground scratch: [0] lowest point, [1] lift, [2] snap distance in use. */
 const GROUND = new Float64Array(3);
 
+/**
+ * [LOOK] Clearance (m, model space, >= 0) the pose being grounded means to have: the run gait's flight phase
+ * (locomotion.ts GAIT_AIR, handed over per slot by the mapper). The snap then plants only floats above it, so a flight
+ * phase shows real air instead of being pulled onto the grass. 0 (the default) = the plain snap. The model sets it per
+ * slot around groundSkeleton and resets it to 0; it never lets anything sink (that rule is unchanged).
+ */
+export const GROUND_AIR = new Float64Array(1);
+
 /** Lowest point of F into GROUND[0]. */
 function lowestInto(F: Float64Array): void {
   let low = Infinity;
@@ -360,7 +369,10 @@ function liftInto(F: Float64Array, pose: ArrayLike<number>): void {
   else {
     const ry = pose[PoseIdx.ROOT_Y]!;
     const grounded = !(ry === ry && ry < 1e4 && ry > -1e4) || ry <= 0;
-    if (grounded && low < GROUND[2]!) lift = -low;
+    let air = GROUND_AIR[0]!;
+    air = air > 0 && air < 1 ? air : 0;
+    // Floats above the intended clearance are planted back onto it (with air 0: onto the grass).
+    if (grounded && low > air && low < air + GROUND[2]!) lift = air - low;
   }
   GROUND[1] = lift;
 }

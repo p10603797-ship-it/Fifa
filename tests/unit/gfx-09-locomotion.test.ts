@@ -3,18 +3,21 @@
  * poses finite and within joint limits, cycle continuity (phase 0 == 2 PI), feet planted while the body passes over
  * them (foot world velocity ~0 during stance, measured with the GFX-07 FK helper footPoint as the model draws it),
  * stride length / arm swing scaling with speed, turn lean from the yaw rate, the directional clips (strafe, jockey,
- * shield, keeper ready), the flight-phase ground snap regression, and the IK helpers.
+ * shield, keeper ready), the flight-phase ground snap regression, [LOOK] the run mechanics (bounce, flight, arm action,
+ * knee drive / heel recovery, steady head, acceleration lean, motion direction, turn lean), and the IK helpers.
  */
 import { describe, expect, it } from 'vitest';
 import { AnimId, createPose, POSE_SIZE, PoseIdx, type Pose } from '../../src/contracts/render';
 import {
-  applyTurnLean, footPhase, LOCOMOTION_POSES, runDuty, shuffleStrideLength, strideLength, strideLengthFor, turnLeanAngle,
+  applyTurnLean, footPhase, GAIT_AIR, LOCOMOTION_POSES, RUN_IN, runDuty, shuffleStrideLength, strideLength, strideLengthFor,
+  turnLeanAngle,
 } from '../../src/render/anim/locomotion';
 import {
   footPitchOf, IK_INFO, legIK, mirrorPose, plantToe, POSE_MAX, POSE_MIN, setFootPitch,
 } from '../../src/render/anim/poseMath';
 import {
-  BODY, createSkeleton, footPoint, framePoint, GROUND_SNAP_MAX, handPoint, Joint, lowestPoint, solvePoseFK,
+  BODY, createSkeleton, footPoint, framePoint, GROUND_AIR, GROUND_SNAP_MAX, groundLift, groundSkeleton, handPoint, Joint,
+  lowestPoint, solvePoseFK,
 } from '../../src/render/players/fk';
 
 const P = PoseIdx;
@@ -207,23 +210,158 @@ describe('[GFX-09] feet planted while the body passes over them (no foot sliding
     }
   });
 
-  it('regression "ground snap pop in flight": the lowest foot never crosses the model ground snap while airborne', () => {
-    // fk.ts plants grounded poses floating < GROUND_SNAP_MAX; a flight phase that crossed it would pop the body.
+  it('regression "ground snap pop in flight": the model keeps the gait\'s flight clearance (no pull-down, no pop, no sinking)', () => {
+    // fk.ts plants grounded poses floating < GROUND_SNAP_MAX. [LOOK] The run now has a real flight phase (both feet well
+    // off the grass): the gait reports the clearance it means (GAIT_AIR), the mapper hands it to the model (GROUND_AIR)
+    // and the snap only plants floats above it. The correction the model applies must stay ~0 through the whole cycle
+    // (it was a pop when a flight crossed the snap distance), nothing may sink, and the sprint must really fly.
     const sk = createSkeleton();
     for (const anim of [AnimId.JOG, AnimId.SPRINT]) {
       for (const v of [3, 5, 7, 8.5, 9.6, 11]) {
-        let maxLow = -1, minLow = 1;
+        let maxLift = 0, minLow = 1, maxAir = 0;
         for (let i = 0; i <= 720; i++) {
           const p = pose(anim, 0, (i / 720) * TAU, v);
+          const air = GAIT_AIR[0]!;
           solvePoseFK(p, sk);
           const low = lowestPoint(sk);
-          maxLow = Math.max(maxLow, low);
+          GROUND_AIR[0] = air;
+          maxLift = Math.max(maxLift, Math.abs(groundLift(sk, p)));
+          GROUND_AIR[0] = 0;
+          // The flight clearance the gait reports is the body's real lowest point.
+          expect(Math.abs(low - air), `${AnimId[anim]} v=${v} i=${i} air`).toBeLessThan(0.004);
+          maxAir = Math.max(maxAir, air);
           minLow = Math.min(minLow, low);
         }
-        expect(maxLow, `${AnimId[anim]} v=${v}`).toBeLessThan(GROUND_SNAP_MAX * 0.8);
+        expect(maxLift, `${AnimId[anim]} v=${v} ground correction`).toBeLessThan(0.004);
         expect(minLow, `${AnimId[anim]} v=${v} sinks`).toBeGreaterThan(-0.002);
+        if (v >= 7) expect(maxAir, `${AnimId[anim]} v=${v} flight`).toBeGreaterThan(0.04);
       }
     }
+    // Without the hint the plain snap is unchanged (a float of a few cm is planted onto the grass).
+    const p = pose(AnimId.SPRINT, 0, 0.38 * TAU, 8.5);
+    solvePoseFK(p, sk);
+    const low = lowestPoint(sk);
+    if (low > 0 && low < GROUND_SNAP_MAX) expect(groundLift(sk, p)).toBeCloseTo(-low, 6);
+  });
+});
+
+describe('[LOOK] run mechanics (jog / sprint)', () => {
+  /** Pelvis height (model, as drawn with the gait's clearance) and per-foot planted flag over one cycle. */
+  function cycleOf(anim: AnimId, v: number, n = 240): { y: number[]; planted: boolean[][]; poses: Pose[] } {
+    const sk = createSkeleton();
+    const y: number[] = [], planted: boolean[][] = [], poses: Pose[] = [];
+    for (let i = 0; i < n; i++) {
+      const c = (i / n) * TAU;
+      const p = pose(anim, 0, c, v);
+      solvePoseFK(p, sk);
+      GROUND_AIR[0] = GAIT_AIR[0]!;
+      groundSkeleton(sk, p);
+      GROUND_AIR[0] = 0;
+      y.push(sk[10]!);
+      planted.push([footPhase(anim, c, v, 0, -1) >= 0, footPhase(anim, c, v, 0, 1) >= 0]);
+      poses.push(p);
+    }
+    return { y, planted, poses };
+  }
+
+  it('the pelvis is highest in the flight phase and lower in the stance (a bounce, not a walk), 4-10 cm', () => {
+    for (const anim of [AnimId.JOG, AnimId.SPRINT]) {
+      for (const v of [4, 5, 7, 8.5]) {
+        const { y, planted } = cycleOf(anim, v);
+        let flightMax = -9, stanceMean = 0, ns = 0;
+        for (let i = 0; i < y.length; i++) {
+          if (!planted[i]![0] && !planted[i]![1]) flightMax = Math.max(flightMax, y[i]!);
+          else { stanceMean += y[i]!; ns++; }
+        }
+        stanceMean /= ns;
+        expect(flightMax, `${AnimId[anim]} v=${v}`).toBeGreaterThan(stanceMean + 0.025);
+        const p2p = Math.max(...y) - Math.min(...y);
+        expect(p2p, `${AnimId[anim]} v=${v} bob`).toBeGreaterThan(0.04);
+        expect(p2p, `${AnimId[anim]} v=${v} bob`).toBeLessThan(0.1);
+      }
+    }
+  });
+
+  it('arms swing opposite the legs with bent elbows; the sprint drives harder, leans more and kicks the heel higher', () => {
+    for (const anim of [AnimId.JOG, AnimId.SPRINT]) {
+      const v = anim === AnimId.JOG ? 5 : 8.5;
+      // Right foot lands at cycle 0: the left arm is forward then, the right arm back.
+      const td = pose(anim, 0, 0, v);
+      expect(td[P.SHOULDER_L_PITCH]!).toBeGreaterThan(td[P.SHOULDER_R_PITCH]! + 0.5);
+      const { poses } = cycleOf(anim, v, 72);
+      for (const p of poses) {
+        for (const e of [p[P.ELBOW_L]!, p[P.ELBOW_R]!]) {
+          expect(e).toBeGreaterThan(1.1); // 63+ degrees of flexion at every phase
+          expect(e).toBeLessThan(1.95);
+        }
+        // Arms stay close to the body (no scarecrow): little abduction.
+        expect(p[P.SHOULDER_L_ROLL]!).toBeLessThan(0.15);
+        expect(p[P.SHOULDER_R_ROLL]!).toBeLessThan(0.15);
+      }
+    }
+    const kneeMax = (anim: AnimId, v: number): number => Math.max(...cycleOf(anim, v, 72).poses.map((p) => p[P.KNEE_R]!));
+    const hipMax = (anim: AnimId, v: number): number => Math.max(...cycleOf(anim, v, 72).poses.map((p) => p[P.HIP_R_PITCH]!));
+    expect(kneeMax(AnimId.SPRINT, 8.5)).toBeGreaterThan(kneeMax(AnimId.JOG, 5) + 0.3); // heel recovery
+    expect(kneeMax(AnimId.SPRINT, 8.5)).toBeGreaterThan(2);
+    expect(hipMax(AnimId.SPRINT, 8.5)).toBeGreaterThan(hipMax(AnimId.JOG, 5) + 0.2); // knee drive
+    const lean = (p: Pose): number => p[P.ROOT_PITCH]! + p[P.SPINE_PITCH]!;
+    expect(lean(pose(AnimId.SPRINT, 0, 1, 8.5))).toBeGreaterThan(lean(pose(AnimId.JOG, 0, 1, 5)) + 0.05);
+  });
+
+  it('the head stays steady: its world pitch and yaw move far less than the pelvis turns', () => {
+    const sk = createSkeleton();
+    for (const anim of [AnimId.JOG, AnimId.SPRINT]) {
+      let hp0 = 9, hp1 = -9, hy0 = 9, hy1 = -9, py0 = 9, py1 = -9;
+      for (let i = 0; i < 72; i++) {
+        const p = pose(anim, 0, (i / 72) * TAU, 7);
+        solvePoseFK(p, sk);
+        const o = Joint.HEAD * 12;
+        const pitch = Math.atan2(sk[o + 3]!, sk[o + 4]!), yaw = Math.atan2(-sk[o + 2]!, sk[o]!);
+        hp0 = Math.min(hp0, pitch); hp1 = Math.max(hp1, pitch); hy0 = Math.min(hy0, yaw); hy1 = Math.max(hy1, yaw);
+        py0 = Math.min(py0, p[P.ROOT_YAW]!); py1 = Math.max(py1, p[P.ROOT_YAW]!);
+      }
+      expect(hp1 - hp0, `${AnimId[anim]} head pitch`).toBeLessThan(0.03);
+      expect(hy1 - hy0, `${AnimId[anim]} head yaw`).toBeLessThan(0.05);
+      expect(py1 - py0, `${AnimId[anim]} pelvis yaw`).toBeGreaterThan(0.12);
+    }
+  });
+
+  it('acceleration leans the run forward and lands the feet closer under the body; braking leans it back (still planted)', () => {
+    const lean = (p: Pose): number => p[P.ROOT_PITCH]! + p[P.SPINE_PITCH]!;
+    const steady = pose(AnimId.SPRINT, 0, 0.02, 6);
+    RUN_IN[0] = 4;
+    const acc = pose(AnimId.SPRINT, 0, 0.02, 6);
+    RUN_IN[0] = -5;
+    const brake = pose(AnimId.SPRINT, 0, 0.02, 6);
+    RUN_IN[0] = 0;
+    expect(lean(acc)).toBeGreaterThan(lean(steady) + 0.08);
+    expect(lean(brake)).toBeLessThan(lean(steady) - 0.05);
+    expect(toe(acc, 1)[0]!).toBeLessThan(toe(steady, 1)[0]! - 0.04);
+    // A steady acceleration keeps planted boots planted.
+    RUN_IN[0] = 3;
+    try {
+      const r = stanceSlip(AnimId.SPRINT, 6);
+      expect(r.drift).toBeLessThan(0.01);
+    } finally { RUN_IN[0] = 0; }
+  });
+
+  it('running off the facing moves the planted feet along the motion (no sideways drag); a turn lean flexes the inside leg', () => {
+    RUN_IN[2] = 0.4;
+    try {
+      const v = 6, c0 = 0.05, c1 = runDuty(v) * TAU - 0.05;
+      const a = toe(pose(AnimId.JOG, 0, c0, v), 1), b = toe(pose(AnimId.JOG, 0, c1, v), 1);
+      const dx = b[0]! - a[0]!, dz = b[2]! - a[2]!;
+      // The planted toe moves back along the motion direction (0.4 rad right of the facing) in model space.
+      expect(Math.atan2(-dz, -dx)).toBeCloseTo(0.4, 2);
+    } finally { RUN_IN[2] = 0; }
+    // Turning right at speed: the right (inside) knee bends more than in straight running, summed over the cycle.
+    let inside = 0, straight = 0;
+    for (let i = 0; i < 24; i++) {
+      const c = (i / 24) * TAU;
+      inside += pose(AnimId.TURN_LEAN, 0, c, 7, 2.5, 1)[P.KNEE_R]!;
+      straight += pose(AnimId.TURN_LEAN, 0, c, 7, 0, 1)[P.KNEE_R]!;
+    }
+    expect(inside).toBeGreaterThan(straight);
   });
 });
 
@@ -273,7 +411,8 @@ describe('[GFX-09] speed scaling, lean and posture', () => {
     const straight = pose(AnimId.TURN_LEAN, 0, 1, 6, 0);
     expect(right[P.ROOT_ROLL]).toBeGreaterThan(0.2);
     expect(left[P.ROOT_ROLL]).toBeLessThan(-0.2);
-    expect(Math.abs(straight[P.ROOT_ROLL]!)).toBeLessThan(1e-6);
+    // [LOOK] Straight running keeps the gait's own pelvic drop (the swing-side hip dips in stance): no turn roll on top.
+    expect(Math.abs(straight[P.ROOT_ROLL]! - pose(AnimId.SPRINT, 0, 1, 6)[P.ROOT_ROLL]!)).toBeLessThan(1e-6);
     // Harder turns lean more.
     expect(pose(AnimId.TURN_LEAN, 0, 1, 3, 1)[P.ROOT_ROLL]).toBeLessThan(pose(AnimId.TURN_LEAN, 0, 1, 3, 2)[P.ROOT_ROLL]! - 0.05);
     // The lean layer used by the mapper gives the same roll as the clip.

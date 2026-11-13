@@ -100,7 +100,8 @@ describe('GFX-07 player model: instancing', () => {
     expect(r.model.group.visible).toBe(false);
     let tris = 0;
     for (const m of r.model.meshes) tris += (m.geometry.getAttribute('position').count / 3) * m.count;
-    expect(tris).toBeLessThanOrEqual(30_000);
+    // [LOOK] Redesigned figure: <= 80k triangles for 22 players at the full LOD (was 30k for the 1,123-triangle model).
+    expect(tris).toBeLessThanOrEqual(80_000);
     for (const m of r.model.meshes) expect(m.frustumCulled).toBe(false);
     r.model.setMatch!(r.state, CLUBS);
     expect(r.model.group.visible).toBe(true);
@@ -407,6 +408,35 @@ describe('GFX-07 player model: quality, lifecycle, debug hook', () => {
     for (const m of r.model.meshes) expect(m.castShadow).toBe(false);
   });
 
+  it('[LOOK] the PERFORMANCE tier swaps in the lighter LOD (<= the pre-[LOOK] 1,123 triangles), keeping colours and variants', () => {
+    const r = made(rig());
+    r.model.setMatch!(r.state, CLUBS);
+    step(r);
+    const tris = (): number => r.model.meshes.reduce((n, m) => n + (m.geometry.getAttribute('position').count / 3) * (m.count / NUM_SLOTS), 0);
+    const full = tris();
+    const shirt = colourA(r, Part.TORSO, 3);
+    const hair = Array.from(r.model.meshes[Part.HEAD]!.geometry.getAttribute('iVar').array as Float32Array);
+    expect(hair.every((v) => v >= 1 && v <= 5)).toBe(true);
+    expect(new Set(hair).size).toBeGreaterThanOrEqual(3); // a squad has a few hair styles
+    const hands = Array.from(r.model.meshes[Part.LOWER_ARM]!.geometry.getAttribute('iVar').array as Float32Array);
+    for (let i = 0; i < NUM_SLOTS; i++) {
+      const keeper = r.state.teams[0]!.keeperSlot === i || r.state.teams[1]!.keeperSlot === i;
+      expect(hands[i * 2], `slot ${i}`).toBe(keeper ? 2 : 1);
+      expect(hands[i * 2 + 1], `slot ${i}`).toBe(keeper ? 2 : 1);
+    }
+    r.model.setQuality!(QualityTier.PERFORMANCE);
+    const low = tris();
+    expect(low).toBeLessThanOrEqual(1_123);
+    expect(full).toBeGreaterThan(low * 2);
+    expect(close(colourA(r, Part.TORSO, 3), shirt)).toBe(true);
+    expect(Array.from(r.model.meshes[Part.HEAD]!.geometry.getAttribute('iVar').array as Float32Array)).toEqual(hair);
+    expect((r.ctx.scene.getObjectByName('players') as unknown as { visible: boolean }).visible).toBe(true);
+    step(r);
+    for (const m of r.model.meshes) expect(Array.from(m.instanceMatrix.array as Float32Array).every(Number.isFinite)).toBe(true);
+    r.model.setQuality!(QualityTier.BALANCED);
+    expect(tris()).toBe(full);
+  });
+
   it('dispose removes the group from the scene', () => {
     const r = rig();
     r.model.dispose();
@@ -435,7 +465,7 @@ describe('GFX-07 player model: quality, lifecycle, debug hook', () => {
     const info = dbg.info();
     expect(info.drawCalls).toBe(8);
     expect(info.instances).toEqual([22, 22, 22, 44, 44, 44, 44, 44]);
-    expect(info.trianglesPerPlayer * 22).toBeLessThanOrEqual(30_000);
+    expect(info.trianglesPerPlayer * 22).toBeLessThanOrEqual(80_000); // [LOOK] full LOD budget
     dbg.holdPose(10, null);
     dbg.closeUp(-1);
     step(r);

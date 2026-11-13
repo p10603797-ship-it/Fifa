@@ -1,6 +1,6 @@
 /**
  * [GFX-07] Body part geometry (src/render/players/parts.ts), kit looks and shader patches (model.ts): budgets
- * (<= 14 draw calls, <= 30k triangles for 22 players), outward winding and unit normals, crisp colour regions in the
+ * (<= 14 draw calls; [LOOK] <= 3,500 triangles per player, <= 80k for 22; the PERFORMANCE LOD <= 1,123), outward winding and unit normals, crisp colour regions in the
  * right places (sleeve / arm, shorts / thigh, knee / sock, face / hair, hand, collar), sizes matching the skeleton,
  * no shirt / shorts z-fighting, keeper looks (long sleeves, gloves), halves sleeves, number glyph rects.
  */
@@ -11,19 +11,21 @@ import type { Kit } from '../../src/contracts/data';
 import { NUMBER_GLYPH_H, NUMBER_GLYPH_W } from '../../src/render/kits';
 import { BODY } from '../../src/render/players/fk';
 import {
-  buildPartGeometry, buildPartSoup, HEM_RX, HEM_RZ, NUMBER_PANEL, Part, PART_COUNT, PART_PAIRED, TORSO_Y0, TORSO_Y1,
-  trianglesPerPlayer,
+  buildPartGeometry, buildPartSoup, HAIR_MAX_RISE, HAIR_STYLE_COUNT, HairStyle, HandVariant, HEM_RX, HEM_RZ, NUMBER_PANEL,
+  Part, PART_COUNT, PART_PAIRED, SleeveVariant, TORSO_Y0, TORSO_Y1, trianglesPerPlayer, visibleTrianglesPerPlayer,
 } from '../../src/render/players/parts';
 import {
-  createSlotLook, GLOVE_COLOUR, gridGlyphRect, heightScale, luminance, patchPartShader, patchTorsoShader,
+  createSlotLook, GLOVE_COLOUR, gridGlyphRect, heightScale, luminance, patchDepthShader, patchPartShader, patchTorsoShader,
   SKIN_TONES, slotLook, strideDistance,
 } from '../../src/render/players/model';
 
 interface Tri { p: Vector3[]; n: Vector3[]; sel: number; c: Vector3 }
 
-function tris(part: number): Tri[] {
-  const b = buildPartSoup(part);
-  const out: Tri[] = [];
+interface VTri extends Tri { variant: number }
+
+function tris(part: number, lod: 0 | 1 = 1): VTri[] {
+  const b = buildPartSoup(part, lod);
+  const out: VTri[] = [];
   for (let t = 0; t < b.triangles; t++) {
     const p: Vector3[] = [], n: Vector3[] = [];
     for (let k = 0; k < 3; k++) {
@@ -32,27 +34,108 @@ function tris(part: number): Tri[] {
       n.push(new Vector3(b.nrm[o]!, b.nrm[o + 1]!, b.nrm[o + 2]!));
     }
     const c = new Vector3().add(p[0]!).add(p[1]!).add(p[2]!).multiplyScalar(1 / 3);
-    out.push({ p, n, sel: b.sel[t * 3]!, c });
+    out.push({ p, n, sel: b.sel[t * 3]!, c, variant: b.vars[t * 3]! });
   }
   return out;
 }
 
 describe('GFX-07 part geometry', () => {
-  it('budget: 8 draw calls (one InstancedMesh per part) and <= 30k triangles for 22 players', () => {
+  // [LOOK] The redesigned figure has a budget of 2,500..3,500 triangles per player at the full LOD (22 players under
+  // 80k of the 200k frame budget; it was 30k for the 1,123-triangle pre-[LOOK] model), every variant counted. The
+  // PERFORMANCE tier's LOD stays no heavier than the pre-[LOOK] model. Draw calls are unchanged (8).
+  it('budget: 8 draw calls (one InstancedMesh per part), <= 3,500 triangles per player (<= 80k for 22); LOD 0 <= 1,123', () => {
     expect(PART_COUNT).toBe(8);
     expect(PART_COUNT).toBeLessThanOrEqual(14);
     const perPlayer = trianglesPerPlayer();
-    expect(perPlayer).toBeGreaterThan(600); // reads as a body, not a capsule
-    expect(perPlayer * 22).toBeLessThanOrEqual(30_000);
+    expect(perPlayer).toBeGreaterThan(2_000); // a shaped figure, not sticks
+    expect(perPlayer).toBeLessThanOrEqual(3_500);
+    expect(perPlayer * 22).toBeLessThanOrEqual(80_000);
+    expect(trianglesPerPlayer(0)).toBeLessThanOrEqual(1_123);
+    expect(trianglesPerPlayer(0)).toBeGreaterThan(600); // reads as a body, not a capsule
+    expect(visibleTrianglesPerPlayer()).toBeLessThan(perPlayer);
     expect(PART_PAIRED.filter(Boolean)).toHaveLength(5);
   });
 
-  it('every part: finite positions, unit normals, outward winding, selector 0 / 1 constant per triangle', () => {
-    for (let part = 0; part < PART_COUNT; part++) {
-      const g = buildPartGeometry(part);
+  it('variants: hair styles on the head, short / long sleeve (full LOD), bare hand / glove, nothing elsewhere; both LODs', () => {
+    for (const lod of [0, 1] as const) {
+      for (let part = 0; part < PART_COUNT; part++) {
+        const ids = new Set(tris(part, lod).map((t) => t.variant));
+        if (part === Part.HEAD) {
+          // BUZZ is the scalp cap alone (no shell); every other style has its own shell.
+          const want = [0];
+          for (let k = 1; k <= HAIR_STYLE_COUNT; k++) if (k !== HairStyle.BUZZ) want.push(k);
+          expect([...ids].sort(), `lod ${lod}`).toEqual(want);
+        } else if (part === Part.LOWER_ARM) {
+          expect([...ids].sort()).toEqual([0, HandVariant.BARE, HandVariant.GLOVE]);
+        } else if (part === Part.UPPER_ARM && lod === 1) {
+          expect([...ids].sort()).toEqual([SleeveVariant.SHORT, SleeveVariant.LONG]);
+        } else {
+          expect([...ids]).toEqual([0]);
+        }
+      }
+      // Hair and gloves are in the second colour (hair / glove).
+      for (const t of tris(Part.HEAD, lod)) if (t.variant !== 0) expect(t.sel).toBe(1);
+      for (const t of tris(Part.LOWER_ARM, lod)) if (t.variant !== 0) expect(t.sel).toBe(1);
+    }
+  });
+
+  it('the keeper glove is larger than the bare hand and ends at the same hand tip', () => {
+    const ext = (v: number) => {
+      const ts = tris(Part.LOWER_ARM).filter((t) => t.variant === v);
+      const xs = ts.flatMap((t) => t.p.map((p) => p.x)), zs = ts.flatMap((t) => t.p.map((p) => p.z));
+      const ys = ts.flatMap((t) => t.p.map((p) => p.y));
+      return { w: Math.max(...xs) - Math.min(...xs), t: Math.max(...zs) - Math.min(...zs), tip: Math.min(...ys) };
+    };
+    const hand = ext(HandVariant.BARE), glove = ext(HandVariant.GLOVE);
+    expect(glove.w).toBeGreaterThan(hand.w * 1.25);
+    expect(glove.t).toBeGreaterThan(hand.t * 1.25);
+    expect(hand.tip).toBeCloseTo(-(BODY.foreArm + BODY.hand), 6);
+    expect(glove.tip).toBeCloseTo(-(BODY.foreArm + BODY.hand), 6);
+  });
+
+  it('joints: the parts meeting at the knee and elbow both end in a ball of about the same radius on the joint', () => {
+    // Points of the thigh below the knee joint and of the shin above it lie within one radius of the joint, as do the
+    // upper arm and forearm at the elbow: a bent joint is covered by a round cap from both sides (no gap, no kink).
+    const capR = (part: number, jointY: number, below: boolean) => {
+      let r = 0;
+      for (const t of tris(part)) for (const p of t.p) {
+        if (t.variant !== 0 && t.variant !== SleeveVariant.SHORT) continue;
+        if (below ? p.y < jointY - 1e-9 : p.y > jointY + 1e-9) r = Math.max(r, Math.hypot(p.x, p.y - jointY, p.z));
+      }
+      return r;
+    };
+    const kneeA = capR(Part.UPPER_LEG, -BODY.thigh, true), kneeB = capR(Part.LOWER_LEG, 0, false);
+    const elbowA = capR(Part.UPPER_ARM, -BODY.upperArm, true), elbowB = capR(Part.LOWER_ARM, 0, false);
+    expect(kneeA).toBeGreaterThan(0.04);
+    expect(Math.abs(kneeA - kneeB)).toBeLessThan(0.006);
+    expect(elbowA).toBeGreaterThan(0.035);
+    expect(Math.abs(elbowA - elbowB)).toBeLessThan(0.004);
+  });
+
+  it('the keeper\'s long sleeve has no cuff step; the short sleeve ends in a cuff over the bare arm', () => {
+    // Largest radius drop between neighbouring heights along the arm (front-most vertex per height).
+    const profile = (v: number): number => {
+      const front = new Map<string, number>();
+      for (const t of tris(Part.UPPER_ARM)) if (t.variant === v) for (const p of t.p) {
+        const k = p.y.toFixed(4);
+        front.set(k, Math.max(front.get(k) ?? 0, Math.hypot(p.x, p.z)));
+      }
+      const ys = [...front.keys()].map(Number).filter((y) => y < -0.05 && y > -BODY.upperArm).sort((a, b) => b - a);
+      let drop = 0;
+      for (let i = 1; i < ys.length; i++) drop = Math.max(drop, front.get(ys[i - 1]!.toFixed(4))! - front.get(ys[i]!.toFixed(4))!);
+      return drop;
+    };
+    expect(profile(SleeveVariant.SHORT)).toBeGreaterThan(0.006);
+    expect(profile(SleeveVariant.LONG)).toBeLessThan(0.006);
+  });
+
+  it('every part (both LODs): finite positions, unit normals, outward winding, selector 0 / 1 constant per triangle', () => {
+    for (const lod of [0, 1] as const) for (let part = 0; part < PART_COUNT; part++) {
+      const g = buildPartGeometry(part, lod);
+      expect(g.getAttribute('aVar').count).toBe(g.getAttribute('position').count);
       expect(g.getAttribute('position').count % 3).toBe(0);
       expect(g.getAttribute('aSel').count).toBe(g.getAttribute('position').count);
-      for (const t of tris(part)) {
+      for (const t of tris(part, lod)) {
         for (const v of t.p) expect(Number.isFinite(v.x + v.y + v.z)).toBe(true);
         for (const n of t.n) expect(n.length()).toBeCloseTo(1, 4);
         expect([0, 1]).toContain(t.sel);
@@ -60,17 +143,23 @@ describe('GFX-07 part geometry', () => {
         const mean = new Vector3().add(t.n[0]!).add(t.n[1]!).add(t.n[2]!);
         expect(geo.dot(mean), `part ${part} winding`).toBeGreaterThan(0);
       }
-      const b = buildPartSoup(part);
+      const b = buildPartSoup(part, lod);
       for (let i = 0; i < b.sel.length; i += 3) {
         expect(b.sel[i + 1]).toBe(b.sel[i]);
         expect(b.sel[i + 2]).toBe(b.sel[i]);
+        expect(b.vars[i + 1]).toBe(b.vars[i]);
+        expect(b.vars[i + 2]).toBe(b.vars[i]);
       }
     }
   });
 
   it('sizes match the skeleton: crown, boot sole and toe, limb lengths, torso span', () => {
     const box = (part: number) => { const g = buildPartGeometry(part); g.computeBoundingBox(); return g.boundingBox!; };
-    expect(box(Part.HEAD).max.y).toBeCloseTo(BODY.headY + BODY.headRY, 3);
+    // The skull's crown is the skeleton's (variant 0); hair styles add at most HAIR_MAX_RISE of volume above it.
+    const skullTop = Math.max(...tris(Part.HEAD).filter((t) => t.variant === 0).flatMap((t) => t.p.map((p) => p.y)));
+    expect(skullTop).toBeCloseTo(BODY.headY + BODY.headRY, 3);
+    expect(box(Part.HEAD).max.y).toBeGreaterThan(BODY.headY + BODY.headRY + 0.02); // a voluminous style exists
+    expect(box(Part.HEAD).max.y).toBeLessThanOrEqual(BODY.headY + BODY.headRY + HAIR_MAX_RISE);
     expect(box(Part.BOOT).min.y).toBeCloseTo(-BODY.ankleY, 6);
     expect(box(Part.BOOT).max.x).toBeCloseTo(BODY.toeX, 6);
     expect(box(Part.BOOT).min.x).toBeLessThan(BODY.heelX);
@@ -101,7 +190,9 @@ describe('GFX-07 part geometry', () => {
     expect(selAt(Part.HEAD, (c) => c.x > 0.08 && Math.abs(c.y - BODY.headY) < 0.04)).toEqual([0]); // face
     expect(selAt(Part.HEAD, (c) => c.x < -0.09 && c.y > BODY.headY - 0.03)).toEqual([1]); // back of the head
     expect(selAt(Part.HEAD, (c) => c.y < 0.12)).toEqual([0]); // neck
-    expect(selAt(Part.BOOT, () => true)).toEqual([0]);
+    // [LOOK] Boots have a sole in the second colour (dark, or light under dark boots); the upper is the boot colour.
+    expect(selAt(Part.BOOT, (c) => c.y > -BODY.ankleY + 0.02)).toEqual([0]);
+    expect(selAt(Part.BOOT, (c) => c.y < -BODY.ankleY + 0.004)).toEqual([1]);
     expect(selAt(Part.PELVIS, () => true)).toEqual([0]);
   });
 
@@ -258,6 +349,33 @@ describe('GFX-07 shader patches (three.js Lambert sources)', () => {
     expect(p.fragment).toContain('fwidth(');
     expect(p.fragment).toContain('vec4 diffuseColor = vec4( diffuse * dkShirt(), opacity );');
     expect(p.fragment.indexOf('vec3 dkShirt()')).toBeLessThan(p.fragment.indexOf('void main()'));
+  });
+
+  it('[LOOK] variants collapse in the part and depth shaders; parts and torso add the sky / rim term', () => {
+    const p = patchPartShader(vs, fs);
+    const collapse = 'transformed *= max( 1.0 - step( 0.5, aVar ), 1.0 - step( 0.5, abs( aVar - iVar ) ) );';
+    expect(p.vertex).toContain('attribute float iVar;');
+    expect(p.vertex.indexOf(collapse)).toBeGreaterThan(p.vertex.indexOf('#include <begin_vertex>'));
+    expect(p.fragment).toContain('dkRim');
+    expect(p.fragment.indexOf('dkRim')).toBeGreaterThan(p.fragment.indexOf('#include <aomap_fragment>'));
+    expect(patchTorsoShader(vs, fs).fragment).toContain('dkRim');
+    const d = patchDepthShader(ShaderLib.depth.vertexShader);
+    expect(d).toContain('attribute float aVar;');
+    expect(d.indexOf(collapse)).toBeGreaterThan(d.indexOf('#include <begin_vertex>'));
+  });
+
+  it('[LOOK] looks: hair style seeded per player (shaved heads are buzz cuts), a sole colour that contrasts the boot', () => {
+    const k: Kit = { shirt: 0xd7263d, shirt2: 0xffffff, pattern: KitPattern.PLAIN, shorts: 0x111111, socks: 0xd7263d, number: 0xffffff };
+    const styles = new Set<number>();
+    for (let c = 0; c < 6; c++) for (let r = 0; r < 25; r++) {
+      const l = slotLook(k, false, c, r, createSlotLook());
+      expect(l.hairStyle).toBeGreaterThanOrEqual(1);
+      expect(l.hairStyle).toBeLessThanOrEqual(HAIR_STYLE_COUNT);
+      if (l.hair === l.skin) expect(l.hairStyle).toBe(HairStyle.BUZZ);
+      expect(Math.abs(luminance(l.sole) - luminance(l.boot))).toBeGreaterThan(0.15);
+      styles.add(l.hairStyle);
+    }
+    expect(styles.size).toBe(HAIR_STYLE_COUNT);
   });
 
   it('fails loudly when three.js moves its chunks (no silent white players)', () => {
