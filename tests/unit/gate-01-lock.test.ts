@@ -23,7 +23,9 @@ interface GateCodesTool {
   newCode(rand?: (n: number) => number): string;
   newCodes(n: number, existing?: readonly string[], rand?: (n: number) => number): string[];
   parseHashList(text: string): string[];
-  insertStatement(hashes: readonly string[]): { sql: string; params: string[] };
+  listedHashes(text: string): string[];
+  appendHashes(text: string, hashes: readonly string[]): { text: string; added: number };
+  removeHash(text: string, hash: string): { text: string; removed: number };
 }
 const tool = (await import(/* @vite-ignore */ new URL('../../tools/gate-codes.mjs', import.meta.url).href)) as GateCodesTool;
 
@@ -313,14 +315,20 @@ describe('GATE tools/gate-codes.mjs', () => {
     expect(tool.hashCode(out[0]!)).not.toBe(listed[0]);
   });
 
-  it('reads hash lists (one per line, # comments) and builds the INSERT OR IGNORE for the checker', () => {
+  it('reads hash lists (one per line, # comments) and adds / removes hashes in codes.js text', () => {
     expect(tool.parseHashList(`# test\n${TEST_HASHES[0]}\n\n  ${TEST_HASHES[1]}  # b\n${TEST_HASHES[0]}\n`)).toEqual(TEST_HASHES.slice(0, 2));
     expect(() => tool.parseHashList('nope')).toThrow(/line 1/);
     expect(() => tool.parseHashList(TEST_HASHES[0]!.toUpperCase())).toThrow();
-    const st = tool.insertStatement(TEST_HASHES);
-    expect(st).toEqual({ sql: 'INSERT OR IGNORE INTO codes (hash) VALUES (?), (?), (?)', params: TEST_HASHES });
-    expect(() => tool.insertStatement([])).toThrow();
-    expect(() => tool.insertStatement(['x'])).toThrow();
-    expect(() => tool.insertStatement(Array.from({ length: 91 }, () => TEST_HASHES[0]!))).toThrow();
+    const base = `export default [\n  // gate-codes:begin\n  '${TEST_HASHES[0]}',\n  // gate-codes:end\n];\n`;
+    const added = tool.appendHashes(base, [TEST_HASHES[0]!, TEST_HASHES[1]!, TEST_HASHES[1]!]);
+    expect(added.added).toBe(1);
+    expect(tool.listedHashes(added.text)).toEqual(TEST_HASHES.slice(0, 2));
+    expect(added.text).toMatch(/gate-codes:end\n\];\n$/);
+    expect(() => tool.appendHashes(base, ['x'])).toThrow();
+    expect(() => tool.appendHashes('export default [];', [TEST_HASHES[1]!])).toThrow(/marker/);
+    const removed = tool.removeHash(added.text, TEST_HASHES[0]!);
+    expect(removed.removed).toBe(1);
+    expect(tool.listedHashes(removed.text)).toEqual([TEST_HASHES[1]]);
+    expect(tool.removeHash(removed.text, TEST_HASHES[0]!).removed).toBe(0);
   });
 });

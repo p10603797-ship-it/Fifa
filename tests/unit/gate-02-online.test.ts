@@ -1,16 +1,17 @@
 /**
- * [GATE] Online password checker (D-048): the Worker (server/gate-worker/worker.js) against an in-memory D1 stand-in,
- * the game's client (src/app/gateOnline.ts) against a mocked fetch and against the Worker itself, gateBoot choosing
- * the online checker, and the Cloudflare tooling (tools/lib/cloudflare.mjs) refusing anything that is not DotKick's.
- * Test codes only: real codes are never in the repository.
+ * [GATE] Online password checker (D-048): the Worker (server/gate-worker/worker.js) with its GateStore Durable Object
+ * over an in-memory SQLite stand-in for ctx.storage.sql, the game's client (src/app/gateOnline.ts) against a mocked
+ * fetch and against the Worker itself, gateBoot choosing the online checker, and the Cloudflare tooling
+ * (tools/lib/cloudflare.mjs) refusing anything that is not DotKick's. Test codes only: real codes are never in the
+ * repository; the worker's codes.js is replaced by the two test hashes below.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker, {
-  DEVICE_RE, MAX_BODY_BYTES, handle, hashCode as workerHash, normaliseCode as workerNormalise, parseRedeemBody, redeem,
-  type D1Like,
+  DEVICE_RE, GateStore, MAX_BODY_BYTES, VALID_HASHES, handle, hashCode as workerHash, normaliseCode as workerNormalise, parseRedeemBody, redeem,
+  type GateEnv,
 } from '../../server/gate-worker/worker.js';
 import {
   GATE_DEVICE_KEY, GATE_HASH_PREFIX, GATE_UNLOCK_KEY, GATE_USED_KEY, createGate, hashCode, normaliseCode, parseUsedList,
@@ -21,22 +22,32 @@ import { createOnlineRedeemer, deviceId, parseCheckerAnswer } from '../../src/ap
 import { GATE_SERVER_TIMEOUT_MS, GATE_SERVER_URL } from '../../src/data/gateConfig';
 import { createMemoryStorage, type KeyValueStorage } from '../../src/platform/storage';
 
+// The worker's accepted hashes: the two test codes below (TSTA-2345-6789, TSTB-ABCD-EFGH).
+vi.mock('../../server/gate-worker/codes.js', () => ({
+  default: [
+    '21df140d0c3f30718d6bc4a717c3f0b9fb26c4efc21d248ab90e94d95ec54808',
+    '063046bf77795914556e4ee5d813889ab7e91a453a70c0e3ad29c2c5fbf5cdca',
+  ],
+}));
+
 /** tools/lib/cloudflare.mjs (plain ESM). */
+type Cfg = { account: string; token: string };
 interface CloudflareLib {
-  GATE_ENVS: Record<'prod' | 'test', { script: string; database: string }>;
+  GATE_ENVS: Record<'prod' | 'test', { script: string }>;
   COMPATIBILITY_DATE: string;
+  STORE_MIGRATION_TAG: string;
   assertGateName(name: string): string;
-  gateEnv(name: string): { script: string; database: string };
-  cloudflareConfig(args: string[], env: Record<string, string | undefined>): { account: string; token: string };
-  cfApi(cfg: { account: string; token: string }, method: string, path: string, body?: unknown, fetchFn?: typeof fetch): Promise<unknown>;
-  uploadWorker(cfg: { account: string; token: string }, script: string, source: string, dbId: string, fetchFn?: typeof fetch): Promise<unknown>;
-  enableWorkersDev(cfg: { account: string; token: string }, script: string, fetchFn?: typeof fetch): Promise<unknown>;
-  ensureDatabase(cfg: { account: string; token: string }, name: string, fetchFn?: typeof fetch): Promise<{ uuid: string; created: boolean }>;
-  sqlStatements(text: string): string[];
+  gateEnv(name: string): { script: string };
+  cloudflareConfig(args: string[], env: Record<string, string | undefined>): Cfg;
+  cfApi(cfg: Cfg, method: string, path: string, body?: unknown, fetchFn?: typeof fetch): Promise<unknown>;
+  uploadWorker(cfg: Cfg, script: string, source: string, codes: string, currentTag: string, fetchFn?: typeof fetch): Promise<unknown>;
+  enableWorkersDev(cfg: Cfg, script: string, fetchFn?: typeof fetch): Promise<unknown>;
+  migrationTag(cfg: Cfg, script: string, fetchFn?: typeof fetch): Promise<string>;
+  codesModule(hashes: string[]): string;
+  hashesInCodesModule(text: string): string[];
 }
 const cf = (await import(/* @vite-ignore */ new URL('../../tools/lib/cloudflare.mjs', import.meta.url).href)) as CloudflareLib;
 
-const SCHEMA = readFileSync(new URL('../../server/gate-worker/schema.sql', import.meta.url), 'utf8');
 const nodeHash = (code: string): string => createHash('sha256').update(GATE_HASH_PREFIX + normaliseCode(code), 'utf8').digest('hex');
 
 const CODE_A = 'TSTA-2345-6789';
@@ -44,40 +55,29 @@ const CODE_B = 'TSTB-ABCD-EFGH';
 const DEV_1 = 'a'.repeat(32);
 const DEV_2 = 'b'.repeat(32);
 
-/**
- * In-memory D1 stand-in: prepare / bind / run / first over node:sqlite (real SQLite, so the Worker's SQL and
- * schema.sql run as written). run() resolves { success, meta: { changes } } like D1. Every call is one atomic
- * statement, like D1's; awaits between statements interleave as they would across Worker requests.
- */
-function fakeD1(): D1Like & { sql: DatabaseSync; seed(hashes: string[]): void; rows(): { hash: string; used_at: number | null; device: string | null }[] } {
-  const sql = new DatabaseSync(':memory:');
-  for (const st of cf.sqlStatements(SCHEMA)) sql.exec(st);
+/** ctx.storage.sql stand-in over node:sqlite: exec(query, ...bindings) -> { toArray() }, synchronous like the real one. */
+function fakeSql() {
+  const db = new DatabaseSync(':memory:');
   return {
+    db,
+    exec(query: string, ...bindings: (string | number | null)[]) {
+      const st = db.prepare(query);
+      const rows = /^\s*select/i.test(query) ? (st.all(...bindings) as Record<string, unknown>[]) : (st.run(...bindings), []);
+      return { toArray: () => rows };
+    },
+  };
+}
+
+/** A GateEnv whose GATE namespace routes to one GateStore over fakeSql (as the Durable Object would). */
+function fakeEnv(): GateEnv & { store: GateStore; sql: ReturnType<typeof fakeSql>; rows(): { hash: string; device: string; used_at: number }[] } {
+  const sql = fakeSql();
+  const store = new GateStore({ storage: { sql } });
+  const stub = { fetch: (url: string, init?: RequestInit) => store.fetch(new Request(url, init)) };
+  return {
+    GATE: { idFromName: (n: string) => n, get: () => stub },
+    store,
     sql,
-    prepare(text: string) {
-      return {
-        bind(...values: unknown[]) {
-          const args = values as (string | number | null)[];
-          return {
-            async run() {
-              await Promise.resolve();
-              const r = sql.prepare(text).run(...args);
-              return { success: true, meta: { changes: Number(r.changes) } };
-            },
-            async first<T>() {
-              await Promise.resolve();
-              return (sql.prepare(text).get(...args) as T | undefined) ?? null;
-            },
-          };
-        },
-      };
-    },
-    seed(hashes) {
-      for (const h of hashes) sql.prepare('INSERT INTO codes (hash) VALUES (?1)').run(h);
-    },
-    rows() {
-      return sql.prepare('SELECT hash, used_at, device FROM codes ORDER BY hash').all() as never;
-    },
+    rows: () => sql.db.prepare('SELECT hash, device, used_at FROM used ORDER BY hash').all() as never,
   };
 }
 
@@ -95,6 +95,10 @@ afterEach(() => {
 });
 
 describe('GATE checker worker: hashing and body checks', () => {
+  it('the mocked codes.js holds exactly the two test codes', () => {
+    expect([...VALID_HASHES].sort()).toEqual([nodeHash(CODE_A), nodeHash(CODE_B)].sort());
+  });
+
   it('normalises and hashes exactly like the game', async () => {
     for (const c of [CODE_A, 'tstb abcd efgh', ' t-s-t-c jkmn pqrs ', 'é漢字ABCD']) {
       expect(workerNormalise(c)).toBe(normaliseCode(c));
@@ -118,48 +122,45 @@ describe('GATE checker worker: hashing and body checks', () => {
   });
 });
 
-describe('GATE checker worker: redeem against D1', () => {
+describe('GATE checker worker: redeem through the GateStore Durable Object', () => {
   it('ok once; the same device again is ok (lost answer); another device is told used; unknown codes are wrong', async () => {
-    const db = fakeD1();
-    db.seed([nodeHash(CODE_A), nodeHash(CODE_B)]);
-    expect(await redeem(db, 'nope-nope-nope', DEV_1, 1)).toBe('wrong');
-    expect(await redeem(db, 'ab', DEV_1, 1)).toBe('wrong'); // too short to be a code: no database read needed
-    expect(await redeem(db, 'tsta 2345 6789', DEV_1, 1000)).toBe('ok');
-    expect(await redeem(db, CODE_A, DEV_1, 2000)).toBe('ok');
-    expect(await redeem(db, CODE_A, DEV_2, 3000)).toBe('used');
-    expect(await redeem(db, CODE_A, DEV_1, 4000)).toBe('ok');
-    expect(await redeem(db, CODE_B, DEV_2, 5000)).toBe('ok');
-    const rows = db.rows();
+    const env = fakeEnv();
+    expect(await redeem(env, 'nope-nope-nope', DEV_1, 1)).toBe('wrong');
+    expect(await redeem(env, 'ab', DEV_1, 1)).toBe('wrong');
+    expect(env.rows()).toEqual([]); // wrong codes never reach the store
+    expect(await redeem(env, 'tsta 2345 6789', DEV_1, 1000)).toBe('ok');
+    expect(await redeem(env, CODE_A, DEV_1, 2000)).toBe('ok');
+    expect(await redeem(env, CODE_A, DEV_2, 3000)).toBe('used');
+    expect(await redeem(env, CODE_A, DEV_1, 4000)).toBe('ok');
+    expect(await redeem(env, CODE_B, DEV_2, 5000)).toBe('ok');
+    const rows = env.rows();
     expect(rows.find((r) => r.hash === nodeHash(CODE_A))).toEqual({ hash: nodeHash(CODE_A), used_at: 1000, device: DEV_1 });
     expect(rows.find((r) => r.hash === nodeHash(CODE_B))).toEqual({ hash: nodeHash(CODE_B), used_at: 5000, device: DEV_2 });
-    // Only hashes: no code text anywhere in the table.
-    expect(JSON.stringify(rows)).not.toMatch(/TST[AB]/);
+    expect(JSON.stringify(rows)).not.toMatch(/TST[AB]/); // only hashes are stored
+    expect(env.store.usedCount()).toBe(2);
   });
 
   it('20 devices redeem one code at the same time: exactly one is ok', async () => {
-    const db = fakeD1();
-    db.seed([nodeHash(CODE_A)]);
+    const env = fakeEnv();
     const devices = Array.from({ length: 20 }, (_, i) => i.toString(16).padStart(32, 'c'));
-    const results = await Promise.all(devices.map((d) => redeem(db, CODE_A, d)));
+    const results = await Promise.all(devices.map((d) => redeem(env, CODE_A, d)));
     expect(results.filter((r) => r === 'ok')).toHaveLength(1);
     expect(results.filter((r) => r === 'used')).toHaveLength(19);
-    expect(db.rows()[0]!.device).toBe(devices[results.indexOf('ok')]);
+    expect(env.rows()[0]!.device).toBe(devices[results.indexOf('ok')]);
   });
 
-  it('schema: hash is the primary key and must be 64 characters', () => {
-    const db = fakeD1();
-    db.seed([nodeHash(CODE_A)]);
-    expect(() => db.seed([nodeHash(CODE_A)])).toThrow();
-    expect(() => db.seed(['short'])).toThrow();
-    expect(db.sql.prepare('INSERT OR IGNORE INTO codes (hash) VALUES (?1)').run(nodeHash(CODE_A)).changes).toBe(0);
+  it('a store that fails or answers nonsense is an error, never ok', async () => {
+    const env = fakeEnv();
+    const bad = (res: Response): GateEnv => ({ GATE: { idFromName: (n: string) => n, get: () => ({ fetch: async () => res }) } });
+    await expect(redeem(bad(new Response('x', { status: 500 })), CODE_A, DEV_1)).rejects.toThrow();
+    await expect(redeem(bad(Response.json({ result: 'maybe' })), CODE_A, DEV_1)).rejects.toThrow();
+    expect(env.rows()).toEqual([]);
   });
 });
 
 describe('GATE checker worker: HTTP', () => {
   it('POST /redeem answers 200 { result } with CORS for any origin; no cookies, no caching', async () => {
-    const db = fakeD1();
-    db.seed([nodeHash(CODE_A)]);
-    const env = { DB: db };
+    const env = fakeEnv();
     const ok = await worker.fetch(post(JSON.stringify({ code: CODE_A, device: DEV_1 })), env);
     expect(ok.headers.get('Cache-Control')).toBe('no-store');
     expect(ok.headers.get('Content-Type')).toMatch(/^application\/json/);
@@ -167,12 +168,12 @@ describe('GATE checker worker: HTTP', () => {
     expect(await answer(ok)).toEqual({ status: 200, body: { result: 'ok' }, cors: '*' });
     expect(await answer(await worker.fetch(post(JSON.stringify({ code: CODE_A, device: DEV_2 })), env))).toEqual({ status: 200, body: { result: 'used' }, cors: '*' });
     expect(await answer(await worker.fetch(post(JSON.stringify({ code: 'WRNG-WRNG-WRNG', device: DEV_2 })), env))).toEqual({ status: 200, body: { result: 'wrong' }, cors: '*' });
-    // application/json bodies work too (a preflighted request).
     expect((await answer(await worker.fetch(post(JSON.stringify({ code: CODE_A, device: DEV_1 }), { headers: { 'Content-Type': 'application/json' } }), env))).body).toEqual({ result: 'ok' });
+    expect(await answer(await worker.fetch(new Request('https://gate.example/stats'), env))).toEqual({ status: 200, body: { total: 2, used: 1 }, cors: '*' });
   });
 
   it('preflight, health, wrong method / path, bad and oversized bodies get proper status codes', async () => {
-    const env = { DB: fakeD1() };
+    const env = fakeEnv();
     const pre = await worker.fetch(new Request('https://gate.example/redeem', {
       method: 'OPTIONS', headers: { Origin: 'https://p10603797-ship-it.github.io', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' },
     }), env);
@@ -183,13 +184,14 @@ describe('GATE checker worker: HTTP', () => {
     expect(pre.headers.get('Access-Control-Allow-Credentials')).toBeNull();
     expect(await answer(await worker.fetch(new Request('https://gate.example/'), env))).toEqual({ status: 200, body: { ok: true }, cors: '*' });
     expect((await worker.fetch(new Request('https://gate.example/redeem'), env)).status).toBe(405);
+    expect((await worker.fetch(new Request('https://gate.example/stats', { method: 'POST', body: '{}' }), env)).status).toBe(405);
     expect((await worker.fetch(new Request('https://gate.example/', { method: 'POST', body: '{}' }), env)).status).toBe(405);
     expect((await worker.fetch(new Request('https://gate.example/other'), env)).status).toBe(404);
     expect((await worker.fetch(post('{bad'), env)).status).toBe(400);
     expect((await worker.fetch(post(JSON.stringify({ code: CODE_A, device: 'x' })), env)).status).toBe(400);
     expect((await worker.fetch(post(''), env)).status).toBe(400);
     const big = JSON.stringify({ code: CODE_A, device: DEV_1, pad: 'x'.repeat(MAX_BODY_BYTES) });
-    expect((await worker.fetch(post(big), env)).status).toBe(413); // streamed, no Content-Length
+    expect((await worker.fetch(post(big), env)).status).toBe(413);
     expect((await worker.fetch(post(big, { headers: { 'Content-Length': String(big.length) } }), env)).status).toBe(413);
     const stream = new ReadableStream<Uint8Array>({
       start(c) {
@@ -198,11 +200,12 @@ describe('GATE checker worker: HTTP', () => {
       },
     });
     expect((await worker.fetch(new Request('https://gate.example/redeem', { method: 'POST', body: stream, duplex: 'half' } as RequestInit), env)).status).toBe(413);
+    expect(env.rows()).toEqual([]);
   });
 
-  it('a failing database answers 503 (the game shows its "connect and try again" message), never ok', async () => {
-    const broken: D1Like = { prepare: () => { throw new Error('D1 down'); } };
-    const res = await handle(post(JSON.stringify({ code: CODE_A, device: DEV_1 })), { DB: broken });
+  it('a failing store answers 503 (the game shows its "connect and try again" message), never ok', async () => {
+    const broken: GateEnv = { GATE: { idFromName: (n: string) => n, get: () => ({ fetch: async () => { throw new Error('down'); } }) } };
+    const res = await handle(post(JSON.stringify({ code: CODE_A, device: DEV_1 })), broken);
     expect(res.status).toBe(503);
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
   });
@@ -293,12 +296,11 @@ describe('GATE online client (src/app/gateOnline.ts)', () => {
   });
 
   it('a lost answer: trying again sends the same device id, and the checker opens the game again', async () => {
-    const db = fakeD1();
-    db.seed([nodeHash(CODE_A)]);
+    const env = fakeEnv();
     const storage = createMemoryStorage();
     let lose = true;
     const m = mockFetch(storage, async (c) => {
-      const res = await worker.fetch(new Request(c.url, c.init), { DB: db });
+      const res = await worker.fetch(new Request(c.url, c.init), env);
       if (lose) {
         lose = false;
         throw new TypeError('Load failed'); // the checker used the code, the answer never arrived
@@ -314,16 +316,15 @@ describe('GATE online client (src/app/gateOnline.ts)', () => {
     expect(m.calls[1]!.body.device).toBe(m.calls[0]!.body.device);
     // Another device (fresh storage) is told it has been used.
     const other = createMemoryStorage();
-    const m2 = mockFetch(other, (c) => worker.fetch(new Request(c.url, c.init), { DB: db }));
+    const m2 = mockFetch(other, (c) => worker.fetch(new Request(c.url, c.init), env));
     expect(await createOnlineRedeemer({ url: 'https://gate.example/redeem', storage: other, fetch: m2.fn }).redeem(CODE_A)).toBe('used');
     expect(m2.calls[0]!.body.device).not.toBe(m.calls[0]!.body.device);
   });
 
   it('two quick submits run one after the other: the second is used locally, one request only', async () => {
-    const db = fakeD1();
-    db.seed([nodeHash(CODE_B)]);
+    const env = fakeEnv();
     const storage = createMemoryStorage();
-    const m = mockFetch(storage, (c) => worker.fetch(new Request(c.url, c.init), { DB: db }));
+    const m = mockFetch(storage, (c) => worker.fetch(new Request(c.url, c.init), env));
     const r = createOnlineRedeemer({ url: 'https://gate.example/redeem', storage, fetch: m.fn });
     expect(await Promise.all([r.redeem(CODE_B), r.redeem(CODE_B)])).toEqual(['ok', 'used']);
     expect(m.calls).toHaveLength(1);
@@ -399,9 +400,9 @@ describe('GATE Cloudflare tooling (tools/lib/cloudflare.mjs)', () => {
   const cfg = { account: '0'.repeat(32), token: 'proxy-injected' };
 
   it('names only DotKick checker resources; refuses everything else on the account', () => {
-    expect(cf.gateEnv('prod')).toEqual({ script: 'dotkick-gate', database: 'dotkick-gate' });
-    expect(cf.gateEnv('test')).toEqual({ script: 'dotkick-gate-test', database: 'dotkick-gate-test' });
-    expect(cf.gateEnv('review-x1')).toEqual({ script: 'dotkick-gate-review-x1', database: 'dotkick-gate-review-x1' });
+    expect(cf.gateEnv('prod')).toEqual({ script: 'dotkick-gate' });
+    expect(cf.gateEnv('test')).toEqual({ script: 'dotkick-gate-test' });
+    expect(cf.gateEnv('review-x1')).toEqual({ script: 'dotkick-gate-review-x1' });
     for (const bad of ['dotquiz', 'dotquiz-live', '', 'dotkick', 'dotkick-gate-prod', 'dotkick-gate-review-X']) expect(() => cf.assertGateName(bad), bad).toThrow(/refusing/);
     for (const bad of ['production', 'dotquiz', 'review-', 'review-A']) expect(() => cf.gateEnv(bad), bad).toThrow();
     expect(cf.COMPATIBILITY_DATE).toBe('2025-01-01');
@@ -414,44 +415,45 @@ describe('GATE Cloudflare tooling (tools/lib/cloudflare.mjs)', () => {
     expect(() => cf.cloudflareConfig([], { CLOUDFLARE_ACCOUNT_ID: cfg.account })).toThrow(/CLOUDFLARE_API_TOKEN/);
   });
 
-  it('uploads the module with the D1 binding and turns on workers.dev for that script only', async () => {
+  it('uploads worker.js + codes.js with the GateStore Durable Object, creating the class only on the first deploy', async () => {
     const seen: { url: string; method: string; auth: string | null; body: unknown }[] = [];
     const fake = (async (url: string, init: RequestInit) => {
       seen.push({ url, method: String(init.method), auth: new Headers(init.headers).get('Authorization'), body: init.body });
       return jsonRes(200, { success: true, result: {} });
     }) as unknown as typeof fetch;
-    await cf.uploadWorker(cfg, 'dotkick-gate-test', 'export default {}', 'db-id', fake);
+    await cf.uploadWorker(cfg, 'dotkick-gate-test', 'export default {}', 'export default [];', '', fake);
+    await cf.uploadWorker(cfg, 'dotkick-gate-test', 'export default {}', 'export default [];', cf.STORE_MIGRATION_TAG, fake);
     await cf.enableWorkersDev(cfg, 'dotkick-gate-test', fake);
-    expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([
-      `PUT https://api.cloudflare.com/client/v4/accounts/${cfg.account}/workers/scripts/dotkick-gate-test`,
-      `POST https://api.cloudflare.com/client/v4/accounts/${cfg.account}/workers/scripts/dotkick-gate-test/subdomain`,
-    ]);
+    const base = `https://api.cloudflare.com/client/v4/accounts/${cfg.account}/workers/scripts/dotkick-gate-test`;
+    expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([`PUT ${base}`, `PUT ${base}`, `POST ${base}/subdomain`]);
     expect(seen.every((s) => s.auth === 'Bearer proxy-injected')).toBe(true);
+    const meta = async (i: number) => JSON.parse(await ((seen[i]!.body as FormData).get('metadata') as Blob).text());
+    const binding = [{ type: 'durable_object_namespace', name: 'GATE', class_name: 'GateStore' }];
+    expect(await meta(0)).toEqual({ main_module: 'worker.js', compatibility_date: '2025-01-01', bindings: binding, migrations: { new_tag: 'v1', new_sqlite_classes: ['GateStore'] } });
+    expect(await meta(1)).toEqual({ main_module: 'worker.js', compatibility_date: '2025-01-01', bindings: binding });
     const form = seen[0]!.body as FormData;
-    const meta = JSON.parse(await (form.get('metadata') as Blob).text());
-    expect(meta).toEqual({ main_module: 'worker.js', compatibility_date: '2025-01-01', bindings: [{ type: 'd1', name: 'DB', id: 'db-id' }] });
     expect(await (form.get('worker.js') as Blob).text()).toBe('export default {}');
-    await expect(cf.uploadWorker(cfg, 'dotquiz', 'x', 'db', fake)).rejects.toThrow(/refusing/);
+    expect(await (form.get('codes.js') as Blob).text()).toBe('export default [];');
+    await expect(cf.uploadWorker(cfg, 'dotquiz', 'x', 'y', '', fake)).rejects.toThrow(/refusing/);
     await expect(cf.enableWorkersDev(cfg, 'dotquiz-live', fake)).rejects.toThrow(/refusing/);
-    expect(seen).toHaveLength(2);
+    expect(seen).toHaveLength(3);
   });
 
-  it('finds a database by exact name before creating one; API errors carry Cloudflare\'s message', async () => {
-    const calls: string[] = [];
-    const fake = (async (url: string, init: RequestInit) => {
-      calls.push(`${init.method} ${url.replace(/^.*\/accounts\/[0-9a-f]+/, '')}`);
-      if (init.method === 'GET') return jsonRes(200, { success: true, result: [{ uuid: 'u-other', name: 'dotkick-gate-test-old' }] });
-      return jsonRes(200, { success: true, result: { uuid: 'u-new', name: 'dotkick-gate-test' } });
-    }) as unknown as typeof fetch;
-    expect(await cf.ensureDatabase(cfg, 'dotkick-gate-test', fake)).toMatchObject({ uuid: 'u-new', created: true });
-    expect(calls).toEqual(['GET /d1/database?name=dotkick-gate-test&per_page=100', 'POST /d1/database']);
+  it('reads the migration tag of its own script only; API errors carry Cloudflare\'s message', async () => {
+    const fake = (async () => jsonRes(200, { success: true, result: [{ id: 'dotquiz', migration_tag: 'zz' }, { id: 'dotkick-gate-test', migration_tag: 'v1' }] })) as unknown as typeof fetch;
+    expect(await cf.migrationTag(cfg, 'dotkick-gate-test', fake)).toBe('v1');
+    expect(await cf.migrationTag(cfg, 'dotkick-gate', fake)).toBe('');
+    await expect(cf.migrationTag(cfg, 'dotquiz', fake)).rejects.toThrow(/refusing/);
     const denied = (async () => jsonRes(403, { success: false, errors: [{ code: 10000, message: 'Authentication error' }] })) as unknown as typeof fetch;
-    await expect(cf.cfApi(cfg, 'POST', '/d1/database', {}, denied)).rejects.toThrow(/10000: Authentication error/);
+    await expect(cf.cfApi(cfg, 'PUT', '/workers/scripts/dotkick-gate-test', {}, denied)).rejects.toThrow(/10000: Authentication error/);
   });
 
-  it('schema.sql splits into its statements', () => {
-    const st = cf.sqlStatements(SCHEMA);
-    expect(st).toHaveLength(1);
-    expect(st[0]).toMatch(/^CREATE TABLE IF NOT EXISTS codes/);
+  it('codes.js round trip: builds from hashes, rejects anything that is not a hash, and the repo copy holds 64-hex hashes only', () => {
+    const hs = [nodeHash(CODE_A), nodeHash(CODE_B)];
+    expect(cf.hashesInCodesModule(cf.codesModule(hs))).toEqual(hs);
+    expect(() => cf.codesModule(['TSTA-2345-6789'])).toThrow(/not a password hash/);
+    const repo = readFileSync(new URL('../../server/gate-worker/codes.js', import.meta.url), 'utf8');
+    expect(cf.hashesInCodesModule(repo).length).toBeGreaterThanOrEqual(1);
+    expect(repo.replace(/\/\*[\s\S]*?\*\//, '').replace(/\/\/.*$/gm, '').replace(/'[0-9a-f]{64}',/g, '').replace(/\s/g, '')).toBe('exportdefault[];');
   });
 });

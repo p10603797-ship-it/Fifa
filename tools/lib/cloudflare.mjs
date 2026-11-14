@@ -1,4 +1,4 @@
-/* global fetch, process, FormData, Blob, URLSearchParams */
+/* global fetch, process, FormData, Blob */
 /**
  * [GATE] Small Cloudflare REST helper for the password checker tools (tools/gate-deploy.mjs, tools/gate-codes.mjs;
  * D-048). Only the DotKick checker's own resources can be named here (GATE_ENVS, plus throwaway review resources

@@ -1,4 +1,4 @@
-/* global console, process, URL, fetch */
+/* global console, process, URL, fetch, setTimeout */
 /**
  * [GATE] Deploy the password checker (server/gate-worker, D-048) to the owner's Cloudflare account.
  *
