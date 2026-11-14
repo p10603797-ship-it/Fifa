@@ -292,7 +292,11 @@ describe('SGN-05 item 5: runtime network (static half; the e2e spec logs a real 
     const uses = (re: RegExp): string[] => SRC_FILES.filter((p) => !p.endsWith('.test.ts') && re.test(srcText(p))).map(rel).sort();
     // [NET-FIX, D-044] src/net/relay.ts reads relay.json beside the page (same origin, no-store) when a room opens and,
     // only if that file names one, the deployer's https credentials URL (no cookies). No URL of its own.
-    expect(uses(/(?<![.\w])fetch\(|\bfetchFn\(/)).toEqual(['src/net/relay.ts', 'src/platform/pwa.ts']);
+    // [GATE, D-048] src/app/gateOnline.ts asks the password checker (GATE_SERVER_URL, src/data/gateConfig.ts) only when a
+    // password is submitted on the lock screen: no cookies, no referrer, no cache.
+    expect(uses(/(?<![.\w])fetch\(|\bfetchFn\(/)).toEqual(['src/app/gateOnline.ts', 'src/net/relay.ts', 'src/platform/pwa.ts']);
+    expect(srcText(join(root, 'src/app/gateOnline.ts'))).toMatch(/credentials: 'omit'[\s\S]*cache: 'no-store'[\s\S]*referrerPolicy: 'no-referrer'/);
+    expect(uses(/dotkick-gate\.dotquiz-live\.workers\.dev/)).toEqual(['src/data/gateConfig.ts']);
     expect(srcText(join(root, 'src/platform/pwa.ts'))).toMatch(/credentials: 'same-origin'/);
     const relay = srcText(join(root, 'src/net/relay.ts'));
     expect(relay).toMatch(/cache: 'no-store', credentials: 'same-origin'/);
@@ -309,9 +313,10 @@ describe('SGN-05 item 5: runtime network (static half; the e2e spec logs a real 
     expect(uses(/0\.peerjs\.com/)).toEqual(['src/net/config.ts']);
   });
 
-  it('every absolute URL in src is a namespace, a licence or credit link, or the online 1v1 broker', () => {
+  it('every absolute URL in src is a namespace, a licence or credit link, the online 1v1 broker or the password checker', () => {
     const allowed = [/^https?:\/\/www\.w3\.org\//, /^https:\/\/openfontlicense\.org/, /^https:\/\/github\.com\/(floriankarsten|JetBrains)\//,
-      /^https?:\/\/(localhost|127\.0\.0\.1)\b/, /^https?:\/\/[a-z0-9.-]*example\.(org|com|net)\b/, /^https:\/\/dotkick\.app\//];
+      /^https?:\/\/(localhost|127\.0\.0\.1)\b/, /^https?:\/\/[a-z0-9.-]*example\.(org|com|net)\b/, /^https:\/\/dotkick\.app\//,
+      /^https:\/\/dotkick-gate\.dotquiz-live\.workers\.dev\/redeem$/]; // [GATE, D-048] the password checker
     for (const p of SRC_FILES) {
       for (const m of srcText(p).matchAll(/\b(?:https?|wss?):\/\/[^\s'"`)<>]+/g)) {
         expect(allowed.some((re) => re.test(m[0])), `${rel(p)}: ${m[0]}`).toBe(true);
