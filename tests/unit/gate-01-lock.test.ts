@@ -142,6 +142,20 @@ describe('GATE SHA-256 fallback', () => {
   });
 });
 
+describe('GATE Home Screen tip', () => {
+  it('shows on iPhone / iPad browser tabs only, never in the Home Screen app or on other devices', async () => {
+    const { suggestHomeScreenFirst } = await import('../../src/app/gate');
+    const ipadUa = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15';
+    expect(suggestHomeScreenFirst({ userAgent: ipadUa, platform: 'MacIntel', maxTouchPoints: 5, standalone: false }, false)).toBe(true);
+    expect(suggestHomeScreenFirst({ userAgent: 'Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X)', standalone: false }, false)).toBe(true);
+    expect(suggestHomeScreenFirst({ userAgent: ipadUa, platform: 'MacIntel', maxTouchPoints: 5, standalone: true }, false)).toBe(false);
+    expect(suggestHomeScreenFirst({ userAgent: ipadUa, platform: 'MacIntel', maxTouchPoints: 5 }, true)).toBe(false);
+    expect(suggestHomeScreenFirst({ userAgent: ipadUa, platform: 'MacIntel', maxTouchPoints: 0 }, false)).toBe(false); // a Mac
+    expect(suggestHomeScreenFirst({ userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/130', platform: 'Linux x86_64', maxTouchPoints: 0 }, false)).toBe(false);
+    expect(suggestHomeScreenFirst(undefined, false)).toBe(false);
+  });
+});
+
 describe('GATE no code list in the game', () => {
   it('the shipped game has no list of hashes: the online checker holds them (D-048)', async () => {
     const { existsSync, readFileSync } = await import('node:fs');

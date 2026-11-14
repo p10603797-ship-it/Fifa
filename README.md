@@ -29,10 +29,12 @@ offline helper `sw.js` and the icons). There is no server, no account, no ads an
 
 Once the game is online (section 4 shows two free ways):
 
-1. On the iPad, open the game's `https://` address in **Safari**.
-2. Tap the screen to start (this also turns the sound on). Tap the **Share** button, then **Add to Home Screen**,
-   then **Add**.
-3. Open **DotKick** from the Home Screen and tap **Play now**. Hold the iPad in landscape.
+1. On the iPad, open the game's `https://` address in **Safari**. It shows the password lock.
+2. **Before typing a password**, tap the **Share** button, then **Add to Home Screen**, then **Add**. (The Home Screen
+   app keeps its own website data, so a password typed in Safari would not unlock it, and each password works only
+   once.)
+3. Open **DotKick** from the Home Screen, type your password and tap **Unlock**, then tap the screen to start and
+   tap **Play now**. Hold the iPad in landscape.
 
 The Home Screen app runs full screen and keeps working without internet (except online 1v1).
 
@@ -49,14 +51,15 @@ straight away on that device, after a reload, after closing Safari, and offline.
   the internet and try again." and the password is not used up. If the connection drops just as the checker accepts
   the password, trying again on the same device still opens the game (the checker remembers which device used it).
 - Once a device is unlocked the game never contacts the checker again (offline play works as before).
-- Safari and the Home Screen app may keep separate website data, so the Home Screen app can ask once more. The
-  password already used in Safari is spent everywhere, so the Home Screen app then needs a **new** password. The same
-  happens after clearing website data, in a private window, or when Safari clears the data of a site not opened for
-  about a week of Safari use.
+- **On iPad, add the game to the Home Screen first and unlock it there** (section 1). Safari and the Home Screen app
+  keep separate website data, so a password typed in Safari does not unlock the Home Screen app, and since it is now
+  spent everywhere the Home Screen app would need a **new** password. The lock screen in Safari says so. A new
+  password is also needed after clearing website data, in a private window, or when Safari clears the data of a site
+  not opened for about a week of Safari use (a Home Screen app counts its own days of use, so it is not affected).
 - Private browsing (or Safari set to block website data) cannot remember the unlock. When the game can tell, it opens
   for that visit and says so (current iPadOS private tabs cannot be told apart, so they may not say it).
 - The lock keeps casual players out; it is not strong security. Like any lock that runs in the browser, a technical
-  person with a computer can get past it (with the browser's developer tools). The repository holds only scrambled
+  person can get past it (for example with the browser's developer tools). The repository holds only scrambled
   versions (hashes) of the passwords, never the passwords themselves.
 
 Making new passwords is in [section 11](#make-new-passwords).
@@ -255,12 +258,14 @@ for **public** repositories (private repositories need a paid GitHub plan).
 ## 5. Add it to the Home Screen and play offline
 
 1. Open the game's `https://` address in **Safari** on the iPad (other browsers on iPad cannot install it the same
-   way).
-2. Tap anywhere to start. The first visit shows a hint about the Home Screen.
+   way). It shows the password lock: do not type the password yet.
+2. The lock suggests adding the game to the Home Screen first: the Home Screen app keeps its own website data, so it
+   needs its own unlock, and each password works only once.
 3. Tap the **Share** button in Safari's toolbar (a square with an arrow pointing up; on some iPadOS versions it is
    inside the **•••** menu), scroll down and tap **Add to Home Screen**. If the sheet shows an **Open as Web App**
    switch, leave it on. Tap **Add**.
-4. Open **DotKick** from the Home Screen. It opens full screen, without Safari's toolbars.
+4. Open **DotKick** from the Home Screen. It opens full screen, without Safari's toolbars. Type your password there
+   and tap **Unlock**; it stays unlocked from then on.
 5. **Offline:** the game saves itself on the iPad during the first visit over HTTPS. To check, switch on Airplane
    Mode and open the Home Screen app: everything except online 1v1 works.
 
@@ -806,7 +811,9 @@ The Cloudflare commands need `CLOUDFLARE_ACCOUNT_ID` (the account id) and `CLOUD
 from the **Edit Cloudflare Workers** template, or any token with Account > Workers Scripts > Edit). Behind an HTTPS
 proxy add `NODE_USE_ENV_PROXY=1`. To retire a password, `npm run gate:codes -- --retire XXXX-XXXX-XXXX`, then deploy.
 `node tools/gate-deploy.mjs --env test --hashes FILE` deploys a separate test checker (`dotkick-gate-test`) with the
-hashes in FILE; tests and checks use that one, never the real one.
+hashes in FILE (required); tests and checks use that one, never the real one. The free Cloudflare plan allows
+about 100,000 checker requests a day; if someone flooded it with wrong passwords, players would see "Couldn't check
+the password" until the next day (no password is used up), and a Cloudflare rate-limit rule can be added.
 
 For tests: every Playwright browser starts unlocked (`playwright.config.ts` seeds the unlock through
 `tools/lib/gateUnlock.ts`). `tests/e2e/gate-01-lock.spec.ts` tests the lock with its own test passwords, added

@@ -1,7 +1,7 @@
 /**
  * [GATE] The passwords the checker accepts (worker.js, D-048), as hashes only: lowercase hex SHA-256 of the UTF-8
  * string "dotkick-gate-v1:" + the normalised code (upper case, everything but A-Z and 0-9 removed). The plain codes
- * are never in the repository (it is public). Add codes with `node tools/gate-codes.mjs 10 --append`, then redeploy
+ * are never in the repository (it is public). Add codes with `npm run gate:codes -- 10 --add`, then redeploy
  * with `node tools/gate-deploy.mjs --env prod`; the site itself does not need rebuilding.
  */
 export default [

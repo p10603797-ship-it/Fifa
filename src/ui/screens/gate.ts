@@ -17,7 +17,7 @@
  *    tab is not shown as "already used".
  */
 import type { Gate, UnlockOutcome } from '../../app/gate';
-import { CODE_LENGTH, GATE_TEXT, GATE_UNLOCK_KEY } from '../../app/gate';
+import { CODE_LENGTH, GATE_TEXT, GATE_UNLOCK_KEY, suggestHomeScreenFirst } from '../../app/gate';
 import { GAME_NAME } from '../../contracts/constants';
 import { h, injectStyle } from '../components';
 
@@ -46,6 +46,7 @@ body.${GATE_BODY_CLASS} #rotate { display: none !important; }
 .gate-input:focus { outline: none; border-color: var(--ember); box-shadow: 0 0 0 3px var(--ember-soft); }
 .gate-input[aria-invalid='true'] { border-color: var(--error); }
 .gate-submit { width: 100%; min-height: 68px; font-size: var(--fs-lg); }
+.gate-tip { margin: 0; color: var(--text-2); font-size: var(--fs-sm); text-align: center; line-height: var(--lh); }
 .gate-msg { margin: 0; min-height: 1.4em; font-size: var(--fs-sm); line-height: var(--lh); text-align: center;
   color: var(--text-2); }
 .gate-msg[data-kind='error'] { color: var(--error); }
@@ -79,6 +80,15 @@ interface VisualViewportLike extends EventTarget {
 }
 
 /** Mount the lock screen into `parent` (#ui). */
+function homeScreenTip(): boolean {
+  try {
+    const standalone = typeof matchMedia === 'function' && matchMedia('(display-mode: standalone)').matches;
+    return suggestHomeScreenFirst(typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { standalone?: boolean }), standalone);
+  } catch {
+    return false;
+  }
+}
+
 export function mountGateScreen(parent: HTMLElement, opts: GateScreenOptions): GateScreen {
   injectStyle('gate', CSS);
   const disposers: (() => void)[] = [];
@@ -110,6 +120,7 @@ export function mountGateScreen(parent: HTMLElement, opts: GateScreenOptions): G
       h('span', { class: 'gate-dot', attrs: { 'aria-hidden': 'true' } }),
       h('h1', { class: 'gate-name', text: GAME_NAME, attrs: { id: 'gate-title' } })),
     h('p', { class: 'gate-prompt', text: GATE_TEXT.prompt, testId: 'gate-prompt' }),
+    ...(homeScreenTip() ? [h('p', { class: 'gate-tip', text: GATE_TEXT.homeScreenTip, testId: 'gate-tip' })] : []),
     input,
     submit,
     msg,

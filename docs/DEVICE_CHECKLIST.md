@@ -20,32 +20,35 @@ that replays the match exactly).
 
 ## Password lock (before step 1, not counted in the 15 minutes)
 
-You need two unused passwords, two iPads (or an iPad and another browser) and an internet connection. The game
+You need three unused passwords, two iPads (or an iPad and another browser) and an internet connection. The game
 checks a password online the first time (D-048), so each password works once, on one device.
 
-1. On iPad A open the address in **Safari**. The game asks for a password: tap the box (the keyboard opens; the box
+1. On iPad A open the address in **Safari**: the lock shows a tip to add the game to the Home Screen first. Do step 1
+   of the install section below (Add to Home Screen) now, then open **DotKick** from the Home Screen. It asks for a
+   password: tap the box (the keyboard opens; the box
    and the **Unlock** button must stay visible above it, in landscape and in portrait), type the first password and
    tap **Go** on the keyboard (or **Unlock**). The start screen appears.
 2. On iPad B (or another browser) open the address and type the **same** password: it must say "That password has
    already been used." and stay locked.
-3. Close Safari on iPad A completely (swipe it away in the app switcher), open it again on the same address: no
-   password, the start screen comes straight up.
+3. Close the DotKick app on iPad A completely (swipe it away in the app switcher), open it again from the Home
+   Screen: no password, the start screen comes straight up.
 4. On iPad B turn on Airplane Mode, type the second password: it must say "Couldn't check the password. Connect to
    the internet and try again." Turn Airplane Mode off and tap **Unlock** again: it opens (the password was not used
    up by the failed try).
-5. In step 1 below, when you open DotKick from the Home Screen: note whether it asks for a password again (iPadOS may
-   give the Home Screen app its own website data). If it asks, the password used in Safari is already spent, so it
-   says "already been used": a new password is needed there.
+5. Note: in Safari on iPad A the address still asks for a password (Safari keeps separate website data from the
+   Home Screen app). Do not type one there.
 6. During step 6 (Airplane Mode): the app opens with no password.
 
-**Pass:** the first password unlocks iPad A and is refused on iPad B, Safari reopens without asking, the offline try
+**Pass:** the first password unlocks iPad A's Home Screen app and is refused on iPad B, the app reopens without asking, the offline try
 says so without using the password up, and offline play opens without asking.
 
 ## 1. Install (1 minute)
 
-1. Open the address in **Safari**. Tap the screen to start. The start screen shows a hint about the Home Screen.
+1. Open the address in **Safari**. The password lock shows, with a tip to add the game to the Home Screen first (do
+   not type a password in Safari).
 2. Tap **Share** (on some iPadOS versions inside the **•••** menu), then **Add to Home Screen**, then **Add**.
-3. Close Safari's tab and open **DotKick** from the Home Screen.
+3. Close Safari's tab and open **DotKick** from the Home Screen (it asks for the password there: password lock step
+   1).
 
 **Pass:** the app opens full screen (no Safari toolbar), in landscape, with the DotKick icon on the Home Screen.
 
@@ -139,7 +142,7 @@ iPad's speaker, not quietly or from the earpiece.
 DotKick device checklist          Date:            iPad model:            iPadOS:
 Game address:                     Game version (Settings > Diagnostics):
 
-0. Password lock           PASS / FAIL   refused on the second iPad? yes / no   Home Screen app asked again? yes / no   notes:
+0. Password lock           PASS / FAIL   refused on the second iPad? yes / no   Safari tab still locked after the app was unlocked? yes / no   notes:
 1. Install                 PASS / FAIL   notes:
 2. Benchmark               PASS / FAIL   (paste the Copy Results text below)
 3. Five-finger touch       PASS / FAIL   notes:

@@ -32,6 +32,7 @@ async function main() {
   const source = readFileSync(resolve(root, 'server/gate-worker/worker.js'), 'utf8');
   const hashFile = flagValue(args, '--hashes');
   if (envName === 'prod' && hashFile) throw new Error('prod always uses server/gate-worker/codes.js');
+  if (envName !== 'prod' && !hashFile) throw new Error(`--env ${envName} needs --hashes FILE (test hashes): the real passwords stay on the prod checker only`);
   const codes = hashFile
     ? codesModule(readFileSync(hashFile, 'utf8').split(/\s+/).filter(Boolean))
     : readFileSync(resolve(root, 'server/gate-worker/codes.js'), 'utf8');

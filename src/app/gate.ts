@@ -52,10 +52,23 @@ export const GATE_TEXT = {
   offline: "Couldn't check the password. Connect to the internet and try again.",
   empty: 'Type your password, then tap Unlock.',
   checking: 'Checking…',
+  homeScreenTip:
+    'On iPad: add DotKick to your Home Screen first (Share, then Add to Home Screen), open it from there and unlock it ' +
+    'there. Each password works only once, and the Home Screen app does not share this unlock with Safari.',
   notRemembered:
     'Unlocked for now. This browser will not remember it (private browsing or website data turned off), so you will ' +
     'need a password again next time.',
 } as const;
+
+/**
+ * True on an iPhone / iPad browser tab that is not the Home Screen app: the lock then suggests adding the game to the
+ * Home Screen before unlocking, since the Home Screen app keeps its own website data and would need a second password.
+ */
+export function suggestHomeScreenFirst(nav: { userAgent?: string; platform?: string; maxTouchPoints?: number; standalone?: boolean } | undefined, standaloneMedia: boolean): boolean {
+  if (!nav || nav.standalone === true || standaloneMedia) return false;
+  const ua = nav.userAgent ?? '';
+  return /iPad|iPhone|iPod/.test(ua) || (nav.platform === 'MacIntel' && (nav.maxTouchPoints ?? 0) > 1);
+}
 
 /** Answer of one redeem attempt. 'offline-error': the online checker could not be reached (never from the local one). */
 export type RedeemResult = 'ok' | 'wrong' | 'used' | 'offline-error';
