@@ -1,16 +1,15 @@
 /**
- * [GATE] Password lock logic (src/app/gate.ts, src/app/sha256.ts, src/data/gateCodes.ts, tools/gate-codes.mjs; D-047).
- * Test codes only: the shipped codes are never in the repository.
+ * [GATE] Password lock logic (src/app/gate.ts, src/app/sha256.ts, tools/gate-codes.mjs; D-047, D-048). The online
+ * checker and its client are tests/unit/gate-02-online.test.ts. Test codes only: real codes are never in the repository.
  */
 import { createHash, randomBytes, webcrypto } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CODE_ALPHABET, CODE_LENGTH, GATE_HASH_PREFIX, GATE_UNLOCK_KEY, GATE_USED_KEY, acceptedHashes, createGate,
-  createLocalRedeemer, defaultDigest, fallbackDigest, formatCode, hashCode, isGateHash, normaliseCode, parseUnlockRecord,
-  parseUsedList, subtleDigest, unlockRecordJson, type CodeRedeemer, type RedeemResult,
+  createLocalRedeemer, defaultDigest, fallbackDigest, formatCode, hashCode, normaliseCode, parseUnlockRecord,
+  parseUsedList, readTestHook, subtleDigest, unlockRecordJson, type CodeRedeemer, type RedeemResult,
 } from '../../src/app/gate';
 import { sha256Bytes, sha256HexFallback, toHex } from '../../src/app/sha256';
-import { GATE_CODE_HASHES } from '../../src/data/gateCodes';
 import { createMemoryStorage, createSafeStorage, type KeyValueStorage, type StorageLike } from '../../src/platform/storage';
 
 /** tools/gate-codes.mjs (plain ESM, no type declarations). */
@@ -23,8 +22,8 @@ interface GateCodesTool {
   hashCode(code: string): string;
   newCode(rand?: (n: number) => number): string;
   newCodes(n: number, existing?: readonly string[], rand?: (n: number) => number): string[];
-  listedHashes(text: string): string[];
-  appendHashes(text: string, hashes: readonly string[]): string;
+  parseHashList(text: string): string[];
+  insertStatement(hashes: readonly string[]): { sql: string; params: string[] };
 }
 const tool = (await import(/* @vite-ignore */ new URL('../../tools/gate-codes.mjs', import.meta.url).href)) as GateCodesTool;
 
@@ -141,12 +140,12 @@ describe('GATE SHA-256 fallback', () => {
   });
 });
 
-describe('GATE shipped code list', () => {
-  it('holds ten well-formed, distinct hashes and none of the test codes', () => {
-    expect(GATE_CODE_HASHES).toHaveLength(10);
-    expect(GATE_CODE_HASHES.every(isGateHash)).toBe(true);
-    expect(new Set(GATE_CODE_HASHES).size).toBe(10);
-    for (const h of TEST_HASHES) expect(GATE_CODE_HASHES).not.toContain(h);
+describe('GATE no code list in the game', () => {
+  it('the shipped game has no list of hashes: the online checker holds them (D-048)', async () => {
+    const { existsSync, readFileSync } = await import('node:fs');
+    expect(existsSync(new URL('../../src/data/gateCodes.ts', import.meta.url))).toBe(false);
+    const boot = readFileSync(new URL('../../src/app/gateBoot.ts', import.meta.url), 'utf8');
+    expect(boot).not.toMatch(/[0-9a-f]{64}/);
   });
 });
 
@@ -267,12 +266,23 @@ describe('GATE stored records', () => {
 });
 
 describe('GATE test hook', () => {
-  it('window.__dotkickGateTest.hashes adds accepted hashes (well-formed only); absent, only the shipped list counts', () => {
-    expect(acceptedHashes(GATE_CODE_HASHES)).toEqual([...GATE_CODE_HASHES]);
+  it('window.__dotkickGateTest: well-formed hashes and an http(s) serverUrl only; absent or malformed, nothing', () => {
+    expect(readTestHook()).toBeNull(); // no window in node
+    vi.stubGlobal('window', {});
+    expect(readTestHook()).toBeNull();
     vi.stubGlobal('window', { __dotkickGateTest: { hashes: [TEST_HASHES[0], 'bad', TEST_HASHES[0]] } });
-    expect(acceptedHashes(GATE_CODE_HASHES)).toEqual([...GATE_CODE_HASHES, TEST_HASHES[0]]);
+    expect(readTestHook()).toEqual({ hashes: [TEST_HASHES[0]], serverUrl: null });
     vi.stubGlobal('window', { __dotkickGateTest: { hashes: 'not a list' } });
-    expect(acceptedHashes(GATE_CODE_HASHES)).toEqual([...GATE_CODE_HASHES]);
+    expect(readTestHook()).toBeNull();
+    vi.stubGlobal('window', { __dotkickGateTest: { serverUrl: 'https://checker.example/redeem' } });
+    expect(readTestHook()).toEqual({ hashes: null, serverUrl: 'https://checker.example/redeem' });
+    for (const bad of ['javascript:alert(1)', 'ftp://x.example/', '', 42, 'https://a b.example/']) {
+      vi.stubGlobal('window', { __dotkickGateTest: { serverUrl: bad } });
+      expect(readTestHook(), String(bad)).toBeNull();
+    }
+    vi.stubGlobal('window', { get __dotkickGateTest() { throw new Error('boom'); } });
+    expect(readTestHook()).toBeNull();
+    expect(acceptedHashes(['x', TEST_HASHES[1], TEST_HASHES[1]])).toEqual([TEST_HASHES[1]]);
   });
 });
 
@@ -303,13 +313,14 @@ describe('GATE tools/gate-codes.mjs', () => {
     expect(tool.hashCode(out[0]!)).not.toBe(listed[0]);
   });
 
-  it('appends hashes between the markers of the code list and reads them back', async () => {
-    const { readFileSync } = await import('node:fs');
-    const text = readFileSync(new URL('../../src/data/gateCodes.ts', import.meta.url), 'utf8');
-    expect(tool.listedHashes(text)).toEqual([...GATE_CODE_HASHES]);
-    const added = tool.appendHashes(text, TEST_HASHES);
-    expect(tool.listedHashes(added)).toEqual([...GATE_CODE_HASHES, ...TEST_HASHES]);
-    expect(added).toContain(`  '${TEST_HASHES[0]}',\n  '${TEST_HASHES[1]}',`);
-    expect(() => tool.listedHashes('no markers')).toThrow();
+  it('reads hash lists (one per line, # comments) and builds the INSERT OR IGNORE for the checker', () => {
+    expect(tool.parseHashList(`# test\n${TEST_HASHES[0]}\n\n  ${TEST_HASHES[1]}  # b\n${TEST_HASHES[0]}\n`)).toEqual(TEST_HASHES.slice(0, 2));
+    expect(() => tool.parseHashList('nope')).toThrow(/line 1/);
+    expect(() => tool.parseHashList(TEST_HASHES[0]!.toUpperCase())).toThrow();
+    const st = tool.insertStatement(TEST_HASHES);
+    expect(st).toEqual({ sql: 'INSERT OR IGNORE INTO codes (hash) VALUES (?), (?), (?)', params: TEST_HASHES });
+    expect(() => tool.insertStatement([])).toThrow();
+    expect(() => tool.insertStatement(['x'])).toThrow();
+    expect(() => tool.insertStatement(Array.from({ length: 91 }, () => TEST_HASHES[0]!))).toThrow();
   });
 });
