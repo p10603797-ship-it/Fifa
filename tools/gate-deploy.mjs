@@ -1,23 +1,24 @@
-/* global console, process, URL */
+/* global console, process, URL, fetch */
 /**
  * [GATE] Deploy the password checker (server/gate-worker, D-048) to the owner's Cloudflare account.
  *
- *   node tools/gate-deploy.mjs --env prod     worker "dotkick-gate" + D1 database "dotkick-gate" (the published game)
- *   node tools/gate-deploy.mjs --env test     worker "dotkick-gate-test" + D1 database "dotkick-gate-test" (tests)
+ *   node tools/gate-deploy.mjs --env prod                      worker "dotkick-gate" (the published game)
+ *   node tools/gate-deploy.mjs --env test --hashes <file>      worker "dotkick-gate-test" (tests), with the hashes in
+ *                                                              <file> (one per line) instead of codes.js
  *
- * Steps (each safe to repeat): create the D1 database when missing (found by name), apply server/gate-worker/
- * schema.sql (CREATE TABLE IF NOT EXISTS: existing passwords are kept), upload worker.js as an ES module with the
- * database bound as DB (compatibility date 2025-01-01), and turn on that script's workers.dev address. It prints the
- * address and the database id. It never touches any other worker, database, route or the account's subdomain.
+ * Uploads worker.js and codes.js (the accepted hashes) as ES modules with the GateStore Durable Object (SQLite
+ * backed) bound as GATE, creating the class on the first deploy, then turns on that script's workers.dev address and
+ * prints it with the password counts. Safe to repeat: the used-password table lives in the Durable Object and is
+ * kept. It never touches any other worker, route or the account's subdomain.
  *
- * Needs CLOUDFLARE_ACCOUNT_ID (or --account <id>) and CLOUDFLARE_API_TOKEN (Workers Scripts Edit + D1 Edit); see
- * tools/lib/cloudflare.mjs. Add passwords afterwards with tools/gate-codes.mjs --server prod|test.
+ * Needs CLOUDFLARE_ACCOUNT_ID (or --account <id>) and CLOUDFLARE_API_TOKEN (Workers Scripts Edit); see
+ * tools/lib/cloudflare.mjs. Behind an HTTPS proxy run with NODE_USE_ENV_PROXY=1.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  cloudflareConfig, d1Query, enableWorkersDev, ensureDatabase, flagValue, gateEnv, sqlStatements, uploadWorker, workersSubdomain,
+  cloudflareConfig, codesModule, enableWorkersDev, flagValue, gateEnv, migrationTag, uploadWorker, workersSubdomain,
 } from './lib/cloudflare.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -29,20 +30,33 @@ async function main() {
   const target = gateEnv(envName);
   const cfg = cloudflareConfig(args);
   const source = readFileSync(resolve(root, 'server/gate-worker/worker.js'), 'utf8');
-  const schema = readFileSync(resolve(root, 'server/gate-worker/schema.sql'), 'utf8');
+  const hashFile = flagValue(args, '--hashes');
+  if (envName === 'prod' && hashFile) throw new Error('prod always uses server/gate-worker/codes.js');
+  const codes = hashFile
+    ? codesModule(readFileSync(hashFile, 'utf8').split(/\s+/).filter(Boolean))
+    : readFileSync(resolve(root, 'server/gate-worker/codes.js'), 'utf8');
 
-  const db = await ensureDatabase(cfg, target.database);
-  console.log(`D1 database ${db.name}: ${db.created ? 'created' : 'found'} (id ${db.uuid})`);
-  for (const sql of sqlStatements(schema)) await d1Query(cfg, db.uuid, sql);
-  console.log('schema applied');
-  await uploadWorker(cfg, target.script, source, db.uuid);
-  console.log(`worker ${target.script} uploaded (D1 bound as DB)`);
+  const tag = await migrationTag(cfg, target.script);
+  await uploadWorker(cfg, target.script, source, codes, tag);
+  console.log(`worker ${target.script} uploaded (${tag ? 'store kept' : 'store created'})`);
   await enableWorkersDev(cfg, target.script);
   const sub = await workersSubdomain(cfg);
-  console.log(`workers.dev on: https://${target.script}.${sub}.workers.dev/redeem`);
-  const counts = await d1Query(cfg, db.uuid, 'SELECT COUNT(*) AS total, COUNT(used_at) AS used FROM codes');
-  const c = counts.results[0] ?? { total: 0, used: 0 };
-  console.log(`passwords: ${c.total} total, ${c.used} used, ${c.total - c.used} unused`);
+  const base = `https://${target.script}.${sub}.workers.dev`;
+  console.log(`workers.dev on: ${base}/redeem`);
+  for (let i = 0; i < 10; i++) {
+    try {
+      const r = await fetch(`${base}/stats`);
+      if (r.ok) {
+        const s = await r.json();
+        console.log(`passwords: ${s.total} accepted, ${s.used} used, ${s.total - s.used} unused`);
+        return;
+      }
+    } catch {
+      /* the new address can take a few seconds to answer */
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  console.log('passwords: the checker did not answer /stats yet; try node tools/gate-codes.mjs --status ' + envName);
 }
 
 main().catch((err) => {
