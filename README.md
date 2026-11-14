@@ -42,20 +42,22 @@ The first time DotKick opens on a device it asks for a password: type it in the 
 not matter, so `abcd efgh jkmn` is the same as `ABCD-EFGH-JKMN`) and tap **Unlock**. After that the game opens
 straight away on that device, after a reload, after closing Safari, and offline.
 
-- **Each password works once per device.** Once a password has unlocked a device, typing it again there says
-  "That password has already been used." There is no server, so the device itself remembers which passwords it has
-  used: the same password still unlocks a *different* device or browser. Give each person their own password.
-- Private browsing (or Safari set to block website data) cannot remember the unlock. The game still opens for that
-  visit and says so; it will ask again next time.
-- Safari and the Home Screen app may keep separate website data, so the Home Screen app can ask once more (use a
-  new password).
-- The list of used passwords is kept in the same website data as the unlock. Clearing website data, a private
-  window, or Safari clearing the data of a site not opened for about a week of Safari use re-locks the game, and
-  the same password then works again on that device. Only an online checker (the plug-in point in decision D-047)
-  could stop that.
-- The lock keeps casual players out; it is not strong security. Like any lock that runs only in the browser, a
-  technical person with a computer can get past it (with the browser's developer tools). The repository holds only
-  scrambled versions (hashes) of the passwords, never the passwords themselves.
+- **Each password works once, on one device.** The game checks the password with a small online checker on the
+  owner's Cloudflare account (free plan). The first device to use a password gets in; any other device that types
+  it afterwards is told "That password has already been used." Give each person their own password.
+- **The first unlock needs the internet.** Without a connection the game says "Couldn't check the password. Connect to
+  the internet and try again." and the password is not used up. If the connection drops just as the checker accepts
+  the password, trying again on the same device still opens the game (the checker remembers which device used it).
+- Once a device is unlocked the game never contacts the checker again (offline play works as before).
+- Safari and the Home Screen app may keep separate website data, so the Home Screen app can ask once more. The
+  password already used in Safari is spent everywhere, so the Home Screen app then needs a **new** password. The same
+  happens after clearing website data, in a private window, or when Safari clears the data of a site not opened for
+  about a week of Safari use.
+- Private browsing (or Safari set to block website data) cannot remember the unlock. When the game can tell, it opens
+  for that visit and says so (current iPadOS private tabs cannot be told apart, so they may not say it).
+- The lock keeps casual players out; it is not strong security. Like any lock that runs in the browser, a technical
+  person with a computer can get past it (with the browser's developer tools). The repository holds only scrambled
+  versions (hashes) of the passwords, never the passwords themselves.
 
 Making new passwords is in [section 11](#make-new-passwords).
 
@@ -786,26 +788,31 @@ Results** button. The on-device script is [docs/DEVICE_CHECKLIST.md](docs/DEVICE
 
 ### Make new passwords
 
-The password lock (section 1, [docs/DECISIONS.md](docs/DECISIONS.md) D-047) checks what is typed against the list
-of hashes in `src/data/gateCodes.ts`: lowercase hex SHA-256 of `dotkick-gate-v1:` followed by the password in
-capitals with everything but letters and digits removed. Passwords are 12 characters from
-`ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no I, L, O, 0 or 1), shown as `XXXX-XXXX-XXXX`.
+The password checker ([docs/DECISIONS.md](docs/DECISIONS.md) D-048) is a Cloudflare Worker, `server/gate-worker/`,
+deployed to the owner's Cloudflare account as `dotkick-gate` (address in `src/data/gateConfig.ts`). It accepts the
+hashes listed in `server/gate-worker/codes.js` (lowercase hex SHA-256 of `dotkick-gate-v1:` followed by the password
+in capitals with everything but letters and digits removed) and remembers which device used each one in a Durable
+Object. Passwords are 12 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no I, L, O, 0 or 1), shown as
+`XXXX-XXXX-XXXX`. The site does not need rebuilding when passwords change.
 
-1. `npm run gate:codes -- 10 --append` makes 10 new passwords with secure randomness, prints them **in the terminal
-   only**, and adds their hashes to `src/data/gateCodes.ts`. Copy the passwords somewhere safe straight away: they
-   are not saved anywhere and cannot be worked out from the hashes. Never commit or paste them into the repository
-   (it is public).
-2. Commit `src/data/gateCodes.ts`, then build and publish (section 4). The new passwords work once the new build is
-   online; devices that are already unlocked stay unlocked.
+1. `npm run gate:codes -- 10 --add` makes 10 new passwords with secure randomness, prints them **in the terminal
+   only**, and adds their hashes to `server/gate-worker/codes.js`. Copy the passwords somewhere safe straight away:
+   they are not saved anywhere and cannot be worked out from the hashes. Never commit or paste them into the
+   repository (it is public).
+2. Publish them: `node tools/gate-deploy.mjs --env prod`, then commit `server/gate-worker/codes.js`.
+3. Check: `npm run gate:codes -- --status prod` prints how many passwords the checker accepts and how many are used.
 
-Without `--append` the tool only prints the passwords and the hash lines (paste the lines between the
-`gate-codes:begin` and `gate-codes:end` markers yourself). To retire a password nobody has used yet, find its line
-with `npm run gate:codes -- --hash XXXX-XXXX-XXXX` and delete it. To replace every password, delete all the lines
-between the markers and add new ones.
+The Cloudflare commands need `CLOUDFLARE_ACCOUNT_ID` (the account id) and `CLOUDFLARE_API_TOKEN` (an API token made
+from the **Edit Cloudflare Workers** template, or any token with Account > Workers Scripts > Edit). Behind an HTTPS
+proxy add `NODE_USE_ENV_PROXY=1`. To retire a password, `npm run gate:codes -- --retire XXXX-XXXX-XXXX`, then deploy.
+`node tools/gate-deploy.mjs --env test --hashes FILE` deploys a separate test checker (`dotkick-gate-test`) with the
+hashes in FILE; tests and checks use that one, never the real one.
 
 For tests: every Playwright browser starts unlocked (`playwright.config.ts` seeds the unlock through
-`tools/lib/gateUnlock.ts`); `tests/e2e/gate-01-lock.spec.ts` tests the lock itself with its own test passwords,
-which an init script adds through `window.__dotkickGateTest = { hashes: [...] }` (never set in the published game).
+`tools/lib/gateUnlock.ts`). `tests/e2e/gate-01-lock.spec.ts` tests the lock with its own test passwords, added
+through `window.__dotkickGateTest = { hashes: [...] }`; `tests/e2e/gate-02-online.spec.ts` tests the online checker
+with a mocked checker, and against the test checker when `GATE_TEST_URL` and `GATE_TEST_CODES` are set (an init
+script can set `window.__dotkickGateTest = { serverUrl }`; never set in the published game).
 
 ---
 
